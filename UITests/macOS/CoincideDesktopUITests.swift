@@ -14,6 +14,104 @@ final class CoincideDesktopUITests: XCTestCase {
         try exerciseProjectWorkflow(appearance: "dark", useKeyboard: true)
     }
 
+    @MainActor func testFilesEditorSearchReferencesAndQuitPreserveDisk() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "files")
+        let app = fixture.app
+        let project = fixture.root.appendingPathComponent("Native Files", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let document = project.appendingPathComponent("Notes.swift")
+        let original = "// Synthetic native editor fixture\nlet nativeNeedle = 7\n"
+        let saved = "// Saved by the native editor\nlet nativeNeedle = 11\n"
+        let unsaved = "// Unsaved native editor buffer\nlet nativeNeedle = 99\n"
+        try original.write(to: document, atomically: true, encoding: .utf8)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "Notes.swift"], ["commit", "--message", "Synthetic editor fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration,
+                           name: "files-fixture-\(arguments[0])")
+        }
+        let initialHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "files-initial-head")
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        try openProject(project, in: app)
+        XCTAssertTrue(app.buttons["Collapse Native Files"].waitForExistence(timeout: 10))
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let draft = "Keep this unsent file discussion"
+        composer.click(); composer.typeText(draft)
+        toggleInspector(in: app)
+        selectSegment("Files", in: app)
+        let file = app.buttons["workspace-entry-Notes.swift"]
+        XCTAssertTrue(file.waitForExistence(timeout: 10)); XCTAssertTrue(file.isHittable); file.click()
+        let editor = app.textViews["File editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForValue(editor, value: original, timeout: 5))
+        editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText(saved)
+        XCTAssertEqual(editor.value as? String, saved)
+        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), original, "Typing in the editor must retain an unsaved buffer.")
+        toggleInspector(in: app)
+        XCTAssertTrue(waitForAbsence(editor, timeout: 5))
+        toggleInspector(in: app)
+        selectSegment("Files", in: app)
+        XCTAssertTrue(waitForValue(editor, value: saved, timeout: 10), "Hiding the inspector must preserve unsaved file edits.")
+        let save = app.buttons["workspace-file-save"]
+        XCTAssertTrue(save.exists && save.isEnabled); save.click()
+        let savedExpectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (try? String(contentsOf: document, encoding: .utf8)) == saved
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [savedExpectation], timeout: 10), .completed)
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), saved)
+        selectSegment("Contents", in: app)
+        let search = app.textFields["workspace-file-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.click(); search.typeText("nativeNeedle")
+        let match = app.buttons["workspace-match-Notes.swift-2"]
+        XCTAssertTrue(match.waitForExistence(timeout: 10)); XCTAssertTrue(match.isHittable); match.click()
+        XCTAssertTrue(waitForValue(editor, value: saved, timeout: 5), "A content match must open its file without changing the saved text.")
+        capture(app, name: "files-content-match-native-editor")
+        let matchTree = XCTAttachment(string: app.debugDescription); matchTree.name = "files-content-match-accessibility-tree"; matchTree.lifetime = .keepAlways; add(matchTree)
+        XCTAssertEqual(composer.value as? String, draft)
+        app.buttons["composer-reference-file"].click()
+        let picker = app.sheets.containing(.textField, identifier: "composer-file-search").element
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        let referenceSearch = picker.textFields["composer-file-search"]
+        referenceSearch.click(); referenceSearch.typeText("Notes.swift")
+        let reference = picker.buttons["composer-file-Notes.swift"]
+        XCTAssertTrue(reference.waitForExistence(timeout: 10)); reference.click()
+        let referencedDraft = draft + " [Notes.swift](Notes.swift) "
+        XCTAssertTrue(waitForValue(composer, value: referencedDraft, timeout: 5), "Referencing a file must preserve the existing unsent draft.")
+        editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText(unsaved)
+        XCTAssertEqual(editor.value as? String, unsaved)
+        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), saved)
+        app.typeKey("q", modifierFlags: .command)
+        let review = quitReview(in: app)
+        XCTAssertTrue(review.buttons["Cancel"].isHittable)
+        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "files-quit-unsaved-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
+        review.buttons["Cancel"].click()
+        XCTAssertTrue(waitForAbsence(review.buttons["Quit and Discard"], timeout: 5))
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(waitForValue(editor, value: unsaved, timeout: 5))
+        XCTAssertEqual(composer.value as? String, referencedDraft)
+        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), saved)
+        app.typeKey("q", modifierFlags: .command)
+        let confirmedReview = quitReview(in: app)
+        XCTAssertTrue(confirmedReview.buttons["Quit and Discard"].isHittable)
+        confirmedReview.buttons["Quit and Discard"].click()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), saved, "Explicit Quit and Discard must not overwrite saved file bytes.")
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: referencedDraft, timeout: 10))
+        toggleInspector(in: app)
+        selectSegment("Files", in: app)
+        XCTAssertTrue(file.waitForExistence(timeout: 10)); file.click()
+        XCTAssertTrue(waitForValue(editor, value: saved, timeout: 10))
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "files-final-head"), initialHead)
+        capture(app, name: "files-reopened-saved-editor-and-reference")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
     @MainActor func testRepositoryGroupingKeepsCheckoutDrafts() throws {
         let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "grouping")
         let app = fixture.app
@@ -394,6 +492,34 @@ final class CoincideDesktopUITests: XCTestCase {
 
     @MainActor private func projectHeaders(in app: XCUIApplication) -> XCUIElementQuery {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Collapse ", "Expand "))
+    }
+
+    @MainActor private func toggleInspector(in app: XCUIApplication) {
+        app.menuBars.menuBarItems["Thread"].click()
+        let toggle = app.menuItems["Toggle Inspector"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5)); toggle.click()
+    }
+
+    @MainActor private func selectSegment(_ title: String, in app: XCUIApplication) {
+        let segment = app.descendants(matching: .any).matching(NSPredicate(
+            format: "(elementType == %d OR elementType == %d) AND (label == %@ OR title == %@)",
+            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.radioButton.rawValue, title, title
+        )).element
+        XCTAssertTrue(segment.waitForExistence(timeout: 5)); XCTAssertTrue(segment.isHittable); segment.click()
+    }
+
+    @MainActor private func quitReview(in app: XCUIApplication) -> XCUIElement {
+        let review = app.descendants(matching: .any).matching(NSPredicate(
+            format: "elementType == %d OR elementType == %d OR elementType == %d",
+            XCUIElement.ElementType.dialog.rawValue, XCUIElement.ElementType.sheet.rawValue, XCUIElement.ElementType.window.rawValue
+        )).containing(.button, identifier: "Quit and Discard").firstMatch
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        let title = "Quit with unsaved file edits?"
+        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", title, title)).element.exists)
+        let warning = "Unsaved file edits will be discarded. Cancel to return to your files and save them before quitting."
+        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", warning, warning)).element.exists)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
+        return review
     }
 
     @MainActor private func threadRow(_ identifier: String, in app: XCUIApplication) -> XCUIElement {

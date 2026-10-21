@@ -7,7 +7,7 @@ struct ChatView: View {
     @State private var sending = false
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
-    @State private var branch = ""
+    @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection)?
     private var thread: CodingThread? { store.thread(threadID) }
     private var draft: Binding<String> {
         Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
@@ -21,11 +21,12 @@ struct ChatView: View {
                     Menu {
                         Text(thread.workspacePath)
                         Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
-                            .disabled(store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false)
+                            .disabled(!store.workspaceReady(for: thread))
                         ExternalEditorMenu(store: store, workspacePath: thread.workspacePath, title: "Open Workspace in…")
                         if thread.messages.isEmpty {
-                            Button("Create Worktree…") { worktreeSheet = true }
-                                .disabled(store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false)
+                            Button("Choose Worktree…") { worktreeSheet = true }
+                                .disabled(thread.isBusy || !thread.queuedTurns.isEmpty || thread.workspacePreparation?.isRunning == true ||
+                                          (store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false))
                         }
                     } label: { Label(store.selectedProject?.name ?? "Workspace", systemImage: "folder").font(.caption).foregroundStyle(.secondary) }
                     .menuStyle(.borderlessButton).fixedSize()
@@ -79,6 +80,11 @@ struct ChatView: View {
                         ProjectCloneBanner(project: project, cancel: { store.cancelProjectClone(project.id) }, retry: { store.retryProjectClone(project.id) },
                                            retrying: store.isRetryingProjectClone(project.id))
                     }
+                    if let preparation = thread.workspacePreparation {
+                        WorktreePreparationBanner(preparation: preparation, cancel: { store.cancelWorktreePreparation(threadID) },
+                                                  retry: { store.retryWorktreePreparation(threadID) },
+                                                  retrying: store.isPreparingWorkspace(threadID))
+                    }
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },
@@ -113,13 +119,14 @@ struct ChatView: View {
                     Task { await store.insertWorkspaceReference(path: path, workspacePath: thread.workspacePath, threadID: threadID) }
                 } cancel: { referenceFileSheet = false }
             }
-            .sheet(isPresented: $worktreeSheet) {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Create a Worktree").font(.title2)
-                    Text("Give this thread its own branch and working directory.").foregroundStyle(.secondary)
-                    TextField("Branch name", text: $branch)
-                    HStack { Spacer(); Button("Cancel") { worktreeSheet = false }; Button("Create") { worktreeSheet = false; Task { await store.createWorktree(for: threadID, branch: branch) } }.disabled(branch.isEmpty) }
-                }.padding(24).frame(width: 430)
+            .sheet(isPresented: $worktreeSheet, onDismiss: {
+                guard let pending = pendingWorktree else { return }
+                pendingWorktree = nil
+                Task { await store.prepareWorktree(for: pending.threadID, selection: pending.selection) }
+            }) {
+                WorktreeSetupSheet(store: store, threadID: threadID, cancel: { worktreeSheet = false }) { selection in
+                    pendingWorktree = (threadID, selection); worktreeSheet = false
+                }
             }
         }
     }

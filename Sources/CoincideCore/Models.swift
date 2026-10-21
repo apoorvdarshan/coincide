@@ -60,6 +60,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var projectID: UUID
     public var title: String
     public var workspacePath: String
+    public var workspacePreparation: ThreadWorkspacePreparation?
     public var providerThreadID: String?
     public var provider: ProviderKind
     public var acpAgent: ACPAgentConfiguration?
@@ -91,7 +92,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests
+        case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests, workspacePreparation
         case draftAttachments
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
@@ -102,6 +103,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         projectID = try values.decode(UUID.self, forKey: .projectID)
         title = try values.decode(String.self, forKey: .title)
         workspacePath = try values.decode(String.self, forKey: .workspacePath)
+        workspacePreparation = try values.decodeIfPresent(ThreadWorkspacePreparation.self, forKey: .workspacePreparation)
         providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
         provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
         acpAgent = try values.decodeIfPresent(ACPAgentConfiguration.self, forKey: .acpAgent)
@@ -155,6 +157,11 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             projects[i].clone = clone
         }
         for i in threads.indices {
+            if var preparation = threads[i].workspacePreparation, preparation.isRunning {
+                preparation.phase = .interrupted; preparation.cancelRequested = false
+                preparation.error = "The app closed during workspace preparation. Retry when ready; existing files are preserved."
+                threads[i].workspacePreparation = preparation; threads[i].queuePaused = true
+            }
             if threads[i].isBusy {
                 threads[i].state = .interrupted
                 threads[i].messages.append(.init(role: .system, text: "The app closed during this turn. Resume by sending another message."))

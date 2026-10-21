@@ -32,17 +32,22 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     case providerRespond(threadID: UUID, runID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case providerSessionRespond(threadID: UUID, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case projectClone(projectID: UUID, plan: GitClonePlan)
+    case resolveWorktree(threadID: UUID, request: GitWorktreeRequest)
+    case prepareWorktree(threadID: UUID, plan: GitWorktreePlan)
     public var threadID: UUID? {
         switch self {
         case .projectClone: nil
-        case .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
+        case .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
+    }
+    var worktreeAttemptID: UUID? {
+        switch self { case .resolveWorktree(_, let request): request.id; case .prepareWorktree(_, let plan): plan.id; default: nil }
     }
     public var projectID: UUID? { if case .projectClone(let id, _) = self { id } else { nil } }
     public var targetID: UUID {
         switch self {
         case .projectClone(let id, _): id
-        case .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
+        case .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }
 }

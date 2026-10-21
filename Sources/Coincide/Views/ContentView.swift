@@ -17,7 +17,8 @@ struct ContentView: View {
                 VSplitView {
                     ChatView(store: store, threadID: thread.id).id(thread.id).frame(minHeight: 280)
                     if terminalVisible, store.workspaceReady(for: thread) {
-                        TerminalPanel(terminals: terminals, thread: thread, report: { store.errorMessage = $0 }, hide: { terminalVisible = false })
+                        TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
+                                      report: { store.errorMessage = $0 }, hide: { terminalVisible = false })
                             .id(thread.id).frame(minHeight: 160, idealHeight: 260, maxHeight: 600)
                     }
                 }
@@ -25,7 +26,7 @@ struct ContentView: View {
                     .inspector(isPresented: $store.inspectorVisible) {
                         Group {
                             if store.workspaceReady(for: thread) { WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath) }
-                            else { ContentUnavailableView("Repository Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when cloning finishes.")) }
+                            else { ContentUnavailableView("Workspace Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when checkout preparation finishes.")) }
                         }.inspectorColumnWidth(min: 280, ideal: 360, max: 600)
                     }
             } else {

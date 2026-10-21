@@ -96,7 +96,14 @@ public enum WorkspaceJournal {
                 guard cloneIDs.insert(plan.id).inserted else { throw CoincideError("Clone attempts must have unique identities.") }
             }
         }
+        var preparationIDs: Set<UUID> = []
         for thread in snapshot.threads {
+            if let preparation = thread.workspacePreparation {
+                try preparation.validate(thread: thread)
+                for id in preparation.previousAttempts.map({ $0.request.id }) + [preparation.id] {
+                    guard preparationIDs.insert(id).inserted, !cloneIDs.contains(id) else { throw CoincideError("Workspace preparation attempts must have unique identities.") }
+                }
+            }
             guard snapshot.workspaceReady(for: thread) || !thread.isBusy else { throw CoincideError("A conversation cannot run before its repository is ready.") }
             if let agent = thread.acpAgent { try agent.validate() }
             if thread.provider == .acp, thread.acpAgent == nil { throw CoincideError("This conversation has no ACP agent configuration.") }

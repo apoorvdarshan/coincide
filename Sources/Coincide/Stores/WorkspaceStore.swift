@@ -42,6 +42,11 @@ private struct WorkspaceFileCleanup {
     let task: Task<Void, Never>
 }
 
+private struct WorktreeOptionsRead {
+    let threadID: UUID
+    let task: Task<WorktreeSetupOptions, any Error>
+}
+
 @MainActor private final class WeakTerminalStore {
     weak var value: TerminalWorkspaceStore?
     init(_ value: TerminalWorkspaceStore) { self.value = value }
@@ -83,11 +88,13 @@ final class WorkspaceStore {
     private var attachmentImportTasks: [UUID: Task<Void, Never>] = [:]
     private var attachmentImportOwners: [UUID: UUID] = [:]
     private var worktreeTasks: [UUID: Task<Void, any Error>] = [:]
+    private var worktreeOptionsReads: [UUID: WorktreeOptionsRead] = [:]
     private var projectCloneRetryTasks: [UUID: Task<Void, Never>] = [:]
     private var removalCleanupTasks: [UUID: ProjectRemovalCleanup] = [:]
     private var terminalStores: [ObjectIdentifier: WeakTerminalStore] = [:]
     private var dirtyEditors: [UUID: String] = [:]
     private var removalEditorLocks: [UUID: Set<String>] = [:]
+    private var workspaceTransitionLocks: [UUID: Set<String>] = [:]
     private var gitInspectors: [String: GitInspectorStore] = [:]
     private var fileServices: [String: WorkspaceFileService] = [:]
     private var fileBrowsers: [String: FileBrowserStore] = [:]
@@ -114,7 +121,7 @@ final class WorkspaceStore {
          projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
         self.engine = engine
         self.managedProjectsRoot = managedProjectsRoot ?? Self.applicationDataRoot.appendingPathComponent("Projects", isDirectory: true)
-        self.worktreesRoot = (managedProjectsRoot?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Worktrees", isDirectory: true)
+        self.worktreesRoot = engine.worktreesRoot
         self.projectCreator = projectCreator
     }
     private static var applicationDataRoot: URL {
@@ -154,7 +161,7 @@ final class WorkspaceStore {
         return projects.allSatisfy { $0.clone?.isReady ?? true } && threads.allSatisfy { workspaceReady(for: $0) }
     }
     func fileService(path: String) throws -> WorkspaceFileService {
-        guard canAccessWorkspaceFiles(path) else { throw CoincideError("This workspace is unavailable. Wait for cloning or removal to finish before accessing its files.") }
+        guard canAccessWorkspaceFiles(path) else { throw CoincideError("This workspace is unavailable. Wait for cloning, worktree preparation, or removal to finish before accessing its files.") }
         let path = Self.canonicalPath(path)
         if let service = fileServices[path] { return service }
         let service = WorkspaceFileService(root: URL(fileURLWithPath: path))
@@ -288,7 +295,8 @@ final class WorkspaceStore {
     var hasUnsavedFileEdits: Bool { !dirtyEditors.isEmpty }
     func canEditWorkspace(_ path: String) -> Bool {
         let path = Self.canonicalPath(path)
-        guard !terminating, !removalEditorLocks.values.contains(where: { $0.contains(path) }) else { return false }
+        guard !terminating, !removalEditorLocks.values.contains(where: { $0.contains(path) }),
+              !workspaceTransitionLocks.values.contains(where: { $0.contains(path) }) else { return false }
         return !snapshot.threads.contains { removalEditorLocks[$0.projectID] != nil && Self.canonicalPath($0.workspacePath) == path }
     }
     func projectRemovalRequest(_ id: UUID) -> ProjectRemovalRequest? {
@@ -427,8 +435,10 @@ final class WorkspaceStore {
         }
         let imports = attachmentImportTasks.compactMap { key, task in attachmentImportOwners[key].map { threadIDs.contains($0) } == true ? task : nil }
         let worktrees = worktreeTasks.filter { threadIDs.contains($0.key) }.map(\.value)
+        let worktreeReads = worktreeOptionsReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let retries = projectCloneRetryTasks.filter { projectIDs.contains($0.key) }.map(\.value)
         for task in imports { task.cancel() }; for task in worktrees { task.cancel() }; for task in retries { task.cancel() }
+        for task in worktreeReads { task.cancel() }
         let terminals = terminalStores.values.compactMap(\.value)
         terminalStores = terminalStores.filter { $0.value.value != nil }
         let closingTerminals = terminals.flatMap { $0.remove(threadIDs: threadIDs) }
@@ -451,6 +461,7 @@ final class WorkspaceStore {
         let task: Task<Void, Never> = Task { [weak self] in
             for task in imports { await task.value }
             for task in worktrees { _ = await task.result }
+            for task in worktreeReads { _ = await task.result }
             for task in retries { await task.value }
             for terminal in closingTerminals { await terminal.waitForClose() }
             for inspector in discardedInspectors.values { await inspector.shutdown() }
@@ -497,7 +508,15 @@ final class WorkspaceStore {
             catch { errorMessage = error.localizedDescription }
         }
     }
-    func workspaceReady(for thread: CodingThread) -> Bool { snapshot.workspaceReady(for: thread) }
+    func workspaceReady(for thread: CodingThread) -> Bool {
+        snapshot.workspaceReady(for: thread) && !workspaceTransitionLocks.values.contains { $0.contains(Self.canonicalPath(thread.workspacePath)) }
+    }
+    func canOpenTerminal(for captured: CodingThread) -> Bool {
+        guard let current = thread(captured.id), current.projectID == captured.projectID,
+              current.workspacePath == captured.workspacePath,
+              current.workspacePreparation?.id == captured.workspacePreparation?.id else { return false }
+        return workspaceReady(for: current) && canAccessWorkspaceFiles(current.workspacePath)
+    }
     func createManagedProject(name: String) async throws -> ManagedProjectCreationResult {
         guard !terminating, engine != nil else { throw CancellationError() }
         let name = try ManagedProjectService.validatedName(name)
@@ -779,24 +798,98 @@ final class WorkspaceStore {
         enqueue(.editThread(threadID, .workspacePath(path)))
     }
     func createWorktree(for id: UUID, branch: String) async {
-        guard let thread = thread(id), thread.messages.isEmpty, !thread.isBusy, !preparingWorkspaces.contains(id) else {
-            errorMessage = "Create the worktree before sending the first message."; return
+        await prepareWorktree(for: id, selection: .createBranch(name: branch, baseRef: "HEAD"))
+    }
+    func prepareWorktree(for id: UUID, selection: GitWorktreeSelection) async {
+        guard let thread = thread(id), thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty else {
+            errorMessage = "Choose the worktree before sending the first message."; return
         }
-        guard workspaceReady(for: thread) else { errorMessage = "Wait for cloning to finish before creating a worktree."; return }
-        preparingWorkspaces.insert(id); defer { preparingWorkspaces.remove(id) }
-        do {
-            let parent = worktreesRoot
-            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-            let path = parent.appendingPathComponent(id.uuidString)
-            let task = Task { try await GitService(root: URL(fileURLWithPath: thread.workspacePath)).createWorktree(at: path, branch: branch) }
-            worktreeTasks[id] = task
-            defer { worktreeTasks.removeValue(forKey: id) }
-            try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard snapshot.projects.first(where: { $0.id == thread.projectID })?.clone?.isReady ?? true else {
+            errorMessage = "Wait for cloning to finish before choosing a worktree."; return
+        }
+        guard thread.workspacePreparation?.isRunning != true else { return }
+        await performWorktreeCommand(for: id, changesWorkspace: true) { engine in
+            try await engine.beginWorktreePreparation(threadID: id, selection: selection)
+        }
+    }
+    func cancelWorktreePreparation(_ id: UUID) {
+        Task { await performWorktreeCommand(for: id) { try await $0.cancelWorktreePreparation(id) } }
+    }
+    func retryWorktreePreparation(_ id: UUID) {
+        Task { await performWorktreeCommand(for: id) { try await $0.retryWorktreePreparation(id) } }
+    }
+    private func performWorktreeCommand(for id: UUID, changesWorkspace: Bool = false,
+                                        operation: @escaping @MainActor (WorkspaceEngine) async throws -> WorkspaceCommandReceipt) async {
+        guard !terminating, let engine, let captured = thread(id), canEditWorkspace(captured.workspacePath),
+              preparingWorkspaces.insert(id).inserted else { return }
+        flushDrafts()
+        let previous = commandTail
+        let task = Task<Void, any Error> {
+            await previous?.value
             try Task.checkCancellation()
-            guard self.thread(id) != nil, !terminating else { return }
-            _ = try await setWorkspacePath(path.path, threadID: id).value
-        } catch is CancellationError { }
-        catch { if self.thread(id) != nil, !terminating { errorMessage = error.localizedDescription } }
+            guard !self.terminating, let current = self.thread(id), current.projectID == captured.projectID,
+                  current.workspacePath == captured.workspacePath,
+                  current.workspacePreparation?.request.id == captured.workspacePreparation?.request.id,
+                  self.canEditWorkspace(current.workspacePath) else { throw CancellationError() }
+            if changesWorkspace {
+                let path = Self.canonicalPath(current.workspacePath)
+                guard !self.dirtyEditors.values.contains(path) else {
+                    throw CoincideError("Save or discard unsaved file edits before changing this conversation's checkout.")
+                }
+                guard !self.terminalStores.values.compactMap(\.value).contains(where: { !($0.sessions[id] ?? []).isEmpty }) else {
+                    throw CoincideError("Close this conversation's terminal tabs in every window before changing its checkout. Running commands are kept open until you close them.")
+                }
+                self.workspaceTransitionLocks[id] = [path]
+            }
+            defer { self.workspaceTransitionLocks.removeValue(forKey: id) }
+            _ = try await operation(engine)
+            self.apply(await engine.current())
+        }
+        worktreeTasks[id] = task; commandTail = Task { _ = await task.result }
+        defer { preparingWorkspaces.remove(id); worktreeTasks.removeValue(forKey: id) }
+        do { try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() } }
+        catch is CancellationError { }
+        catch { if thread(id) != nil, !terminating { errorMessage = GitService.redactURLs(error.localizedDescription) } }
+    }
+    func worktreeSetupOptions(for id: UUID) async throws -> WorktreeSetupOptions {
+        guard !terminating, let captured = thread(id), canEditWorkspace(captured.workspacePath),
+              captured.workspacePreparation?.isRunning != true,
+              snapshot.projects.first(where: { $0.id == captured.projectID })?.clone?.isReady ?? true,
+              captured.messages.isEmpty, !captured.isBusy, captured.queuedTurns.isEmpty else { throw CancellationError() }
+        let path = captured.workspacePreparation.map { $0.isReady ? captured.workspacePath : $0.request.sourcePath } ?? captured.workspacePath
+        let anchor = WorkspaceFileService(root: URL(fileURLWithPath: path)), jobID = UUID()
+        let task = Task<WorktreeSetupOptions, any Error> {
+            do {
+                _ = try await anchor.metadata()
+                async let inventory = GitWorktreeService(source: URL(fileURLWithPath: path)).inventory()
+                async let branches = GitService(root: URL(fileURLWithPath: path)).branches()
+                let result = try await WorktreeSetupOptions(branches: branches, worktrees: inventory.worktrees.filter {
+                    !$0.isBare && !$0.isDetached && $0.prunableReason == nil && $0.branch != nil && $0.headCommit != nil
+                })
+                _ = try await anchor.metadata()
+                try Task.checkCancellation()
+                await anchor.close(); return result
+            } catch { await anchor.close(); throw error }
+        }
+        worktreeOptionsReads[jobID] = .init(threadID: id, task: task)
+        defer { worktreeOptionsReads.removeValue(forKey: jobID) }
+        func isCurrent() -> Bool {
+            guard !task.isCancelled, !terminating, let current = thread(id), current.projectID == captured.projectID,
+                  current.workspacePath == captured.workspacePath,
+                  current.workspacePreparation?.request.id == captured.workspacePreparation?.request.id,
+                  canEditWorkspace(current.workspacePath) else { return false }
+            return true
+        }
+        do {
+            let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard isCurrent() else { throw CancellationError() }
+            return result
+        } catch {
+            try Task.checkCancellation()
+            guard isCurrent() else { throw CancellationError() }
+            throw error
+        }
     }
     func shutdown() async {
         terminating = true
@@ -805,6 +898,8 @@ final class WorkspaceStore {
         for task in creations { task.cancel() }
         for task in creations { _ = await task.result }
         let worktrees = Array(worktreeTasks.values); for task in worktrees { task.cancel() }; for task in worktrees { _ = await task.result }
+        let worktreeReads = worktreeOptionsReads.values.map(\.task)
+        for task in worktreeReads { task.cancel() }; for task in worktreeReads { _ = await task.result }
         let retries = Array(projectCloneRetryTasks.values); for task in retries { task.cancel() }; for task in retries { await task.value }
         let inspectors = Array(gitInspectors.values)
         for model in inspectors { model.prepareForShutdown() }

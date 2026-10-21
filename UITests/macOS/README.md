@@ -50,10 +50,19 @@ commits must remain unchanged. It then renames both checkouts as a group,
 reviews the exact paths in the native removal sheet, checks Cancel preserves
 all three drafts, and confirms group removal clears the workspace while both
 checkouts' README, HEAD bytes, and resolved commits remain unchanged.
+The fourth test imports a private local repository, edits and saves through the
+native file editor, and verifies unsaved buffers survive hiding the inspector.
+It opens a content-search match and retains the rendered selection for visual
+review, adds a relative file reference to an existing unsent draft, and checks
+normal Quit cancellation preserves unsaved edits. Explicit Quit and Discard
+must retain the last saved bytes; relaunch must restore the composer draft and
+open those saved bytes while the Git commit remains unchanged. Selected text is
+not exposed by public XCTest attributes; the match/file assertions and retained
+pixels do not claim an automated selected-range check.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all three tests to pass with zero
+gate requires all four tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 

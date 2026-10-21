@@ -52,7 +52,7 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 9 protects these fields
+  hold it for explicit resumption. Database storage version 10 protects these fields
   from older binaries. No exactly-once provider execution is claimed.
 - Background clones are project-owned outbox actions. The project and conversation
   appear as soon as their intent is saved; submitted messages retain their captured
@@ -62,6 +62,15 @@ must each be mapped and verified before declaring parity.
   exclusive, and retry checks local completion evidence before creating another
   attempt. Coincide preserves previous staging folders; Git itself may remove
   files when a clone fails. Partial network transfers are not resumed.
+- Worktree preparation persists an intent and final target path before resolving
+  local Git references, then journals the immutable plan before mutation. Each
+  attempt captures source/common/admin ownership and a pinned commit. Queued input
+  retains its provider configuration and waits for readiness. New/existing branch
+  setup and explicit registered reuse preserve source edits and untracked files.
+  Cancellation, failure, and restart hold queues; conservative completion evidence
+  permits recovery without restarting Git over an old folder. New attempts retain
+  previous files, branches, and ownership records. No automatic deletion, branch
+  reset, pruning, fetch, or remote setup is part of this flow.
 - Managed New Project creates a distinct folder under the app's `Projects` data
   directory, initializes Git, and generates a starter README/icon. It respects
   the user's Git branch, identity, hooks, and signing settings. Initial-commit
@@ -92,7 +101,7 @@ must each be mapped and verified before declaring parity.
   action. Whole-group confirmation captures every registration/path and active
   and archived conversation; stale membership is rejected. The last selected
   conversation restores its owner and archived view on restart. Storage version
-  9 protects these durable preferences and identity fields from older binaries.
+  10 protects these durable preferences and identity fields from older binaries.
 - Project removal commits all active/archived thread removals, project removal,
   collapsed-preference cleanup, and pending-action cancellation together. Running
   actions retain their leases until their owned executors settle; detached
@@ -156,7 +165,7 @@ must each be mapped and verified before declaring parity.
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, legacy migration | Complete provider recovery, checkpoints/finalization and run history, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
-| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, queued-message readiness and restart recovery, cancellable operations and app-shutdown cleanup, worktree creation | PRs/stacks/host integrations, checkpoints/revert, worktree lifecycle/setup, automatic pull policies, broader credential and network failure coverage |
+| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery | PRs/stacks/host integrations, checkpoints/revert, worktree setup scripts/submodules/removal, automatic pull policies, broader credential and network failure coverage |
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup | Durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |

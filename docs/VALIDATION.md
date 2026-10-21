@@ -1,5 +1,65 @@
 # Validation record
 
+## 2026-10-22 — durable native worktree preparation
+
+- Worktree choices now save an intent and target cwd before asynchronous local Git
+  resolution. A second durable stage saves the immutable plan before Git mutation;
+  readiness, the prepared target, and the first eligible FIFO provider effect commit
+  together. Queued turns preserve provider/model/permission/ACP/attachments. Retry
+  changes only their cwd/native-session fields when assigning a fresh destination.
+  Old provider session IDs cannot resume in the newly selected checkout.
+- Native choices cover a new branch with an explicit local base, an existing local
+  branch, and registered local-branch worktree reuse. Git inventory parses NUL
+  fields, including newline paths and lock reasons. Actual inventory normalizes
+  macOS `/private/var` and `/var` aliases consistently; lexical validation still
+  rejects traversal, empty components, remote URLs, and credential-bearing URLs.
+  The first real-Git run exposed the alias mismatch; this was corrected without
+  relaxing repository or inode containment.
+- Plans capture source/admin/common-directory and parent identities and a pinned
+  commit. Git commands use captured repository binding and an owned process group
+  with bounded output, timeouts, cancellation, and exit/pipe draining. A gated
+  linked-source `.git` replacement verifies that neither repository nor destination
+  is mutated. Exclusive managed destinations and sibling ownership records prevent
+  overwriting retained folders; reuse verifies registration, common directory,
+  checkout/admin identities, and backlinks.
+- Automatic completion requires a durable receipt written only after owned Git
+  exits successfully, plus exact pinned HEAD and matching ownership. A running
+  post-checkout hook cannot satisfy completion. If a crash precedes that receipt,
+  registration alone remains unproven and preserved; explicit verified reuse can
+  accept it later. No branch reset, worktree deletion, pruning, or missing-base fetch
+  is performed. Git may clean its own unfinished files when cancelled.
+- Cancel and restart hold queues. Startup publishes interrupted state immediately,
+  then runs owned read-only completion probes in four lanes. A gated probe proves
+  load and unrelated provider commands remain responsive. Attempt/incarnation and
+  removal fences reject late results and old begin intents even after same-ID
+  re-add. Failed empty setup can choose another worktree; previous attempts remain
+  journaled. Manual path edits cannot invalidate a preparation record.
+- Checkout changes reject unsaved file edits and conversation terminal tabs across
+  all registered windows. Running commands remain open for explicit closure.
+  Synchronous preflight locks the old path through intent commit/application, and
+  terminal creation rechecks its captured conversation path/attempt. Regressions
+  preserve a dirty completed-worktree editor and both window terminal owners,
+  retain unrelated terminals, and reject a stale terminal action after transition.
+- Eleven primitive cases, thirteen engine cases, and four native Store workflows
+  cover real Git bytes/receipts, source edits/untracked sentinels, new/existing/reuse,
+  aliases/newline paths, replacement/FIFO/containment, cancellation, queued settings,
+  corrected setup, restart windows, background recovery, stale owners, transaction
+  rollback, dirty buffers, and terminal ownership. No installed provider model turn
+  or local interactive GUI was used for these new cases.
+- The full suite passed 318 tests: 257 core, 4 terminal, 13 Markdown, and 44 native
+  UI/store. The 31-case focused worktree run also passed. Packaging/launch,
+  strict deep app/runner signing, bundled-font rendering, GUI-runner compilation,
+  and all three CI-configuration tests pass. A private SQLite backup precedes the
+  storage 9-to-10 migration; canonical comparison confirms the entire existing
+  workspace, all 3 conversations, 25 messages, and project fields are unchanged.
+- Hosted run 39694657397 at `288000b` passed all three actual GUI workflows with
+  zero failures or skips: full light/dark and complete grouped/separate checkout,
+  three drafts, restart/selection, group rename, Cancel, and confirmed group removal.
+  The fourth Files/editor/content-search/reference/unsaved-Quit workflow is now
+  compiled with a strict four-test gate; its actual hosted execution remains pending.
+
+Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
+
 ## 2026-10-22 — native external-editor handoffs
 
 - Added the pinned editor catalog and native Xcode support, local preferred-editor

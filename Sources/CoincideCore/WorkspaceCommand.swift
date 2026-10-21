@@ -60,6 +60,7 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case saveACPAgent(ACPAgentConfiguration)
     case removeACPAgent(UUID)
     case startProjectClone(project: WorkspaceProject, thread: CodingThread)
+    case cancelWorktreePreparation(UUID)
     case cancelProjectClone(UUID)
     case retryProjectClone(projectID: UUID, plan: GitClonePlan)
 }
@@ -69,12 +70,15 @@ enum EngineCommand: Codable, Sendable {
     case runtimeOpened(threadID: UUID, runID: UUID, runtimeID: UUID)
     case provider(threadID: UUID, runtimeID: UUID, event: ProviderEvent)
     case effectResult(WorkspaceEffectRequest, EffectResult)
+    case beginWorktreePreparation(threadID: UUID, request: GitWorktreeRequest, expectedSourcePath: String, previousAttemptID: UUID?, incarnation: UUID)
+    case worktreeStarted(threadID: UUID, attemptID: UUID)
+    case worktreeRecovered(threadID: UUID, attemptID: UUID, incarnation: UUID, result: GitWorktreeResult)
     case pauseQueues
     case cloneStarted(projectID: UUID, attemptID: UUID)
     case cloneProgress(projectID: UUID, attemptID: UUID, progress: GitCloneProgress)
     case repositoryIdentityResolved(projectID: UUID, path: String, incarnation: UUID, requestID: UUID, identity: RepositoryIdentity?)
 }
-enum EffectResult: Codable, Sendable { case succeeded, failed(String), cancelled, stopped }
+enum EffectResult: Codable, Sendable { case succeeded, failed(String), cancelled, stopped, worktreeResolved(GitWorktreePlan), worktreePrepared(GitWorktreeResult) }
 
 struct WorkspaceDecision: Sendable {
     var snapshot: WorkspaceSnapshot
@@ -83,10 +87,62 @@ struct WorkspaceDecision: Sendable {
     // Kept for existing single-runtime decision inspections.
     var closeRuntime: UUID? { closeRuntimes.first }
     var cancelCloneAttempt: UUID?
+    var cancelWorktreeAttempt: UUID?
 
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
+        case .beginWorktreePreparation(let threadID, let request, let expectedSourcePath, let previousAttemptID, _):
+            do { try request.validate() } catch { throw WorkspaceCommandError("Choose a valid local worktree destination and branch.") }
+            guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
+            var thread = decision.snapshot.threads[i]
+            guard thread.workspacePath == expectedSourcePath, !thread.isBusy, !thread.isArchived, thread.messages.isEmpty,
+                  decision.snapshot.projects.contains(where: { $0.id == thread.projectID && ($0.clone == nil || $0.clone?.isReady == true) }) else {
+                throw WorkspaceCommandError("Prepare the workspace before the first turn, in an available conversation.")
+            }
+            var history: [ThreadWorkspacePreparationAttempt] = []
+            if let previousAttemptID {
+                guard let old = thread.workspacePreparation, old.id == previousAttemptID, old.canRetry,
+                      old.request.sourcePath == request.sourcePath, old.request.selection == request.selection,
+                      old.request.destinationRoot == request.destinationRoot else { throw WorkspaceCommandError("This workspace preparation changed. Refresh its status before retrying.") }
+                history = old.previousAttempts + [.init(request: old.request, plan: old.plan)]
+            } else {
+                guard thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Clear queued messages before choosing another workspace.") }
+                if let old = thread.workspacePreparation {
+                    guard !old.isRunning, request.sourcePath == (old.canRetry ? old.request.sourcePath : expectedSourcePath) else { throw WorkspaceCommandError("Wait for the current workspace preparation to finish or cancel it first.") }
+                    history = old.previousAttempts + [.init(request: old.request, plan: old.plan)]
+                } else {
+                    guard request.sourcePath == expectedSourcePath else { throw WorkspaceCommandError("The source workspace changed. Choose the worktree again.") }
+                }
+            }
+            let allIDs = decision.snapshot.threads.compactMap(\.workspacePreparation).flatMap { $0.previousAttempts.map { $0.request.id } + [$0.id] }
+            guard !allIDs.contains(request.id), !decision.snapshot.cloneAttemptIDs.contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is already in use.") }
+            thread.workspacePreparation = .init(request: request, now: now, previousAttempts: history)
+            thread.workspacePath = request.destinationPath; thread.providerThreadID = nil; thread.runtimeID = nil
+            thread.runtimeRequests = []; thread.providerMetadata = nil; thread.providerActivity = nil
+            for j in thread.queuedTurns.indices {
+                thread.queuedTurns[j].configuration.workspacePath = request.destinationPath
+                thread.queuedTurns[j].configuration.nativeThreadID = nil
+            }
+            thread.updatedAt = now; decision.snapshot.threads[i] = thread; decision.closeRuntimes.insert(thread.id)
+            decision.effects.append(.init(id: request.id, request: .resolveWorktree(threadID: threadID, request: request)))
+        case .worktreeRecovered(let threadID, let attemptID, _, let result):
+            if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
+               let state = decision.snapshot.threads[i].workspacePreparation, state.id == attemptID, !state.isReady, let plan = state.plan {
+                decision.snapshot.threads[i].queuePaused = true
+                decision.finished(.prepareWorktree(threadID: threadID, plan: plan), result: .worktreePrepared(result), now: now)
+            }
+        case .worktreeStarted(let threadID, let attemptID):
+            if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }), var state = decision.snapshot.threads[i].workspacePreparation,
+               state.id == attemptID, state.phase == .queued, !state.cancelRequested {
+                state.phase = .resolving; state.updatedAt = now; decision.snapshot.threads[i].workspacePreparation = state
+            }
+        case .client(.cancelWorktreePreparation(let threadID)):
+            guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }), var state = decision.snapshot.threads[i].workspacePreparation else { throw WorkspaceCommandError("This conversation has no workspace preparation to cancel.") }
+            if state.isRunning, !state.cancelRequested {
+                state.cancelRequested = true; state.updatedAt = now; decision.snapshot.threads[i].workspacePreparation = state
+                decision.snapshot.threads[i].queuePaused = true; decision.cancelWorktreeAttempt = state.id
+            }
         case .client(.renameProjectGroup(let key, let expected, let requested)):
             let group = try decision.validatedGroup(key, expectedProjects: expected)
             let title: String
@@ -237,7 +293,7 @@ struct WorkspaceDecision: Sendable {
             decision.snapshot.projects.append(project)
         case .client(.createThread(let thread)):
             guard decision.snapshot.projects.contains(where: { $0.id == thread.projectID }), !decision.snapshot.threads.contains(where: { $0.id == thread.id }),
-                  thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
+                  thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, thread.workspacePreparation == nil else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
             guard decision.snapshot.workspaceReady(for: thread) || decision.snapshot.projects.first(where: { $0.id == thread.projectID })?.path == thread.workspacePath else { throw WorkspaceCommandError("Wait for the clone before choosing another workspace.") }
             if thread.provider == .acp {
                 guard let agent = thread.acpAgent, decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
@@ -284,9 +340,13 @@ struct WorkspaceDecision: Sendable {
                     thread.isArchived = value
                     if value { thread.queuePaused = true; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil }
                 case .workspacePath(let path):
+                    if thread.workspacePreparation != nil {
+                        guard path == thread.workspacePath else { throw WorkspaceCommandError("Use Choose Worktree to change a prepared conversation's workspace.") }
+                        break
+                    }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Change the workspace before sending the first message.") }
                     guard decision.snapshot.workspaceReady(for: thread) else { throw WorkspaceCommandError("Wait for the clone before changing workspaces.") }
-                    thread.workspacePath = path; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
+                    thread.workspacePath = path; thread.providerThreadID = nil; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
                 }
             case .submit(_, let text):
                 let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -296,7 +356,7 @@ struct WorkspaceDecision: Sendable {
                                         attachments: thread.draftAttachments.isEmpty ? nil : thread.draftAttachments)
                 thread.draft = ""; thread.draftAttachments = []
                 if thread.isBusy || !decision.snapshot.workspaceReady(for: thread) {
-                    if thread.queuedTurns.isEmpty, !thread.isBusy { thread.queuePaused = false }
+                    if thread.queuedTurns.isEmpty, !thread.isBusy, thread.workspacePreparation?.cancelRequested != true, thread.workspacePreparation?.phase != .cancelled, thread.workspacePreparation?.phase != .interrupted { thread.queuePaused = false }
                     thread.queuedTurns.append(queued)
                 }
                 else {
@@ -344,7 +404,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
+            case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -510,6 +570,7 @@ struct WorkspaceDecision: Sendable {
             case .succeeded:
                 clone.phase = .completed; clone.error = nil; clone.progress = .init(stage: .checkout, percent: 100, detail: nil, stalled: false)
             case .failed(let message): clone.phase = .failed; clone.error = String(GitService.redactURLs(message).prefix(4_000))
+            case .worktreeResolved, .worktreePrepared: return
             case .cancelled, .stopped:
                 clone.phase = clone.cancelRequested ? .cancelled : .interrupted; clone.error = nil
             }
@@ -524,8 +585,32 @@ struct WorkspaceDecision: Sendable {
         }
         guard let index = snapshot.threads.firstIndex(where: { $0.id == request.threadID }) else { return }
         var thread = snapshot.threads[index]
+        if let attemptID = request.worktreeAttemptID {
+            guard var state = thread.workspacePreparation, state.id == attemptID, !state.isReady else { return }
+            switch (request, result) {
+            case (.resolveWorktree(_, let saved), .worktreeResolved(let plan)) where saved == state.request && plan.request == saved && !state.cancelRequested && state.isRunning:
+                state.plan = plan; state.phase = .preparing; state.error = nil; state.updatedAt = now
+                thread.workspacePreparation = state; snapshot.threads[index] = thread
+                effects.append(.init(request: .prepareWorktree(threadID: thread.id, plan: plan))); return
+            case (.prepareWorktree(_, let plan), .worktreePrepared(let result)) where state.plan == plan:
+                state.result = result; state.phase = .completed; state.error = nil
+                if state.cancelRequested || thread.workspacePreparation?.phase == .cancelled || thread.workspacePreparation?.phase == .interrupted { thread.queuePaused = true }
+            case (_, .failed(let error)) where state.isRunning:
+                state.phase = state.cancelRequested ? .cancelled : .failed
+                state.error = String(GitService.redactURLs(error).prefix(4_000))
+            case (_, .cancelled) where state.isRunning, (_, .stopped) where state.isRunning, (.resolveWorktree, .worktreeResolved) where state.isRunning:
+                state.phase = state.cancelRequested ? .cancelled : .interrupted; state.error = nil
+            default: return
+            }
+            state.cancelRequested = false; state.updatedAt = now; state.endedAt = now
+            thread.workspacePreparation = state; thread.updatedAt = now
+            // Readiness observes the just-completed value before taking a captured FIFO turn.
+            snapshot.threads[index] = thread
+            if state.isReady { startNext(in: &thread, now: now) }
+            snapshot.threads[index] = thread; return
+        }
         switch request {
-        case .projectClone: break // Project-owned effects are handled before thread lookup.
+        case .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
             if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
@@ -563,7 +648,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
+        case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
         case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

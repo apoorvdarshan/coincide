@@ -32,7 +32,18 @@ stage, and commit Git changes. The branch menu creates/switches local branches o
 tracks fetched remote branches. Fetch, fast-forward Pull, and explicit single-branch
 Push use your existing Git credentials. A folder without Git can initialize a
 repository; staging and unstaging also work before its first commit. A new thread
-can create a separate Git worktree before its first message.
+can choose a Git worktree before its first message.
+
+Save or discard file edits and close that conversation's terminal tabs in every
+window before changing its checkout. Running commands remain open until you close them.
+Choose **Choose Worktree…** from the conversation's workspace menu. Create a new
+branch from a locally available base ref/commit, check out an existing branch,
+or explicitly use a registered branch worktree from the same repository. Messages wait
+while setup runs and retain their chosen provider, model, permissions, and
+attachments. Cancel and application restart pause the queue. Retry first checks
+saved completion evidence; unproven folders and branches are preserved. To change
+a failed setup, remove queued messages and choose another worktree. Coincide
+does not reset branches, delete worktrees, or fetch a missing base automatically.
 
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a

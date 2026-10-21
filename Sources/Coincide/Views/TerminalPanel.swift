@@ -5,6 +5,7 @@ import SwiftUI
 struct TerminalPanel: View {
     var terminals: TerminalWorkspaceStore
     let thread: CodingThread
+    let canAdd: () -> Bool
     let report: (String) -> Void
     let hide: () -> Void
     @State private var pendingClose: LocalTerminalSession?
@@ -57,7 +58,10 @@ struct TerminalPanel: View {
             Button("Cancel", role: .cancel) { pendingClose = nil }
         }
     }
-    private func add() { do { try terminals.add(for: thread) } catch { report(error.localizedDescription) } }
+    private func add() {
+        guard canAdd() else { return }
+        do { try terminals.add(for: thread) } catch { report(error.localizedDescription) }
+    }
 }
 
 private struct NativeTerminalView: NSViewRepresentable {
