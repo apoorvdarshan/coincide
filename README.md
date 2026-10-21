@@ -35,6 +35,11 @@ chosen model and permissions, and can be edited or removed before it starts.
 **Stop** interrupts the current turn and holds the queue. Use **Resume Queue** to
 continue; restarting the app also holds unfinished work rather than resending it.
 
+Responses render native Markdown headings, lists, task lists, quotes, tables, and
+code blocks with copy controls and basic syntax coloring. Workspace file links
+open the native editor at the referenced line. Web links use the default browser;
+embedded HTML stays inert. Mathematical typesetting and media previews are pending.
+
 Open **Terminal** in the toolbar (⌥⌘T) for a native terminal in the conversation's
 workspace. Create multiple tabs, resize the panel, or hide it while commands keep
 running. Terminals stay attached to their conversation while the window is open;
@@ -59,6 +64,9 @@ document for live checks and their limitations.
 
 The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), with its
 [MIT notice](docs/SwiftTerm-LICENSE.txt) bundled in the development app.
+Markdown parsing uses [Swift Markdown](https://github.com/swiftlang/swift-markdown)
+and [Swift cmark](https://github.com/swiftlang/swift-cmark); their licenses and
+notices are also bundled.
 
 T3 Code is copyright © 2026 T3 Tools Inc.; its [MIT license](docs/T3-CODE-LICENSE.txt)
 is preserved here. Coincide is an independent project.

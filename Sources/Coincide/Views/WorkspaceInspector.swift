@@ -9,8 +9,9 @@ struct WorkspaceInspector: View {
         VStack(spacing: 0) {
             Picker("Workspace", selection: $tab) { Text("Changes").tag("Changes"); Text("Files").tag("Files") }.pickerStyle(.segmented).padding()
             if tab == "Changes" { ChangesView(path: path, report: { store.errorMessage = $0 }) }
-            else { FilesView(path: path, report: { store.errorMessage = $0 }) }
+            else { FilesView(path: path, navigation: store.fileNavigation?.workspacePath == path ? store.fileNavigation : nil, report: { store.errorMessage = $0 }) }
         }
+        .onChange(of: store.fileNavigation?.id, initial: true) { if store.fileNavigation?.workspacePath == path { tab = "Files" } }
     }
 }
 
@@ -77,6 +78,7 @@ private struct ChangesView: View {
 
 private struct FilesView: View {
     let path: String
+    let navigation: FileNavigation?
     let report: (String) -> Void
     @State private var directory = ""
     @State private var files: [WorkspaceFile] = []
@@ -85,6 +87,7 @@ private struct FilesView: View {
     @State private var contents = ""
     @State private var pendingFile: WorkspaceFile?
     @State private var confirmDiscard = false
+    @State private var editorNavigation: FileNavigation?
     var body: some View {
         VStack(spacing: 8) {
             HStack {
@@ -104,9 +107,16 @@ private struct FilesView: View {
                     Text(editing).font(.caption).lineLimit(1).truncationMode(.middle)
                     Spacer(); Button("Save") { save() }.disabled(contents == original)
                 }.padding(.horizontal)
-                TextEditor(text: $contents).font(.system(.caption, design: .monospaced)).accessibilityLabel("File editor").padding(.horizontal, 6)
+                SourceEditor(text: $contents, path: editing, navigation: editorNavigation).padding(.horizontal, 6)
             } else { ContentUnavailableView("Select a File", systemImage: "doc.text", description: Text("Open a text file to read or edit it.")) }
         }.task { loadDirectory() }
+        .onChange(of: navigation?.id, initial: true) {
+            guard let navigation else { return }
+            let file = WorkspaceFile(path: navigation.path, isDirectory: false)
+            if editing == navigation.path { editorNavigation = navigation }
+            else if contents != original { pendingFile = file; confirmDiscard = true }
+            else { open(file) }
+        }
         .confirmationDialog("Discard unsaved changes?", isPresented: $confirmDiscard) {
             Button("Discard Changes", role: .destructive) { if let pendingFile { open(pendingFile) }; pendingFile = nil }
             Button("Cancel", role: .cancel) { pendingFile = nil }
@@ -117,7 +127,7 @@ private struct FilesView: View {
         do { files = try workspace.list(directory) } catch { report(error.localizedDescription) }
     }
     private func open(_ file: WorkspaceFile) {
-        do { let text = try workspace.read(file.path); editing = file.path; original = text; contents = text }
+        do { let text = try workspace.read(file.path); editing = file.path; original = text; contents = text; editorNavigation = navigation?.path == file.path ? navigation : nil }
         catch { report(error.localizedDescription) }
     }
     private func save() {

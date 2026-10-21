@@ -1,9 +1,12 @@
 import CoincideCore
+import CoincideMarkdown
 import SwiftUI
 
 struct MessageView: View {
     let message: ChatMessage
     let providerName: String
+    let workspacePath: String
+    let openFile: (URL, Int?) -> Void
     var body: some View {
         Group {
             if message.role == .user {
@@ -20,8 +23,7 @@ struct MessageView: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     if message.role == .system { Label("Notice", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
-                    Text((try? AttributedString(markdown: message.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.text))
-                        .font(.system(size: 15)).lineSpacing(5).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    MarkdownView(message.text, workspace: URL(fileURLWithPath: workspacePath), openFile: openFile)
                     Button {
                         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string)
                     } label: { Image(systemName: "doc.on.doc").font(.caption).foregroundStyle(.secondary) }

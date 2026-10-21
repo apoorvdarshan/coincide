@@ -2,6 +2,13 @@ import AppKit
 import CoincideCore
 import Observation
 
+struct FileNavigation: Equatable {
+    let id = UUID()
+    let workspacePath: String
+    let path: String
+    let line: Int?
+}
+
 @MainActor @Observable
 final class WorkspaceStore {
     var snapshot = WorkspaceSnapshot()
@@ -14,6 +21,7 @@ final class WorkspaceStore {
     var isLoading = true
     var isRefreshingModels = false
     var inspectorVisible = false
+    var fileNavigation: FileNavigation?
     private var engine: WorkspaceEngine?
     private var loadingTask: Task<Void, Never>?
     private var updatesTask: Task<Void, Never>?
@@ -189,6 +197,14 @@ final class WorkspaceStore {
         flushDrafts(); sendCommand(.editQueued(threadID: threadID, queuedID: queuedID))
     }
     func resumeQueue(_ threadID: UUID) { sendCommand(.resumeQueue(threadID: threadID)) }
+    func openFile(_ url: URL, line: Int?, workspacePath: String) {
+        let root = URL(fileURLWithPath: workspacePath).standardizedFileURL.resolvingSymlinksInPath()
+        guard url.path.hasPrefix(root.path + "/") else { errorMessage = "This file is outside the workspace."; return }
+        let relative = String(url.path.dropFirst(root.path.count + 1))
+        do { _ = try WorkspaceFiles(root: root).resolve(relative) }
+        catch { errorMessage = error.localizedDescription; return }
+        fileNavigation = .init(workspacePath: workspacePath, path: relative, line: line); inspectorVisible = true
+    }
     func refreshModels(provider: ProviderKind? = nil) async {
         guard !isRefreshingModels, let engine else { return }; isRefreshingModels = true
         defer { isRefreshingModels = false }

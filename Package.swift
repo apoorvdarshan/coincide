@@ -6,13 +6,16 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.library(name: "CoincideCore", targets: ["CoincideCore"]),
                .executable(name: "Coincide", targets: ["Coincide"])],
-    dependencies: [.package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.99.1", traits: [])],
+    dependencies: [.package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.99.1", traits: []),
+                   .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.9.0")],
     targets: [
         .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
         .target(name: "CoincideCore", dependencies: ["CSQLite"]),
         .target(name: "CoincideTerminal", dependencies: ["CoincideCore", .product(name: "SwiftTerm", package: "SwiftTerm")]),
-        .executableTarget(name: "Coincide", dependencies: ["CoincideCore", "CoincideTerminal"]),
+        .target(name: "CoincideMarkdown", dependencies: [.product(name: "Markdown", package: "swift-markdown")]),
+        .executableTarget(name: "Coincide", dependencies: ["CoincideCore", "CoincideTerminal", "CoincideMarkdown"]),
         .testTarget(name: "CoincideCoreTests", dependencies: ["CoincideCore", "CSQLite"], resources: [.copy("Fixtures")]),
-        .testTarget(name: "CoincideTerminalTests", dependencies: ["CoincideTerminal"])
+        .testTarget(name: "CoincideTerminalTests", dependencies: ["CoincideTerminal"]),
+        .testTarget(name: "CoincideMarkdownTests", dependencies: ["CoincideMarkdown"])
     ]
 )

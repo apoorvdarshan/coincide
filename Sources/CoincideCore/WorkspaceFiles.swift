@@ -5,6 +5,7 @@ public struct WorkspaceFile: Identifiable, Sendable {
     public var isDirectory: Bool
     public var id: String { path }
     public var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    public init(path: String, isDirectory: Bool) { self.path = path; self.isDirectory = isDirectory }
 }
 
 public struct WorkspaceFiles: Sendable {

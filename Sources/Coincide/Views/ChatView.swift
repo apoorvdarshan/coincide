@@ -34,7 +34,10 @@ struct ChatView: View {
                                         .font(.subheadline).foregroundStyle(.secondary)
                                 }.frame(maxWidth: .infinity).padding(.top, 100).padding(.bottom, 60)
                             }
-                            ForEach(thread.messages) { MessageView(message: $0, providerName: thread.provider.name) }
+                            ForEach(thread.messages) { message in
+                                MessageView(message: message, providerName: thread.provider.name, workspacePath: thread.workspacePath,
+                                            openFile: { url, line in store.openFile(url, line: line, workspacePath: thread.workspacePath) })
+                            }
                             if thread.state == .running {
                                 HStack(spacing: 8) { ProgressView().controlSize(.small); Text("\(thread.provider.name) is working…").font(.caption).foregroundStyle(.secondary) }
                             }

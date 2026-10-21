@@ -1,5 +1,32 @@
 # Validation record
 
+## 2026-10-22 — native Markdown transcript
+
+- Added Swift Markdown 0.9.0 and Swift cmark 0.9.0 at the revisions locked in
+  `Package.resolved`. Their original licenses/notices are bundled in the app.
+  Rendering uses SwiftUI/AppKit; there is no webview or JavaScript renderer.
+- `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test` passed 56 tests:
+  43 core, 4 terminal, and 9 Markdown. New coverage includes nested inline styles,
+  streamed unfinished code fences, GFM tables/tasks/lists, inert HTML, rejected URL
+  schemes, workspace containment and symlink escape, line-number links, Unicode
+  syntax coloring, large-input fallback, cache isolation, and UTF-16 line selection.
+- Native offscreen AppKit hosting-window captures were inspected in light and dark
+  appearance. They contain the rendered code, tables, list numbering, task states,
+  nested lists, and inline styles. Inspection exposed table sizing/alignment issues,
+  which were corrected. SwiftUI ImageRenderer alone omitted scroll-view content,
+  so those initial images were not used as evidence of code/table rendering.
+- File links open the inspector's native text editor with the requested line
+  selected. The editor preserves unsaved-change confirmation, conflict-checked
+  writes, standard undo, and workspace path checks. The line calculation is tested;
+  a full interactive file-link/copy-control smoke check is still pending because
+  the desktop was locked during this milestone.
+- Development app packaging and strict signature verification passed.
+
+Code highlighting is lexical and limited to common language families. Unknown or
+large code blocks retain plain source. Images currently retain their alternative
+text and safe link; media previews, mathematics, and full upstream Markdown
+extensions remain pending. This is not a full transcript-parity claim.
+
 ## 2026-10-22 — native command engine and queued turns
 
 - `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test` passed 47 tests:
