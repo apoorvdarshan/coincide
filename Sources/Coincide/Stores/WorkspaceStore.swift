@@ -19,6 +19,7 @@ final class WorkspaceStore {
     var showArchived = false
     var errorMessage: String?
     var providerModels: [ProviderKind: [ProviderModel]] = [:]
+    var acpModels: [UUID: [ProviderModel]] = [:]
     var isLoading = true
     var isRefreshingModels = false
     var inspectorVisible = false
@@ -84,6 +85,12 @@ final class WorkspaceStore {
     }
     private func apply(_ update: WorkspaceUpdate) {
         guard update.sequence >= lastSequence else { return }
+        for id in Array(acpModels.keys) {
+            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
+            if old?.providerMetadata != next?.providerMetadata || old?.acpAgent != next?.acpAgent || old?.workspacePath != next?.workspacePath {
+                acpModels.removeValue(forKey: id)
+            }
+        }
         lastSequence = update.sequence; snapshot = update.snapshot
         if let error = update.error, !terminating { errorMessage = error }
     }
@@ -140,7 +147,18 @@ final class WorkspaceStore {
     }
     func setModel(_ model: String, id: UUID) { sendCommand(.editThread(id, .model(model))) }
     func setProvider(_ provider: ProviderKind, id: UUID) { sendCommand(.editThread(id, .provider(provider))) }
+    func setACPAgent(_ agent: ACPAgentConfiguration, id: UUID) { sendCommand(.editThread(id, .acpAgent(agent))) }
+    func setAgentMode(_ mode: String?, id: UUID) { sendCommand(.editThread(id, .agentMode(mode))) }
+    func setAgentConfig(_ optionID: String, value: String?, id: UUID) { sendCommand(.editThread(id, .agentConfig(id: optionID, value: value))) }
+    func saveACPAgent(_ agent: ACPAgentConfiguration) async throws { _ = try await enqueue(.saveACPAgent(agent)).value }
+    func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] { providerModels[provider] ?? [] }
+    func models(for thread: CodingThread) -> [ProviderModel] {
+        guard thread.provider == .acp else { return models(for: thread.provider) }
+        if let refreshed = acpModels[thread.id] { return refreshed }
+        if let metadata = thread.providerMetadata { return ACPConfigurationOptions.models(metadata) }
+        return []
+    }
     func setDraft(_ text: String, id: UUID) {
         draftOverrides[id] = text; pendingDrafts[id] = text
         draftSaveTask?.cancel()
@@ -255,8 +273,9 @@ final class WorkspaceStore {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
               !preparingWorkspaces.contains(id), !isImportingAttachments(id) else { return Task { false } }
-        guard ProcessChannel.findExecutable(thread.provider.executable) != nil else {
-            errorMessage = "Install and sign in to \(thread.provider.name) CLI before sending a message."
+        let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.provider.executable
+        guard !executable.isEmpty, ProcessChannel.findExecutable(executable) != nil else {
+            errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
             return Task { false }
         }
         pendingDrafts.removeValue(forKey: id)
@@ -282,6 +301,10 @@ final class WorkspaceStore {
         let task = enqueue(.respond(threadID: id, requestID: request.id, response: .answers(answers)))
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
     }
+    func choose(_ request: ApprovalRequest, threadID id: UUID, optionID: String) async {
+        let task = enqueue(.respond(threadID: id, requestID: request.id, response: .option(optionID)))
+        do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
+    }
     func removeQueued(_ queuedID: UUID, threadID: UUID) { sendCommand(.removeQueued(threadID: threadID, queuedID: queuedID)) }
     func editQueued(_ queuedID: UUID, threadID: UUID) {
         flushDrafts(); sendCommand(.editQueued(threadID: threadID, queuedID: queuedID))
@@ -300,7 +323,9 @@ final class WorkspaceStore {
         defer { isRefreshingModels = false }
         do {
             let kind = provider ?? selectedThread?.provider ?? .codex
-            providerModels[kind] = try await engine.models(provider: kind)
+            if kind == .acp, let thread = selectedThread, thread.acpAgent != nil {
+                acpModels[thread.id] = try await engine.models(thread: thread)
+            } else { providerModels[kind] = try await engine.models(provider: kind) }
         } catch { if !terminating { errorMessage = error.localizedDescription } }
     }
     func createWorktree(for id: UUID, branch: String) async {

@@ -32,9 +32,10 @@ public enum RPCEvent: Sendable {
     case notification(method: String, params: JSONValue)
     case request(id: JSONValue, method: String, params: JSONValue)
     case disconnected(String)
+    case barrier(@Sendable () -> Void)
 }
 
-public enum StdioDialect: Sendable { case jsonRPC, claudeControl }
+public enum StdioDialect: Sendable { case jsonRPC, jsonRPC2, claudeControl }
 
 public actor JSONRPCConnection {
     private let logger = Logger(subsystem: "com.apoorvdarshan.coincide", category: "ProviderTransport")
@@ -46,6 +47,7 @@ public actor JSONRPCConnection {
     private var pending: [JSONValue: CheckedContinuation<JSONValue, any Error>] = [:]
     private var timeouts: [JSONValue: Task<Void, Never>] = [:]
     private var writes: [JSONValue: Task<Void, Never>] = [:]
+    private var barriers: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var nextID = 0
     private var decoder: NDJSONDecoder
     private var ended = false
@@ -67,7 +69,7 @@ public actor JSONRPCConnection {
             }
         }
     }
-    public func request(_ method: String, params: JSONValue = .object([:]), timeout: Duration = .seconds(30)) async throws -> JSONValue {
+    public func request(_ method: String, params: JSONValue = .object([:]), timeout: Duration = .seconds(30), onSent: (@Sendable () -> Void)? = nil) async throws -> JSONValue {
         guard !ended else { throw CoincideError("The provider connection is closed.") }
         start(); nextID += 1
         logger.debug("Provider request started: \(method, privacy: .public)")
@@ -83,7 +85,7 @@ public actor JSONRPCConnection {
                 } else { frame = .object(["id": id, "method": .string(method), "params": params]) }
                 writes[id] = Task { [weak self] in
                     guard let self else { return }
-                    do { try await self.send(frame); await self.writeFinished(id) }
+                    do { try await self.send(frame); onSent?(); await self.writeFinished(id) }
                     catch { await self.fail(id, error: error) }
                 }
                 timeouts[id] = Task { [weak self] in
@@ -114,10 +116,28 @@ public actor JSONRPCConnection {
     public func close() {
         disconnect("Connection closed."); channel.stop(); reader?.cancel(); reader = nil
     }
+    /// Completes after the event consumer has processed all notifications already decoded.
+    public func flushEvents() async {
+        guard !ended else { return }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            guard !Task.isCancelled else { return }
+            await withCheckedContinuation { continuation in
+                barriers[id] = continuation
+                self.continuation.yield(.barrier { [weak self] in Task { await self?.finishBarrier(id) } })
+            }
+        } onCancel: { Task { await self.finishBarrier(id) } }
+    }
+    private func finishBarrier(_ id: UUID) { barriers.removeValue(forKey: id)?.resume() }
     private func send(_ value: JSONValue) async throws {
         guard !ended else { throw CoincideError("The provider connection is closed.") }
+        var value = value
+        if dialect == .jsonRPC2, var object = value.object {
+            object["jsonrpc"] = .string("2.0"); value = .object(object)
+        }
+        let payload = value
         try await channel.writePayload {
-            var data = try JSONEncoder().encode(value); data.append(10); return data
+            var data = try JSONEncoder().encode(payload); data.append(10); return data
         }
     }
     private func writeFinished(_ id: JSONValue) { writes.removeValue(forKey: id) }
@@ -134,6 +154,9 @@ public actor JSONRPCConnection {
         } catch { disconnect("Invalid provider protocol: \(error.localizedDescription)"); channel.stop() }
     }
     private func accept(_ frame: JSONValue) {
+        if dialect == .jsonRPC2, frame["jsonrpc"].string != "2.0" {
+            disconnect("The agent sent an invalid JSON-RPC 2.0 envelope."); channel.stop(); return
+        }
         if dialect == .claudeControl {
             switch frame["type"].string {
             case "control_response":
@@ -170,6 +193,7 @@ public actor JSONRPCConnection {
     private func disconnect(_ message: String) {
         guard !ended else { return }; ended = true
         for id in Array(pending.keys) { fail(id, error: CoincideError(message)) }
+        for id in Array(barriers.keys) { finishBarrier(id) }
         continuation.yield(.disconnected(message)); continuation.finish()
     }
     deinit { channel.stop(); reader?.cancel(); for timeout in timeouts.values { timeout.cancel() }; for write in writes.values { write.cancel() } }

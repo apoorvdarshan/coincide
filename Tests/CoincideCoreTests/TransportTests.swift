@@ -50,6 +50,14 @@ func fixtureConnection(_ mode: String) throws -> JSONRPCConnection {
     await rpc.close()
 }
 
+@Test(.timeLimit(.minutes(1))) func eventBarriersReleaseWhenCancelledOrTheConnectionCloses() async throws {
+    let rpc = try fixtureConnection("hang")
+    let cancelled = Task { await rpc.flushEvents() }
+    try await Task.sleep(for: .milliseconds(20)); cancelled.cancel(); await cancelled.value
+    let closed = Task { await rpc.flushEvents() }
+    try await Task.sleep(for: .milliseconds(20)); await rpc.close(); await closed.value
+}
+
 @Test func processDrainsBothLargePipesAndPreservesExitCode() async throws {
     let result = try await CommandRunner.run("/usr/bin/python3", ["-c", "import sys; sys.stdout.write('x'*200000); sys.stderr.write('y'*200000); sys.exit(7)"])
     #expect(result.output.count == 200_000); #expect(result.error.count == 200_000); #expect(result.status == 7)

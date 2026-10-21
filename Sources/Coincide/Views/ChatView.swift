@@ -35,11 +35,11 @@ struct ChatView: View {
                                 }.frame(maxWidth: .infinity).padding(.top, 100).padding(.bottom, 60)
                             }
                             ForEach(thread.messages) { message in
-                                MessageView(store: store, message: message, providerName: thread.provider.name, workspacePath: thread.workspacePath,
+                                MessageView(store: store, message: message, providerName: thread.providerName, workspacePath: thread.workspacePath,
                                             openFile: { url, line in store.openFile(url, line: line, workspacePath: thread.workspacePath) })
                             }
                             if thread.state == .running {
-                                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("\(thread.provider.name) is working…").font(.caption).foregroundStyle(.secondary) }
+                                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("\(thread.providerName) is working…").font(.caption).foregroundStyle(.secondary) }
                             }
                             Color.clear.frame(height: 1).id("latest")
                         }
@@ -52,12 +52,13 @@ struct ChatView: View {
                 VStack(spacing: 10) {
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
-                                     onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } })
+                                     onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },
+                                     onOption: { option in Task { await store.choose(request, threadID: threadID, optionID: option) } })
                     }
                     if !thread.queuedTurns.isEmpty { QueuedTurnsView(store: store, thread: thread) }
                     if !thread.draftAttachments.isEmpty { AttachmentShelf(store: store, attachments: thread.draftAttachments, remove: { store.removeAttachment($0, threadID: threadID) }) }
                     if store.isImportingAttachments(threadID) { HStack { ProgressView().controlSize(.small); Text("Adding attachments…").font(.caption).foregroundStyle(.secondary); Spacer() } }
-                    ComposerView(text: draft, provider: thread.provider, permission: thread.permission,
+                    ComposerView(text: draft, provider: thread.provider, providerName: thread.providerName, permission: thread.permission,
                                  busy: store.isBusy(threadID), submitting: sending || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
                                  hasAttachments: !thread.draftAttachments.isEmpty, attach: { store.chooseAttachments(threadID: threadID) },
                                  importProviders: { store.importAttachments(providers: $0, threadID: threadID) },
@@ -93,24 +94,51 @@ private struct ProviderMenu: View {
     var body: some View {
         Menu {
             if thread.messages.isEmpty {
-                ForEach(ProviderKind.allCases) { provider in
+                ForEach(ProviderKind.builtIn) { provider in
                     Button { store.setProvider(provider, id: thread.id) } label: {
                         if provider == thread.provider { Label(provider.name, systemImage: "checkmark") } else { Text(provider.name) }
+                    }
+                }
+                ForEach(store.snapshot.acpAgents) { agent in
+                    Button { store.setACPAgent(agent, id: thread.id) } label: {
+                        if thread.acpAgent == agent { Label(agent.name, systemImage: "checkmark") } else { Text(agent.name) }
                     }
                 }
                 Divider()
             }
             Button("Default Model") { store.setModel("", id: thread.id) }
-            ForEach(store.models(for: thread.provider)) { model in Button(model.name) { store.setModel(model.id, id: thread.id) } }
+            ForEach(store.models(for: thread)) { model in Button(model.name) { store.setModel(model.id, id: thread.id) } }
+            if thread.provider == .acp {
+                Divider()
+                if let options = thread.providerMetadata?["configOptions"].array {
+                    ForEach(options, id: \.self) { option in
+                        if option["type"].string == "select", option["category"].string != "model", let id = option["id"].string {
+                            Menu(option["name"].string ?? id) {
+                                Button("Agent Default") { store.setAgentConfig(id, value: nil, id: thread.id) }
+                                ForEach(ACPConfigurationOptions.values(option), id: \.self) { value in
+                                    if let selected = value["value"].string {
+                                        Button(value["name"].string ?? selected) { store.setAgentConfig(id, value: selected, id: thread.id) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Button("Agent Default Mode") { store.setAgentMode(nil, id: thread.id) }
+                    ForEach(thread.providerMetadata?["modes"]["availableModes"].array ?? [], id: \.self) { mode in
+                        if let id = mode["id"].string { Button(mode["name"].string ?? id) { store.setAgentMode(id, id: thread.id) } }
+                    }
+                }
+            }
             Divider()
             Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
         } label: {
             HStack(spacing: 6) {
-                Text(thread.provider.name).font(.system(size: 17, weight: .semibold))
+                Text(thread.providerName).font(.system(size: 17, weight: .semibold))
                 if !thread.model.isEmpty { Text(thread.model).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
         }
-        .menuStyle(.borderlessButton).fixedSize().disabled(store.isBusy(thread.id))
+        .menuStyle(.borderlessButton).fixedSize()
         .accessibilityLabel("Provider and model")
     }
 }

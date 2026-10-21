@@ -13,6 +13,7 @@ In development. Full T3 Code feature parity is **not complete**. See
 Requires macOS 14+, a Swift 6.2+ toolchain, and Xcode Command Line Tools. Codex
 conversations require an installed, authenticated `codex` CLI; Claude conversations
 use the installed, authenticated `claude` CLI.
+ACP v1 agents can use other installed CLIs, such as `opencode acp`.
 
 ```sh
 ./script/build_and_run.sh
@@ -29,6 +30,16 @@ Choose the provider in a new conversation's header. Review requested commands an
 changes in the conversation. Use the inspector to browse/edit files or inspect,
 stage, and commit Git changes. A new thread can create a separate Git worktree
 before its first message.
+
+In **Settings → Providers → ACP Agents**, save an agent name, executable, and
+arguments (one per line), then choose it in a new conversation's header.
+Arguments are passed literally. Model discovery supports the agent's config
+options and older model lists; mode and other select options appear after session
+setup. Permission buttons preserve the choices the agent supplies. ACP agents
+enforce their own sandbox and use their own sign-in. Editing or removing a saved
+agent leaves existing conversations' saved invocations intact. ACP v2, managed
+registry installs, client-side filesystem/terminal delegation, and native agent
+authentication flows are still pending.
 
 Send another message during a turn to queue it. Each queued message keeps its
 chosen model and permissions, and can be edited or removed before it starts.
@@ -63,11 +74,12 @@ Worktree folders are preserved when conversations are archived.
 ## Tests
 
 ```sh
-swift test
+swift test --no-parallel
 ```
 
 Tests cover process streaming/failure/cancellation, protocol framing and request
 correlation, deterministic Codex and Claude approval conversations, journal replay,
+ACP streaming/permissions/images/config options/resume and native agent settings,
 atomic commit failures, accepted/rejected command deduplication, queued execution,
 approval responsiveness, Stop, stale provider events, lease loss, migration/restart,
 attachment import/integrity/conversion, native paste cancellation,

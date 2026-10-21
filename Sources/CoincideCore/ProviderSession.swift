@@ -1,10 +1,11 @@
 import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case codex, claude
+    case codex, claude, acp
+    public static var builtIn: [Self] { [.codex, .claude] }
     public var id: String { rawValue }
-    public var name: String { self == .codex ? "Codex" : "Claude" }
-    public var executable: String { self == .codex ? "codex" : "claude" }
+    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .acp: "ACP Agent" } }
+    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .acp: "" } }
 }
 
 public enum ProviderEvent: Codable, Sendable, Equatable {
@@ -17,6 +18,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     case completed(ThreadState)
     case failure(String)
     case connectionClosed(String)
+    case configuration(JSONValue)
     indirect case context(runID: UUID, event: ProviderEvent)
 }
 
@@ -28,10 +30,14 @@ public protocol ProviderSession: Actor {
     func interrupt() async throws
     func respond(_ request: ApprovalRequest, allow: Bool) async throws
     func answer(_ request: ApprovalRequest, answers: [String: String]) async throws
+    func choose(_ request: ApprovalRequest, optionID: String) async throws
     func close() async
 }
 
 extension ProviderSession {
+    public func choose(_ request: ApprovalRequest, optionID: String) async throws {
+        throw CoincideError("This provider does not offer selectable permission options.")
+    }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard input.images.isEmpty else { throw CoincideError("This provider does not support image input.") }
         try await send(text: input.text, thread: thread)
@@ -40,6 +46,14 @@ extension ProviderSession {
 
 public enum ProviderSessions {
     public static func make(for thread: CodingThread) throws -> any ProviderSession {
+        if thread.provider == .acp {
+            guard let agent = thread.acpAgent else { throw CoincideError("Choose an ACP agent in Settings before sending a message.") }
+            try agent.validate()
+            guard let executable = ProcessChannel.findExecutable(agent.executable) else {
+                throw CoincideError("The executable for \(agent.name) is not installed or executable.")
+            }
+            return try ACPSession(executable: executable, arguments: agent.arguments, cwd: URL(fileURLWithPath: thread.workspacePath))
+        }
         guard let executable = ProcessChannel.findExecutable(thread.provider.executable) else {
             throw CoincideError("Install and sign in to \(thread.provider.name) CLI before sending a message.")
         }
@@ -47,6 +61,7 @@ public enum ProviderSessions {
         switch thread.provider {
         case .codex: return try CodexSession(executable: executable, cwd: cwd)
         case .claude: return try ClaudeSession(executable: executable, cwd: cwd, resumeID: thread.providerThreadID)
+        case .acp: throw CoincideError("Choose an ACP agent.")
         }
     }
 }

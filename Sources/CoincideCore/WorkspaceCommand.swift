@@ -23,6 +23,8 @@ public struct RuntimeRequest: Codable, Sendable, Equatable, Identifiable {
 public enum ThreadEdit: Codable, Sendable, Equatable {
     case title(String), model(String), provider(ProviderKind), permission(PermissionMode)
     case draft(String), pinned(Bool), archived(Bool), workspacePath(String)
+    case acpAgent(ACPAgentConfiguration), agentMode(String?)
+    case agentConfig(id: String, value: String?)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -37,6 +39,8 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case resumeQueue(threadID: UUID)
     case addAttachments(threadID: UUID, attachments: [ChatAttachment])
     case removeAttachment(threadID: UUID, attachmentID: UUID)
+    case saveACPAgent(ACPAgentConfiguration)
+    case removeACPAgent(UUID)
 }
 
 enum EngineCommand: Codable, Sendable {
@@ -56,6 +60,11 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
+        case .client(.saveACPAgent(let agent)):
+            do { try agent.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
+            if let i = decision.snapshot.acpAgents.firstIndex(where: { $0.id == agent.id }) { decision.snapshot.acpAgents[i] = agent }
+            else { decision.snapshot.acpAgents.append(agent) }
+        case .client(.removeACPAgent(let id)): decision.snapshot.acpAgents.removeAll { $0.id == id }
         case .client(.addProject(let project)):
             if decision.snapshot.projects.contains(where: { $0.path == project.path }) { return decision }
             guard !decision.snapshot.projects.contains(where: { $0.id == project.id }) else { throw WorkspaceCommandError("This project identity is already in use.") }
@@ -63,6 +72,9 @@ struct WorkspaceDecision: Sendable {
         case .client(.createThread(let thread)):
             guard decision.snapshot.projects.contains(where: { $0.id == thread.projectID }), !decision.snapshot.threads.contains(where: { $0.id == thread.id }),
                   thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
+            if thread.provider == .acp {
+                guard let agent = thread.acpAgent, decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
+            }
             var thread = thread; thread.runtimeID = nil; thread.runtimeRequests = []
             decision.snapshot.threads.insert(thread, at: 0)
         case .client(let action):
@@ -76,9 +88,19 @@ struct WorkspaceDecision: Sendable {
                     guard !title.isEmpty else { throw WorkspaceCommandError("A conversation title cannot be empty.") }; thread.title = title
                 case .model(let model): thread.model = model
                 case .permission(let mode): thread.permission = mode
+                case .agentMode(let mode): thread.agentModeID = mode
+                case .agentConfig(let id, let value):
+                    guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
+                    var values = thread.agentConfigValues ?? [:]; values[id] = value; thread.agentConfigValues = values.isEmpty ? nil : values
                 case .provider(let kind):
+                    guard kind != .acp else { throw WorkspaceCommandError("Choose a configured ACP agent.") }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
-                    decision.closeRuntime = thread.id; thread.provider = kind; thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
+                    decision.closeRuntime = thread.id; thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil; thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
+                case .acpAgent(let agent):
+                    guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
+                    guard decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Save this agent in Settings first.") }
+                    decision.closeRuntime = thread.id; thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
+                    thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
                 case .draft(let value): thread.draft = value
                 case .pinned(let value): thread.isPinned = value
                 case .archived(let value):
@@ -113,6 +135,10 @@ struct WorkspaceDecision: Sendable {
                 }
                 let request = thread.runtimeRequests[i].request
                 switch response {
+                case .option(let id):
+                    guard request.method == "session/request_permission", (request.params["options"].array ?? []).contains(where: { $0["optionId"].string == id }) else {
+                        throw WorkspaceCommandError("This permission option is no longer available.")
+                    }
                 case .decision: guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") }
                 case .answers(let answers):
                     guard request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
@@ -132,7 +158,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .createThread: break
+            case .addProject, .createThread, .saveACPAgent, .removeACPAgent: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -173,6 +199,7 @@ struct WorkspaceDecision: Sendable {
             try receive(inner, threadID: threadID, runtimeID: runtimeID, now: now); return
         }
         switch event {
+        case .configuration(let metadata): thread.providerMetadata = metadata
         case .thread(let native): thread.providerThreadID = native
         case .turn(let native): thread.activeRun?.nativeTurnID = native // A late acknowledgement never changes idle to running.
         case .delta(let itemID, let role, let text):
@@ -241,7 +268,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .createThread: nil
+        case .addProject, .createThread, .saveACPAgent, .removeACPAgent: nil
         case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

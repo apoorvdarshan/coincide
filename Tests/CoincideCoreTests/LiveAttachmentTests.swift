@@ -20,13 +20,15 @@ private func markerImage(_ marker: String) throws -> Data {
 }
 
 /// Explicit opt-in: incurs real provider usage and sends only generated test data.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_ATTACHMENTS"] == "1"), .timeLimit(.minutes(3)), arguments: ProviderKind.allCases)
+@Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_ATTACHMENTS"] == "1"), .timeLimit(.minutes(3)), arguments: ProviderKind.builtIn)
 func installedProvidersReadAnImageAndFileThroughTheNativeEngine(_ kind: ProviderKind) async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"))
     do {
         _ = try await engine.load()
-        let project = WorkspaceProject(path: root.path), imageMarker = "IMG-\(Int.random(in: 100_000...999_999))", fileMarker = "NOTE-\(Int.random(in: 100_000...999_999))"
+        // Avoid visually ambiguous punctuation in an OCR fixture; retain an exact
+        // comparison of independent random image and file markers.
+        let project = WorkspaceProject(path: root.path), imageMarker = "IMG\(Int.random(in: 100_000...999_999))", fileMarker = "NOTE\(Int.random(in: 100_000...999_999))"
         var thread = CodingThread(project: project); thread.provider = kind
         try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
         let image = try await engine.attachments.importData(markerImage(imageMarker), name: "picture.png")

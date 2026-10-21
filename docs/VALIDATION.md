@@ -1,5 +1,53 @@
 # Validation record
 
+## 2026-10-22 — native ACP v1 agents
+
+- Added a native JSON-RPC 2.0 stdio adapter following the official
+  [initialization](https://agentclientprotocol.com/protocol/v1/initialization),
+  [prompt lifecycle](https://agentclientprotocol.com/protocol/v1/prompt-turn), and
+  [configuration](https://agentclientprotocol.com/protocol/v1/session-config-options)
+  contracts. No T3 server or JavaScript adapter is launched by Coincide.
+- Deterministic tests cover streaming, images, reasoning, tool updates, plans,
+  opaque permission options, model/mode changes through both legacy fields and
+  grouped config options, unsupported versions/images/resume, authentication
+  errors, concurrent discovery, and cancellation (including an agent that ignores
+  Stop). Client filesystem, terminal, authentication, and elicitation capabilities
+  are not advertised yet. Unknown configuration categories keep their select UI.
+- The native engine test confirms a start effect settles while a permission is
+  still waiting; two queued turns complete through exact permission responses.
+  After shutdown/reopen, the same native session loads and completes another turn
+  without duplicating its replayed history. Event barriers drain already-decoded
+  notifications and release their waiters on cancellation or connection close.
+- Native store tests cover saving, selecting, editing, removing, and reopening
+  agent configurations. Existing conversations retain their captured invocation.
+  Light/dark offscreen AppKit settings captures were inspected. Physical settings,
+  permission-button, and keyboard interaction still need unlocked-desktop QA.
+- Real installed OpenCode initialized, advertised models through config options,
+  and completed a generated-marker turn through the native engine using the
+  advertised `opencode/glm-5.3-flash-free` model. The agent's default
+  `opencode/flint-40b-free` failed after roughly 91 seconds with
+  `Endpoint is unavailable`; this service failure remains recorded. No sign-in,
+  provider installation, credential changes, or user files were needed.
+- A combined live-provider check also exercised Codex and Claude attachment turns.
+  One Codex OCR response substituted an en dash for the image marker's hyphen.
+  The fixture now uses letters and digits to avoid that visual ambiguity; its
+  exact independent image/file-marker assertion remains unchanged.
+- The complete offline suite passed 84 tests: 63 core, 4 terminal, 13 Markdown,
+  and 4 native UI/store tests. A combined run enabling live Codex/Claude discovery,
+  both image/file cases, OpenCode discovery, and its native-engine turn also passed
+  all 84 tests. CI keeps live-provider checks opt-in. The preceding
+  transport fix passed [GitHub CI](https://github.com/apoorvdarshan/coincide/actions/runs/39667658837)
+  with every test retained and the original one-second deadline assertions.
+- Packaging, launch, strict signature verification, and bundled-font runtime
+  verification passed. A private SQLite backup preceded storage migration 3 → 4.
+  Canonical comparison excluding only new ACP fields confirmed all 3 existing
+  conversations and 25 prior messages were unchanged.
+
+ACP v2, registry/managed installs, native authentication and elicitation, delegated
+filesystem/terminal operations, richer content/config types, session browsing and
+import, and provider-specific features remain pending. These checks establish a
+working ACP v1 integration, not full ACP or T3 Code parity.
+
 ## 2026-10-22 — durable native attachments
 
 - `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 COINCIDE_LIVE_ATTACHMENTS=1 swift test`

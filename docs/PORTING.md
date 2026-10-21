@@ -22,6 +22,12 @@ must each be mapped and verified before declaring parity.
   resources ship inside the app and have a separate runtime-loading CI check.
 - Codex and Claude run as installed CLI processes over stdio. Coincide uses existing
   provider authentication; no API key is embedded or copied into the workspace.
+- Custom installed ACP v1 agents use a native JSON-RPC 2.0 adapter. Saved named
+  invocations pass literal arguments and are captured in each conversation/queue.
+  Config options take precedence over legacy model/mode fields. Permissions keep
+  agent-provided option IDs, and resumed history is drained without duplicating
+  the journal transcript. Unsupported capabilities are not advertised. ACP agents
+  enforce their own sandbox; Codex permission settings do not apply to them.
 - Each local thread has its own provider connection, workspace path, permission
   selection, and persisted conversation. Persistence commits versioned entity and
   message mutations, the cached projection, a command receipt, and an audit marker
@@ -33,7 +39,7 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 3 protects these fields
+  hold it for explicit resumption. Database storage version 4 protects these fields
   from older binaries. No exactly-once provider execution is claimed.
 - Attachment bytes live in private, immutable app-owned files. Drafts, queued
   turns, messages, and outbox entries retain typed references. Images are normalized
@@ -50,7 +56,7 @@ must each be mapped and verified before declaring parity.
 | Native workspace | Projects, new threads, search, rename, pin, archive, settings | Groups, sorting/reorder, snooze/settle, undo, scratch projects, import/migration |
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
-| Other providers | Not implemented | Cursor, Grok, OpenCode, Antigravity, Pi, Muse, ACP registry and custom providers |
+| Other providers | Custom installed ACP v1 agents, OpenCode preset, native model/config-select discovery, session load, streaming/thoughts, tool/plan output, exact permission choices, interrupt, queued/resumed conversation integration | ACP v2, registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, broader content/config types, session listing/import/fork, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, legacy migration | Complete provider recovery, checkpoints/finalization and run history, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill/file pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
@@ -65,12 +71,14 @@ must each be mapped and verified before declaring parity.
 ## Validation commands
 
 ```sh
-swift test
+swift test --no-parallel
 ./script/build_and_run.sh --build-only
 ./script/build_and_run.sh --verify
 COINCIDE_LIVE_CODEX=1 swift test --filter installedCodexHandshakeAndModelDiscovery
 COINCIDE_LIVE_CLAUDE=1 swift test --filter installedClaudeHandshakeAndModelDiscovery
 COINCIDE_LIVE_ATTACHMENTS=1 swift test --filter installedProvidersReadAnImageAndFileThroughTheNativeEngine
+COINCIDE_LIVE_ACP=1 swift test --filter installedOpenCodeACPHandshakeAndModelDiscovery
+COINCIDE_LIVE_ACP_TURN=1 swift test --filter installedOpenCodeCompletesATurnThroughTheNativeEngine
 ```
 
 The live discovery test performs a handshake and model listing only. It does not
@@ -80,6 +88,12 @@ the native engine. It permits only the generated file's Claude Read approval.
 The deterministic provider fixture contacts no external service
 and does not exercise real provider authentication or prove full provider parity.
 Tests create temporary isolated Git repositories and remove them after use.
+
+The ACP discovery check creates an agent session and reads advertised models; it
+does not submit a model turn. The separate ACP turn check sends a generated marker
+and declines every tool permission. `COINCIDE_ACP_TEST_MODEL` can select one of
+the installed agent's advertised models for that check. A passing agent/model
+does not establish availability of the agent's other hosted model endpoints.
 
 ## Upstream attribution
 

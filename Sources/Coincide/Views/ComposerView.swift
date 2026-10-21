@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct ComposerView: View {
     @Binding var text: String
     let provider: ProviderKind
+    var providerName: String? = nil
     let permission: PermissionMode
     let busy: Bool
     let submitting: Bool
@@ -21,11 +22,11 @@ struct ComposerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .topLeading) {
-                if text.isEmpty { Text("Message \(provider.name)…").foregroundStyle(.tertiary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
+                if text.isEmpty { Text("Message \(providerName ?? provider.name)…").foregroundStyle(.tertiary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
                 TextEditor(text: $text).font(.system(size: 15)).frame(height: height)
                     .focused($editorFocused)
                     .onAppear { editorFocused = true }
-                    .scrollContentBackground(.hidden).accessibilityLabel("Message to \(provider.name)")
+                    .scrollContentBackground(.hidden).accessibilityLabel("Message to \(providerName ?? provider.name)")
                     .onKeyPress(keys: [.return], phases: .down) { event in
                         guard !event.modifiers.contains(.shift), !event.modifiers.contains(.option) else { return .ignored }
                         guard canSend else { return .ignored }
@@ -36,14 +37,18 @@ struct ComposerView: View {
             HStack {
                 Button(action: attach) { Image(systemName: "plus").frame(width: 24, height: 24) }
                     .buttonStyle(.plain).help("Attach files").accessibilityLabel("Attach files").disabled(submitting)
-                Menu {
+                if provider == .acp {
+                    Label("Agent permissions", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
+                        .help("The agent enforces its own sandbox. Coincide shows the permission requests it sends.")
+                } else { Menu {
                     ForEach(PermissionMode.allCases) { mode in
                         Button { setPermission(mode) } label: {
                             if mode == permission { Label(mode.title, systemImage: "checkmark") } else { Text(mode.title) }
                         }
                     }
                 } label: { Label(permission.title, systemImage: "slider.horizontal.3").font(.caption) }
-                .menuStyle(.borderlessButton).fixedSize().disabled(busy)
+                .menuStyle(.borderlessButton).fixedSize()
+                }
                 Spacer()
                 Text("⇧ Return for a new line").font(.caption2).foregroundStyle(.tertiary)
                 if busy {

@@ -55,6 +55,10 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var workspacePath: String
     public var providerThreadID: String?
     public var provider: ProviderKind
+    public var acpAgent: ACPAgentConfiguration?
+    public var agentModeID: String?
+    public var agentConfigValues: [String: String]?
+    public var providerMetadata: JSONValue?
     public var draft: String
     public var draftAttachments: [ChatAttachment]
     public var model: String
@@ -80,6 +84,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
         case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests
         case draftAttachments
+        case acpAgent, agentModeID, agentConfigValues, providerMetadata
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -89,6 +94,10 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         workspacePath = try values.decode(String.self, forKey: .workspacePath)
         providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
         provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
+        acpAgent = try values.decodeIfPresent(ACPAgentConfiguration.self, forKey: .acpAgent)
+        agentModeID = try values.decodeIfPresent(String.self, forKey: .agentModeID)
+        agentConfigValues = try values.decodeIfPresent([String: String].self, forKey: .agentConfigValues)
+        providerMetadata = try values.decodeIfPresent(JSONValue.self, forKey: .providerMetadata)
         draft = try values.decodeIfPresent(String.self, forKey: .draft) ?? ""
         draftAttachments = try values.decodeIfPresent([ChatAttachment].self, forKey: .draftAttachments) ?? []
         model = try values.decode(String.self, forKey: .model)
@@ -106,13 +115,23 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
     }
     public var isBusy: Bool { activeRun != nil || state == .running || state == .awaitingApproval }
+    public var providerName: String { provider == .acp ? acpAgent?.name ?? provider.name : provider.name }
 }
 
 public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var schemaVersion: Int = 1
     public var projects: [WorkspaceProject] = []
     public var threads: [CodingThread] = []
+    public var acpAgents: [ACPAgentConfiguration] = []
     public init() {}
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        projects = try values.decodeIfPresent([WorkspaceProject].self, forKey: .projects) ?? []
+        threads = try values.decodeIfPresent([CodingThread].self, forKey: .threads) ?? []
+        acpAgents = try values.decodeIfPresent([ACPAgentConfiguration].self, forKey: .acpAgents) ?? []
+    }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
         for i in threads.indices {
@@ -148,10 +167,12 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
+        if method == "session/request_permission" { return params["toolCall"]["title"].string ?? "Approve agent tool" }
         if method == "can_use_tool" { return "Approve \(params["tool_name"].string ?? "tool")" }
         return method.contains("fileChange") ? "Approve file changes" : "Approve command"
     }
     public var detail: String {
+        if method == "session/request_permission" { return params["toolCall"]["rawInput"].pretty }
         if method == "can_use_tool" { return params["input"]["command"].string ?? params["input"].pretty }
         return params["command"].string ?? params["reason"].string ?? params.pretty
     }

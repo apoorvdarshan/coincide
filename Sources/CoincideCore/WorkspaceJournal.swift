@@ -6,6 +6,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case projectUpserted(WorkspaceProject)
     case projectRemoved(UUID)
     case projectsOrdered([UUID])
+    case acpAgentsReplaced([ACPAgentConfiguration])
     case threadMetadataUpserted(CodingThread)
     case threadRemoved(UUID)
     case threadsOrdered([UUID])
@@ -15,6 +16,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
 
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
+        case .acpAgentsReplaced(let agents): snapshot.acpAgents = agents
         case .imported(let value): try WorkspaceJournal.validate(value); snapshot = value
         case .projectUpserted(let project):
             if let i = snapshot.projects.firstIndex(where: { $0.id == project.id }) { snapshot.projects[i] = project }
@@ -83,15 +85,20 @@ public enum WorkspaceJournal {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
         for thread in snapshot.threads {
+            if let agent = thread.acpAgent { try agent.validate() }
+            if thread.provider == .acp, thread.acpAgent == nil { throw CoincideError("This conversation has no ACP agent configuration.") }
             try AttachmentLimits.validate(thread.draftAttachments)
             for queued in thread.queuedTurns { try AttachmentLimits.validate(queued.attachments ?? []) }
             for message in thread.messages { try AttachmentLimits.validate(message.attachments ?? []) }
         }
+        guard Set(snapshot.acpAgents.map(\.id)).count == snapshot.acpAgents.count else { throw CoincideError("Agent configurations must have unique identities.") }
+        for agent in snapshot.acpAgents { try agent.validate() }
     }
 
     public static func changes(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) throws -> [WorkspaceEvent] {
         try validate(previous); try validate(next)
         var events: [WorkspaceEvent] = []
+        if previous.acpAgents != next.acpAgents { events.append(.acpAgentsReplaced(next.acpAgents)) }
         let oldProjects = Dictionary(uniqueKeysWithValues: previous.projects.map { ($0.id, $0) })
         let newProjects = Set(next.projects.map(\.id))
         for project in previous.projects where !newProjects.contains(project.id) { events.append(.projectRemoved(project.id)) }

@@ -19,6 +19,7 @@ public actor WorkspaceEngine {
         var session: any ProviderSession
         var provider: ProviderKind
         var path: String
+        var acpAgent: ACPAgentConfiguration?
         var reader: Task<Void, Never>?
     }
     private let database: WorkspaceDatabase
@@ -225,6 +226,8 @@ public actor WorkspaceEngine {
             var configured = thread
             configured.provider = configuration.provider; configured.workspacePath = configuration.workspacePath
             configured.providerThreadID = configuration.nativeThreadID; configured.model = configuration.model; configured.permission = configuration.permission
+            configured.acpAgent = configuration.acpAgent; configured.agentModeID = configuration.agentModeID
+            configured.agentConfigValues = configuration.agentConfigValues
             let runtime = try await runtime(for: configured, runID: runID)
             guard !closing, !stoppingEffects, revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false,
@@ -245,6 +248,7 @@ public actor WorkspaceEngine {
                   thread.runtimeRequests.contains(where: { $0.id == request.id && $0.responding }),
                   let runtime = runtimes[thread.id], runtime.id == thread.runtimeID else { return .cancelled }
             switch response {
+            case .option(let id): try await runtime.session.choose(request, optionID: id)
             case .decision(let allow): try await runtime.session.respond(request, allow: allow)
             case .answers(let answers): try await runtime.session.answer(request, answers: answers)
             }
@@ -252,10 +256,10 @@ public actor WorkspaceEngine {
         }
     }
     private func runtime(for thread: CodingThread, runID: UUID) async throws -> Runtime {
-        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath { return existing }
+        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent { return existing }
         await closeRuntime(thread.id)
         let id = UUID(), session = try factory(thread)
-        var runtime = Runtime(id: id, session: session, provider: thread.provider, path: thread.workspacePath)
+        var runtime = Runtime(id: id, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent)
         runtimes[thread.id] = runtime
         _ = try await enqueue(.runtimeOpened(threadID: thread.id, runID: runID, runtimeID: id))
         let stream = session.events
@@ -281,8 +285,11 @@ public actor WorkspaceEngine {
         for id in Array(runtimes.keys) { await closeRuntime(id) }
     }
     public func models(provider: ProviderKind) async throws -> [ProviderModel] {
-        guard !closing else { throw CancellationError() }
         var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path)); thread.provider = provider
+        return try await models(thread: thread)
+    }
+    public func models(thread: CodingThread) async throws -> [ProviderModel] {
+        guard !closing else { throw CancellationError() }
         let id = UUID(), session = try factory(thread); metadataSessions[id] = session
         do {
             let result = try await session.models(); await session.close(); metadataSessions.removeValue(forKey: id); return result
