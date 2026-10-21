@@ -196,7 +196,13 @@ public actor ACPSession: ProviderSession {
                 return
             }
             announceTurn()
-            let request = ApprovalRequest(id: id, method: method, params: params)
+            var enriched = params.object ?? [:]
+            if let toolID = params["toolCall"]["toolCallId"].string {
+                var call = tools[toolID]?.object ?? [:]
+                for (key, value) in params["toolCall"].object ?? [:] where value != .null { call[key] = value }
+                enriched["toolCall"] = .object(call)
+            }
+            let request = ApprovalRequest(id: id, method: method, params: .object(enriched))
             pending[id] = request; emit(.approval(request))
         case .notification(let method, let params):
             guard method == "session/update", params["sessionId"].string == sessionID, !loadingHistory else { return }
@@ -204,6 +210,18 @@ public actor ACPSession: ProviderSession {
             if kind == "current_mode_update" { setMetadata(section: "modes", field: "currentModeId", value: update["currentModeId"]); return }
             if kind == "config_option_update" { setMetadata(field: "configOptions", value: update["configOptions"]); return }
             if kind == "available_commands_update" { setMetadata(field: "availableCommands", value: update["availableCommands"]); return }
+            if kind == "tool_call" || kind == "tool_call_update" {
+                guard let id = update["toolCallId"].string, let sessionID else { return }
+                var tool = tools[id]?.object ?? [:]
+                for (key, value) in update.object ?? [:] where value != .null { tool[key] = value }
+                tools[id] = .object(tool)
+                if working, kind == "tool_call" { segment += 1 }
+                var patch = (update.object ?? [:]).filter { $0.value != .null }
+                patch["sessionUpdate"] = .string("tool_call_update")
+                do { emit(.entity(try .acp(.object(patch), sessionID: sessionID))) }
+                catch { emit(.failure(error.localizedDescription)) }
+                return
+            }
             guard working else { return }; announceTurn()
             switch kind {
             case "agent_message_chunk", "agent_thought_chunk":
@@ -214,20 +232,6 @@ public actor ACPSession: ProviderSession {
                 } else {
                     emit(.message(.init(role: .system, text: "This agent returned \(update["content"]["type"].string ?? "unknown") content that the native transcript cannot display yet.")))
                 }
-            case "tool_call", "tool_call_update":
-                guard let id = update["toolCallId"].string else { return }
-                var tool = tools[id]?.object ?? [:]
-                for (key, value) in update.object ?? [:] where value != .null { tool[key] = value }
-                let merged = JSONValue.object(tool); tools[id] = merged
-                if kind == "tool_call" { segment += 1 }
-                let output = (merged["content"].array ?? []).compactMap { item -> String? in
-                    if item["type"].string == "content" { return item["content"]["text"].string }
-                    if item["type"].string == "diff" { return "\(item["path"].string ?? "File")\n\(item["newText"].string ?? "")" }
-                    return nil
-                }.joined(separator: "\n")
-                let title = merged["title"].string ?? "Tool"
-                let status = merged["status"].string ?? "pending"
-                emit(.message(.init(id: "acp-\(generation)-tool-\(id)", role: .tool, text: "\(title) · \(status)\n\(output)")))
             case "plan":
                 let text = (update["entries"].array ?? []).map { "- [\($0["status"].string == "completed" ? "x" : " ")] \($0["content"].string ?? "")" }.joined(separator: "\n")
                 emit(.message(.init(id: "acp-\(generation)-plan", role: .tool, text: text)))
@@ -311,7 +315,7 @@ public actor ACPSession: ProviderSession {
         // Session configuration and connection lifecycle remain meaningful while
         // idle. The engine still fences them by the owning runtime identity.
         switch event {
-        case .configuration, .thread, .connectionClosed: continuation.yield(event); return
+        case .configuration, .thread, .connectionClosed, .entity, .associateEntity: continuation.yield(event); return
         default: break
         }
         if let runID { continuation.yield(.context(runID: runID, event: event)) }

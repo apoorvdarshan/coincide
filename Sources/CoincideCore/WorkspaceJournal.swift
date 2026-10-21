@@ -79,6 +79,7 @@ public enum WorkspaceJournal {
         guard snapshot.schemaVersion == 1, projects.count == snapshot.projects.count, threads.count == snapshot.threads.count,
               snapshot.threads.allSatisfy({ thread in
                   projects.contains(thread.projectID) && Set(thread.messages.map(\.id)).count == thread.messages.count &&
+                  Set(thread.messages.compactMap { $0.providerEntity?.key }).count == thread.messages.filter { $0.providerEntity != nil }.count &&
                   Set(thread.queuedTurns.map(\.id)).count == thread.queuedTurns.count &&
                   !thread.queuedTurns.contains { $0.id == thread.activeRun?.id }
               }) else {
@@ -117,7 +118,7 @@ public enum WorkspaceJournal {
                 if index < oldMessages.count {
                     let old = oldMessages[index]
                     if old == message { continue }
-                    if old.id == message.id, old.role == message.role, old.createdAt == message.createdAt, old.attachments == message.attachments, message.text.utf8.starts(with: old.text.utf8) {
+                    if old.id == message.id, old.role == message.role, old.createdAt == message.createdAt, old.attachments == message.attachments, old.providerEntity == message.providerEntity, message.text.utf8.starts(with: old.text.utf8) {
                         let tail = String(decoding: message.text.utf8.dropFirst(old.text.utf8.count), as: UTF8.self)
                         events.append(.messageTextAppended(threadID: thread.id, index: index, messageID: message.id, text: tail))
                         continue

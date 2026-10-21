@@ -19,6 +19,8 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     case failure(String)
     case connectionClosed(String)
     case configuration(JSONValue)
+    case entity(ProviderEntityUpdate)
+    case associateEntity(ProviderEntityKey, clientMessageID: String)
     indirect case context(runID: UUID, event: ProviderEvent)
 }
 

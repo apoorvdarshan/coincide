@@ -23,7 +23,18 @@ struct MessageView: View {
                 DisclosureGroup {
                     Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
-                } label: { Label(message.role == .tool ? "Tool activity" : "Reasoning", systemImage: message.role == .tool ? "terminal" : "brain").font(.caption).foregroundStyle(.secondary) }
+                    if let entity = message.providerEntity {
+                        if entity.fields.object?["rawInput"] != nil { entityDetail("Input", value: entity.fields["rawInput"]) }
+                        if entity.fields.object?["rawOutput"] != nil { entityDetail("Output", value: entity.fields["rawOutput"]) }
+                        if entity.fields.object?["locations"] != nil { entityDetail("Files", value: entity.fields["locations"]) }
+                        DisclosureGroup("Details") { Text(entity.fields.pretty).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+                    }
+                } label: {
+                    HStack {
+                        Label(message.providerEntity?.fields["title"].string ?? (message.role == .tool ? "Tool activity" : "Reasoning"), systemImage: message.role == .tool ? "terminal" : "brain")
+                        if let status = message.providerEntity?.fields["status"].string { Text(status.replacingOccurrences(of: "_", with: " ")).foregroundStyle(.tertiary) }
+                    }.font(.caption).foregroundStyle(.secondary)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     if message.role == .system { Label("Notice", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
@@ -36,5 +47,11 @@ struct MessageView: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+    private func entityDetail(_ title: String, value: JSONValue) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value.string ?? value.pretty).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
     }
 }

@@ -43,6 +43,7 @@ public struct ChatMessage: Codable, Identifiable, Sendable, Equatable {
     public var text: String
     public var createdAt: Date
     public var attachments: [ChatAttachment]?
+    public var providerEntity: ProviderEntity?
     public init(id: String = UUID().uuidString, role: MessageRole, text: String, attachments: [ChatAttachment]? = nil) {
         self.id = id; self.role = role; self.text = text; self.createdAt = Date(); self.attachments = attachments
     }

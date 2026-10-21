@@ -94,6 +94,25 @@ private actor RuntimeProvider: ProviderSession {
     }
 }
 
+@Test(.timeLimit(.minutes(1))) func malformedProviderEntityStopsOnlyItsRuntimeAndAllowsTheConversationToRecover() async throws {
+    try await withRuntime { f in
+        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "first"))
+        try await waitRuntime { await f.harness.providers(f.thread.id).first?.prompts().count == 1 }
+        let first = try #require(f.harness.providers(f.thread.id).first)
+        let key = ProviderEntityKey(sessionID: "fixture", type: "agent_message", id: "bad")
+        await first.emit(.entity(.patch(key, .string("invalid patch"))))
+        try await waitRuntime { await f.engine.current().snapshot.threads[0].state == .failed }
+        #expect(await f.engine.current().error == nil)
+        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "second"))
+        try await waitRuntime { f.harness.providers(f.thread.id).count == 2 }
+        let second = try #require(f.harness.providers(f.thread.id).last)
+        try await waitRuntime { await second.prompts() == ["second"] }
+        await second.finish()
+        try await waitRuntime { await f.engine.current().snapshot.threads[0].state == .idle }
+        #expect(await f.engine.current().error == nil)
+    }
+}
+
 private final class RuntimeHarness: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [UUID: [RuntimeProvider]] = [:]

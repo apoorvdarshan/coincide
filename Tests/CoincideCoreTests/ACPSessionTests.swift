@@ -28,12 +28,15 @@ func acpStreamsModelsModesPermissionsImagesAndResumesWithoutReplayingHistory(_ m
         if !resume { #expect(try await session.models().map(\.id) == ["default", "fixture"]) }
         let observer = Task {
             var text = "", thought = "", tool = "", permissions = 0, plan = false
+            var tools: [ProviderEntityKey: ProviderEntity] = [:]
             for await scoped in session.events {
                 switch unwrapACP(scoped) {
                 case .delta(_, let role, let value): if role == .assistant { text += value } else if role == .reasoning { thought += value }
                 case .message(let message):
-                    if message.id.hasSuffix("tool-tool-1") { tool = message.text }
                     if message.id.hasSuffix("plan") { plan = message.text.contains("Read fixture") }
+                case .entity(let update):
+                    let entity = try update.apply(to: tools[update.key]); tools[update.key] = entity
+                    if entity.key.type == "tool_call" { tool = entity.text }
                 case .approval(let request):
                     #expect(request.id == .string("opaque-17")); permissions += 1
                     await #expect(throws: (any Error).self) { try await session.choose(request, optionID: "invented") }
@@ -168,9 +171,36 @@ private func waitACP(_ predicate: () async throws -> Bool) async throws {
             let completed = await reopened.current().snapshot.threads[0]
             #expect(completed.messages.filter({ $0.role == .user }).count == 3)
             #expect(completed.messages.filter({ $0.role == .assistant }).count == 6)
+            let tools = completed.messages.compactMap(\.providerEntity).filter { $0.key.type == "tool_call" }
+            #expect(tools.count == 3 && Set(tools.map(\.key)).count == 3)
+            #expect(tools.allSatisfy { $0.fields["rawInput"]["path"] == .string("fixture.txt") && $0.fields["rawOutput"] == .string("Fixture tool result") })
             #expect(completed.messages.allSatisfy { !$0.text.contains("OLD HISTORY") && !$0.text.contains("OLD USER") })
             await reopened.shutdown()
         } catch { await reopened.shutdown(); throw error }
+    } catch { await engine.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func acpRetainsBackgroundToolOutputAfterTheForegroundTurnHasFinished() async throws {
+    let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("workspace.sqlite"), gate = root.appendingPathComponent("background-gate")
+    let fixture = try #require(Bundle.module.url(forResource: "acp_server", withExtension: "py", subdirectory: "Fixtures"))
+    let agent = ACPAgentConfiguration(name: "Background fixture", executable: "/usr/bin/python3", arguments: [fixture.path, "background", gate.path])
+    let engine = try WorkspaceEngine(url: url), project = WorkspaceProject(path: root.path)
+    var thread = CodingThread(project: project); thread.provider = .acp; thread.acpAgent = agent
+    do {
+        _ = try await engine.load(); try await engine.dispatch(.addProject(project)); try await engine.dispatch(.saveACPAgent(agent)); try await engine.dispatch(.createThread(thread))
+        try await engine.dispatch(.submit(threadID: thread.id, text: "first"))
+        try await waitACP { await engine.current().snapshot.threads[0].runtimeRequests.count == 1 }
+        try await engine.dispatch(.respond(threadID: thread.id, requestID: .string("opaque-17"), response: .option("opaque-once")))
+        try await waitACP { await engine.current().snapshot.threads[0].state == .idle }
+        try Data().write(to: gate) // The peer cannot send background output before the engine is idle.
+        try await waitACP { await engine.current().snapshot.threads[0].messages.contains { $0.providerEntity?.key.id == "background-tool" } }
+        let idle = await engine.current().snapshot.threads[0]
+        #expect(idle.state == .idle && idle.activeRun == nil)
+        #expect(idle.messages.first(where: { $0.providerEntity?.key.id == "background-tool" })?.providerEntity?.fields["rawOutput"]["kept"] == .string("after idle"))
+        await engine.shutdown()
+        let database = try WorkspaceDatabase(url: url), current = await engine.current().snapshot
+        #expect(try await database.rebuildProjection().snapshot == current)
     } catch { await engine.shutdown(); throw error }
 }
 

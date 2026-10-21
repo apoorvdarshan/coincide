@@ -169,7 +169,10 @@ struct WorkspaceDecision: Sendable {
                 decision.snapshot.threads[i].runtimeID = runtimeID
             }
         case .provider(let threadID, let runtimeID, let event):
-            try decision.receive(event, threadID: threadID, runtimeID: runtimeID, now: now)
+            do { try decision.receive(event, threadID: threadID, runtimeID: runtimeID, now: now) }
+            catch let error as CoincideError {
+                try decision.receive(.failure(error.localizedDescription), threadID: threadID, runtimeID: runtimeID, now: now)
+            }
         case .effectResult(let request, let result):
             decision.finished(request, result: result, now: now)
         case .pauseQueues:
@@ -199,6 +202,23 @@ struct WorkspaceDecision: Sendable {
             try receive(inner, threadID: threadID, runtimeID: runtimeID, now: now); return
         }
         switch event {
+        case .entity(let update):
+            if let i = thread.messages.firstIndex(where: { $0.providerEntity?.key == update.key }) {
+                let entity = try update.apply(to: thread.messages[i].providerEntity)
+                thread.messages[i].providerEntity = entity
+                if thread.messages[i].role != .user || !thread.messages[i].id.hasPrefix("user-") { thread.messages[i].text = entity.text }
+            } else {
+                let entity = try update.apply(to: nil)
+                var message = ChatMessage(id: entity.key.messageID, role: entity.role, text: entity.text)
+                message.createdAt = now; message.providerEntity = entity; thread.messages.append(message)
+            }
+        case .associateEntity(let key, let clientID):
+            guard key.type == "user_message", let target = thread.messages.firstIndex(where: { $0.id == clientID && $0.role == .user }) else { return }
+            guard thread.messages[target].providerEntity == nil || thread.messages[target].providerEntity?.key == key else { throw CoincideError("The agent changed an accepted message identity.") }
+            let echoed = thread.messages.firstIndex(where: { $0.providerEntity?.key == key })
+            let entity = echoed.flatMap { thread.messages[$0].providerEntity } ?? ProviderEntity(key: key)
+            thread.messages[target].providerEntity = entity
+            if let echoed, echoed != target { thread.messages.remove(at: echoed) }
         case .configuration(let metadata): thread.providerMetadata = metadata
         case .thread(let native): thread.providerThreadID = native
         case .turn(let native): thread.activeRun?.nativeTurnID = native // A late acknowledgement never changes idle to running.

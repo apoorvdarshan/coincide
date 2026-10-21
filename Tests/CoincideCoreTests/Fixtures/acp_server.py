@@ -1,10 +1,15 @@
 import json
 import sys
 import traceback
+import os
+import time
+import uuid
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "normal"
 session = "fixture-session"
 prompt_id = None
+tool_id = ""
+message_id = ""
 chosen_model = "default"
 chosen_mode = "code"
 new_sessions = 0
@@ -95,6 +100,8 @@ for line in sys.stdin:
     elif method == "session/prompt":
         assert params["sessionId"] == session
         prompt_id = request["id"]
+        tool_id = "tool-" + uuid.uuid4().hex
+        message_id = "message-" + uuid.uuid4().hex
         blocks = params["prompt"]
         text = next((block["text"] for block in blocks if block["type"] == "text"), "")
         if text == "images":
@@ -105,13 +112,13 @@ for line in sys.stdin:
             prompt_id = None
             continue
         update("agent_thought_chunk", content={"type": "text", "text": "Thinking"})
-        update("agent_message_chunk", messageId="answer", content={"type": "text", "text": "hello "})
+        update("agent_message_chunk", messageId=message_id, content={"type": "text", "text": "hello "})
         if text == "hang":
             continue
         update("plan", entries=[{"content": "Read fixture", "status": "pending", "priority": "high"}])
-        update("tool_call", toolCallId="tool-1", title="Read Fixture", kind="read", status="pending")
+        update("tool_call", toolCallId=tool_id, title="Read Fixture", kind="read", status="pending", rawInput={"path": "fixture.txt"})
         send({"id": "opaque-17", "method": "session/request_permission", "params": {
-            "sessionId": session, "toolCall": {"toolCallId": "tool-1", "title": "Read Fixture", "rawInput": {"path": "fixture.txt"}},
+            "sessionId": session, "toolCall": {"toolCallId": tool_id, "title": "Read Fixture", "rawInput": {"path": "fixture.txt"}},
             "options": [{"optionId": "opaque-once", "name": "Read once", "kind": "allow_once"},
                         {"optionId": "opaque-always", "name": "Always read", "kind": "allow_always"},
                         {"optionId": "opaque-no", "name": "Reject", "kind": "reject_once"}]}})
@@ -127,9 +134,13 @@ for line in sys.stdin:
         if outcome == {"outcome": "cancelled"}:
             continue
         assert outcome == {"outcome": "selected", "optionId": "opaque-once"} or outcome == {"outcome": "selected", "optionId": "opaque-no"}
-        update("tool_call_update", toolCallId="tool-1", status="completed", content=[{"type": "content", "content": {"type": "text", "text": "Fixture tool result"}}])
-        update("agent_message_chunk", messageId="answer", content={"type": "text", "text": "🌍"})
+        update("tool_call_update", toolCallId=tool_id, status="completed", rawOutput="Fixture tool result", content=[{"type": "content", "content": {"type": "text", "text": "Fixture tool result"}}])
+        update("agent_message_chunk", messageId=message_id, content={"type": "text", "text": "🌍"})
         send({"id": prompt_id, "result": {"stopReason": "end_turn"}})
         prompt_id = None
+        if mode == "background":
+            while not os.path.exists(sys.argv[2]):
+                time.sleep(.005)
+            update("tool_call_update", toolCallId="background-tool", title="Background result", status="completed", rawOutput={"kept": "after idle"})
     else:
         raise AssertionError("Unexpected client frame: " + str(method))

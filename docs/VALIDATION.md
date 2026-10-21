@@ -1,5 +1,44 @@
 # Validation record
 
+## 2026-10-22 — durable provider transcript entities
+
+- Added native transcript entities keyed by session, type, and opaque ID. The
+  reducer preserves structured content and unknown fields, applies omitted/null/
+  replacement semantics, patches `_meta` by top-level key, and keeps chunk metadata
+  separate. Binary terminal chunks decode independently before appending; complete
+  terminal snapshots replace prior bytes. Plans, compaction summaries, and unknown
+  future updates retain their payloads.
+- The entity reducer follows the current official
+  [ACP v2 entity rules](https://agentclientprotocol.com/protocol/v2/prompt-lifecycle)
+  and [tool/terminal updates](https://agentclientprotocol.com/protocol/v2/tool-calls).
+  The inspected official schema's Git blob was
+  `e47fe81d2db877fe182bdca2ce4ac52ffd62ec61`. The v2 wire adapter is not implemented
+  yet; these tests do not establish v2 connection or foreground-lifecycle support.
+- ACP v1 tool updates now use these entities, preserving their input/output,
+  locations, status, and other metadata. The native disclosure shows the tool
+  title/status, input, output, files, and raw details. Its v1 adapter filters null
+  updates according to v1 semantics before applying the native patch.
+- A gated protocol test waits for the engine to become idle before allowing the
+  fixture to send background tool output. The update is saved without starting a
+  new turn and survives journal rebuild. Restart/resume tests now verify three
+  distinct tool identities and their input/output across three turns.
+- Tests also cover entity-ID collisions between types/sessions, streamed-content
+  replacement and clearing, unknown variants/content, plan envelope fields,
+  metadata-only journal changes, stale runtime events, and native user-message
+  association with echo arriving before or after acceptance. Original local text
+  and timestamps are preserved; equal content never establishes identity.
+- Malformed entity updates fail their owning runtime while the workspace command
+  engine remains usable. A regression sends another turn and completes it with a
+  new provider connection after that failure.
+- `COINCIDE_LIVE_ACP=1 COINCIDE_LIVE_ACP_TURN=1 COINCIDE_ACP_TEST_MODEL=opencode/glm-5.3-flash-free swift test --no-parallel`
+  passed all 93 tests: 72 core, 4 terminal, 13 Markdown, and 4 native UI/store.
+  Installed OpenCode discovery and a generated-marker turn passed again.
+- Packaging, launch, strict signature verification, and bundled-font verification
+  passed. A private SQLite backup preceded storage migration 4 → 5; canonical
+  comparison excluding only the new optional entity field confirmed all 3 prior
+  conversations and 25 messages were unchanged. Physical interaction with the new
+  tool disclosures remains part of unlocked-desktop QA.
+
 ## 2026-10-22 — native ACP v1 agents
 
 - Added a native JSON-RPC 2.0 stdio adapter following the official
