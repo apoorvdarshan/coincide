@@ -77,6 +77,14 @@ Manual mode supports dragging projects and Move Up/Down controls. Switching sort
 modes preserves your saved manual order. Archived conversations do not determine
 project activity or creation ranking.
 
+Right-click a project heading and choose **Remove Project** to remove its active
+and archived conversations from the workspace and stop their agents, clone, and
+terminals in every open window. Confirm any unsaved file edits before removal.
+Checkout folders, worktrees, partial clone attempts, and attachment files stay on
+disk. Conversation data remains in local recovery history; removal is not secure
+erasure. If new conversations or unsaved editors appear during confirmation,
+review the removal again.
+
 Use **+** in the composer to attach files, or paste/drop local files and images.
 Attachments stay with drafts, queued turns, and sent messages across restarts.
 Image previews include copy, save, and open controls. Codex and Claude receive
@@ -118,6 +126,10 @@ file conflicts/path containment, and real local Git/remotes, branch tracking,
 divergence, conflicts, hooks, cancellation, background cloning, queue gating,
 clone retry/recovery, and worktree operations. See the porting
 document for live checks and their limitations.
+
+The native macOS GUI CI job tests an isolated app copy through real windows,
+menus, and keyboard input. Its harness and result requirements are documented in
+[desktop UI tests](UITests/macOS/README.md).
 
 The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), with its
 [MIT notice](docs/SwiftTerm-LICENSE.txt) bundled in the development app.

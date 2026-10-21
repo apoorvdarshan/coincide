@@ -1,5 +1,50 @@
 # Validation record
 
+## 2026-10-22 — native project removal and hosted GUI test foundation
+
+- Added confirmed project removal covering active and archived conversations in
+  one journal/projection/receipt transaction. The confirmation includes the exact
+  conversation set; a new conversation requires renewed confirmation. Pending
+  actions cancel atomically, running actions retain their executor leases, and
+  exact action identities fence late registration and cancellation. Provider,
+  clone, and owned model operations wait across the removal commit/acknowledgement
+  window. Old model results cannot attach to a re-created owner with the same IDs.
+- Runtime handles detach before publication. Tracked cleanup waits outside the
+  serial inbox, so unrelated projects remain responsive while processes close.
+  All registered native windows close only the removed conversations' terminals.
+  Pending imports/worktree setup and clone retries cancel, drafts/model caches and
+  stale selection/navigation clear, and inspectors with surviving path references
+  remain open. Checkout, worktree, staging, and attachment files remain untouched.
+  Append-only recovery history remains; the confirmation does not promise erasure.
+- File edits register dirtiness synchronously. Project editor scopes freeze
+  before waiting for earlier UI commands, and a queued preflight checks for newly
+  dirty buffers. Rejected removal releases the scopes. Shared workspaces stay
+  locked through cleanup and become editable again for surviving owners. Stale
+  file callbacks cannot reopen an unreferenced workspace.
+- The full SwiftPM suite passed 209 tests: 174 core, 4 terminal, 13 Markdown, and
+  18 native UI/store tests. New regressions cover stale/duplicate confirmations,
+  empty projects, receipt replay/collision, transaction rollback, restart/journal
+  rebuild, saturated pending/running effects, slow close responsiveness, same-ID
+  metadata reuse, late clone events, preserved file/attachment bytes, terminals in
+  two window owners, never-finishing paste cancellation, shared inspector paths,
+  dirty-buffer confirmation, edit locks, and stale navigation. The full suite
+  passed again after the final catch-side metadata guard found during review.
+- Native packaging/launch, strict deep signature checks, and bundled-font runtime
+  verification passed. A private backup and canonical JSON comparison confirmed
+  storage version 8 and all existing 3 conversations/25 messages are unchanged.
+- Added a test-only Xcode UI runner exercising the SwiftPM-built app through real
+  macOS windows, menus, keyboard input, and screenshots. The runner compiles and
+  passes strict deep signature verification without launching a local GUI. Its
+  three configuration tests and workflow lint pass. The CI script refuses local
+  GUI execution. A copied app uses a dedicated bundle identifier and DEBUG-only
+  private workspace; invalid test configuration cannot fall back to user data.
+  Hosted light/dark workflows cover project creation and initial Git commit,
+  rename/collapse, retained selection/draft, and graceful quit/reopen. Their actual
+  hosted execution and screenshot inspection are pending the first CI run; build
+  success alone does not establish visual correctness.
+
+Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
+
 ## 2026-10-22 — persistent native project organization
 
 - Added native project collapse/expand, display-name editing, a project-sort menu,

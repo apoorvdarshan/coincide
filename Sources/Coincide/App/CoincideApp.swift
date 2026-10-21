@@ -19,9 +19,19 @@ enum CoincideMain {
 
 struct CoincideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var store = WorkspaceStore()
+    @State private var store: WorkspaceStore
     @FocusedValue(\.cloneRepositoryPresentation) private var cloneRepositoryPresentation: Binding<Bool>?
     @FocusedValue(\.newProjectPresentation) private var newProjectPresentation: Binding<Bool>?
+    init() {
+        do {
+            let url = try AppLaunchConfiguration.databaseURL(bundleIdentifier: Bundle.main.bundleIdentifier,
+                                                            environment: ProcessInfo.processInfo.environment)
+            _store = State(initialValue: WorkspaceStore(databaseURL: url))
+        } catch {
+            FileHandle.standardError.write(Data("Coincide UI-test workspace configuration is invalid.\n".utf8))
+            exit(EXIT_FAILURE)
+        }
+    }
     var body: some Scene {
         WindowGroup("Coincide") {
             ContentView(store: store)

@@ -7,6 +7,7 @@ struct SidebarView: View {
     let onNewProject: () -> Void
     @State private var renaming: SidebarRenameTarget?
     @State private var title = ""
+    @State private var removing: ProjectRemovalRequest?
     var body: some View {
         List(selection: $store.selectedThreadID) {
             ForEach(store.orderedProjects) { project in
@@ -25,6 +26,7 @@ struct SidebarView: View {
                             Image(systemName: thread.isPinned ? "pin" : thread.state == .running ? "circle.dotted" : "bubble.left")
                         }
                         .tag(thread.id)
+                        .accessibilityIdentifier("thread-\(thread.id.uuidString)")
                         .contextMenu {
                             Button(thread.isPinned ? "Unpin" : "Pin") { store.togglePin(thread.id) }
                             Button("Rename…") { title = thread.title; renaming = .thread(thread.id) }
@@ -55,6 +57,7 @@ struct SidebarView: View {
                     } label: { Image(systemName: "arrow.up.arrow.down") }
                     .menuStyle(.borderlessButton).fixedSize().help("Sort Projects")
                     .accessibilityLabel("Sort projects").accessibilityValue(store.projectSortMode.title)
+                    .accessibilityIdentifier("project-sort-menu")
                 }
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -77,7 +80,7 @@ struct SidebarView: View {
         }
         .onChange(of: store.selectedThreadID) { if let thread = store.selectedThread { store.selectedProjectID = thread.projectID } }
         .alert(renaming?.alertTitle ?? String(localized: "Rename"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Title", text: $title)
+            TextField("Title", text: $title).accessibilityIdentifier("sidebar-rename-title")
             Button("Cancel", role: .cancel) { renaming = nil }
             Button("Save") {
                 switch renaming {
@@ -86,7 +89,21 @@ struct SidebarView: View {
                 case nil: break
                 }
                 renaming = nil
-            }.disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }.accessibilityIdentifier("sidebar-rename-save").disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .alert(removing.map { String(localized: "Remove “\($0.name)” from Coincide?") } ?? String(localized: "Remove Project"),
+               isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { request in
+            Button("Cancel", role: .cancel) { removing = nil }
+            Button("Remove Project", role: .destructive) {
+                removing = nil
+                Task {
+                    do { try await store.removeProject(request) }
+                    catch is CancellationError { }
+                    catch { store.errorMessage = error.localizedDescription }
+                }
+            }
+        } message: { request in
+            Text(removalExplanation(request))
         }
     }
 
@@ -114,7 +131,15 @@ struct SidebarView: View {
                 if store.orderedProjects.first?.id != project.id { Button("Move Up") { store.moveProject(project.id, by: -1) } }
                 if store.orderedProjects.last?.id != project.id { Button("Move Down") { store.moveProject(project.id, by: 1) } }
             }
+            Divider()
+            Button("Remove Project…", role: .destructive) { removing = store.projectRemovalRequest(project.id) }
         }
+    }
+
+    private func removalExplanation(_ request: ProjectRemovalRequest) -> String {
+        var text = String(localized: "This removes its active and archived conversations from the workspace and stops their agents, clone operation, and terminals.\n\nCheckout, worktree, staging, and attachment files stay on disk. Conversation data remains in local recovery history; this is not secure erasure.")
+        if !request.dirtyEditorIDs.isEmpty { text += "\n\n" + String(localized: "Unsaved file edits in this project will be discarded.") }
+        return text
     }
 
     private func sortModeItem(_ mode: ProjectSortMode) -> some View {

@@ -34,6 +34,7 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case addProject(WorkspaceProject)
     case addProjectWithThread(project: WorkspaceProject, thread: CodingThread)
     case renameProject(projectID: UUID, title: String)
+    case removeProject(projectID: UUID, expectedThreadIDs: [UUID])
     case setProjectExpanded(projectID: UUID, expanded: Bool)
     case setProjectSortMode(ProjectSortMode)
     case moveProject(projectID: UUID, before: UUID?, expectedOrder: [UUID])
@@ -69,12 +70,26 @@ enum EffectResult: Codable, Sendable { case succeeded, failed(String), cancelled
 struct WorkspaceDecision: Sendable {
     var snapshot: WorkspaceSnapshot
     var effects: [PendingWorkspaceEffect] = []
-    var closeRuntime: UUID?
+    var closeRuntimes: Set<UUID> = []
+    // Kept for existing single-runtime decision inspections.
+    var closeRuntime: UUID? { closeRuntimes.first }
     var cancelCloneAttempt: UUID?
 
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
+        case .client(.removeProject(let projectID, let expectedThreadIDs)):
+            guard decision.snapshot.projects.contains(where: { $0.id == projectID }) else { throw WorkspaceCommandError("This project is no longer available.") }
+            let threadIDs = Set(decision.snapshot.threads.filter { $0.projectID == projectID }.map(\.id))
+            guard Set(expectedThreadIDs).count == expectedThreadIDs.count, Set(expectedThreadIDs) == threadIDs else {
+                throw WorkspaceCommandError("This project's conversations changed. Review the current active and archived conversations before removing it.")
+            }
+            decision.snapshot.projects.removeAll { $0.id == projectID }
+            decision.snapshot.threads.removeAll { $0.projectID == projectID }
+            if var preferences = decision.snapshot.sidebarPreferences {
+                preferences.collapsedProjectIDs.removeAll { $0 == projectID }; decision.snapshot.sidebarPreferences = preferences
+            }
+            decision.closeRuntimes.formUnion(threadIDs)
         case .client(.renameProject(let projectID, let requested)):
             let title: String
             do { title = try ManagedProjectService.validatedName(requested) }
@@ -187,11 +202,11 @@ struct WorkspaceDecision: Sendable {
                 case .provider(let kind):
                     guard kind != .acp else { throw WorkspaceCommandError("Choose a configured ACP agent.") }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
-                    decision.closeRuntime = thread.id; thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
+                    decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
                     guard decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Save this agent in Settings first.") }
-                    decision.closeRuntime = thread.id; thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
+                    decision.closeRuntimes.insert(thread.id); thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
                     thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value
@@ -199,11 +214,11 @@ struct WorkspaceDecision: Sendable {
                 case .archived(let value):
                     guard !thread.isBusy else { throw WorkspaceCommandError("Stop the running turn before archiving this conversation.") }
                     thread.isArchived = value
-                    if value { thread.queuePaused = true; decision.closeRuntime = thread.id; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil }
+                    if value { thread.queuePaused = true; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil }
                 case .workspacePath(let path):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Change the workspace before sending the first message.") }
                     guard decision.snapshot.workspaceReady(for: thread) else { throw WorkspaceCommandError("Wait for the clone before changing workspaces.") }
-                    thread.workspacePath = path; decision.closeRuntime = thread.id; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
+                    thread.workspacePath = path; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
                 }
             case .submit(_, let text):
                 let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -261,7 +276,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .addProjectWithThread, .renameProject, .setProjectExpanded, .setProjectSortMode, .moveProject, .reorderProjects, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
+            case .addProject, .addProjectWithThread, .renameProject, .removeProject, .setProjectExpanded, .setProjectSortMode, .moveProject, .reorderProjects, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -393,7 +408,7 @@ struct WorkspaceDecision: Sendable {
             if stopped || state != .idle { thread.queuePaused = true }
             else { startNext(in: &thread, now: now) }
         case .failure(let message), .connectionClosed(let message):
-            closeRuntime = thread.id; thread.runtimeID = nil
+            closeRuntimes.insert(thread.id); thread.runtimeID = nil
             thread.providerActivity = nil
             if thread.activeRun != nil {
                 thread.state = thread.activeRun?.stopRequested == true ? .interrupted : .failed
@@ -441,13 +456,13 @@ struct WorkspaceDecision: Sendable {
             if case .failed(let message) = result {
                 thread.state = thread.activeRun?.stopRequested == true ? .interrupted : .failed
                 thread.activeRun = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.queuePaused = true
-                thread.messages.append(.init(role: .system, text: message)); closeRuntime = thread.id; thread.runtimeID = nil
+                thread.messages.append(.init(role: .system, text: message)); closeRuntimes.insert(thread.id); thread.runtimeID = nil
             }
         case .providerInterrupt(_, let runID):
             guard thread.activeRun?.id == runID else { return }
             guard case .stopped = result else { return }
             thread.activeRun = nil; thread.runtimeRequests = []; thread.state = .interrupted; thread.queuePaused = true
-            thread.runtimeID = nil; closeRuntime = thread.id
+            thread.runtimeID = nil; closeRuntimes.insert(thread.id)
             thread.providerActivity = nil
         case .providerRespond(_, let runID, let request, _):
             guard thread.activeRun?.id == runID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id }) else { return }
@@ -466,7 +481,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .addProjectWithThread, .renameProject, .setProjectExpanded, .setProjectSortMode, .moveProject, .reorderProjects, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
+        case .addProject, .addProjectWithThread, .renameProject, .removeProject, .setProjectExpanded, .setProjectSortMode, .moveProject, .reorderProjects, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
         case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

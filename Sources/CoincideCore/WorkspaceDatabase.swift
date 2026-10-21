@@ -9,6 +9,12 @@ private final class DatabaseHandle: @unchecked Sendable {
     deinit { sqlite3_close(value) }
 }
 
+struct WorkspaceCommitOutcome: Sendable {
+    var receipt: WorkspaceCommandReceipt
+    /// Original rows before pending actions were cancelled. Running rows keep their leases.
+    var removedEffects: [WorkspaceEffect]
+}
+
 /// Commits the journal, projection, receipt, pending effects, and audit marker atomically.
 public actor WorkspaceDatabase {
     private let handle: DatabaseHandle
@@ -75,6 +81,12 @@ public actor WorkspaceDatabase {
     public func commit(_ snapshot: WorkspaceSnapshot, event: String, commandID: UUID,
                        expectedSequence: Int64? = nil, effects: [PendingWorkspaceEffect] = [],
                        deduplicationPayload: Data? = nil) throws -> WorkspaceCommandReceipt {
+        try commitWithRemovedEffects(snapshot, event: event, commandID: commandID, expectedSequence: expectedSequence,
+                                     effects: effects, deduplicationPayload: deduplicationPayload).receipt
+    }
+    func commitWithRemovedEffects(_ snapshot: WorkspaceSnapshot, event: String, commandID: UUID,
+                                  expectedSequence: Int64? = nil, effects: [PendingWorkspaceEffect] = [],
+                                  deduplicationPayload: Data? = nil) throws -> WorkspaceCommitOutcome {
         try WorkspaceJournal.validate(snapshot)
         struct FingerprintInput: Encodable { let snapshot: WorkspaceSnapshot; let event: String }
         struct EffectFingerprintInput: Encodable { let snapshot: WorkspaceSnapshot; let event: String; let effects: [PendingWorkspaceEffect] }
@@ -96,7 +108,7 @@ public actor WorkspaceDatabase {
         do {
             if let stored = try existingReceipt(commandID) {
                 guard stored.fingerprint == fingerprint else { throw WorkspaceCommitError.commandIDCollision }
-                try execute("COMMIT"); return stored.receipt
+                try execute("COMMIT"); return .init(receipt: stored.receipt, removedEffects: [])
             }
             let before = try currentRevision()
             if let expectedSequence, expectedSequence != before.sequence { throw WorkspaceCommitError.revisionChanged }
@@ -121,10 +133,11 @@ public actor WorkspaceDatabase {
                 try insertEffect(.init(id: pending.id, commandID: commandID, request: pending.request, status: .pending,
                                        attemptCount: 0, createdAt: receipt.acceptedAt, updatedAt: receipt.acceptedAt))
             }
+            let removedEffects = try cancelPendingEffectsOfRemovedEntities(from: before.snapshot, to: snapshot, now: receipt.acceptedAt)
             try audit(event)
             try execute("COMMIT")
             cached = WorkspaceRevision(snapshot: snapshot, sequence: sequence)
-            return receipt
+            return .init(receipt: receipt, removedEffects: removedEffects)
         } catch { try? execute("ROLLBACK"); throw error }
     }
 
@@ -298,6 +311,24 @@ public actor WorkspaceDatabase {
 }
 
 extension WorkspaceDatabase {
+    /// Runs inside the metadata transaction. Never revoke running leases: their owned executors
+    /// must stop and settle them, including a claim that has not yet registered in memory.
+    private func cancelPendingEffectsOfRemovedEntities(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot, now: Date) throws -> [WorkspaceEffect] {
+        let threads = Set(previous.threads.map(\.id)).subtracting(next.threads.map(\.id))
+        let projects = Set(previous.projects.map(\.id)).subtracting(next.projects.map(\.id))
+        guard !threads.isEmpty || !projects.isEmpty else { return [] }
+        let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects WHERE status IN ('pending','running') ORDER BY sequence")
+        defer { sqlite3_finalize(statement) }
+        let removed = try readEffects(statement).filter { effect in
+            effect.request.threadID.map { threads.contains($0) } == true || effect.request.projectID.map { projects.contains($0) } == true
+        }
+        for var effect in removed where effect.status == .pending {
+            effect.status = .cancelled; effect.leaseOwner = nil; effect.leaseExpiresAt = nil
+            effect.updatedAt = now; effect.lastError = "The owning conversation or project was removed."
+            try writeEffect(effect)
+        }
+        return removed
+    }
     public func cancelEffect(_ id: UUID, workerID: UUID, reason: String, now: Date = Date()) throws -> Bool {
         try effectTransaction {
             guard var effect = try ownedEffect(id, workerID: workerID, now: now) else { return false }
@@ -344,8 +375,12 @@ extension WorkspaceDatabase {
     public func settleEffect(_ id: UUID, workerID: UUID, error: String? = nil, now: Date = Date()) throws -> Bool {
         try effectTransaction {
             guard var effect = try ownedEffect(id, workerID: workerID, now: now) else { return false }
-            effect.status = error == nil ? .succeeded : .failed
-            effect.leaseOwner = nil; effect.leaseExpiresAt = nil; effect.updatedAt = now; effect.lastError = error
+            let snapshot = try currentRevision().snapshot
+            let ownerExists = effect.request.threadID.map { id in snapshot.threads.contains { $0.id == id } }
+                ?? effect.request.projectID.map { id in snapshot.projects.contains { $0.id == id } } ?? false
+            effect.status = ownerExists ? (error == nil ? .succeeded : .failed) : .cancelled
+            effect.leaseOwner = nil; effect.leaseExpiresAt = nil; effect.updatedAt = now
+            effect.lastError = ownerExists ? error : "The owning conversation or project was removed."
             try writeEffect(effect); return true
         }
     }

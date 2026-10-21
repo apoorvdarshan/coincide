@@ -82,6 +82,9 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
         }
     }
 
+    /// Wait for the bounded shutdown escalation after a tab or project has been closed.
+    public func waitForClose() async { await closeTask?.value }
+
     public func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
     public func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         let clean = title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }

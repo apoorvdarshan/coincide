@@ -29,6 +29,7 @@ struct NewProjectSheet: View {
                 }
                 Form {
                     TextField("Project name", text: $name).focused($nameFocused).autocorrectionDisabled()
+                        .accessibilityIdentifier("new-project-name")
                         .accessibilityHint("The name shown in your projects sidebar")
                     LabeledContent("Location") {
                         Text(destination.path).font(.caption).foregroundStyle(.secondary)
@@ -52,10 +53,11 @@ struct NewProjectSheet: View {
                 if creating { ProgressView().controlSize(.small).accessibilityLabel("Creating project") }
                 Spacer()
                 if created != nil {
-                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).accessibilityIdentifier("project-created-done")
                 } else {
                     Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction).disabled(creating)
                     Button(creating ? "Creating…" : "Create Project", action: create)
+                        .accessibilityIdentifier("create-project")
                         .keyboardShortcut(.defaultAction).disabled(creating || validationError != nil)
                 }
             }

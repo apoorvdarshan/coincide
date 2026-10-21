@@ -24,6 +24,7 @@ struct ComposerView: View {
             ZStack(alignment: .topLeading) {
                 if text.isEmpty { Text("Message \(providerName ?? provider.name)…").foregroundStyle(.tertiary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
                 TextEditor(text: $text).font(.system(size: 15)).frame(height: height)
+                    .accessibilityIdentifier("composer-input")
                     .focused($editorFocused)
                     .onAppear { editorFocused = true }
                     .scrollContentBackground(.hidden).accessibilityLabel("Message to \(providerName ?? provider.name)")

@@ -2,9 +2,9 @@ name: Swift
 on:
   push:
     branches: [main]
-    paths: ['Sources/**', 'Tests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml']
+    paths: ['Sources/**', 'Tests/**', 'UITests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml']
   pull_request:
-    paths: ['Sources/**', 'Tests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml']
+    paths: ['Sources/**', 'Tests/**', 'UITests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,6 +12,20 @@ concurrency:
   group: swift-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      macos_ui: ${{ steps.paths.outputs.macos_ui }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify native UI CI configuration
+        run: python3 -m unittest discover -s UITests/macOS -p 'test_*.py' -v
+      - name: Select native UI changes
+        id: paths
+        run: python3 script/macos_ui_ci.py changes
   test:
     runs-on: macos-26
     timeout-minutes: 15
@@ -36,3 +50,36 @@ jobs:
         run: codesign --verify --strict dist/Coincide.app
       - name: Verify native resource loading
         run: dist/Coincide.app/Contents/MacOS/Coincide --verify-resources
+      - name: Archive the verified SwiftPM app for native UI testing
+        run: tar -czf "$RUNNER_TEMP/coincide-native-app.tgz" -C dist Coincide.app
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coincide-native-app-${{ github.sha }}
+          path: ${{ runner.temp }}/coincide-native-app.tgz
+          if-no-files-found: error
+          retention-days: 1
+  native-ui:
+    needs: [test, changes]
+    if: needs.changes.outputs.macos_ui == 'true'
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coincide-native-app-${{ github.sha }}
+          path: ${{ runner.temp }}/coincide-native-app
+      - name: Extract the verified app
+        run: tar -xzf "$RUNNER_TEMP/coincide-native-app/coincide-native-app.tgz" -C "$RUNNER_TEMP/coincide-native-app"
+      - name: Run native window, menu, keyboard, and persistence tests
+        run: ./script/test_macos_ui.sh --ci "$RUNNER_TEMP/coincide-native-app/Coincide.app"
+      - name: Keep native UI screenshots and test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coincide-native-ui-${{ github.sha }}
+          path: ${{ runner.temp }}/coincide-desktop-ui-artifacts
+          if-no-files-found: warn
+          retention-days: 14

@@ -69,6 +69,17 @@ must each be mapped and verified before declaring parity.
   their selected eligible conversation, and display renames preserve checkout
   paths. New projects have creation/activity dates; legacy unknown dates remain
   unset rather than being assigned synthetic migration timestamps.
+- Project removal commits all active/archived thread removals, project removal,
+  collapsed-preference cleanup, and pending-action cancellation together. Running
+  actions retain their leases until their owned executors settle; detached
+  provider/model/clone cleanup is tracked outside the command inbox. Every native
+  window registers its terminal owner for targeted cleanup. Composer/import/model
+  state and unreferenced inspectors are reconciled, shared paths remain usable,
+  and editor scopes freeze during removal after explicit unsaved-edit confirmation.
+  New conversations or dirty editors require renewed confirmation. Checkout,
+  worktree, staging, and attachment files are preserved. Append-only recovery
+  history remains, so removal is explicitly described as workspace removal rather
+  than secure erasure. These changes use the existing storage version 8 format.
 - Attachment bytes live in private, immutable app-owned files. Drafts, queued
   turns, messages, and outbox entries retain typed references. Images are normalized
   with ImageIO as needed and delivered through each provider's native image input;
@@ -81,7 +92,7 @@ must each be mapped and verified before declaring parity.
 
 | Area | Implemented now | Remaining work for parity |
 | --- | --- | --- |
-| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, project display renaming/collapse, persistent manual ordering and activity/thread-creation sorting, thread search/rename/pin/archive, settings | Project removal, grouped logical checkouts, snooze/settle, undo, scratch projects, import/migration |
+| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, project display renaming/collapse, persistent manual ordering and activity/thread-creation sorting, confirmed project removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, settings | Grouped logical checkouts, snooze/settle, undo, scratch projects, import/migration |
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |

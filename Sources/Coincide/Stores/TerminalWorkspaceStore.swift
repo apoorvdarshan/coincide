@@ -19,7 +19,18 @@ final class TerminalWorkspaceStore {
         if selection[threadID] == session.id { selection[threadID] = sessions[threadID]?.last?.id }
     }
     func closeAll() {
-        for session in sessions.values.flatMap({ $0 }) { session.close() }
+        _ = removeAll()
+    }
+    @discardableResult func remove(threadIDs: Set<UUID>) -> [LocalTerminalSession] {
+        let closing = threadIDs.flatMap { sessions.removeValue(forKey: $0) ?? [] }
+        for id in threadIDs { selection.removeValue(forKey: id) }
+        for session in closing { session.close() }
+        return closing
+    }
+    @discardableResult func removeAll() -> [LocalTerminalSession] {
+        let closing = sessions.values.flatMap { $0 }
+        for session in closing { session.close() }
         sessions.removeAll(); selection.removeAll()
+        return closing
     }
 }

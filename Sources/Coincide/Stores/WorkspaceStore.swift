@@ -10,10 +10,23 @@ struct FileNavigation: Equatable {
     let line: Int?
 }
 
+struct ProjectRemovalRequest: Identifiable {
+    let id: UUID
+    let name: String
+    let threadIDs: [UUID]
+    let dirtyEditorIDs: Set<UUID>
+}
+
+@MainActor private final class WeakTerminalStore {
+    weak var value: TerminalWorkspaceStore?
+    init(_ value: TerminalWorkspaceStore) { self.value = value }
+}
+
 @MainActor @Observable
 final class WorkspaceStore {
     typealias ProjectCreator = @Sendable (String, URL) async throws -> ManagedProjectCreationResult
     let managedProjectsRoot: URL
+    let worktreesRoot: URL
     private let projectCreator: ProjectCreator
     var snapshot = WorkspaceSnapshot()
     var selectedThreadID: UUID?
@@ -37,6 +50,13 @@ final class WorkspaceStore {
     private var preparingWorkspaces: Set<UUID> = []
     private var attachmentImportCounts: [UUID: Int] = [:]
     private var attachmentImportTasks: [UUID: Task<Void, Never>] = [:]
+    private var attachmentImportOwners: [UUID: UUID] = [:]
+    private var worktreeTasks: [UUID: Task<Void, any Error>] = [:]
+    private var projectCloneRetryTasks: [UUID: Task<Void, Never>] = [:]
+    private var removalCleanupTasks: [UUID: Task<Void, Never>] = [:]
+    private var terminalStores: [ObjectIdentifier: WeakTerminalStore] = [:]
+    private var dirtyEditors: [UUID: String] = [:]
+    private var removalEditorLocks: [UUID: Set<String>] = [:]
     private var gitInspectors: [String: GitInspectorStore] = [:]
     private var retryingProjectClones: Set<UUID> = []
     private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
@@ -45,6 +65,7 @@ final class WorkspaceStore {
 
     init(databaseURL: URL? = nil) {
         managedProjectsRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Projects", isDirectory: true)
+        worktreesRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Worktrees", isDirectory: true)
         projectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }
         do {
             if let databaseURL { engine = try WorkspaceEngine(url: databaseURL); return }
@@ -57,6 +78,7 @@ final class WorkspaceStore {
          projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
         self.engine = engine
         self.managedProjectsRoot = managedProjectsRoot ?? Self.applicationDataRoot.appendingPathComponent("Projects", isDirectory: true)
+        self.worktreesRoot = (managedProjectsRoot?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Worktrees", isDirectory: true)
         self.projectCreator = projectCreator
     }
     private static var applicationDataRoot: URL {
@@ -100,6 +122,43 @@ final class WorkspaceStore {
         return isProjectExpanded(projectID) ? threads : threads.filter { $0.id == selectedThreadID }
     }
     func renameProject(_ id: UUID, title: String) { sendCommand(.renameProject(projectID: id, title: title)) }
+    func registerTerminals(_ terminals: TerminalWorkspaceStore) { terminalStores[ObjectIdentifier(terminals)] = WeakTerminalStore(terminals) }
+    func unregisterTerminals(_ terminals: TerminalWorkspaceStore) { terminalStores.removeValue(forKey: ObjectIdentifier(terminals)) }
+    func setEditorDirty(_ id: UUID, workspacePath: String, dirty: Bool) {
+        if dirty { dirtyEditors[id] = Self.canonicalPath(workspacePath) } else { dirtyEditors.removeValue(forKey: id) }
+    }
+    func canEditWorkspace(_ path: String) -> Bool {
+        let path = Self.canonicalPath(path)
+        guard !terminating, !removalEditorLocks.values.contains(where: { $0.contains(path) }) else { return false }
+        return !snapshot.threads.contains { removalEditorLocks[$0.projectID] != nil && Self.canonicalPath($0.workspacePath) == path }
+    }
+    func projectRemovalRequest(_ id: UUID) -> ProjectRemovalRequest? {
+        guard let project = snapshot.projects.first(where: { $0.id == id }) else { return nil }
+        let threads = snapshot.threads.filter { $0.projectID == id }
+        let paths = Set(([project.path] + threads.map(\.workspacePath)).map(Self.canonicalPath))
+        return .init(id: id, name: project.name, threadIDs: threads.map(\.id).sorted { $0.uuidString < $1.uuidString },
+                     dirtyEditorIDs: Set(dirtyEditors.compactMap { paths.contains($0.value) ? $0.key : nil }))
+    }
+    func removeProject(_ request: ProjectRemovalRequest) async throws {
+        guard !terminating, let engine, removalEditorLocks[request.id] == nil,
+              let current = projectRemovalRequest(request.id), let project = snapshot.projects.first(where: { $0.id == request.id }) else { throw CancellationError() }
+        guard current.dirtyEditorIDs.isSubset(of: request.dirtyEditorIDs) else {
+            throw CoincideError("New unsaved file edits appeared. Review the project removal again before discarding them.")
+        }
+        removalEditorLocks[request.id] = Set(([project.path] + snapshot.threads.filter { $0.projectID == request.id }.map(\.workspacePath)).map(Self.canonicalPath))
+        defer { removalEditorLocks.removeValue(forKey: request.id) }
+        _ = try await enqueue(.removeProject(projectID: request.id, expectedThreadIDs: request.threadIDs), preflight: {
+            guard let latest = self.projectRemovalRequest(request.id) else { throw CancellationError() }
+            guard latest.dirtyEditorIDs.isSubset(of: request.dirtyEditorIDs) else {
+                throw CoincideError("New unsaved file edits appeared. Review the project removal again before discarding them.")
+            }
+        }).value
+        await engine.awaitProjectRemovalCleanup(projectID: request.id)
+        for task in Array(removalCleanupTasks.values) { await task.value }
+    }
+    private static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+    }
     func setProjectExpanded(_ id: UUID, expanded: Bool) { sendCommand(.setProjectExpanded(projectID: id, expanded: expanded)) }
     func setProjectSortMode(_ mode: ProjectSortMode) { sendCommand(.setProjectSortMode(mode)) }
     func moveProject(_ id: UUID, by offset: Int) {
@@ -143,13 +202,49 @@ final class WorkspaceStore {
                 acpModels.removeValue(forKey: id)
             }
         }
+        let removedThreads = Set(snapshot.threads.map(\.id)).subtracting(update.snapshot.threads.map(\.id))
+        let removedProjects = Set(snapshot.projects.map(\.id)).subtracting(update.snapshot.projects.map(\.id))
         lastSequence = update.sequence; snapshot = update.snapshot
+        if !removedThreads.isEmpty || !removedProjects.isEmpty { reconcileRemovedResources(threadIDs: removedThreads, projectIDs: removedProjects) }
         if let error = update.error, !terminating { errorMessage = error }
     }
-    private func enqueue(_ command: WorkspaceCommand) -> Task<WorkspaceCommandReceipt, any Error> {
+    private func reconcileRemovedResources(threadIDs: Set<UUID>, projectIDs: Set<UUID>) {
+        for id in threadIDs {
+            pendingDrafts.removeValue(forKey: id); draftOverrides.removeValue(forKey: id); acpModels.removeValue(forKey: id)
+        }
+        let imports = attachmentImportTasks.compactMap { key, task in attachmentImportOwners[key].map { threadIDs.contains($0) } == true ? task : nil }
+        let worktrees = worktreeTasks.filter { threadIDs.contains($0.key) }.map(\.value)
+        let retries = projectCloneRetryTasks.filter { projectIDs.contains($0.key) }.map(\.value)
+        for task in imports { task.cancel() }; for task in worktrees { task.cancel() }; for task in retries { task.cancel() }
+        let terminals = terminalStores.values.compactMap(\.value)
+        terminalStores = terminalStores.filter { $0.value.value != nil }
+        let closingTerminals = terminals.flatMap { $0.remove(threadIDs: threadIDs) }
+        let referencedPaths = Set((snapshot.projects.map(\.path) + snapshot.threads.map(\.workspacePath)).map(Self.canonicalPath))
+        dirtyEditors = dirtyEditors.filter { referencedPaths.contains($0.value) }
+        let discardedInspectors = gitInspectors.filter { !referencedPaths.contains($0.key) }
+        for (path, inspector) in discardedInspectors { inspector.prepareForShutdown(); gitInspectors.removeValue(forKey: path) }
+        if let navigation = fileNavigation, !referencedPaths.contains(Self.canonicalPath(navigation.workspacePath)) { fileNavigation = nil }
+        if selectedThreadID.map({ threadIDs.contains($0) }) == true {
+            selectedThreadID = snapshot.threads.first(where: { !$0.isArchived })?.id
+        }
+        if selectedProjectID.map({ projectIDs.contains($0) }) == true {
+            selectedProjectID = selectedThread?.projectID ?? snapshot.projects.first?.id
+        }
+        let cleanupID = UUID()
+        removalCleanupTasks[cleanupID] = Task { [weak self] in
+            for task in imports { await task.value }
+            for task in worktrees { _ = await task.result }
+            for task in retries { await task.value }
+            for terminal in closingTerminals { await terminal.waitForClose() }
+            for inspector in discardedInspectors.values { await inspector.shutdown() }
+            self?.removalCleanupTasks.removeValue(forKey: cleanupID)
+        }
+    }
+    private func enqueue(_ command: WorkspaceCommand, preflight: (@MainActor () throws -> Void)? = nil) -> Task<WorkspaceCommandReceipt, any Error> {
         let previous = commandTail, engine = engine
         let task = Task<WorkspaceCommandReceipt, any Error> {
             await previous?.value
+            try preflight?()
             guard let engine else { throw CoincideError("The workspace runtime is unavailable.") }
             let receipt = try await engine.dispatch(command)
             apply(await engine.current())
@@ -179,7 +274,7 @@ final class WorkspaceStore {
         if let existing = snapshot.projects.first(where: { $0.path == project.path }) { selectedProjectID = existing.id; return }
         let task = enqueue(.addProject(project))
         Task {
-            do { _ = try await task.value; selectedProjectID = snapshot.projects.first { $0.path == project.path }?.id }
+            do { _ = try await task.value; if let added = snapshot.projects.first(where: { $0.path == project.path }) { selectedProjectID = added.id } }
             catch { errorMessage = error.localizedDescription }
         }
     }
@@ -199,7 +294,7 @@ final class WorkspaceStore {
         catch {
             throw CoincideError("The project files are preserved at \(result.project.path), but the project could not be opened. \(GitService.redactURLs(error.localizedDescription))")
         }
-        selectedProjectID = result.project.id; selectedThreadID = thread.id; showArchived = false
+        if snapshot.threads.contains(where: { $0.id == thread.id }) { selectedProjectID = result.project.id; selectedThreadID = thread.id; showArchived = false }
         return result
     }
     func cloneRepository(source: String, destination: URL) async throws {
@@ -207,17 +302,17 @@ final class WorkspaceStore {
         var project = WorkspaceProject(path: plan.destinationPath); project.clone = .init(plan: plan)
         let thread = CodingThread(project: project)
         _ = try await enqueue(.startProjectClone(project: project, thread: thread)).value
-        selectedProjectID = project.id; selectedThreadID = thread.id; showArchived = false
+        if snapshot.threads.contains(where: { $0.id == thread.id }) { selectedProjectID = project.id; selectedThreadID = thread.id; showArchived = false }
     }
     func cancelProjectClone(_ projectID: UUID) { sendCommand(.cancelProjectClone(projectID)) }
     func retryProjectClone(_ projectID: UUID) {
         guard !terminating, snapshot.projects.first(where: { $0.id == projectID })?.clone?.canRetry == true,
               retryingProjectClones.insert(projectID).inserted else { return }
-        Task {
-            defer { retryingProjectClones.remove(projectID) }
+        projectCloneRetryTasks[projectID] = Task {
+            defer { retryingProjectClones.remove(projectID); projectCloneRetryTasks.removeValue(forKey: projectID) }
             guard let engine else { return }
             do { _ = try await engine.retryProjectClone(projectID); apply(await engine.current()) }
-            catch { if !terminating { errorMessage = GitService.redactURLs(error.localizedDescription) } }
+            catch { if !terminating, snapshot.projects.contains(where: { $0.id == projectID }) { errorMessage = GitService.redactURLs(error.localizedDescription) } }
         }
     }
     func isRetryingProjectClone(_ projectID: UUID) -> Bool { retryingProjectClones.contains(projectID) }
@@ -230,6 +325,7 @@ final class WorkspaceStore {
         Task {
             do {
                 _ = try await task.value
+                guard self.thread(thread.id) != nil else { return }
                 selectedThreadID = thread.id
                 selectedProjectID = project.id; showArchived = false
             } catch { errorMessage = error.localizedDescription }
@@ -252,6 +348,7 @@ final class WorkspaceStore {
         return []
     }
     func setDraft(_ text: String, id: UUID) {
+        guard !terminating, thread(id) != nil else { return }
         draftOverrides[id] = text; pendingDrafts[id] = text
         draftSaveTask?.cancel()
         draftSaveTask = Task { [weak self] in
@@ -262,10 +359,11 @@ final class WorkspaceStore {
     private func flushDrafts() {
         let values = pendingDrafts; pendingDrafts = [:]
         for (id, text) in values {
+            guard thread(id) != nil else { continue }
             let task = enqueue(.editThread(id, .draft(text)))
             Task {
                 do { _ = try await task.value; if draftOverrides[id] == text { draftOverrides.removeValue(forKey: id) } }
-                catch { if !terminating { errorMessage = error.localizedDescription } }
+                catch { if !terminating, thread(id) != nil { errorMessage = error.localizedDescription } }
             }
         }
     }
@@ -284,14 +382,17 @@ final class WorkspaceStore {
         }
     }
     func importAttachments(files: [URL] = [], providers: [NSItemProvider] = [], threadID: UUID) {
-        guard !terminating, let engine else { return }
+        guard !terminating, let engine, thread(threadID) != nil else { return }
         guard files.count + providers.count <= AttachmentLimits.count else { errorMessage = "Attach up to 100 files per message."; return }
         let taskID = UUID()
+        attachmentImportOwners[taskID] = threadID
         attachmentImportCounts[threadID, default: 0] += 1
         attachmentImportTasks[taskID] = Task {
             defer {
-                attachmentImportCounts[threadID, default: 1] -= 1
+                let remaining = attachmentImportCounts[threadID, default: 1] - 1
+                attachmentImportCounts[threadID] = remaining > 0 ? remaining : nil
                 attachmentImportTasks.removeValue(forKey: taskID)
+                attachmentImportOwners.removeValue(forKey: taskID)
             }
             var references: [ChatAttachment] = [], errors: [String] = []
             for file in files {
@@ -314,12 +415,12 @@ final class WorkspaceStore {
                 } catch is CancellationError { return }
                 catch { errors.append(error.localizedDescription) }
             }
-            guard !terminating, !Task.isCancelled else { return }
+            guard !terminating, !Task.isCancelled, thread(threadID) != nil else { return }
             if !references.isEmpty {
                 do { _ = try await enqueue(.addAttachments(threadID: threadID, attachments: references)).value }
                 catch { errors.append(error.localizedDescription) }
             }
-            if !errors.isEmpty { errorMessage = errors.joined(separator: "\n") }
+            if !errors.isEmpty, thread(threadID) != nil { errorMessage = errors.joined(separator: "\n") }
         }
     }
     func removeAttachment(_ attachmentID: UUID, threadID: UUID) { sendCommand(.removeAttachment(threadID: threadID, attachmentID: attachmentID)) }
@@ -376,6 +477,7 @@ final class WorkspaceStore {
         return Task {
             do { _ = try await task.value; if draftOverrides[id] == "" { draftOverrides.removeValue(forKey: id) }; return true }
             catch {
+                guard self.thread(id) != nil else { return false }
                 if (draftOverrides[id] ?? "").isEmpty { setDraft(text, id: id) }
                 errorMessage = error.localizedDescription; return false
             }
@@ -403,7 +505,11 @@ final class WorkspaceStore {
     }
     func resumeQueue(_ threadID: UUID) { sendCommand(.resumeQueue(threadID: threadID)) }
     func openFile(_ url: URL, line: Int?, workspacePath: String) {
-        if let thread = snapshot.threads.first(where: { $0.workspacePath == workspacePath }), !workspaceReady(for: thread) {
+        let normalizedPath = Self.canonicalPath(workspacePath)
+        let threads = snapshot.threads.filter { Self.canonicalPath($0.workspacePath) == normalizedPath }
+        let projects = snapshot.projects.filter { Self.canonicalPath($0.path) == normalizedPath }
+        guard !terminating, canEditWorkspace(workspacePath), !threads.isEmpty || !projects.isEmpty else { return }
+        if threads.contains(where: { !workspaceReady(for: $0) }) || projects.contains(where: { $0.clone.map { !$0.isReady } ?? false }) {
             errorMessage = "Wait for the repository to finish cloning before opening its files."; return
         }
         let root = URL(fileURLWithPath: workspacePath).standardizedFileURL.resolvingSymlinksInPath()
@@ -419,9 +525,13 @@ final class WorkspaceStore {
         do {
             let kind = provider ?? selectedThread?.provider ?? .codex
             if kind == .acp, let thread = selectedThread, thread.acpAgent != nil {
-                acpModels[thread.id] = try await engine.models(thread: thread)
+                let models = try await engine.models(thread: thread)
+                guard let current = self.thread(thread.id), current.provider == thread.provider,
+                      current.acpAgent == thread.acpAgent, current.workspacePath == thread.workspacePath else { return }
+                acpModels[thread.id] = models
             } else { providerModels[kind] = try await engine.models(provider: kind) }
-        } catch { if !terminating { errorMessage = error.localizedDescription } }
+        } catch is CancellationError { }
+        catch { if !terminating { errorMessage = error.localizedDescription } }
     }
     func createWorktree(for id: UUID, branch: String) async {
         guard let thread = thread(id), thread.messages.isEmpty, !thread.isBusy, !preparingWorkspaces.contains(id) else {
@@ -430,25 +540,34 @@ final class WorkspaceStore {
         guard workspaceReady(for: thread) else { errorMessage = "Wait for cloning to finish before creating a worktree."; return }
         preparingWorkspaces.insert(id); defer { preparingWorkspaces.remove(id) }
         do {
-            let parent = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-                .appendingPathComponent("Coincide/Worktrees", isDirectory: true)
+            let parent = worktreesRoot
             try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
             let path = parent.appendingPathComponent(id.uuidString)
-            try await GitService(root: URL(fileURLWithPath: thread.workspacePath)).createWorktree(at: path, branch: branch)
+            let task = Task { try await GitService(root: URL(fileURLWithPath: thread.workspacePath)).createWorktree(at: path, branch: branch) }
+            worktreeTasks[id] = task
+            defer { worktreeTasks.removeValue(forKey: id) }
+            try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard self.thread(id) != nil, !terminating else { return }
             _ = try await enqueue(.editThread(id, .workspacePath(path.path))).value
-        } catch { errorMessage = error.localizedDescription }
+        } catch is CancellationError { }
+        catch { if self.thread(id) != nil, !terminating { errorMessage = error.localizedDescription } }
     }
     func shutdown() async {
         terminating = true
         let creations = Array(projectCreationTasks.values)
         for task in creations { task.cancel() }
         for task in creations { _ = await task.result }
+        let worktrees = Array(worktreeTasks.values); for task in worktrees { task.cancel() }; for task in worktrees { _ = await task.result }
+        let retries = Array(projectCloneRetryTasks.values); for task in retries { task.cancel() }; for task in retries { await task.value }
         let inspectors = Array(gitInspectors.values)
         for model in inspectors { model.prepareForShutdown() }
         for model in inspectors { await model.shutdown() }
         let imports = Array(attachmentImportTasks.values); for task in imports { task.cancel() }; for task in imports { await task.value }
         draftSaveTask?.cancel(); flushDrafts()
         await commandTail?.value
+        for task in Array(removalCleanupTasks.values) { await task.value }
+        for terminals in terminalStores.values.compactMap(\.value) { for session in terminals.removeAll() { await session.waitForClose() } }
         await engine?.shutdown()
         updatesTask?.cancel(); updatesTask = nil
     }
