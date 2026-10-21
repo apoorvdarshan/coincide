@@ -42,6 +42,7 @@ struct MarkdownBlocksView: View {
             inline(spans).font(.system(size: [26.0, 22, 19, 17, 16, 15][min(5, max(0, level - 1))], weight: .semibold))
                 .accessibilityAddTraits(.isHeader).padding(.top, 4)
         case .code(let language, let text): MarkdownCodeView(language: language, source: text)
+        case .math(let latex): NativeMathView(latex: latex)
         case .quote(let blocks):
             HStack(alignment: .top, spacing: 12) {
                 RoundedRectangle(cornerRadius: 2).fill(.secondary.opacity(0.35)).frame(width: 3)

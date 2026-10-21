@@ -23,8 +23,12 @@ import Testing
     > The queue keeps its place across a restart.
 
     - [x] Parse native Markdown
-    - [ ] Add mathematical typesetting
-      - Preserve the original expression until then.
+    - [x] Render native display equations
+      - Keep unsupported expressions readable as source.
+
+    ```math
+    x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}
+    ```
 
     | Feature | Result |
     | :--- | ---: |

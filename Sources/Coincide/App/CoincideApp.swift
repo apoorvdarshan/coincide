@@ -1,7 +1,22 @@
 import AppKit
+import CoincideMarkdown
+import Darwin
 import SwiftUI
 
 @main
+enum CoincideMain {
+    @MainActor static func main() {
+        if CommandLine.arguments.dropFirst() == ["--verify-resources"] {
+            guard let image = NativeMath.image(#"x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}"#, dark: false),
+                  image.cgImage(forProposedRect: nil, context: nil, hints: nil) != nil else {
+                FileHandle.standardError.write(Data("Native math resources could not be rendered.\n".utf8)); exit(EXIT_FAILURE)
+            }
+            print("Native math resources rendered successfully."); return
+        }
+        CoincideApp.main()
+    }
+}
+
 struct CoincideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store = WorkspaceStore()

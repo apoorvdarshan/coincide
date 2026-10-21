@@ -18,6 +18,8 @@ must each be mapped and verified before declaring parity.
   lifecycle, file selection, reveal-in-Finder, and clipboard integration.
 - `CoincideMarkdown`: Swift Markdown/cmark parsing, bounded off-main rendering
   models, native SwiftUI blocks, lexical code coloring, and contained file links.
+  SwiftMath/CoreText renders closed display formulas without a webview. Font
+  resources ship inside the app and have a separate runtime-loading CI check.
 - Codex and Claude run as installed CLI processes over stdio. Coincide uses existing
   provider authentication; no API key is embedded or copied into the workspace.
 - Each local thread has its own provider connection, workspace path, permission
@@ -45,7 +47,7 @@ must each be mapped and verified before declaring parity.
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Not implemented | Cursor, Grok, OpenCode, Antigravity, Pi, Muse, ACP registry and custom providers |
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, legacy migration | Complete provider recovery, checkpoints/finalization and run history, incremental projection storage/performance, full upstream command coverage |
-| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, contained file links with line navigation, tool/reasoning disclosure, focused Enter/Shift-Enter input | Math, media, citations, diagrams/details/alerts, complete language highlighting, attachments, slash/skill/file pickers, plans, steering |
+| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, media, citations, diagrams/details/alerts, complete language highlighting, attachments, slash/skill/file pickers, plans, steering |
 | Git/workspaces | Status, staged/unstaged diff, stage/unstage, commit, branches, worktree creation | Checkout/clone, pull/push, PRs/stacks/multiple hosts, checkpoints/revert, worktree lifecycle/setup |
 | Files | Browse/read/edit UTF-8 with conflict detection and workspace path checks | Search/ignore support, large/binary files, filesystem watching, editor integration |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup | Durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |

@@ -1,5 +1,31 @@
 # Validation record
 
+## 2026-10-22 — native display equations and packaged fonts
+
+- Added SwiftMath 1.7.3 at the locked revision, with its MIT notice and original
+  font bundle/licenses. SwiftMath uses native CoreText rendering. Display formulas
+  accept closed, standalone `$$` or `\[` / `\]` blocks and closed `math` code
+  fences, including fences nested in quotes. Incomplete fences stay as code.
+- The complete local suite passed 60 tests: 43 core, 4 terminal, and 13 Markdown.
+  Math tests check Markdown characters retained inside formulas, protected code
+  and HTML, prices, incomplete delimiters, nested fences, bounded parsing of many
+  unfinished formulas, font loading, fractions/integrals/matrices, invalid-command
+  fallback, and expression-size/nesting limits. A final focused math run passed
+  after excluding protected code/HTML from closing delimiters.
+- Native light/dark offscreen captures include the typeset quadratic formula and
+  its Copy LaTeX control. Original message text remains available through response
+  copy. Oversized or unsupported expressions display source rather than disappearing.
+- Packaging copies the SwiftPM font resource bundle. `--verify-resources` renders
+  a formula before starting the app, without opening a workspace, provider process,
+  or window. CI now runs this check after bundle/signature verification.
+- Native packaging and strict signature verification passed. The resource check
+  also passed from a temporary relocated copy of the complete app; that copy was
+  removed afterward. Both earlier Markdown commits passed GitHub Swift CI.
+
+Inline formulas, same-line display delimiters, display delimiters nested in quotes,
+and full upstream math syntax remain pending. This does not claim KaTeX-level
+coverage, interactive copy verification, or complete T3 transcript parity.
+
 ## 2026-10-22 — native Markdown transcript
 
 - Added Swift Markdown 0.9.0 and Swift cmark 0.9.0 at the revisions locked in

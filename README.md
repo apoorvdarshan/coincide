@@ -38,7 +38,10 @@ continue; restarting the app also holds unfinished work rather than resending it
 Responses render native Markdown headings, lists, task lists, quotes, tables, and
 code blocks with copy controls and basic syntax coloring. Workspace file links
 open the native editor at the referenced line. Web links use the default browser;
-embedded HTML stays inert. Mathematical typesetting and media previews are pending.
+embedded HTML stays inert. Closed display equations on their own lines (`$$` or
+`\[` delimiters) and fenced `math` blocks render through native CoreText, with
+LaTeX copying and readable source fallback. Inline equations and media previews
+are pending.
 
 Open **Terminal** in the toolbar (⌥⌘T) for a native terminal in the conversation's
 workspace. Create multiple tabs, resize the panel, or hide it while commands keep
@@ -67,6 +70,8 @@ The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), with 
 Markdown parsing uses [Swift Markdown](https://github.com/swiftlang/swift-markdown)
 and [Swift cmark](https://github.com/swiftlang/swift-cmark); their licenses and
 notices are also bundled.
+Native equations use [SwiftMath](https://github.com/mgriebling/SwiftMath), with its
+[MIT license](docs/SwiftMath-LICENSE.txt) and original font notices bundled.
 
 T3 Code is copyright © 2026 T3 Tools Inc.; its [MIT license](docs/T3-CODE-LICENSE.txt)
 is preserved here. Coincide is an independent project.

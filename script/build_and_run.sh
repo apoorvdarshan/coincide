@@ -9,10 +9,12 @@ cd "$ROOT_DIR"
 case "$MODE" in run|--debug|--logs|--telemetry|--verify|--build-only) ;; *) echo "usage: $0 [--build-only|--debug|--logs|--telemetry|--verify]" >&2; exit 2 ;; esac
 if [[ "$MODE" != "--build-only" ]]; then swift "$ROOT_DIR/script/stop_app.swift" "$APP_BUNDLE"; fi
 swift build
-BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
+BUILD_DIRECTORY="$(swift build --show-bin-path)"
+BUILD_BINARY="$BUILD_DIRECTORY/$APP_NAME"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 cp "$BUILD_BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Notices"
+/usr/bin/ditto "$BUILD_DIRECTORY/SwiftMath_SwiftMath.bundle" "$APP_BUNDLE/Contents/Resources/SwiftMath_SwiftMath.bundle"
 for NOTICE_FILE in "$ROOT_DIR"/docs/*-LICENSE.txt "$ROOT_DIR"/docs/*-NOTICE.txt; do
   /usr/bin/install -m 644 "$NOTICE_FILE" "$APP_BUNDLE/Contents/Resources/Notices/"
 done
