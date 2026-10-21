@@ -46,7 +46,8 @@ swift test
 ```
 
 Tests cover process streaming/failure/cancellation, protocol framing and request
-correlation, deterministic Codex and Claude approval conversations, persistence/restart,
+correlation, deterministic Codex and Claude approval conversations, journal replay,
+atomic commit failures, command deduplication, migration/restart,
 file conflicts/path containment, and Git/worktree operations. See the porting
 document for live checks and their limitations.
 

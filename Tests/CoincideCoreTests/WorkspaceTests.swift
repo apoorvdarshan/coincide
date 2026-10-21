@@ -22,6 +22,9 @@ func temporaryWorkspace() throws -> URL {
     #expect(try await second.eventCount() == 1)
     let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
     #expect(permissions == 0o600)
+    for suffix in ["-wal", "-shm"] where FileManager.default.fileExists(atPath: url.path + suffix) {
+        #expect(try FileManager.default.attributesOfItem(atPath: url.path + suffix)[.posixPermissions] as? Int == 0o600)
+    }
 }
 
 @Test func restartMarksOnlyActiveTurnsInterrupted() {

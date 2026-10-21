@@ -1,5 +1,31 @@
 # Validation record
 
+## 2026-10-21 — replayable workspace journal
+
+- `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test`: all 29 tests passed
+  across core (25) and terminal (4). New coverage includes replay of streaming
+  Unicode combining marks, reorder/truncate/removal, concurrent command-ID
+  deduplication, stale revision rejection, legacy import, projection rebuild,
+  SQLite transaction failure/rollback, empty history, and future/incomplete data.
+- Events, projection, receipt, and audit marker commit together. A trigger that
+  failed the last transaction write left no partial journal events, receipt, or
+  projection change; retrying that command after removing the fault succeeded.
+- The app's existing database was backed up before migration. Canonical JSON
+  comparison confirmed that its project, both conversations, and all 12 existing
+  messages were unchanged after the native app imported the legacy snapshot.
+- A real Claude turn through the migrated native app returned
+  `COINCIDE_JOURNAL_SMOKE_OK` and finished `idle`. The journal recorded metadata,
+  message-upsert, and streamed text-append events for that turn. Development
+  packaging and strict code-signature verification passed.
+- The database and its WAL/SHM files use private permissions. Replay reads one
+  record at a time rather than materializing the whole journal in memory.
+
+The desktop currently derives journal mutations from serialized snapshot writes.
+The explicit commit API deduplicates stable command IDs; the convenience `save`
+API creates a fresh ID for each call. Normalized domain commands, a transactional
+effect outbox/worker, queued turns, and incremental projection storage still need
+to be implemented. No exactly-once provider execution is claimed.
+
 ## 2026-10-21 — native terminal
 
 - Added SwiftTerm 1.99.1 at locked revision

@@ -12,7 +12,7 @@ let package = Package(
         .target(name: "CoincideCore", dependencies: ["CSQLite"]),
         .target(name: "CoincideTerminal", dependencies: ["CoincideCore", .product(name: "SwiftTerm", package: "SwiftTerm")]),
         .executableTarget(name: "Coincide", dependencies: ["CoincideCore", "CoincideTerminal"]),
-        .testTarget(name: "CoincideCoreTests", dependencies: ["CoincideCore"], resources: [.copy("Fixtures")]),
+        .testTarget(name: "CoincideCoreTests", dependencies: ["CoincideCore", "CSQLite"], resources: [.copy("Fixtures")]),
         .testTarget(name: "CoincideTerminalTests", dependencies: ["CoincideTerminal"])
     ]
 )
