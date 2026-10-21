@@ -2,16 +2,42 @@ import CoincideCore
 import Foundation
 import Observation
 
+enum WorkspaceFileSearchMode: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case paths, contents
+    var id: String { rawValue }
+}
+struct WorkspaceFileSearchRequest: Hashable, Sendable {
+    let directory: String
+    let query: String
+    let mode: WorkspaceFileSearchMode
+    let caseSensitive: Bool
+    let wholeWord: Bool
+    let useRegex: Bool
+}
+private enum FileBrowserListing: Sendable {
+    case paths(WorkspaceEntryPage)
+    case contents(WorkspaceContentSearchResult)
+}
+
 /// Shared workspace editor state survives inspector visibility and conversation changes.
 @MainActor @Observable
 final class FileBrowserStore {
+    typealias DocumentLoader = @Sendable (String) async throws -> WorkspaceTextDocument
     let workspacePath: String
     let service: WorkspaceFileService
     private weak var workspace: WorkspaceStore?
+    private let loadDocument: DocumentLoader
     private let editorID = UUID()
     var directory = ""
     var query = ""
+    var searchMode = WorkspaceFileSearchMode.paths
+    var caseSensitive = false
+    var wholeWord = false
+    var useRegex = false
+    var searchRequest: WorkspaceFileSearchRequest { .init(directory: directory, query: query, mode: searchMode, caseSensitive: caseSensitive, wholeWord: wholeWord, useRegex: useRegex) }
     private(set) var entries: [WorkspaceEntry] = []
+    private(set) var contentMatches: [WorkspaceContentMatch] = []
+    private(set) var regexFallbackError: String?
     private(set) var truncated = false
     private(set) var isLoading = false
     private(set) var isReading = false
@@ -24,9 +50,10 @@ final class FileBrowserStore {
     var operationError: String?
     var navigation: FileNavigation?
     private var listID = UUID()
+    private var publishedSearchRequest: WorkspaceFileSearchRequest?
     private var readID = UUID()
     private var lastNavigationID: UUID?
-    private var listTask: Task<WorkspaceEntryPage, any Error>?
+    private var listTask: Task<FileBrowserListing, any Error>?
     private var readTask: Task<WorkspaceTextDocument, any Error>?
     private var writeTask: Task<WorkspaceTextDocument, any Error>?
     private var watchTask: Task<Void, Never>?
@@ -35,8 +62,9 @@ final class FileBrowserStore {
     var isDirty: Bool { contents != original }
     var canWrite: Bool { !closed && workspace?.canAccessWorkspaceFiles(workspacePath) == true && document?.revision != nil && document?.truncated == false && !isReading && !isSaving }
 
-    init(workspace: WorkspaceStore, path: String, service: WorkspaceFileService) {
+    init(workspace: WorkspaceStore, path: String, service: WorkspaceFileService, documentLoader: DocumentLoader? = nil) {
         self.workspace = workspace; workspacePath = path; self.service = service
+        loadDocument = documentLoader ?? { try await service.readFile(relativePath: $0) }
     }
     func start() async {
         guard !closed, !starting, watchTask == nil else { return }
@@ -53,20 +81,35 @@ final class FileBrowserStore {
     }
     func reloadEntries() async {
         guard !closed, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return }
-        let id = UUID(); listID = id; isLoading = true; listTask?.cancel()
-        let service = service, directory = directory, query = query
-        let task = Task {
-            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return try await service.listEntries(directoryPath: directory) }
-            return try await service.searchEntries(query: query)
+        let id = UUID(); listID = id; isLoading = true
+        let previous = listTask; previous?.cancel()
+        let service = service, request = searchRequest
+        if publishedSearchRequest != request { entries = []; contentMatches = []; regexFallbackError = nil; listingError = nil; truncated = false }
+        defer { if listID == id { isLoading = false; listTask = nil } }
+        _ = await previous?.result
+        guard !closed, !Task.isCancelled, listID == id, request == searchRequest, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return }
+        let task = Task<FileBrowserListing, any Error> {
+            if request.mode == .contents {
+                if request.query.isEmpty { return .contents(.init(matches: [], truncated: false)) }
+                let result = try await service.searchContents(query: request.query, caseSensitive: request.caseSensitive, wholeWord: request.wholeWord, useRegex: request.useRegex)
+                return .contents(result)
+            }
+            if request.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let page = try await service.listEntries(directoryPath: request.directory); return .paths(page)
+            }
+            let page = try await service.searchEntries(query: request.query); return .paths(page)
         }
         listTask = task
-        defer { if listID == id { isLoading = false; listTask = nil } }
         do {
             let page = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-            guard !closed, !Task.isCancelled, listID == id, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return }
-            entries = page.entries; truncated = page.truncated; listingError = nil
+            guard !closed, !Task.isCancelled, listID == id, request == searchRequest, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return }
+            switch page {
+            case .paths(let page): entries = page.entries; contentMatches = []; truncated = page.truncated; regexFallbackError = nil
+            case .contents(let page): entries = []; contentMatches = page.matches; truncated = page.truncated; regexFallbackError = page.regexFallbackError
+            }
+            listingError = nil; publishedSearchRequest = request
         } catch is CancellationError { }
-        catch { if !closed, !Task.isCancelled, listID == id { entries = []; truncated = false; listingError = error.localizedDescription } }
+        catch { if !closed, !Task.isCancelled, listID == id, request == searchRequest { entries = []; contentMatches = []; truncated = false; regexFallbackError = nil; listingError = error.localizedDescription } }
     }
     func setContents(_ text: String) {
         guard canWrite else { return }
@@ -74,10 +117,13 @@ final class FileBrowserStore {
     }
     @discardableResult func open(_ path: String, navigation: FileNavigation? = nil, discardChanges: Bool = false) async -> Bool {
         guard !closed, !isSaving, workspace?.canAccessWorkspaceFiles(workspacePath) == true, !isDirty || discardChanges else { return false }
-        let id = UUID(); readID = id; isReading = true; readTask?.cancel()
-        let service = service, task = Task { try await service.readFile(relativePath: path) }
-        readTask = task
+        let id = UUID(); readID = id; isReading = true
+        let previous = readTask; previous?.cancel()
         defer { if readID == id { isReading = false; readTask = nil } }
+        _ = await previous?.result
+        guard !closed, !Task.isCancelled, readID == id, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
+        let loader = loadDocument, task = Task { try await loader(path) }
+        readTask = task
         do {
             let value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
             guard !closed, !Task.isCancelled, readID == id, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
@@ -87,7 +133,11 @@ final class FileBrowserStore {
         } catch is CancellationError { return false }
         catch { if !closed, !Task.isCancelled, readID == id { operationError = error.localizedDescription }; return false }
     }
-    func navigate(_ navigation: FileNavigation) { self.navigation = navigation }
+    func navigate(_ navigation: FileNavigation) {
+        guard !closed, document?.relativePath == navigation.path, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return }
+        readID = UUID(); readTask?.cancel(); isReading = false
+        self.navigation = navigation
+    }
     func consumeNavigation(_ navigation: FileNavigation) -> Bool {
         guard lastNavigationID != navigation.id else { return false }
         lastNavigationID = navigation.id; return true

@@ -32,7 +32,11 @@ struct SourceEditor: NSViewRepresentable {
         guard let navigation, context.coordinator.navigationID != navigation.id else { return }
         context.coordinator.navigationID = navigation.id
         if let line = navigation.line {
-            let range = SourceTextLocation.range(in: text, line: line)
+            var range = SourceTextLocation.range(in: text, line: line)
+            if let column = navigation.utf16Column {
+                let offset = min(max(0, column), range.length)
+                range = NSRange(location: range.location + offset, length: min(max(0, navigation.utf16Length ?? 0), range.length - offset))
+            }
             editor.setSelectedRange(range); editor.scrollRangeToVisible(range)
         }
     }

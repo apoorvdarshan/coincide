@@ -66,6 +66,7 @@ public actor WorkspaceFileService {
     public nonisolated let root: URL
     private let anchor: Task<WorkspaceFileRoot, any Error>
     private let git: WorkspaceFileGit
+    private let contentSearchLimits: WorkspaceContentSearchLimits
     private struct Job: Sendable { let cancel: @Sendable () -> Void; let drain: Task<Void, Never> }
     private var jobs: [UUID: Job] = [:]
     private var closed = false
@@ -80,12 +81,15 @@ public actor WorkspaceFileService {
         let folder = self.root
         anchor = Task.detached { try WorkspaceFileRoot(root: folder) }
         git = .init(environment: nil, executable: nil)
+        contentSearchLimits = .init()
     }
-    init(root: URL, environment: [String: String], gitExecutable: URL? = nil) {
+    init(root: URL, environment: [String: String], gitExecutable: URL? = nil,
+         contentSearchLimits: WorkspaceContentSearchLimits = .init()) {
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
         let folder = self.root
         anchor = Task.detached { try WorkspaceFileRoot(root: folder) }
         git = .init(environment: environment, executable: gitExecutable)
+        self.contentSearchLimits = contentSearchLimits
     }
     private func perform<T: Sendable>(_ operation: @escaping @Sendable (WorkspaceFileRoot, WorkspaceFileGit) async throws -> T) async throws -> T {
         guard !closed else { throw WorkspaceFileError(.closed, "This workspace file session is closed.") }
@@ -123,30 +127,29 @@ public actor WorkspaceFileService {
             var query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             while let first = query.first, "@./".contains(first) { query.removeFirst() }
             let deadline = ContinuousClock.now + .seconds(15)
-            var pending = [""], visited = 0, truncated = false, matches: [(Int, WorkspaceEntry)] = []
-            while let directory = pending.popLast() {
+            let page = try await WorkspaceFileWalker.entries(root: folder, git: git, deadline: deadline)
+            var truncated = page.truncated, matches: [(Int, WorkspaceEntry)] = []
+            for entry in page.entries {
                 try Task.checkCancellation()
-                guard ContinuousClock.now < deadline, visited < 25_000 else { truncated = true; break }
-                let page: WorkspaceEntryPage
-                do { page = try folder.list(directory, deadline: deadline) }
-                catch let error as WorkspaceFileError where error.failure == .permissionDenied || error.failure == .missing { continue }
-                let ignored: Set<String>
-                do { ignored = try await git.ignored(page.entries.map(\.path), root: folder, includeTracked: true, deadline: deadline) }
-                catch let error as WorkspaceFileError where error.failure == .timedOut { truncated = true; break }
-                truncated = truncated || page.truncated
-                for entry in page.entries {
-                    try Task.checkCancellation(); visited += 1
-                    if visited > 25_000 || ContinuousClock.now >= deadline { truncated = true; break }
-                    if ignored.contains(entry.path) { continue }
-                    if entry.kind == .directory { pending.append(entry.path) }
-                    if imageOnly ? (entry.kind != .file || !Self.isImage(entry.path)) : (kind != nil && entry.kind != kind) { continue }
-                    guard let score = Self.score(entry.path, query: query) else { continue }
-                    matches.append((score, entry))
-                    matches.sort { $0.0 == $1.0 ? $0.1.path < $1.1.path : $0.0 < $1.0 }
-                    if matches.count > limit { truncated = true; matches.removeLast() }
-                }
+                guard ContinuousClock.now < deadline else { truncated = true; break }
+                if imageOnly ? (entry.kind != .file || !Self.isImage(entry.path)) : (kind != nil && entry.kind != kind) { continue }
+                guard let score = Self.score(entry.path, query: query) else { continue }
+                matches.append((score, entry))
+                matches.sort { $0.0 == $1.0 ? $0.1.path < $1.1.path : $0.0 < $1.0 }
+                if matches.count > limit { truncated = true; matches.removeLast() }
             }
             return .init(entries: matches.map(\.1), truncated: truncated)
+        }
+    }
+    public func searchContents(query: String, limit: Int = 500, caseSensitive: Bool = false,
+                               wholeWord: Bool = false, useRegex: Bool = false) async throws -> WorkspaceContentSearchResult {
+        guard !query.isEmpty, query.utf16.count <= 256, !query.contains("\0"), (1...500).contains(limit) else {
+            throw WorkspaceFileError(.invalidQuery, "Use a nonempty search of at most 256 characters and a result limit from 1 to 500.")
+        }
+        let limits = contentSearchLimits
+        return try await perform { folder, git in
+            try await WorkspaceContentSearch.search(root: folder, git: git, query: query, limit: limit,
+                caseSensitive: caseSensitive, wholeWord: wholeWord, useRegex: useRegex, limits: limits)
         }
     }
     public func listIgnoredFiles() async throws -> WorkspaceIgnoredFilePage {

@@ -57,7 +57,7 @@ final class CoincideDesktopUITests: XCTestCase {
         groupedHeader.rightClick()
         let createInCheckout = app.menuItems["New Thread in Checkout"]
         XCTAssertTrue(createInCheckout.waitForExistence(timeout: 5)); createInCheckout.click()
-        let secondCheckout = createInCheckout.menuItems[second.path]
+        let secondCheckout = createInCheckout.menuItems.matching(NSPredicate(format: "title == %@", second.path)).element
         XCTAssertTrue(secondCheckout.waitForExistence(timeout: 5)); secondCheckout.click()
         XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
         assertConversationWorkspace(app, path: second.path)
@@ -70,12 +70,12 @@ final class CoincideDesktopUITests: XCTestCase {
         groupedHeader.rightClick()
         let checkouts = app.menuItems["Checkouts"]
         XCTAssertTrue(checkouts.waitForExistence(timeout: 5)); checkouts.click()
-        XCTAssertTrue(checkouts.menuItems[first.path].waitForExistence(timeout: 5))
-        XCTAssertTrue(checkouts.menuItems[second.path].exists, "The native checkout menu must expose both physical paths.")
+        XCTAssertTrue(checkouts.menuItems.matching(NSPredicate(format: "title == %@", first.path)).element.waitForExistence(timeout: 5))
+        XCTAssertTrue(checkouts.menuItems.matching(NSPredicate(format: "title == %@", second.path)).element.exists, "The native checkout menu must expose both physical paths.")
         app.typeKey(.escape, modifierFlags: []); app.typeKey(.escape, modifierFlags: [])
         let checkoutPreference = app.descendants(matching: .any).matching(identifier: "new-conversation-checkout").element
         XCTAssertTrue(checkoutPreference.waitForExistence(timeout: 5)); checkoutPreference.click()
-        let firstChoice = app.menuItems[first.path]
+        let firstChoice = app.menuItems.matching(NSPredicate(format: "title == %@", first.path)).element
         XCTAssertTrue(firstChoice.waitForExistence(timeout: 5)); firstChoice.click()
         XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
         XCTAssertEqual(composer.value as? String, secondDraft, "Choosing a future checkout must preserve the selected conversation's draft.")

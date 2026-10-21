@@ -1,5 +1,7 @@
 import CoincideCore
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import Coincide
 
@@ -116,4 +118,112 @@ func nativeFileCreationAndPreviewKeepExistingBytesAndReferencesPersistOnlyInTheC
         #expect(reopened.thread(thread.id)?.queuedTurns == thread.queuedTurns && reopened.thread(thread.id)?.provider == thread.provider)
         await reopened.shutdown()
     } catch { await model.shutdown(); await store.shutdown(); throw error }
+}
+
+@MainActor @Test(.timeLimit(.minutes(1)))
+func nativeContentSearchKeepsConversationAndDirtyEditorStateWhileOpeningTheExactUTF16Match() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-content-search-ui-\(UUID())", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let checkout = root.appendingPathComponent("Checkout", isDirectory: true)
+    try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+    let source = "Header\n😀 needle NEEDLE needlework\nneedle\n"
+    try Data(source.utf8).write(to: checkout.appendingPathComponent("source.swift"))
+    try Data("Nothing to find".utf8).write(to: checkout.appendingPathComponent("other.txt"))
+    let project = WorkspaceProject(path: checkout.path)
+    var thread = CodingThread(project: project); thread.draft = "Keep my unsent prompt"
+    var initial = WorkspaceSnapshot(); initial.projects = [project]; initial.threads = [thread]
+    let databaseURL = root.appendingPathComponent("workspace.sqlite"), database = try WorkspaceDatabase(url: databaseURL)
+    _ = try await database.commit(initial, event: "fixture", commandID: UUID())
+    let store = WorkspaceStore(engine: try WorkspaceEngine(url: databaseURL, identityResolver: { _ in nil }))
+    await store.load()
+    let model = try store.fileBrowser(path: checkout.path)
+    do {
+        await model.start()
+        let conversations = store.snapshot.threads
+        model.searchMode = .contents; model.query = "needle"; model.wholeWord = true
+        await model.reloadEntries()
+        #expect(model.listingError == nil && model.regexFallbackError == nil)
+        let match = try #require(model.contentMatches.first { $0.lineNumber == 2 })
+        #expect(match.path == "source.swift" && match.matchRanges.map(\.start) == [3, 10])
+        let range = try #require(match.matchRanges.first)
+        let navigation = FileNavigation(workspacePath: checkout.path, path: match.path, line: match.lineNumber,
+                                        utf16Column: range.start, utf16Length: range.end - range.start)
+        #expect(await model.open(match.path, navigation: navigation))
+        let host = NSHostingView(rootView: SourceEditor(text: Binding(get: { model.contents }, set: { model.setContents($0) }),
+                                                       path: match.path, navigation: model.navigation, isEditable: model.canWrite)
+            .frame(width: 400, height: 240))
+        host.frame = NSRect(x: 0, y: 0, width: 400, height: 240); host.layoutSubtreeIfNeeded()
+        func editor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            for child in view.subviews { if let text = editor(in: child) { return text } }
+            return nil
+        }
+        let textView = try #require(editor(in: host))
+        #expect(textView.string == source)
+        #expect((textView.string as NSString).substring(with: textView.selectedRange()) == "needle")
+        #expect(textView.selectedRange() == NSRange(location: 10, length: 6))
+        model.setContents(source + "My unsaved addition\n")
+        let dirty = model.contents
+        model.caseSensitive = true; model.query = "NEEDLE"; await model.reloadEntries()
+        #expect(model.contentMatches.count == 1 && model.contentMatches[0].matchRanges.map(\.start) == [10])
+        #expect(model.contents == dirty && model.isDirty)
+        model.useRegex = true; model.query = "["; await model.reloadEntries()
+        #expect(model.contentMatches.isEmpty && model.regexFallbackError != nil && model.listingError == nil)
+        model.searchMode = .paths; model.query = "other"; await model.reloadEntries()
+        #expect(model.entries.map(\.path) == ["other.txt"] && model.contentMatches.isEmpty && model.regexFallbackError == nil)
+        #expect(model.contents == dirty && store.snapshot.threads == conversations)
+        #expect(store.selectedThreadID == thread.id && store.thread(thread.id)?.draft == "Keep my unsent prompt")
+        #expect(try String(contentsOf: checkout.appendingPathComponent("source.swift"), encoding: .utf8) == source)
+    } catch { await store.shutdown(); throw error }
+    await store.shutdown()
+}
+
+private actor HeldNativeFileRead {
+    private var waiter: CheckedContinuation<Void, Never>?
+    private(set) var entered = false
+    func hold() async { entered = true; await withCheckedContinuation { waiter = $0 } }
+    func release() { waiter?.resume(); waiter = nil }
+}
+
+@MainActor @Test(.timeLimit(.minutes(1)))
+func sameFileNavigationCancelsAnOlderPendingOpenWithoutReplacingTheLatestEditor() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-file-navigation-\(UUID())", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let checkout = root.appendingPathComponent("Checkout", isDirectory: true)
+    try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+    for name in ["a.txt", "b.txt"] { try Data(name.utf8).write(to: checkout.appendingPathComponent(name)) }
+    let project = WorkspaceProject(path: checkout.path), thread = CodingThread(project: project)
+    var initial = WorkspaceSnapshot(); initial.projects = [project]; initial.threads = [thread]
+    let databaseURL = root.appendingPathComponent("workspace.sqlite"), database = try WorkspaceDatabase(url: databaseURL)
+    _ = try await database.commit(initial, event: "fixture", commandID: UUID())
+    let store = WorkspaceStore(engine: try WorkspaceEngine(url: databaseURL, identityResolver: { _ in nil }))
+    await store.load()
+    let service = try store.fileService(path: checkout.path), gate = HeldNativeFileRead()
+    let model = FileBrowserStore(workspace: store, path: checkout.path, service: service, documentLoader: { path in
+        let value = try await service.readFile(relativePath: path)
+        if path == "b.txt" { await gate.hold() }
+        return value
+    })
+    var pending: Task<Bool, Never>?
+    do {
+        #expect(await model.open("a.txt"))
+        pending = Task { await model.open("b.txt") }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await !gate.entered {
+            guard ContinuousClock.now < deadline else { throw CoincideError("The held native file read did not start.") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.isReading && !model.canWrite)
+        let latest = FileNavigation(workspacePath: checkout.path, path: "a.txt", line: 1, utf16Column: 1, utf16Length: 2)
+        model.navigate(latest)
+        #expect(model.document?.relativePath == "a.txt" && model.navigation == latest && !model.isReading && model.canWrite)
+        model.setContents("Keep my latest edit")
+        await gate.release()
+        #expect(await pending?.value == false)
+        #expect(model.document?.relativePath == "a.txt" && model.navigation == latest && model.contents == "Keep my latest edit" && model.isDirty)
+        #expect(model.operationError == nil && store.snapshot.threads == [thread])
+        #expect(try String(contentsOf: checkout.appendingPathComponent("a.txt"), encoding: .utf8) == "a.txt")
+        #expect(try String(contentsOf: checkout.appendingPathComponent("b.txt"), encoding: .utf8) == "b.txt")
+    } catch { await gate.release(); _ = await pending?.value; await model.shutdown(); await store.shutdown(); throw error }
+    await model.shutdown(); await store.shutdown()
 }

@@ -161,7 +161,7 @@ final class WorkspaceFileRoot: @unchecked Sendable {
             if next == folder { break }; folder = next
         }
     }
-    func list(_ relative: String, deadline: ContinuousClock.Instant? = nil) throws -> WorkspaceEntryPage {
+    func list(_ relative: String, deadline: ContinuousClock.Instant? = nil, limit: Int = 25_000) throws -> WorkspaceEntryPage {
         try validate()
         let dir = try openDirectory(relative)
         guard !dir.relative.split(separator: "/").contains(where: { Self.gitName(String($0)) }) else { throw WorkspaceFileError(.gitMetadata, "Git metadata folders are not shown in the file browser.") }
@@ -170,6 +170,7 @@ final class WorkspaceFileRoot: @unchecked Sendable {
         let copy = try elevatedFileFD(openat(dir.fd, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC))
         guard let stream = fdopendir(copy) else { Darwin.close(copy); throw fileFailure() }
         defer { closedir(stream) }
+        let maximum = max(1, min(25_000, limit))
         var result: [WorkspaceEntry] = [], truncated = false
         while let entry = readdir(stream) {
             try Task.checkCancellation()
@@ -179,7 +180,7 @@ final class WorkspaceFileRoot: @unchecked Sendable {
             var info = stat()
             guard fstatat(dir.fd, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { continue }
             guard regular(info) || directory(info) else { continue }
-            if result.count == 25_000 { truncated = true; break }
+            if result.count == maximum { truncated = true; break }
             result.append(.init(path: relative.isEmpty ? name : relative + "/" + name, kind: directory(info) ? .directory : .file))
         }
         try validate(dir)
@@ -192,7 +193,7 @@ final class WorkspaceFileRoot: @unchecked Sendable {
         guard fstatat(dir.fd, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { return nil }
         try validate(dir); return regular(info) ? Int(info.st_size) : nil
     }
-    func read(_ relative: String, allowMissing: Bool, maxBytes: Int) throws -> WorkspaceTextDocument {
+    func read(_ relative: String, allowMissing: Bool, maxBytes: Int, onRead: (Int) -> Void = { _ in }) throws -> WorkspaceTextDocument {
         let target: (WorkspaceFileDirectory, String, String)
         do { target = try parent(relative) }
         catch let error as WorkspaceFileError where allowMissing && error.failure == .missing {
@@ -208,19 +209,18 @@ final class WorkspaceFileRoot: @unchecked Sendable {
         let file = try elevatedFileFD(opened); defer { Darwin.close(file) }
         var before = stat(); guard fstat(file, &before) == 0 else { throw fileFailure() }
         guard regular(before) else { throw WorkspaceFileError(.notFile, "This workspace path is not a regular file.") }
-        var bytes = Data(), buffer = [UInt8](repeating: 0, count: min(65_536, maxBytes + 1))
-        while bytes.count <= maxBytes {
+        var bytes = Data(), buffer = [UInt8](repeating: 0, count: min(65_536, maxBytes))
+        while bytes.count < maxBytes {
             try Task.checkCancellation()
-            let remaining = min(buffer.count, maxBytes + 1 - bytes.count)
+            let remaining = min(buffer.count, maxBytes - bytes.count)
             let count = Darwin.read(file, &buffer, remaining)
             if count < 0 { if errno == EINTR { continue }; throw fileFailure() }
-            if count == 0 { break }; bytes.append(contentsOf: buffer.prefix(count))
+            if count == 0 { break }; onRead(count); bytes.append(contentsOf: buffer.prefix(count))
         }
         var after = stat(); guard fstat(file, &after) == 0 else { throw fileFailure() }
         guard sameFile(before, after), before.st_size == after.st_size, before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
               before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec else { throw WorkspaceFileError(.conflict, "This file changed while it was being read. Reload it.") }
-        let truncated = bytes.count > maxBytes || before.st_size > maxBytes
-        if bytes.count > maxBytes { bytes.removeLast(bytes.count - maxBytes) }
+        let truncated = before.st_size > maxBytes
         guard !bytes.contains(0) else { throw WorkspaceFileError(.binary, "This binary file cannot be opened in the text editor.") }
         var text = String(data: bytes, encoding: .utf8)
         if text == nil, truncated, let prefix = Self.completeUTF8Prefix(bytes) {

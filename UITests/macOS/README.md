@@ -29,6 +29,8 @@ Native panel and alert buttons are scoped to their visible containers so Touch
 Bar duplicates cannot satisfy a query. For the pinned XCTest runtime's observed
 512-unit alert-text truncation, on-device Vision checks both warning phrases in
 the actual alert screenshot; the image and recognized text remain in the result.
+Full checkout paths use exact menu-title predicates because XCTest's convenience
+identifier queries reject strings longer than 128 characters.
 
 The first two tests exercise light/dark actual windows, File-menu or keyboard project
 creation, an initial Git commit, project renaming, collapse with the selected

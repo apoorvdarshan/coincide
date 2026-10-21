@@ -125,6 +125,13 @@ must each be mapped and verified before declaring parity.
   The composer can insert escaped relative file/folder links into a captured
   conversation without attaching bytes. No upstream filesystem-watch RPC is
   claimed; watching is a native implementation capability.
+- Native content search preserves whitespace and UTF-16 source ranges, with
+  literal/regex, case, and Unicode whole-word controls. The inspector groups
+  highlighted lines by path and opens the selected match in the native editor.
+  Matching is cooperative and bounded; partial results and native regex errors
+  are explicit. The native ICU regex dialect is not claimed to reproduce fff
+  fallback results or ranking. Searches retain dirty buffers and conversation
+  state and never replace file contents.
 - Default permission mode is supervised. Full access is available as an explicit
   per-thread choice. Unsupported interactive provider requests fail explicitly.
 
@@ -140,7 +147,7 @@ must each be mapped and verified before declaring parity.
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
 | Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, queued-message readiness and restart recovery, cancellable operations and app-shutdown cleanup, worktree creation | PRs/stacks/host integrations, checkpoints/revert, worktree lifecycle/setup, automatic pull policies, broader credential and network failure coverage |
-| Files | Async hidden/empty/ignored directory browsing, bounded path search and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and file-link navigation | Content/regex search, arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, external editor integration, crash recovery of unsaved buffers, cached index/ranking parity |
+| Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, external editor integration, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup | Durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |
 | Desktop integration | App bundle, commands/shortcuts, appearance | Notifications, deep links, updates, browser/preview, screenshot/import features, power/resources, accessibility QA |

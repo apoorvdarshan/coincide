@@ -44,6 +44,11 @@ discarding unsaved files. Save checks the original file revision before replacin
 it; concurrent external writers can still race the final check, so this is not
 cross-process locking.
 
+Switch file search to **Contents** to search text across the workspace. **Aa**,
+**Word**, and `.*` control case, whole words, and regular expressions. Results
+show matching lines and highlight occurrences; choosing one opens its file at
+the match. Partial results and unsupported expressions are shown explicitly.
+
 Use **@** beside the composer to search for a workspace file or folder and insert
 a relative link into that conversation's draft. References do not copy file
 contents or attach files automatically.

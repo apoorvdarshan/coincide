@@ -12,7 +12,7 @@ struct WorkspaceFilesView: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack {
-                Button { model.directory = (model.directory as NSString).deletingLastPathComponent; model.query = "" } label: { Image(systemName: "chevron.up") }
+                Button { model.directory = (model.directory as NSString).deletingLastPathComponent; model.query = ""; model.searchMode = .paths } label: { Image(systemName: "chevron.up") }
                     .disabled(model.directory.isEmpty).help("Parent folder").accessibilityLabel("Parent folder")
                 Text(model.directory.isEmpty ? "Workspace" : model.directory).lineLimit(1).truncationMode(.middle)
                 Spacer()
@@ -21,23 +21,31 @@ struct WorkspaceFilesView: View {
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .help("Refresh files").accessibilityLabel("Refresh files")
             }.padding(.horizontal)
-            TextField("Search workspace files", text: $model.query).textFieldStyle(.roundedBorder).padding(.horizontal)
+            Picker("Search", selection: $model.searchMode) {
+                Text("Paths").tag(WorkspaceFileSearchMode.paths)
+                Text("Contents").tag(WorkspaceFileSearchMode.contents)
+            }.pickerStyle(.segmented).padding(.horizontal).accessibilityIdentifier("workspace-search-mode")
+            TextField(model.searchMode == .paths ? "Search workspace files" : "Search file contents", text: $model.query).textFieldStyle(.roundedBorder).padding(.horizontal)
                 .accessibilityIdentifier("workspace-file-search")
+            if model.searchMode == .contents {
+                HStack {
+                    Toggle("Aa", isOn: $model.caseSensitive).help("Match case").accessibilityLabel("Match case")
+                    Toggle("Word", isOn: $model.wholeWord).help("Match whole words").accessibilityLabel("Whole words")
+                    Toggle(".*", isOn: $model.useRegex).help("Regular expression").accessibilityLabel("Regular expression")
+                    Spacer(minLength: 0)
+                }.toggleStyle(.button).font(.caption).padding(.horizontal)
+            }
             if model.isLoading { ProgressView().controlSize(.small) }
             if let error = model.listingError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal) }
-            List(model.entries, id: \.path) { entry in
-                Button {
-                    if entry.isDirectory { model.directory = entry.path; model.query = "" }
-                    else { requestOpen(entry.path) }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: entry.isDirectory ? "folder" : "doc.text")
-                        Text(model.query.isEmpty ? entry.name : entry.path).lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 0)
-                        if entry.ignored == true { Text("Ignored").font(.caption2).foregroundStyle(.secondary) }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(.plain).accessibilityIdentifier("workspace-entry-" + entry.path)
-            }.frame(minHeight: 110, maxHeight: 220)
+            if model.searchMode == .contents {
+                WorkspaceContentSearchResults(matches: model.contentMatches) { match in
+                    let range = match.matchRanges.first
+                    let navigation = FileNavigation(workspacePath: model.workspacePath, path: match.path, line: match.lineNumber,
+                                                    utf16Column: range?.start, utf16Length: range.map { $0.end - $0.start })
+                    requestOpen(match.path, navigation: navigation)
+                }.frame(minHeight: 110, maxHeight: 220)
+            } else { pathResults.frame(minHeight: 110, maxHeight: 220) }
+            if let error = model.regexFallbackError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal) }
             if model.truncated { Text("Some results were omitted. Narrow your search to see more.").font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
             if let error = model.operationError { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(.horizontal) }
             if let document = model.document {
@@ -62,7 +70,7 @@ struct WorkspaceFilesView: View {
                 ContentUnavailableView("Select a File", systemImage: "doc.text", description: Text("Open a text file to read or edit it."))
             }
         }
-        .task(id: model.query + "\0" + model.directory) {
+        .task(id: model.searchRequest) {
             do { if !model.query.isEmpty { try await Task.sleep(for: .milliseconds(180)) }; try Task.checkCancellation(); await model.reloadEntries() }
             catch { }
         }
@@ -93,7 +101,23 @@ struct WorkspaceFilesView: View {
         }
     }
     private func requestOpen(_ path: String, navigation: FileNavigation? = nil) {
-        if model.isDirty { pendingPath = path; pendingNavigation = navigation; discard = true }
+        if path == model.document?.relativePath, let navigation { model.navigate(navigation) }
+        else if model.isDirty { pendingPath = path; pendingNavigation = navigation; discard = true }
         else { Task { await model.open(path, navigation: navigation) } }
+    }
+    private var pathResults: some View {
+        List(model.entries, id: \.path) { entry in
+            Button {
+                if entry.isDirectory { model.directory = entry.path; model.query = "" }
+                else { requestOpen(entry.path) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: entry.isDirectory ? "folder" : "doc.text")
+                    Text(model.query.isEmpty ? entry.name : entry.path).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    if entry.ignored == true { Text("Ignored").font(.caption2).foregroundStyle(.secondary) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain).accessibilityIdentifier("workspace-entry-" + entry.path)
+        }
     }
 }

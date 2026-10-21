@@ -1,5 +1,56 @@
 # Validation record
 
+## 2026-10-22 — native workspace content search
+
+- Added whitespace-preserving literal/regex search with case and Unicode whole-word
+  options. Matches use one-based lines and original UTF-16/end-exclusive ranges.
+  Whole-word filtering handles letters, marks, numbers, underscore, astral scalars,
+  punctuation-edged adjacent matches, and later accepted candidates after rejected
+  raw matches. Zero-width regex matches are bounded and excluded in whole-word mode.
+- Path and content searches share fresh, anchored, ignore-aware discovery: at most
+  25,000 entries and a 15-second discovery budget. Content matching has a cooperative
+  250-ms budget, at most 500 matching lines, 100 lines per file, 100 ranges per line,
+  1 MiB read per file, 32 MiB aggregate reads, and 16,384 UTF-16 units per line.
+  Binary/malformed prefixes consume the read budget before exclusion. Large-file
+  prefixes contribute complete lines only. Every omission or exhausted budget is
+  reported through `truncated`; queries are never written into diagnostics.
+- Native ICU regex compilation failures return a generic visible error with no
+  pattern or raw Foundation diagnostic. SDK-supported progress callbacks, per-line
+  checks, and owned task cancellation provide cooperative interruption. The
+  pathological-pattern regression checks partial-result behavior under the test
+  framework timeout; it does not prove a specific callback interleaving or a hard
+  real-time deadline. Native regex/fallback semantics are not fff compatibility.
+- The inspector adds Paths/Contents, Match Case, Whole Words, and Regex controls.
+  A lazy native list groups and highlights matching lines. Opening a result targets
+  its captured file, line, and UTF-16 range, with existing dirty-buffer confirmation.
+  Same-file navigation retains unsaved edits. Search generations and complete
+  request/options fence late results; superseded reads/scans cancel and drain before
+  a replacement starts. Same-file navigation cancels and fences an older pending
+  other-file open while retaining its shutdown drain. A held real-read completion
+  verifies that the latest navigation and subsequent dirty edit cannot be replaced.
+  Watch refreshes preserve conversation and dirty editor state.
+- The full suite passed 272 tests: 225 core, 4 terminal, 13 Markdown, and 30 native
+  UI/store. Thirteen new core cases cover Unicode/CRLF/case folding, literal spaces,
+  word filtering, regex/zero-width/privacy, Git ignores, file/line/range/result and
+  byte budgets, special files, cancellation, root replacement, and pathological
+  regex. The new offscreen UI test checks actual NSTextView selection after an
+  emoji and retains dirty text, drafts, provider, selection, and source-file bytes.
+  All prior file/walker/read and Git regressions pass. No local interactive GUI test ran.
+- Hosted run 39691871298 passed both full light and dark workflows, including
+  restart, draft persistence, warning text, Cancel, confirmed removal, and original
+  Git files. The grouping workflow reached checkout menus but XCTest rejected a
+  207-character path passed to its convenience identifier lookup (128-character
+  runtime limit). Exact property predicates replace that lookup; full grouping
+  GUI verification remains pending. All three workflows remain required.
+  The passing warning checks do not establish that the OCR fallback ran; the
+  exported result contains no OCR attachment for those successful checks.
+- Packaging/launch, strict deep app/runner signing, bundled-font rendering,
+  GUI-runner compilation, and all three CI-configuration tests pass. Canonical
+  comparison confirms the existing 3 conversations, 25 messages, and non-identity
+  project fields are unchanged; storage remains version 9.
+
+Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
+
 ## 2026-10-22 — native workspace file sessions and editor integration
 
 - Added local async listing, path search, ignored-file inventory, bounded UTF-8

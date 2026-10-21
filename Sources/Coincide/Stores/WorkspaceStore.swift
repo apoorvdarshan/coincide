@@ -8,6 +8,12 @@ struct FileNavigation: Equatable {
     let workspacePath: String
     let path: String
     let line: Int?
+    let utf16Column: Int?
+    let utf16Length: Int?
+    init(workspacePath: String, path: String, line: Int?, utf16Column: Int? = nil, utf16Length: Int? = nil) {
+        self.workspacePath = workspacePath; self.path = path; self.line = line
+        self.utf16Column = utf16Column; self.utf16Length = utf16Length
+    }
 }
 
 struct ProjectRemovalRequest: Identifiable {
