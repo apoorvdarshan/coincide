@@ -5,8 +5,13 @@ services. A running T3 Code/Node server or Electron frontend is not the intended
 final architecture. This goal is **not complete**.
 
 The reference is [pingdotgg/t3code at 680152e27b2a961686389ca69a1557cbb2c55f08](https://github.com/pingdotgg/t3code/tree/680152e27b2a961686389ca69a1557cbb2c55f08).
-`upstream-inventory.json` records its 185 named RPC methods and 38 user guides.
-Those entries are an inventory, not a claim that Coincide implements the server
+`upstream-inventory.json` records 198 registered RPC methods (182 from `WS_METHODS`
+and 16 from `ORCHESTRATION_V2_WS_METHODS`), three separate legacy constant-only
+names, and 38 user guides. The active method set matches the `Rpc.make`
+declarations and `WsRpcGroup` in `packages/contracts/src/rpc.ts`, plus the server
+handler table in `apps/server/src/ws.ts` at that revision. The legacy names have
+no registered handlers and do not count as pending RPC implementation targets.
+These entries are an inventory, not a claim that Coincide implements the server
 wire protocol. Applicable desktop behavior, core services, and remote support
 must each be mapped and verified before declaring parity.
 

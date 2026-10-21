@@ -4,24 +4,6 @@
   "scope": "Complete native Swift macOS port, including core services and all applicable desktop features. No Node/Electron/T3 backend dependency in the final app. Remote service protocols remain a required parity area.",
   "rpc_methods": [
     {
-      "key": "projectsList",
-      "method": "projects.list",
-      "status": "pending",
-      "note": "Inventory entry; no claim of wire compatibility."
-    },
-    {
-      "key": "projectsAdd",
-      "method": "projects.add",
-      "status": "pending",
-      "note": "Inventory entry; no claim of wire compatibility."
-    },
-    {
-      "key": "projectsRemove",
-      "method": "projects.remove",
-      "status": "pending",
-      "note": "Inventory entry; no claim of wire compatibility."
-    },
-    {
       "key": "projectsListEntries",
       "method": "projects.listEntries",
       "status": "pending",
@@ -1112,6 +1094,138 @@
       "method": "subscribeResourceTelemetry",
       "status": "pending",
       "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "dispatchCommand",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.dispatchCommand",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "getTurnDiff",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.getTurnDiff",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "getFullThreadDiff",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.getFullThreadDiff",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "searchThreads",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.searchThreads",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "searchThread",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.searchThread",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "searchThreadStream",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.searchThreadStream",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "getArchivedShellSnapshot",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.getArchivedShellSnapshot",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "getThreadProjection",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.getThreadProjection",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "getWorkflowScript",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.getWorkflowScript",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "stopWorkflow",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.stopWorkflow",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "getTurnItem",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.getTurnItem",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "launchThread",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.launchThread",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeArchivedShell",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.subscribeArchivedShell",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeShell",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.subscribeShell",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeThread",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.subscribeThread",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeCommandOutput",
+      "constant_group": "ORCHESTRATION_V2_WS_METHODS",
+      "method": "orchestration.subscribeCommandOutput",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    }
+  ],
+  "legacy_method_constants": [
+    {
+      "key": "projectsList",
+      "method": "projects.list",
+      "classification": "constant_only",
+      "note": "Declared in WS_METHODS but has no Rpc.make, WsRpcGroup member, or server handler at the pinned revision. Project listings arrive through orchestration.subscribeShell; this name is not a registered alias."
+    },
+    {
+      "key": "projectsAdd",
+      "method": "projects.add",
+      "classification": "constant_only",
+      "note": "Declared in WS_METHODS but has no Rpc.make, WsRpcGroup member, or server handler at the pinned revision. Project creation uses projects.mutate with project.create; this name is not a registered alias."
+    },
+    {
+      "key": "projectsRemove",
+      "method": "projects.remove",
+      "classification": "constant_only",
+      "note": "Declared in WS_METHODS but has no Rpc.make, WsRpcGroup member, or server handler at the pinned revision. Project removal uses projects.mutate with project.delete; this name is not a registered alias."
     }
   ],
   "user_guides": [
