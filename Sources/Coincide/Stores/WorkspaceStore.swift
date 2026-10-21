@@ -34,6 +34,7 @@ final class WorkspaceStore {
     private var preparingWorkspaces: Set<UUID> = []
     private var attachmentImportCounts: [UUID: Int] = [:]
     private var attachmentImportTasks: [UUID: Task<Void, Never>] = [:]
+    private var gitInspectors: [String: GitInspectorStore] = [:]
     private var lastSequence: Int64 = -1
     private var terminating = false
 
@@ -60,6 +61,13 @@ final class WorkspaceStore {
     }
     func isResponding(_ request: ApprovalRequest, threadID: UUID) -> Bool {
         thread(threadID)?.runtimeRequests.first(where: { $0.id == request.id })?.responding == true
+    }
+    func gitInspector(path: String) -> GitInspectorStore {
+        let path = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        if let existing = gitInspectors[path] { return existing }
+        let model = GitInspectorStore(path: path)
+        if terminating { model.prepareForShutdown() }
+        gitInspectors[path] = model; return model
     }
     var visibleThreads: [CodingThread] {
         snapshot.threads.filter {
@@ -346,6 +354,9 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        let inspectors = Array(gitInspectors.values)
+        for model in inspectors { model.prepareForShutdown() }
+        for model in inspectors { await model.shutdown() }
         let imports = Array(attachmentImportTasks.values); for task in imports { task.cancel() }; for task in imports { await task.value }
         draftSaveTask?.cancel(); flushDrafts()
         await commandTail?.value

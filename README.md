@@ -28,8 +28,11 @@ Add a project folder, start a thread, and send a message. Coincide connects dire
 to Codex app-server or Claude's stream-json protocol using their existing sign-in.
 Choose the provider in a new conversation's header. Review requested commands and file
 changes in the conversation. Use the inspector to browse/edit files or inspect,
-stage, and commit Git changes. A new thread can create a separate Git worktree
-before its first message.
+stage, and commit Git changes. The branch menu creates/switches local branches or
+tracks fetched remote branches. Fetch, fast-forward Pull, and explicit single-branch
+Push use your existing Git credentials. A folder without Git can initialize a
+repository; staging and unstaging also work before its first commit. A new thread
+can create a separate Git worktree before its first message.
 
 In **Settings → Providers → ACP Agents**, save an agent name, executable, and
 arguments (one per line), then choose it in a new conversation's header.
@@ -87,7 +90,8 @@ ACP streaming/permissions/images/config options/resume and native agent settings
 atomic commit failures, accepted/rejected command deduplication, queued execution,
 approval responsiveness, Stop, stale provider events, lease loss, migration/restart,
 attachment import/integrity/conversion, native paste cancellation,
-file conflicts/path containment, and Git/worktree operations. See the porting
+file conflicts/path containment, and real local Git/remotes, branch tracking,
+divergence, conflicts, hooks, cancellation, and worktree operations. See the porting
 document for live checks and their limitations.
 
 The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), with its

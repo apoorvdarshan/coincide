@@ -8,71 +8,10 @@ struct WorkspaceInspector: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("Workspace", selection: $tab) { Text("Changes").tag("Changes"); Text("Files").tag("Files") }.pickerStyle(.segmented).padding()
-            if tab == "Changes" { ChangesView(path: path, report: { store.errorMessage = $0 }) }
+            if tab == "Changes" { GitInspectorView(workspace: store, path: path) }
             else { FilesView(path: path, navigation: store.fileNavigation?.workspacePath == path ? store.fileNavigation : nil, report: { store.errorMessage = $0 }) }
         }
         .onChange(of: store.fileNavigation?.id, initial: true) { if store.fileNavigation?.workspacePath == path { tab = "Files" } }
-    }
-}
-
-private struct ChangesView: View {
-    let path: String
-    let report: (String) -> Void
-    @State private var branch = ""
-    @State private var files: [ChangedFile] = []
-    @State private var selected: String?
-    @State private var diff = ""
-    @State private var staged = false
-    @State private var commitMessage = ""
-    @State private var statusError: String?
-    @State private var loading = false
-    var body: some View {
-        VStack(spacing: 8) {
-            HStack { Label(branch.isEmpty ? "Source control" : branch, systemImage: "arrow.triangle.branch"); Spacer(); Button { Task { await refresh() } } label: { Image(systemName: "arrow.clockwise") }.disabled(loading) }.padding(.horizontal)
-            if let statusError { ContentUnavailableView("Git Unavailable", systemImage: "folder.badge.questionmark", description: Text(statusError)) }
-            else {
-                List(files, selection: $selected) { file in
-                    HStack { Text(file.status).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary); Text(file.path).lineLimit(1).truncationMode(.middle) }.tag(file.path)
-                        .contextMenu {
-                            Button("Stage File") { Task { await perform { try await git.stage([file.path]) } } }
-                            if file.isStaged { Button("Unstage File") { Task { await perform { try await git.unstage([file.path]) } } } }
-                        }
-                }.frame(minHeight: 100, maxHeight: 220)
-                Toggle("Staged diff", isOn: $staged).padding(.horizontal)
-                ScrollView([.horizontal, .vertical]) {
-                    Text(diff.isEmpty ? "No changes in this view." : diff).font(.system(.caption, design: .monospaced)).textSelection(.enabled).padding().frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(maxHeight: .infinity)
-                Divider()
-                TextField("Commit message", text: $commitMessage).textFieldStyle(.roundedBorder).padding(.horizontal)
-                HStack {
-                    Button("Stage All") { Task { await perform { try await git.stage(files.map(\.path)) } } }.disabled(files.isEmpty || loading)
-                    Spacer()
-                    Button("Commit Staged") { Task { await perform { try await git.commit(message: commitMessage); commitMessage = "" } } }
-                        .disabled(!files.contains(where: \.isStaged) || commitMessage.isEmpty || loading)
-                }.padding([.horizontal, .bottom])
-            }
-        }
-        .task { await refresh() }
-        .onChange(of: selected) { Task { await loadDiff() } }
-        .onChange(of: staged) { Task { await loadDiff() } }
-    }
-    private var git: GitService { GitService(root: URL(fileURLWithPath: path)) }
-    private func refresh() async {
-        loading = true; defer { loading = false }
-        do { let snapshot = try await git.status(); branch = snapshot.branch; files = snapshot.changes; statusError = nil; await loadDiff() }
-        catch { statusError = error.localizedDescription }
-    }
-    private func loadDiff() async {
-        let selection = selected, wantsStaged = staged
-        do {
-            let value = try await git.diff(file: files.first { $0.path == selection }, staged: wantsStaged)
-            guard selection == selected, wantsStaged == staged else { return }; diff = value
-        } catch { report(error.localizedDescription) }
-    }
-    private func perform(_ operation: () async throws -> Void) async {
-        loading = true
-        do { try await operation(); await refresh() } catch { report(error.localizedDescription) }
-        loading = false
     }
 }
 

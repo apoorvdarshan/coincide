@@ -184,9 +184,10 @@ public struct CommandResult: Sendable {
 public enum CommandRunner {
     public static func run(_ executable: String, _ arguments: [String], cwd: URL? = nil,
                            input: Data? = nil, limit: Int = 16 * 1_024 * 1_024,
-                           timeout: Duration = .seconds(30)) async throws -> CommandResult {
+                           timeout: Duration = .seconds(30), environment: [String: String]? = nil) async throws -> CommandResult {
+        try Task.checkCancellation()
         guard let url = ProcessChannel.findExecutable(executable) else { throw CoincideError("\(executable) is not installed or executable.") }
-        let channel = try ProcessChannel(executable: url, arguments: arguments, cwd: cwd)
+        let channel = try ProcessChannel(executable: url, arguments: arguments, cwd: cwd, environment: environment)
         return try await withTaskCancellationHandler {
             try await withThrowingTaskGroup(of: CommandResult.self) { group in
                 group.addTask {
@@ -200,6 +201,7 @@ public enum CommandRunner {
                         }
                         if out.count + err.count > limit { channel.stop(); throw CoincideError("Command output exceeded the limit.") }
                     }
+                    try Task.checkCancellation()
                     throw CoincideError("Command ended without an exit status.")
                 }
                 group.addTask {
@@ -211,7 +213,7 @@ public enum CommandRunner {
                     channel.finishInput()
                     let result = try await group.next()!
                     group.cancelAll(); return result
-                } catch { channel.stop(); group.cancelAll(); throw error }
+                } catch { channel.stop(); group.cancelAll(); try Task.checkCancellation(); throw error }
             }
         } onCancel: { channel.stop() }
     }

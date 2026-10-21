@@ -68,7 +68,7 @@ must each be mapped and verified before declaring parity.
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, legacy migration | Complete provider recovery, checkpoints/finalization and run history, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill/file pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
-| Git/workspaces | Status, staged/unstaged diff, stage/unstage, commit, branches, worktree creation | Checkout/clone, pull/push, PRs/stacks/multiple hosts, checkpoints/revert, worktree lifecycle/setup |
+| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, cancellable operations and app-shutdown cleanup, worktree creation | Clone/progress/retry, PRs/stacks/host integrations, checkpoints/revert, worktree lifecycle/setup, automatic pull policies, broader credential and network failure coverage |
 | Files | Browse/read/edit UTF-8 with conflict detection and workspace path checks | Search/ignore support, large/binary files, filesystem watching, editor integration |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup | Durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |
@@ -96,7 +96,9 @@ only generated image/file markers, and checks both installed providers through
 the native engine. It permits only the generated file's Claude Read approval.
 The deterministic provider fixture contacts no external service
 and does not exercise real provider authentication or prove full provider parity.
-Tests create temporary isolated Git repositories and remove them after use.
+Tests create temporary isolated Git repositories and remove them after use. Git
+synchronization tests use a local bare remote and two working copies; they do not
+publish to any external repository or establish live SSH/HTTPS authentication.
 
 The ACP discovery check creates an agent session and reads advertised models; it
 does not submit a model turn. The separate ACP turn check sends a generated marker

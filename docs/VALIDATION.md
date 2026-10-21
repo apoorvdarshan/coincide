@@ -1,5 +1,51 @@
 # Validation record
 
+## 2026-10-22 — native Git branches and synchronization
+
+- Replaced the HEAD-dependent status read with a single NUL-delimited
+  [porcelain v2](https://git-scm.com/docs/git-status#_porcelain_format_version_2)
+  snapshot. Empty repositories, detached HEAD, missing upstream commits,
+  ahead/behind counts, rename paths, submodules, and conflicts now have explicit
+  native state. Nested project folders resolve repository-relative paths against
+  the actual worktree root, including roots and filenames containing newlines.
+- Added native initialization, branch creation/switching, remote branch tracking,
+  fetch, clean fast-forward pull, and explicit single-branch push controls. Pull
+  overrides rebase/squash/autostash configuration; divergence leaves the current
+  commit intact. Push overrides mirror configuration and uses an explicit refspec,
+  with force updates and automatic tag propagation disabled. Pre-push hooks remain
+  active. Existing credential helpers and SSH configuration are reused; secrets
+  are not copied into app settings, and URL userinfo/query/fragment are removed
+  from error messages.
+- Git mutations share a cancellable FIFO keyed by the common Git directory, so
+  linked worktrees and multiple windows serialize their operations. Literal NUL
+  path input prevents pathspec expansion and command-line-size limits. Unstaging
+  an initial file removes only its index entry, preserving newer worktree bytes.
+  Repository initialization refuses an existing or containing repository.
+- Native inspector state survives switching panels and is owned by the workspace.
+  Application shutdown cancels and awaits its mutation, status, and diff tasks.
+  A regression cancels a commit while its hook is waiting and verifies that no
+  commit was made and staged file bytes remain. Another cancels a waiting push
+  hook and verifies that no remote branch or tracking configuration was created.
+  Cancellation now consistently surfaces as `CancellationError` in CommandRunner.
+- Real Git tests use isolated local bare repositories and two working copies.
+  They cover initial commits, modified initial-file unstaging, literal magic-like
+  paths, nested roots, renamed/newline paths, detached state, preserving edits on
+  checkout failure, remote tracking, fetch/pull/push, divergent history, conflict
+  resolution, mirror/force/matching/tag configuration, remote names containing
+  equals signs, deleted tracking refs, hooks, cancellation, and queued mutations.
+  These tests do not establish live SSH/HTTPS authentication or network recovery.
+- `swift test --no-parallel` passed all 120 tests: 97 core, 4 terminal, 13 Markdown,
+  and 6 native UI/store tests. The Git inspector/store tests exercise initialization,
+  staging, first commit, branch switching, recoverable errors, and app shutdown.
+  Light/dark offscreen AppKit captures were inspected at 280- and 420-point widths.
+  Native packaging, launch, strict signature checks, and bundled-font runtime
+  verification passed. Physical menu, sheet, and keyboard interaction still needs
+  unlocked-desktop QA.
+
+Clone/progress/retry, PR/stack/host integrations, checkpoints, worktree cleanup and
+setup, automatic-pull policies, and comprehensive network/credential recovery
+remain open Git parity work. No external repository was used by these fixtures.
+
 ## 2026-10-22 — opt-in ACP v2 connections and foreground lifecycle
 
 - Added an opt-in native adapter for the current ACP v2 draft, using the same
