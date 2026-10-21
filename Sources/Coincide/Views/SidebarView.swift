@@ -8,6 +8,8 @@ struct SidebarView: View {
     @State private var renaming: SidebarRenameTarget?
     @State private var title = ""
     @State private var removing: ProjectRemovalRequest?
+    @State private var removingGroup: ProjectGroupRemovalRequest?
+    @State private var pendingGroupRemoval: ProjectGroupRemovalRequest?
     var body: some View {
         List(selection: $store.selectedThreadID) {
             ForEach(store.orderedProjectGroups) { group in
@@ -79,6 +81,7 @@ struct SidebarView: View {
             Button("Save") {
                 switch renaming {
                 case .project(let id): store.renameProject(id, title: title)
+                case .group(let group): store.renameProjectGroup(group, title: title)
                 case .thread(let id): store.rename(id, title: title)
                 case nil: break
                 }
@@ -99,11 +102,27 @@ struct SidebarView: View {
         } message: { request in
             Text(removalExplanation(request))
         }
+        .sheet(item: $removingGroup, onDismiss: finishGroupRemoval) { request in
+            ProjectGroupRemovalSheet(request: request, cancel: { removingGroup = nil }, remove: {
+                pendingGroupRemoval = request
+                removingGroup = nil
+            })
+        }
     }
 
     private var projectMoveAction: ((IndexSet, Int) -> Void)? {
         guard store.projectSortMode == .manual else { return nil }
         return { offsets, destination in store.moveProjectGroups(fromOffsets: offsets, toOffset: destination) }
+    }
+
+    private func finishGroupRemoval() {
+        guard let request = pendingGroupRemoval else { return }
+        pendingGroupRemoval = nil
+        Task {
+            do { try await store.removeProjectGroup(request) }
+            catch is CancellationError { }
+            catch { store.errorMessage = error.localizedDescription }
+        }
     }
 
     private func threadRow(_ thread: CodingThread, group: ProjectGroup) -> some View {
@@ -156,6 +175,11 @@ struct SidebarView: View {
                     }
                 }
             } else if let project = group.members.first { checkoutActions(project) }
+            if group.memberProjectIDs.count > 1 {
+                Divider()
+                Button("Rename Group…") { title = group.displayName; renaming = .group(group) }
+                Button("Remove Group…", role: .destructive) { removingGroup = store.projectGroupRemovalRequest(group.key) }
+            }
             if store.projectSortMode == .manual {
                 Divider()
                 if store.orderedProjectGroups.first?.id != group.id { Button("Move Up") { store.moveProjectGroup(group.key, by: -1) } }
@@ -198,11 +222,12 @@ struct SidebarView: View {
 }
 
 private enum SidebarRenameTarget {
-    case project(UUID), thread(UUID)
+    case project(UUID), thread(UUID), group(ProjectGroup)
     var alertTitle: String {
         switch self {
         case .project: String(localized: "Rename Project")
         case .thread: String(localized: "Rename Thread")
+        case .group: String(localized: "Rename Group")
         }
     }
 }

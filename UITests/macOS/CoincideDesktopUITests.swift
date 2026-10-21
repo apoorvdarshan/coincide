@@ -28,6 +28,13 @@ final class CoincideDesktopUITests: XCTestCase {
         }
         let firstHead = try verifyHead(gitPath: fixture.gitPath, project: first, configuration: fixture.configuration, name: "grouping-first-initial-head")
         let secondHead = try verifyHead(gitPath: fixture.gitPath, project: second, configuration: fixture.configuration, name: "grouping-second-initial-head")
+        var originalFiles: [URL: Data] = [:]
+        for checkout in [first, second] {
+            for relativePath in ["README.md", ".git/HEAD"] {
+                let file = checkout.appendingPathComponent(relativePath)
+                originalFiles[file] = try Data(contentsOf: file)
+            }
+        }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
@@ -78,6 +85,9 @@ final class CoincideDesktopUITests: XCTestCase {
         let futureThreadID = try selectedThreadIdentifier(in: app)
         XCTAssertNotEqual(futureThreadID, firstThreadID); XCTAssertNotEqual(futureThreadID, secondThreadID)
         XCTAssertEqual(threadRows(in: app).count, 3)
+        let futureDraft = "Distinct draft in the preferred checkout one"
+        composer.click(); composer.typeText(futureDraft)
+        XCTAssertEqual(composer.value as? String, futureDraft)
 
         threadRow(firstThreadID, in: app).click()
         XCTAssertTrue(waitForValue(composer, value: firstDraft, timeout: 5))
@@ -119,6 +129,63 @@ final class CoincideDesktopUITests: XCTestCase {
         capture(app, name: "grouping-reopened")
         XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: first, configuration: fixture.configuration, name: "grouping-first-final-head"), firstHead)
         XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: second, configuration: fixture.configuration, name: "grouping-second-final-head"), secondHead)
+
+        groupedHeader.rightClick()
+        let renameGroup = app.menuItems["Rename Group…"]
+        XCTAssertTrue(renameGroup.waitForExistence(timeout: 5)); renameGroup.click()
+        let renameSheet = app.sheets.containing(.button, identifier: "sidebar-rename-save").element
+        XCTAssertTrue(renameSheet.waitForExistence(timeout: 5))
+        XCTAssertTrue(renameSheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Rename Group", "Rename Group")).element.exists)
+        XCTAssertEqual(renameSheet.textFields.count, 1)
+        let renameField = renameSheet.textFields.element
+        XCTAssertEqual(renameField.value as? String, "Team/Repo")
+        renameField.click(); renameField.typeKey("a", modifierFlags: .command)
+        let renamedGroup = "Native UI Group Renamed"
+        renameField.typeText(renamedGroup); renameSheet.buttons["sidebar-rename-save"].click()
+        let renamedHeader = app.buttons["Collapse \(renamedGroup)"]
+        XCTAssertTrue(renamedHeader.waitForExistence(timeout: 5))
+        setGroupingMode("Separate Checkouts", in: app)
+        let renamedPhysicalHeaders = app.buttons.matching(NSPredicate(format: "label == %@", "Collapse \(renamedGroup)"))
+        XCTAssertTrue(renamedPhysicalHeaders.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(renamedPhysicalHeaders.count, 2, "Renaming the group must rename both registered checkouts.")
+        setGroupingMode("Repository", in: app)
+        XCTAssertTrue(renamedHeader.waitForExistence(timeout: 5))
+        XCTAssertEqual(projectHeaders(in: app).count, 1)
+        renamedHeader.rightClick()
+        let removeGroup = app.menuItems["Remove Group…"]
+        XCTAssertTrue(removeGroup.waitForExistence(timeout: 5)); removeGroup.click()
+        let review = assertGroupRemovalReview(in: app, name: renamedGroup, paths: [first.path, second.path])
+        let remove = review.buttons["remove-project-group"]
+        XCTAssertTrue(remove.isHittable && app.state == .runningForeground && CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
+        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "grouping-remove-group-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
+        review.buttons["Cancel"].click()
+        XCTAssertTrue(waitForAbsence(remove, timeout: 5))
+        XCTAssertTrue(renamedHeader.exists)
+        XCTAssertEqual(threadRows(in: app).count, 3)
+        let drafts = [(firstThreadID, firstDraft, first.path), (futureThreadID, futureDraft, first.path), (secondThreadID, secondDraft, second.path)]
+        for (identifier, draft, path) in drafts {
+            let row = threadRow(identifier, in: app)
+            XCTAssertTrue(row.exists); row.click()
+            XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5), "Cancelling group removal must preserve every conversation's draft.")
+            assertConversationWorkspace(app, path: path)
+        }
+        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
+        renamedHeader.rightClick()
+        XCTAssertTrue(removeGroup.waitForExistence(timeout: 5)); removeGroup.click()
+        let confirmedReview = assertGroupRemovalReview(in: app, name: renamedGroup, paths: [first.path, second.path])
+        confirmedReview.buttons["remove-project-group"].click()
+        XCTAssertTrue(waitForAbsence(renamedHeader, timeout: 10))
+        XCTAssertTrue(waitForAbsence(composer, timeout: 5))
+        XCTAssertEqual(projectHeaders(in: app).count, 0)
+        XCTAssertEqual(threadRows(in: app).count, 0)
+        for (file, bytes) in originalFiles {
+            XCTAssertEqual(try Data(contentsOf: file), bytes, "Removing a group must preserve existing checkout file bytes: \(file.lastPathComponent).")
+        }
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: first, configuration: fixture.configuration, name: "grouping-first-removed-head"), firstHead)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: second, configuration: fixture.configuration, name: "grouping-second-removed-head"), secondHead)
+        let emptyDescription = "Your projects and coding agents, in a native Mac workspace."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", emptyDescription, emptyDescription)).element.waitForExistence(timeout: 5))
+        capture(app, name: "grouping-removed-empty-workspace")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
@@ -342,6 +409,23 @@ final class CoincideDesktopUITests: XCTestCase {
         app.menuButtons["project-sort-menu"].click()
         let mode = app.menuItems[title]
         XCTAssertTrue(mode.waitForExistence(timeout: 5)); mode.click()
+    }
+
+    @MainActor private func assertGroupRemovalReview(in app: XCUIApplication, name: String, paths: [String]) -> XCUIElement {
+        let review = app.sheets.containing(.button, identifier: "remove-project-group").element
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        let title = "Remove “\(name)” Group?"
+        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", title, title)).element.exists)
+        let checkouts = review.descendants(matching: .any).matching(identifier: "group-removal-checkouts").element
+        XCTAssertTrue(checkouts.exists)
+        for path in paths {
+            let text = checkouts.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", path, path)).firstMatch
+            XCTAssertTrue(text.exists, "The removal review must name every exact physical checkout path: \(path).")
+            XCTAssertTrue(checkouts.frame.contains(text.frame), "Both test checkout paths must be visible in the native review.")
+        }
+        let caveats = review.staticTexts.matching(NSPredicate(format: "(label CONTAINS %@ OR value CONTAINS %@) AND (label CONTAINS %@ OR value CONTAINS %@)", "Git may clean up unfinished files", "Git may clean up unfinished files", "local recovery history", "local recovery history")).element
+        XCTAssertTrue(caveats.exists, "Group removal must explain active-Git cleanup and retained recovery history.")
+        return review
     }
 
     @MainActor private func waitForValue(_ element: XCUIElement, value: String, timeout: TimeInterval) -> Bool {

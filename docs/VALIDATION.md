@@ -1,5 +1,37 @@
 # Validation record
 
+## 2026-10-22 — atomic group rename and removal
+
+- Whole-group rename and removal validate every registration ID and literal
+  checkout path. Removal additionally validates the full active/archived
+  conversation union. Stale, missing, duplicate, moved, or regrouped members reject
+  before changing any project. SQLite rollback tests preserve journal, receipts,
+  preferences, leases, and effects; successful transactions replay after restart.
+- The native removal sheet lists all checkout paths, explains retained files and
+  recovery history, and warns about unsaved edits. Cancel preserves the group.
+  Removal starts after dismissal so a stale-confirmation error remains visible.
+- Every affected path locks before the first suspension. A real queued worktree
+  assignment blocked by a separate SQLite writer commits before removal preflight;
+  the new path remains locked even after its conversation disappears. Two-window
+  PTY coverage checks targeted closure and surviving terminals. A held unrelated
+  provider cleanup does not delay group completion. Shared inspectors and files
+  remain usable afterward. Archived fallback stays visible and restores on restart.
+- The full suite passed 243 tests: 200 core, 4 terminal, 13 Markdown, and 26 native
+  UI/store. Independent source review found no remaining blocker. Hosted run
+  39689027117 exposed an installed-Codex assumption in the preceding grouping
+  fixture; that test now configures its injected ACP agent explicitly and passes
+  locally without depending on a developer's installed Codex.
+- The third hosted GUI workflow now includes native whole-group rename, physical
+  mode headers, removal-sheet paths, Cancel/draft retention, confirmed removal,
+  and unchanged Git HEAD/file checks. The gate still requires all three workflows
+  without skips. Complete hosted GUI verification remains pending.
+- Packaging/launch, strict deep app and runner signing, bundled-font rendering,
+  and UI-runner compilation pass. No local GUI test ran. Canonical comparison
+  confirms all 3 existing conversations, 25 messages, and non-identity project
+  fields are unchanged; storage remains version 9.
+
+Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
+
 ## 2026-10-22 — persisted logical checkout groups and conversation selection
 
 - Registered projects now acquire credential-free repository identity on load,

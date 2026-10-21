@@ -35,6 +35,8 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case addProjectWithThread(project: WorkspaceProject, thread: CodingThread)
     case renameProject(projectID: UUID, title: String)
     case removeProject(projectID: UUID, expectedThreadIDs: [UUID])
+    case renameProjectGroup(groupKey: String, expectedProjects: [ProjectGroupMemberReference], title: String)
+    case removeProjectGroup(groupKey: String, expectedProjects: [ProjectGroupMemberReference], expectedThreadIDs: [UUID])
     case setProjectExpanded(projectID: UUID, expanded: Bool)
     case setProjectSortMode(ProjectSortMode)
     case setProjectGroupingMode(ProjectGroupingMode)
@@ -85,6 +87,25 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
+        case .client(.renameProjectGroup(let key, let expected, let requested)):
+            let group = try decision.validatedGroup(key, expectedProjects: expected)
+            let title: String
+            do { title = try ManagedProjectService.validatedName(requested) }
+            catch { throw WorkspaceCommandError(error.localizedDescription) }
+            let ids = Set(group.memberProjectIDs)
+            for i in decision.snapshot.projects.indices where ids.contains(decision.snapshot.projects[i].id) && decision.snapshot.projects[i].name != title {
+                decision.snapshot.projects[i].name = title; decision.snapshot.projects[i].updatedAt = now
+            }
+        case .client(.removeProjectGroup(let key, let expected, let expectedThreads)):
+            let group = try decision.validatedGroup(key, expectedProjects: expected)
+            let ids = Set(group.memberProjectIDs)
+            let threads = Set(decision.snapshot.threads.filter { ids.contains($0.projectID) }.map(\.id))
+            guard Set(expectedThreads).count == expectedThreads.count, Set(expectedThreads) == threads else {
+                throw WorkspaceCommandError("This project's conversations changed. Review all current active and archived conversations before removing the group.")
+            }
+            decision.snapshot.projects.removeAll { ids.contains($0.id) }
+            decision.snapshot.threads.removeAll { ids.contains($0.projectID) }
+            decision.closeRuntimes.formUnion(threads)
         case .client(.selectConversation(let threadID)):
             guard threadID.map({ id in decision.snapshot.threads.contains { $0.id == id } }) ?? true else { throw WorkspaceCommandError("This conversation is no longer available.") }
             var preferences = decision.snapshot.effectiveSidebarPreferences
@@ -323,7 +344,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .addProjectWithThread, .renameProject, .removeProject, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
+            case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -362,6 +383,14 @@ struct WorkspaceDecision: Sendable {
     private func validatedGroup(_ key: String, expected: [UUID]) throws -> ProjectGroup {
         guard let group = snapshot.projectGroups.first(where: { $0.key == key }), Set(expected).count == expected.count,
               Set(expected) == Set(group.memberProjectIDs) else { throw WorkspaceCommandError("This project's checkouts changed. Review the current group and try again.") }
+        return group
+    }
+    private func validatedGroup(_ key: String, expectedProjects: [ProjectGroupMemberReference]) throws -> ProjectGroup {
+        let group = try validatedGroup(key, expected: expectedProjects.map(\.id))
+        let paths = Dictionary(uniqueKeysWithValues: group.memberProjectReferences.map { ($0.id, $0.path) })
+        guard expectedProjects.allSatisfy({ paths[$0.id] == $0.path }) else {
+            throw WorkspaceCommandError("This project's checkout paths changed. Review the current checkouts before changing the group.")
+        }
         return group
     }
     private func validateProjectOrder(_ expected: [UUID]) throws {
@@ -534,7 +563,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .addProjectWithThread, .renameProject, .removeProject, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
+        case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
         case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

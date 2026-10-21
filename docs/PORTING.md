@@ -88,7 +88,9 @@ must each be mapped and verified before declaring parity.
   every project/thread identity. Atomic membership checks protect collapse,
   checkout selection, and manual moves; moves preserve untouched interleaving.
   Future-conversation checkout selection never retargets existing conversations.
-  Rename/removal menus choose one physical checkout, and the last selected
+  Rename/removal menus support one physical checkout or an atomic whole-group
+  action. Whole-group confirmation captures every registration/path and active
+  and archived conversation; stale membership is rejected. The last selected
   conversation restores its owner and archived view on restart. Storage version
   9 protects these durable preferences and identity fields from older binaries.
 - Project removal commits all active/archived thread removals, project removal,
@@ -98,6 +100,8 @@ must each be mapped and verified before declaring parity.
   window registers its terminal owner for targeted cleanup. Composer/import/model
   state and unreferenced inspectors are reconciled, shared paths remain usable,
   and editor scopes freeze during removal after explicit unsaved-edit confirmation.
+  Queued worktree assignments extend those locks before removal commits. Removal
+  waits for affected cleanup owners without waiting for unrelated projects.
   New conversations or dirty editors require renewed confirmation. Coincide does
   not delete checkout, worktree, staging, or attachment files; Git may clean up its
   own unfinished files when an active clone is stopped. Append-only recovery
@@ -115,7 +119,7 @@ must each be mapped and verified before declaring parity.
 
 | Area | Implemented now | Remaining work for parity |
 | --- | --- | --- |
-| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, logical repository/folder/physical grouping and overrides, explicit checkout choice for new conversations, restored conversation selection, project display renaming/group collapse, persistent manual ordering and aggregated activity/thread-creation sorting, confirmed physical-project removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, settings | Group-wide rename/removal, snooze/settle, undo, scratch projects, import/migration |
+| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, logical repository/folder/physical grouping and overrides, explicit checkout choice for new conversations, restored conversation selection, physical/group renaming and collapse, persistent manual ordering and aggregated activity/thread-creation sorting, confirmed atomic physical/group removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, settings | Snooze/settle, undo, scratch projects, import/migration |
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |

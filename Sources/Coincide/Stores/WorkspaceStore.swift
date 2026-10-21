@@ -18,6 +18,19 @@ struct ProjectRemovalRequest: Identifiable {
     let dirtyEditorIDs: Set<UUID>
 }
 
+struct ProjectGroupRemovalRequest: Identifiable {
+    let id: String
+    let name: String
+    let projects: [ProjectGroupMemberReference]
+    let threadIDs: [UUID]
+    let dirtyEditorIDs: Set<UUID>
+}
+
+private struct ProjectRemovalCleanup {
+    let projectIDs: Set<UUID>
+    let task: Task<Void, Never>
+}
+
 @MainActor private final class WeakTerminalStore {
     weak var value: TerminalWorkspaceStore?
     init(_ value: TerminalWorkspaceStore) { self.value = value }
@@ -60,7 +73,7 @@ final class WorkspaceStore {
     private var attachmentImportOwners: [UUID: UUID] = [:]
     private var worktreeTasks: [UUID: Task<Void, any Error>] = [:]
     private var projectCloneRetryTasks: [UUID: Task<Void, Never>] = [:]
-    private var removalCleanupTasks: [UUID: Task<Void, Never>] = [:]
+    private var removalCleanupTasks: [UUID: ProjectRemovalCleanup] = [:]
     private var terminalStores: [ObjectIdentifier: WeakTerminalStore] = [:]
     private var dirtyEditors: [UUID: String] = [:]
     private var removalEditorLocks: [UUID: Set<String>] = [:]
@@ -192,6 +205,9 @@ final class WorkspaceStore {
         return isProjectExpanded(projectID) ? threads : threads.filter { $0.id == selectedThreadID }
     }
     func renameProject(_ id: UUID, title: String) { sendCommand(.renameProject(projectID: id, title: title)) }
+    func renameProjectGroup(_ group: ProjectGroup, title: String) {
+        sendCommand(.renameProjectGroup(groupKey: group.key, expectedProjects: group.memberProjectReferences, title: title))
+    }
     func registerTerminals(_ terminals: TerminalWorkspaceStore) { terminalStores[ObjectIdentifier(terminals)] = WeakTerminalStore(terminals) }
     func unregisterTerminals(_ terminals: TerminalWorkspaceStore) { terminalStores.removeValue(forKey: ObjectIdentifier(terminals)) }
     func setEditorDirty(_ id: UUID, workspacePath: String, dirty: Bool) {
@@ -224,9 +240,57 @@ final class WorkspaceStore {
             guard latest.dirtyEditorIDs.isSubset(of: request.dirtyEditorIDs) else {
                 throw CoincideError("New unsaved file edits appeared. Review the project removal again before discarding them.")
             }
+            let paths = [latest.path] + self.snapshot.threads.filter { $0.projectID == request.id }.map(\.workspacePath)
+            self.extendRemovalLocks(projectIDs: [request.id], paths: paths)
         }).value
         await engine.awaitProjectRemovalCleanup(projectID: request.id)
-        for task in Array(removalCleanupTasks.values) { await task.value }
+        await awaitRemovalCleanup(projectIDs: [request.id])
+    }
+    func projectGroupRemovalRequest(_ key: String) -> ProjectGroupRemovalRequest? {
+        guard let group = snapshot.projectGroups.first(where: { $0.key == key }) else { return nil }
+        let members = Set(group.memberProjectIDs), threads = snapshot.threads.filter { members.contains($0.projectID) }
+        let paths = Set((group.memberProjectReferences.map(\.path) + threads.map(\.workspacePath)).map(Self.canonicalPath))
+        return .init(id: key, name: group.displayName, projects: group.memberProjectReferences,
+                     threadIDs: threads.map(\.id).sorted { $0.uuidString < $1.uuidString },
+                     dirtyEditorIDs: Set(dirtyEditors.compactMap { paths.contains($0.value) ? $0.key : nil }))
+    }
+    private func validateGroupRemoval(_ request: ProjectGroupRemovalRequest) throws {
+        guard let current = projectGroupRemovalRequest(request.id),
+              current.projects.sorted(by: { $0.id.uuidString < $1.id.uuidString }) == request.projects.sorted(by: { $0.id.uuidString < $1.id.uuidString }),
+              current.threadIDs == request.threadIDs else {
+            throw CoincideError("The group's checkouts or conversations changed. Review the group removal again.")
+        }
+        guard current.dirtyEditorIDs.isSubset(of: request.dirtyEditorIDs) else {
+            throw CoincideError("New unsaved file edits appeared. Review the group removal again before discarding them.")
+        }
+    }
+    func removeProjectGroup(_ request: ProjectGroupRemovalRequest) async throws {
+        guard !terminating, let engine else { throw CancellationError() }
+        try validateGroupRemoval(request)
+        let members = Set(request.projects.map(\.id))
+        guard !members.isEmpty, members.allSatisfy({ removalEditorLocks[$0] == nil }) else { throw CancellationError() }
+        let threads = snapshot.threads.filter { members.contains($0.projectID) }
+        let paths = Set((request.projects.map(\.path) + threads.map(\.workspacePath)).map(Self.canonicalPath))
+        for id in members { removalEditorLocks[id] = paths }
+        defer { for id in members { removalEditorLocks.removeValue(forKey: id) } }
+        _ = try await enqueue(.removeProjectGroup(groupKey: request.id, expectedProjects: request.projects, expectedThreadIDs: request.threadIDs), preflight: {
+            try self.validateGroupRemoval(request)
+            let paths = request.projects.map(\.path) + self.snapshot.threads.filter { members.contains($0.projectID) }.map(\.workspacePath)
+            self.extendRemovalLocks(projectIDs: members, paths: paths)
+        }).value
+        for id in members { await engine.awaitProjectRemovalCleanup(projectID: id) }
+        await awaitRemovalCleanup(projectIDs: members)
+    }
+    private func awaitRemovalCleanup(projectIDs: Set<UUID>) async {
+        while true {
+            let tasks = removalCleanupTasks.values.filter { !$0.projectIDs.isDisjoint(with: projectIDs) }.map(\.task)
+            guard !tasks.isEmpty else { return }
+            for task in tasks { await task.value }
+        }
+    }
+    private func extendRemovalLocks(projectIDs: Set<UUID>, paths: [String]) {
+        let added = Set(paths.map(Self.canonicalPath))
+        for id in projectIDs { removalEditorLocks[id, default: []].formUnion(added) }
     }
     private static func canonicalPath(_ path: String) -> String {
         URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
@@ -299,13 +363,16 @@ final class WorkspaceStore {
         for (path, inspector) in discardedInspectors { inspector.prepareForShutdown(); gitInspectors.removeValue(forKey: path) }
         if let navigation = fileNavigation, !referencedPaths.contains(Self.canonicalPath(navigation.workspacePath)) { fileNavigation = nil }
         if selectedThreadID.map({ threadIDs.contains($0) }) == true {
-            selectedThreadID = snapshot.threads.first(where: { !$0.isArchived })?.id
+            let fallback = snapshot.threads.first(where: { $0.isArchived == showArchived })
+                ?? snapshot.threads.first(where: { !$0.isArchived }) ?? snapshot.threads.first
+            selectedThreadID = fallback?.id
+            showArchived = fallback?.isArchived ?? false
         }
         if selectedProjectID.map({ projectIDs.contains($0) }) == true {
             selectedProjectID = selectedThread?.projectID ?? snapshot.projects.first?.id
         }
         let cleanupID = UUID()
-        removalCleanupTasks[cleanupID] = Task { [weak self] in
+        let task: Task<Void, Never> = Task { [weak self] in
             for task in imports { await task.value }
             for task in worktrees { _ = await task.result }
             for task in retries { await task.value }
@@ -313,6 +380,7 @@ final class WorkspaceStore {
             for inspector in discardedInspectors.values { await inspector.shutdown() }
             self?.removalCleanupTasks.removeValue(forKey: cleanupID)
         }
+        removalCleanupTasks[cleanupID] = .init(projectIDs: projectIDs, task: task)
     }
     private func enqueue(_ command: WorkspaceCommand, preflight: (@MainActor () throws -> Void)? = nil) -> Task<WorkspaceCommandReceipt, any Error> {
         let previous = commandTail, engine = engine
@@ -614,6 +682,10 @@ final class WorkspaceStore {
         } catch is CancellationError { }
         catch { if !terminating { errorMessage = error.localizedDescription } }
     }
+    /// Completed worktree assignments share the UI command order with confirmations and drafts.
+    func setWorkspacePath(_ path: String, threadID: UUID) -> Task<WorkspaceCommandReceipt, any Error> {
+        enqueue(.editThread(threadID, .workspacePath(path)))
+    }
     func createWorktree(for id: UUID, branch: String) async {
         guard let thread = thread(id), thread.messages.isEmpty, !thread.isBusy, !preparingWorkspaces.contains(id) else {
             errorMessage = "Create the worktree before sending the first message."; return
@@ -630,7 +702,7 @@ final class WorkspaceStore {
             try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
             try Task.checkCancellation()
             guard self.thread(id) != nil, !terminating else { return }
-            _ = try await enqueue(.editThread(id, .workspacePath(path.path))).value
+            _ = try await setWorkspacePath(path.path, threadID: id).value
         } catch is CancellationError { }
         catch { if self.thread(id) != nil, !terminating { errorMessage = error.localizedDescription } }
     }
@@ -647,7 +719,7 @@ final class WorkspaceStore {
         let imports = Array(attachmentImportTasks.values); for task in imports { task.cancel() }; for task in imports { await task.value }
         draftSaveTask?.cancel(); flushDrafts()
         await commandTail?.value
-        for task in Array(removalCleanupTasks.values) { await task.value }
+        for cleanup in Array(removalCleanupTasks.values) { await cleanup.task.value }
         for terminals in terminalStores.values.compactMap(\.value) { for session in terminals.removeAll() { await session.waitForClose() } }
         await engine?.shutdown()
         updatesTask?.cancel(); updatesTask = nil

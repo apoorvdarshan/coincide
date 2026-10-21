@@ -28,6 +28,13 @@ public enum ProjectGroupingMode: String, Codable, CaseIterable, Identifiable, Se
     }
 }
 
+public struct ProjectGroupMemberReference: Codable, Identifiable, Sendable, Equatable {
+    public let id: UUID
+    public let path: String
+    public init(id: UUID, path: String) { self.id = id; self.path = path }
+    public init(project: WorkspaceProject) { id = project.id; path = project.path }
+}
+
 public struct ProjectGroup: Identifiable, Sendable, Equatable {
     public let key: String
     public var id: String { key }
@@ -36,6 +43,8 @@ public struct ProjectGroup: Identifiable, Sendable, Equatable {
     /// One representative per physical path. Stale alias registrations remain in memberProjectIDs.
     public let members: [WorkspaceProject]
     public let memberProjectIDs: [UUID]
+    /// Every registration and its literal path, captured in canonical project order.
+    public let memberProjectReferences: [ProjectGroupMemberReference]
 }
 
 public struct SidebarPreferences: Codable, Sendable, Equatable {
@@ -113,14 +122,15 @@ public extension WorkspaceSnapshot {
             if members[key] == nil { order.append(key) }
             members[key, default: []].append(winner)
         }
-        var ids: [String: [UUID]] = [:]
+        var ids: [String: [UUID]] = [:], references: [String: [ProjectGroupMemberReference]] = [:]
         for project in projects {
             guard let key = logicalByPhysical[Self.physicalKey(project)] else { continue }
             ids[key, default: []].append(project.id)
+            references[key, default: []].append(.init(project: project))
         }
         return order.map { key in
             let values = members[key]!, representative = values[0]
-            return .init(key: key, displayName: Self.groupName(values), representative: representative, members: values, memberProjectIDs: ids[key] ?? [])
+            return .init(key: key, displayName: Self.groupName(values), representative: representative, members: values, memberProjectIDs: ids[key] ?? [], memberProjectReferences: references[key] ?? [])
         }
     }
     var orderedProjectGroups: [ProjectGroup] {

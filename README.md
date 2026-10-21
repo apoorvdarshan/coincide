@@ -82,6 +82,10 @@ picker chooses the checkout for future conversations; existing conversations
 keep their workspace, draft, and agent. The last selected conversation reopens
 when Coincide restarts.
 
+Use **Rename Group…** to rename all checkouts together. **Remove Group…** shows
+every checkout path and removes the whole group's active and archived
+conversations in one operation. Cancel leaves the group unchanged.
+
 Right-click a single project heading to rename it while keeping its folder path.
 The sidebar sort menu offers **Last user message** (including queued
 messages), **Created at** (the newest conversation in each project), and **Manual**.
@@ -92,9 +96,9 @@ conversations do not determine project activity or creation ranking.
 
 Right-click a project heading and choose **Remove Project** to remove its active
 and archived conversations from the workspace and stop their agents, clone, and
-terminals in every open window. For a group, choose the physical path under
-**Checkouts** first; sibling checkouts stay open. The confirmation includes the
-checkout path and any unsaved file edits.
+terminals in every open window. To remove only one checkout from a group, choose
+its physical path under **Checkouts**; sibling checkouts stay open. The
+confirmation includes the checkout paths and any unsaved file edits.
 Coincide does not delete checkout, worktree, staging, or attachment files. Git may
 clean up unfinished files when an active clone is stopped. Conversation data
 remains in local recovery history; removal is not secure

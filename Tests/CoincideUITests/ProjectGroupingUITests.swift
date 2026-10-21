@@ -75,6 +75,9 @@ func groupedCheckoutControlsPreserveRunningOwnershipAndRouteOnlyNewConversations
         try await waitGroupingUI { store.snapshot.threads.count == 4 }
         #expect(store.selectedThread?.projectID == b.id && store.selectedThread?.workspacePath == b.path)
         store.selectedThreadID = threadA; store.selectedProjectID = a.id
+        let agent = ACPAgentConfiguration(name: "Grouping Fixture Agent", executable: "/usr/bin/true")
+        try await store.saveACPAgent(agent); store.setACPAgent(agent, id: threadA)
+        try await waitGroupingUI { store.thread(threadA)?.acpAgent == agent }
         #expect(await store.submit("Running in checkout A", threadID: threadA).value)
         try await waitGroupingUI { await provider.prompts.count == 1 && store.thread(threadA)?.activeRun?.nativeTurnID != nil }
         #expect(await store.submit("Queued in checkout A", threadID: threadA).value)

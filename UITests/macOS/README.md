@@ -37,7 +37,10 @@ synthetic remote URL, without fetching or contacting that host. It imports both
 through the native folder panel, creates conversations in each checkout, and
 checks repository grouping, explicit future-checkout selection, distinct drafts,
 separate-checkout mode, and persistence after relaunch. The existing checkout
-commits must remain unchanged.
+commits must remain unchanged. It then renames both checkouts as a group,
+reviews the exact paths in the native removal sheet, checks Cancel preserves
+all three drafts, and confirms group removal clears the workspace while both
+checkouts' README, HEAD bytes, and resolved commits remain unchanged.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
