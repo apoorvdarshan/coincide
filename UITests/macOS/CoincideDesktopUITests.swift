@@ -15,13 +15,15 @@ final class CoincideDesktopUITests: XCTestCase {
     @MainActor private func exerciseProjectWorkflow(appearance: String, useKeyboard: Bool) throws {
         let environment = ProcessInfo.processInfo.environment
         let appPath = try XCTUnwrap(environment["COINCIDE_UI_APP_PATH"], "The CI harness must supply the staged app.")
+        let gitPath = try XCTUnwrap(environment["COINCIDE_UI_GIT_PATH"], "The CI harness must resolve the developer Git executable outside the sandbox.")
         let manager = FileManager.default
+        XCTAssertTrue(gitPath.hasPrefix("/") && gitPath != "/usr/bin/git" && manager.isExecutableFile(atPath: gitPath))
         // Xcode sandboxes its generated runner, even with ENABLE_APP_SANDBOX=NO.
         // Foundation supplies writable temporary storage belonging to that runner.
         let requestedRoot = manager.temporaryDirectory.appendingPathComponent("coincide-ui-testing-" + UUID().uuidString, isDirectory: true)
         try manager.createDirectory(at: requestedRoot, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let root = requestedRoot.resolvingSymlinksInPath()
-        defer { try? manager.removeItem(at: root) }
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
         let hooks = root.appendingPathComponent("empty-hooks", isDirectory: true)
         try manager.createDirectory(at: hooks, withIntermediateDirectories: false)
         let configuration = root.appendingPathComponent("gitconfig")
@@ -36,9 +38,14 @@ final class CoincideDesktopUITests: XCTestCase {
         app.launchEnvironment["GIT_CONFIG_GLOBAL"] = configuration.path
         app.launchEnvironment["GIT_CONFIG_NOSYSTEM"] = "1"
         app.launchArguments = ["-appearance", appearance]
-        defer {
+        // XCTest invokes teardown blocks even when a failed assertion aborts a test.
+        addTeardownBlock { @MainActor [weak self] in
             if app.state != .notRunning {
-                let tree = XCTAttachment(string: app.debugDescription); tree.name = "\(appearance)-final-accessibility-tree"; tree.lifetime = .keepAlways; add(tree)
+                let tree = XCTAttachment(string: app.debugDescription); tree.name = "\(appearance)-final-accessibility-tree"; tree.lifetime = .keepAlways; self?.add(tree)
+                if app.windows.firstMatch.exists {
+                    let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+                    screenshot.name = "\(appearance)-final-window"; screenshot.lifetime = .keepAlways; self?.add(screenshot)
+                }
                 app.terminate()
             }
         }
@@ -59,17 +66,22 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(create.waitForExistence(timeout: 5) && create.isEnabled); create.click()
         XCTAssertTrue(waitForAbsence(create, timeout: 20), "Creation must settle without leaving the modal busy.")
         let done = app.buttons["project-created-done"]
-        if done.exists { done.click() } // A nonfatal initial-commit warning still means project creation succeeded.
+        if done.exists {
+            let warning = XCTAttachment(string: app.debugDescription); warning.name = "\(appearance)-initial-commit-warning"; warning.lifetime = .keepAlways; add(warning)
+            done.click() // A nonfatal initial-commit warning still means project creation succeeded.
+        }
         let header = app.buttons["Collapse \(projectName)"]
         XCTAssertTrue(header.waitForExistence(timeout: 10))
+        let layout = XCTAttachment(string: "Application frame: \(app.frame)\nWindow frame: \(app.windows.firstMatch.frame)\n\n\(app.debugDescription)")
+        layout.name = "\(appearance)-created-layout-and-accessibility"; layout.lifetime = .keepAlways; add(layout)
+        capture(app, name: "\(appearance)-created")
         let projectFolders = try manager.contentsOfDirectory(at: root.appendingPathComponent("Projects"), includingPropertiesForKeys: [.isDirectoryKey])
             .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
         XCTAssertEqual(projectFolders.count, 1)
         let projectFolder = try XCTUnwrap(projectFolders.first)
-        let git = Process(); git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        git.arguments = ["-C", projectFolder.path, "rev-parse", "--verify", "HEAD"]
-        git.standardOutput = Pipe(); git.standardError = Pipe(); try git.run(); git.waitUntilExit()
-        XCTAssertEqual(git.terminationStatus, 0, "The created native project must contain its initial Git commit.")
+        let initialHead = try verifyHead(gitPath: gitPath, project: projectFolder, configuration: configuration, name: "\(appearance)-initial-git-head")
+        let preservedPaths = ["README.md", "assets/icon.svg", ".git/HEAD"]
+        let preservedFiles = try Dictionary(uniqueKeysWithValues: preservedPaths.map { ($0, try Data(contentsOf: projectFolder.appendingPathComponent($0))) })
         let composer = app.textViews["composer-input"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10) && composer.isHittable)
         let draft = "Synthetic draft retained through sidebar changes"
@@ -102,8 +114,53 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(selected.exists && selected.isSelected)
         capture(app, name: "\(appearance)-reopened")
         let tree = XCTAttachment(string: app.debugDescription); tree.name = "\(appearance)-reopened-accessibility-tree"; tree.lifetime = .keepAlways; add(tree)
+
+        let collapsedHeader = app.buttons["Expand \(renamed)"]
+        collapsedHeader.rightClick()
+        let removeItem = app.menuItems["Remove Project…"]
+        XCTAssertTrue(removeItem.waitForExistence(timeout: 5)); removeItem.click()
+        let confirmationTitle = app.staticTexts["Remove “\(renamed)” from Coincide?"]
+        let confirmRemove = app.buttons["Remove Project"]
+        XCTAssertTrue(confirmationTitle.waitForExistence(timeout: 5) && confirmRemove.exists)
+        let explanation = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Git may clean up unfinished files", "local recovery history")).firstMatch
+        XCTAssertTrue(explanation.waitForExistence(timeout: 5), "Removal must explain active-Git cleanup and retained recovery history.")
+        app.buttons["Cancel"].click()
+        XCTAssertTrue(waitForAbsence(confirmRemove, timeout: 5))
+        XCTAssertTrue(collapsedHeader.exists && composer.exists)
+        XCTAssertEqual(composer.value as? String, draft, "Cancelling removal must preserve the selected conversation and its draft.")
+
+        collapsedHeader.rightClick()
+        XCTAssertTrue(removeItem.waitForExistence(timeout: 5)); removeItem.click()
+        XCTAssertTrue(confirmationTitle.waitForExistence(timeout: 5) && confirmRemove.exists && explanation.exists)
+        confirmRemove.click()
+        XCTAssertTrue(waitForAbsence(collapsedHeader, timeout: 10), "Confirmed removal must remove the project from the sidebar.")
+        XCTAssertTrue(waitForAbsence(composer, timeout: 5), "Confirmed removal must clear the removed conversation.")
+        for path in preservedPaths {
+            XCTAssertEqual(try Data(contentsOf: projectFolder.appendingPathComponent(path)), preservedFiles[path], "Removing a registered project must preserve its existing \(path) bytes.")
+        }
+        XCTAssertEqual(try verifyHead(gitPath: gitPath, project: projectFolder, configuration: configuration, name: "\(appearance)-removed-git-head"), initialHead)
+        XCTAssertTrue(app.staticTexts["Your projects and coding agents, in a native Mac workspace."].waitForExistence(timeout: 5))
+        capture(app, name: "\(appearance)-removed-empty-workspace")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
+    @MainActor private func verifyHead(gitPath: String, project: URL, configuration: URL, name: String) throws -> String {
+        let git = Process(); git.executableURL = URL(fileURLWithPath: gitPath)
+        git.arguments = ["-C", project.path, "rev-parse", "--verify", "HEAD"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_CONFIG_GLOBAL"] = configuration.path; environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        git.environment = environment
+        let output = Pipe(), errors = Pipe(); git.standardOutput = output; git.standardError = errors
+        try git.run(); git.waitUntilExit()
+        let stdout = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let diagnostic = XCTAttachment(string: "Git: \(gitPath)\nExit: \(git.terminationStatus)\nstdout:\n\(stdout)\nstderr:\n\(stderr)")
+        diagnostic.name = name; diagnostic.lifetime = .keepAlways; add(diagnostic)
+        XCTAssertEqual(git.terminationStatus, 0, "The created native project must contain its initial Git commit. Git stderr: \(stderr)")
+        let head = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(head.isEmpty)
+        return head
     }
 
     @MainActor private func waitForAbsence(_ element: XCUIElement, timeout: TimeInterval) -> Bool {

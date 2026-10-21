@@ -80,8 +80,9 @@ project activity or creation ranking.
 Right-click a project heading and choose **Remove Project** to remove its active
 and archived conversations from the workspace and stop their agents, clone, and
 terminals in every open window. Confirm any unsaved file edits before removal.
-Checkout folders, worktrees, partial clone attempts, and attachment files stay on
-disk. Conversation data remains in local recovery history; removal is not secure
+Coincide does not delete checkout, worktree, staging, or attachment files. Git may
+clean up unfinished files when an active clone is stopped. Conversation data
+remains in local recovery history; removal is not secure
 erasure. If new conversations or unsaved editors appear during confirmation,
 review the removal again.
 

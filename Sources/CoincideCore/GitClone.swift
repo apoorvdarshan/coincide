@@ -223,7 +223,8 @@ public struct GitCloneService: Sendable {
             try promote(parent: parentAnchor, staging: stagingAnchor, checkout: checkoutAnchor)
             await onProgress(.init(stage: .checkout, percent: 100))
         } catch { watcher.cancel(); process.stop(); _ = await process.waitForExit(); throw error }
-        // Retain only the tiny ownership sidecar. No checkout bytes are deleted, even on failure.
+        // Coincide retains the ownership sidecar and never deletes checkout bytes.
+        // Git may clean up its own unfinished files on cancellation or failure.
         // A crash before promotion is recovered by the completion marker above.
     }
 

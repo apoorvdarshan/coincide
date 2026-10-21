@@ -25,13 +25,15 @@ def test_targets(configuration):
     return [value for key, value in configuration.items() if not key.startswith("__") and isinstance(value, dict)]
 
 
-def prepare_configuration(configuration, app, bootstrap):
-    app, bootstrap = map(Path, (app, bootstrap))
+def prepare_configuration(configuration, app, bootstrap, git):
+    app, bootstrap, git = map(Path, (app, bootstrap, git))
     for path in (app, bootstrap):
         if not path.is_absolute() or not path.is_dir() or path.is_symlink():
             raise ValueError("UI artifact locations must be existing absolute directories without a final symlink.")
     if not bootstrap.name.startswith("coincide-ui-testing-"):
         raise ValueError("The bootstrap workspace must use the app's dedicated UI-testing prefix.")
+    if not git.is_absolute() or not git.is_file() or not os.access(git, os.X_OK) or git == Path("/usr/bin/git"):
+        raise ValueError("UI Git verification requires an absolute executable developer Git path, not the system shim.")
     with (app / "Contents/Info.plist").open("rb") as handle:
         info = plistlib.load(handle)
     if info.get("CFBundleIdentifier") != TEST_BUNDLE_ID:
@@ -49,6 +51,7 @@ def prepare_configuration(configuration, app, bootstrap):
     target["DependentProductPaths"] = [str(app) if path == previous_app else path for path in target.get("DependentProductPaths", [])]
     target.setdefault("EnvironmentVariables", {}).update({
         "COINCIDE_UI_APP_PATH": str(app),
+        "COINCIDE_UI_GIT_PATH": str(git),
     })
     # Keep even an automatic target-app launch away from the normal workspace.
     target.setdefault("UITargetAppEnvironmentVariables", {}).update({
@@ -88,7 +91,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("changes")
     prepare = commands.add_parser("prepare")
-    for name in ("xctestrun", "app", "bootstrap"):
+    for name in ("xctestrun", "app", "bootstrap", "git"):
         prepare.add_argument("--" + name, required=True)
     results = commands.add_parser("verify-results"); results.add_argument("summary")
     arguments = parser.parse_args()
@@ -101,7 +104,7 @@ def main():
     elif arguments.command == "prepare":
         path = Path(arguments.xctestrun)
         with path.open("rb") as handle:
-            configuration = prepare_configuration(plistlib.load(handle), arguments.app, arguments.bootstrap)
+            configuration = prepare_configuration(plistlib.load(handle), arguments.app, arguments.bootstrap, arguments.git)
         with path.open("wb") as handle:
             plistlib.dump(configuration, handle)
     else:

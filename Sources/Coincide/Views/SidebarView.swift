@@ -137,7 +137,7 @@ struct SidebarView: View {
     }
 
     private func removalExplanation(_ request: ProjectRemovalRequest) -> String {
-        var text = String(localized: "This removes its active and archived conversations from the workspace and stops their agents, clone operation, and terminals.\n\nCheckout, worktree, staging, and attachment files stay on disk. Conversation data remains in local recovery history; this is not secure erasure.")
+        var text = String(localized: "This removes its active and archived conversations from the workspace and stops their agents, clone operation, and terminals.\n\nCoincide does not delete checkout, worktree, staging, or attachment files. Git may clean up unfinished files when an active clone is stopped. Conversation data remains in local recovery history; this is not secure erasure.")
         if !request.dirtyEditorIDs.isEmpty { text += "\n\n" + String(localized: "Unsaved file edits in this project will be discarded.") }
         return text
     }

@@ -22,10 +22,16 @@ explicit environment opt-in; invalid configuration must never fall back to
 normal app data. Git identity and hooks are configured through a private
 test-only Git config, without changing the runner's global settings. Composer
 text remains unsent; no coding agent or network provider is invoked.
+The shell resolves the selected Xcode's real Git executable before entering the
+sandbox; commit verification avoids `/usr/bin/git`'s developer-tool shim and
+retains both output streams in the test result for diagnosis.
 
 The two tests exercise light/dark actual windows, File-menu or keyboard project
 creation, an initial Git commit, project renaming, collapse with the selected
 conversation retained, and composer persistence across graceful quit/relaunch.
+They then cancel a project-removal confirmation, verify the selected draft is
+retained, confirm removal, and check the existing README, icon, HEAD bytes and
+resolved Git commit remain unchanged while the workspace becomes empty.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result

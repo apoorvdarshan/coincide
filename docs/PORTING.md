@@ -81,8 +81,9 @@ must each be mapped and verified before declaring parity.
   window registers its terminal owner for targeted cleanup. Composer/import/model
   state and unreferenced inspectors are reconciled, shared paths remain usable,
   and editor scopes freeze during removal after explicit unsaved-edit confirmation.
-  New conversations or dirty editors require renewed confirmation. Checkout,
-  worktree, staging, and attachment files are preserved. Append-only recovery
+  New conversations or dirty editors require renewed confirmation. Coincide does
+  not delete checkout, worktree, staging, or attachment files; Git may clean up its
+  own unfinished files when an active clone is stopped. Append-only recovery
   history remains, so removal is explicitly described as workspace removal rather
   than secure erasure. These changes use the existing storage version 8 format.
 - Attachment bytes live in private, immutable app-owned files. Drafts, queued

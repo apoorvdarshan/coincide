@@ -14,7 +14,9 @@
   All registered native windows close only the removed conversations' terminals.
   Pending imports/worktree setup and clone retries cancel, drafts/model caches and
   stale selection/navigation clear, and inspectors with surviving path references
-  remain open. Checkout, worktree, staging, and attachment files remain untouched.
+  remain open. Coincide does not delete checkout, worktree, staging, or attachment
+  files. Git can clean up its own unfinished files when an active clone stops;
+  the removal confirmation and documentation explicitly qualify that case.
   Append-only recovery history remains; the confirmation does not promise erasure.
 - File edits register dirtiness synchronously. Project editor scopes freeze
   before waiting for earlier UI commands, and a queued preflight checks for newly
@@ -44,8 +46,15 @@
   launch: Xcode's generated runner is sandboxed and could not create fixtures in
   shell-owned scratch. Fixtures now use the runner's Foundation temporary
   directory; screenshots remain retained XCTest attachments exported after the
-  run. Local compile/configuration checks pass. The hosted retry and screenshot
-  inspection remain required; build success does not establish visual correctness.
+  run. A second hosted run reached project creation in both appearances but its
+  Git verification child exited unsuccessfully; the harness now resolves the
+  actual developer Git executable outside the runner sandbox and retains command
+  diagnostics. Recordings confirm readable selected rows and symbols in the live
+  light/dark app, unlike the earlier offscreen captures. Leading-edge clipping
+  remains unresolved pending window-frame diagnostics. The workflows now also
+  test Cancel/confirmed removal, draft retention, and preserved README/icon/HEAD
+  bytes. Local compile/configuration checks pass; the complete hosted workflows
+  and screenshot review remain pending.
 
 Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
 
