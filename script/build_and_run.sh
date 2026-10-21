@@ -13,8 +13,9 @@ BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 cp "$BUILD_BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Notices"
-cp "$ROOT_DIR/docs/T3-CODE-LICENSE.txt" "$ROOT_DIR/docs/SwiftTerm-LICENSE.txt" "$APP_BUNDLE/Contents/Resources/Notices/"
-cp "$ROOT_DIR/docs/SwiftMarkdown-LICENSE.txt" "$ROOT_DIR/docs/SwiftMarkdown-NOTICE.txt" "$ROOT_DIR/docs/SwiftCMark-LICENSE.txt" "$APP_BUNDLE/Contents/Resources/Notices/"
+for NOTICE_FILE in "$ROOT_DIR"/docs/*-LICENSE.txt "$ROOT_DIR"/docs/*-NOTICE.txt; do
+  /usr/bin/install -m 644 "$NOTICE_FILE" "$APP_BUNDLE/Contents/Resources/Notices/"
+done
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

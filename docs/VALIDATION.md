@@ -21,6 +21,9 @@
   a full interactive file-link/copy-control smoke check is still pending because
   the desktop was locked during this milestone.
 - Development app packaging and strict signature verification passed.
+- Repeating packaging exposed read-only dependency notice files copied from the
+  package checkout. The script now installs notices with mode 644. Two consecutive
+  packaging runs and signature verification passed after that correction.
 
 Code highlighting is lexical and limited to common language families. Unknown or
 large code blocks retain plain source. Images currently retain their alternative
