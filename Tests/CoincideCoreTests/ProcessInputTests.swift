@@ -51,8 +51,9 @@ private actor InputTestGate {
 @Test(.timeLimit(.minutes(1))) func rpcTimeoutAndCloseStayResponsiveDuringABlockedLargeWrite() async throws {
     for close in [false, true] {
         let rpc = try JSONRPCConnection(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: ["-c", "import time; time.sleep(2)"])
+        let payload = JSONValue.string(String(repeating: "x", count: 8 * 1_024 * 1_024))
         let started = ContinuousClock.now
-        let request = Task { try await rpc.request("large", params: .string(String(repeating: "x", count: 8 * 1_024 * 1_024)), timeout: close ? .seconds(30) : .milliseconds(100)) }
+        let request = Task { try await rpc.request("large", params: payload, timeout: close ? .seconds(30) : .milliseconds(100)) }
         if close { try await Task.sleep(for: .milliseconds(100)); await rpc.close() }
         do { _ = try await request.value; Issue.record("The blocked RPC unexpectedly succeeded") }
         catch { /* Both paths must cancel input and release the waiter. */ }

@@ -27,7 +27,9 @@ jobs:
           key: swift-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
           restore-keys: swift-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
       - name: Build and test
-        run: swift test
+        # Process/PTY and deadline regressions share a small hosted runner. Keep
+        # every test, while avoiding simultaneous fixture launches starving timers.
+        run: swift test --no-parallel
       - name: Package the native app
         run: ./script/build_and_run.sh --build-only
       - name: Verify app signature

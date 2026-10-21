@@ -41,6 +41,12 @@
   before pipe writing begins leaves the connection intact. The deadline assertions
   remain unchanged; the full 74-test suite and both live attachment cases passed
   again locally after this correction.
+- A subsequent hosted run still missed the deadline while many process, PTY,
+  image-rendering, and database tests launched concurrently. The measured interval
+  also included constructing the 8 MiB test string before the RPC timer existed.
+  The fixture payload is now prepared before timing, and CI runs every test with
+  `swift test --no-parallel` to keep process-startup contention out of timer checks.
+  The same timeout, close paths, payload size, and one-second assertions remain.
 - Native packaging, launch, strict signature verification, and bundled-font
   runtime verification passed. A private backup preceded migration of the real
   workspace from storage version 2 to 3. Canonical comparison, excluding only new
