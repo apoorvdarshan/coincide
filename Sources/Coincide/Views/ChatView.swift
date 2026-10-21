@@ -27,6 +27,9 @@ struct ChatView: View {
                         }
                     } label: { Label(store.selectedProject?.name ?? "Workspace", systemImage: "folder").font(.caption).foregroundStyle(.secondary) }
                     .menuStyle(.borderlessButton).fixedSize()
+                    .accessibilityIdentifier("conversation-workspace")
+                    .accessibilityLabel("Conversation workspace")
+                    .accessibilityValue(thread.workspacePath)
                 }.padding(.horizontal, 24).padding(.vertical, 12)
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -57,6 +60,19 @@ struct ChatView: View {
                     .onChange(of: thread.messages.count) { proxy.scrollTo("latest", anchor: .bottom) }
                 }
                 VStack(spacing: 10) {
+                    if let group = store.projectGroup(containing: thread.projectID), group.members.count > 1 {
+                        Picker("New conversations", selection: Binding(
+                            get: { store.preferredProject(in: group)?.id ?? group.representative.id },
+                            set: { store.setProjectGroupCheckout(group, projectID: $0) })) {
+                            ForEach(group.members) { project in
+                                Text(project.path).lineLimit(1).truncationMode(.middle).tag(project.id)
+                                    .disabled(project.clone.map { !$0.isReady } ?? false)
+                            }
+                        }
+                        .pickerStyle(.menu).font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("new-conversation-checkout")
+                        .help("Choose the checkout for a new conversation. This conversation keeps its current workspace.")
+                    }
                     if let project = store.snapshot.projects.first(where: { $0.id == thread.projectID }) {
                         ProjectCloneBanner(project: project, cancel: { store.cancelProjectClone(project.id) }, retry: { store.retryProjectClone(project.id) },
                                            retrying: store.isRetryingProjectClone(project.id))

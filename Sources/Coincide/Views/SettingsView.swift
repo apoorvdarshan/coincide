@@ -37,6 +37,11 @@ struct SettingsView: View {
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "cpu") }
             Form {
                 Picker("Appearance", selection: $appearance) { Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark") }
+                Picker("Group projects", selection: Binding(get: { store.projectGroupingMode }, set: { store.setProjectGroupingMode($0) })) {
+                    ForEach(ProjectGroupingMode.allCases) { Text($0.title).tag($0) }
+                }
+                Text("Group checkouts by repository, by repository and folder, or show them separately. Existing conversations keep their workspaces.")
+                    .font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Version", value: "0.1.0 (development)")
                 Link("Source Code", destination: URL(string: "https://github.com/apoorvdarshan/coincide")!)
                 Link("T3 Code", destination: URL(string: "https://github.com/pingdotgg/t3code")!)

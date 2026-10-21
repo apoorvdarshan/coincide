@@ -89,6 +89,7 @@ public enum WorkspaceJournal {
         }
         var cloneIDs: Set<UUID> = []
         for project in snapshot.projects {
+            try validateRepositoryIdentity(project.repositoryIdentity, project: project)
             guard let clone = project.clone else { continue }
             try clone.validate(project: project)
             for plan in clone.previousPlans + [clone.plan] {
@@ -106,6 +107,24 @@ public enum WorkspaceJournal {
         guard Set(snapshot.acpAgents.map(\.id)).count == snapshot.acpAgents.count else { throw CoincideError("Agent configurations must have unique identities.") }
         for agent in snapshot.acpAgents { try agent.validate() }
         try snapshot.sidebarPreferences?.validate(projectIDs: projects)
+        let preferences = snapshot.effectiveSidebarPreferences, groups = snapshot.projectGroups
+        let physicalKeys = Set(snapshot.projects.compactMap { snapshot.physicalProjectKey(for: $0.id) })
+        guard preferences.selectedThreadID.map({ threads.contains($0) }) ?? true,
+              Set(preferences.groupingOverrides.keys).isSubset(of: physicalKeys),
+              Set(preferences.groupExpandedByKey.keys).isSubset(of: Set(groups.map(\.key))),
+              preferences.activeProjectByGroup.allSatisfy({ key, id in
+                  groups.contains { $0.key == key && $0.memberProjectIDs.contains(id) } && snapshot.projects.contains { $0.id == id && ($0.clone == nil || $0.clone?.isReady == true) }
+              }) else { throw CoincideError("Project grouping preferences refer to a checkout or group that no longer exists.") }
+    }
+
+    static func validateRepositoryIdentity(_ identity: RepositoryIdentity?, project: WorkspaceProject) throws {
+        guard let identity else { return }
+        try identity.validate()
+        let path = URL(fileURLWithPath: project.path).standardizedFileURL.path
+        let relative = path == identity.rootPath ? "" : (path.hasPrefix(identity.rootPath + "/") ? String(path.dropFirst(identity.rootPath.count + 1)) : nil)
+        guard identity.projectRelativePath == relative, project.clone == nil || project.clone?.isReady == true else {
+            throw CoincideError("Repository metadata does not belong to this checkout.")
+        }
     }
 
     public static func changes(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) throws -> [WorkspaceEvent] {

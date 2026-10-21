@@ -10,6 +10,7 @@ public struct WorkspaceUpdate: Sendable {
 public actor WorkspaceEngine {
     public typealias ProviderFactory = @Sendable (CodingThread) throws -> any ProviderSession
     public typealias CloneFactory = @Sendable (GitClonePlan) throws -> any ProjectCloneSession
+    public typealias IdentityResolver = @Sendable (URL) async throws -> RepositoryIdentity?
     private struct Envelope: Sendable {
         var id: UUID
         var command: EngineCommand
@@ -35,11 +36,19 @@ public actor WorkspaceEngine {
         var projectIDs: Set<UUID>
         var task: Task<Void, Never>
     }
+    private struct IdentityRefresh: Sendable {
+        var id: UUID
+        var incarnation: UUID
+        var path: String
+        var task: Task<RepositoryIdentity?, any Error>
+    }
     private let database: WorkspaceDatabase
     public nonisolated let attachments: AttachmentStore
     private let ownership: WorkspaceRuntimeLock
     private let factory: ProviderFactory
     private let cloneFactory: CloneFactory
+    private let identityResolver: IdentityResolver
+    private let identityGate = GitOperationGate()
     private let workerID = UUID()
     private let inbox: AsyncStream<Envelope>
     private let incoming: AsyncStream<Envelope>.Continuation
@@ -60,6 +69,8 @@ public actor WorkspaceEngine {
     private var effectRequests: [UUID: WorkspaceEffectRequest] = [:]
     private var runtimes: [UUID: Runtime] = [:]
     private var metadataSessions: [UUID: MetadataRuntime] = [:]
+    private var projectIncarnations: [UUID: UUID] = [:]
+    private var identityRefreshes: [UUID: IdentityRefresh] = [:]
     private var cleanupTasks: [UUID: Cleanup] = [:]
     private var retiringEffects: Set<UUID> = []
     private var retiringEffectWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
@@ -71,12 +82,14 @@ public actor WorkspaceEngine {
     private let encoder: JSONEncoder = { let value = JSONEncoder(); value.outputFormatting = [.sortedKeys]; return value }()
 
     public init(url: URL, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
-                cloneFactory: @escaping CloneFactory = { GitCloneService(plan: $0) }) throws {
+                cloneFactory: @escaping CloneFactory = { GitCloneService(plan: $0) },
+                identityResolver: @escaping IdentityResolver = { try await RepositoryIdentityResolver(root: $0).resolve() }) throws {
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
         factory = providerFactory
         self.cloneFactory = cloneFactory
+        self.identityResolver = identityResolver
         let pair = AsyncStream<Envelope>.makeStream()
         inbox = pair.stream; incoming = pair.continuation
     }
@@ -95,6 +108,7 @@ public actor WorkspaceEngine {
         recovered = await reconcileCompletedClones(in: recovered)
         let receipt = try await database.commit(recovered, event: "workspace.opened", commandID: UUID(), expectedSequence: revision.sequence)
         revision = .init(snapshot: recovered, sequence: receipt.sequence)
+        projectIncarnations = Dictionary(uniqueKeysWithValues: recovered.projects.map { ($0.id, UUID()) })
         loaded = true
         let stream = inbox
         commandWorker = Task { [weak self] in
@@ -104,6 +118,7 @@ public actor WorkspaceEngine {
             }
         }
         publish()
+        scheduleIdentityRefreshes(previous: nil)
         return recovered
     }
     public func current() -> WorkspaceUpdate { .init(snapshot: revision.snapshot, sequence: revision.sequence, error: fatalError) }
@@ -163,7 +178,12 @@ public actor WorkspaceEngine {
                 let base = try await database.revision()
                 if let fatalError { throw CoincideError(fatalError) }
                 let decision: WorkspaceDecision
-                do { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
+                do {
+                    if case .repositoryIdentityResolved(let projectID, let path, let incarnation, let requestID, _) = envelope.command,
+                       !ownsIdentityRefresh(projectID: projectID, path: path, incarnation: incarnation, requestID: requestID) {
+                        decision = WorkspaceDecision(snapshot: base.snapshot)
+                    } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
+                }
                 catch let error as WorkspaceCommandError {
                     do {
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: error.message, expectedSequence: base.sequence)
@@ -190,6 +210,7 @@ public actor WorkspaceEngine {
                     publish()
                     envelope.continuation.resume(returning: receipt)
                     scheduleEffects()
+                    scheduleIdentityRefreshes(previous: base.snapshot)
                     return
                 } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
             }
@@ -231,6 +252,16 @@ public actor WorkspaceEngine {
         let threads = decision.closeRuntimes.union(removedThreads)
         var projectIDs = removedProjects
         var sessions: [any ProviderSession] = []
+        var jobs: [Task<Void, Never>] = []
+        let old = Dictionary(uniqueKeysWithValues: previous.projects.map { ($0.id, $0) })
+        for project in decision.snapshot.projects where old[project.id] == nil || old[project.id]?.path != project.path {
+            projectIncarnations[project.id] = UUID()
+        }
+        for id in removedProjects { projectIncarnations.removeValue(forKey: id) }
+        for (id, refresh) in identityRefreshes where removedProjects.contains(id) || !decision.snapshot.projects.contains(where: { $0.id == id && $0.path == refresh.path && ($0.clone == nil || $0.clone?.isReady == true) }) {
+            identityRefreshes.removeValue(forKey: id); refresh.task.cancel(); projectIDs.insert(id)
+            jobs.append(Task { _ = try? await refresh.task.value })
+        }
         for id in threads {
             if let runtime = runtimes.removeValue(forKey: id) {
                 runtime.reader?.cancel(); sessions.append(runtime.session); projectIDs.insert(runtime.projectID)
@@ -241,7 +272,6 @@ public actor WorkspaceEngine {
             if let projectID = metadata.projectID { projectIDs.insert(projectID) }
             if metadata.closeTask == nil { sessions.append(metadata.session) }
         }
-        var jobs: [Task<Void, Never>] = []
         for effect in removedEffects where effect.status == .running && effect.leaseOwner == workerID {
             // Shutdown/failure can finish an executor while the commit awaits SQLite. Its ID
             // must not become a waiter after its one completion notification already happened.
@@ -275,6 +305,98 @@ public actor WorkspaceEngine {
         retiringEffects.remove(id)
         let waiters = retiringEffectWaiters.removeValue(forKey: id) ?? []
         for waiter in waiters { waiter.resume() }
+    }
+    /// Metadata reads are owned by one project incarnation. Cancelling waits for the resolver's
+    /// owned process to exit; failures never stop provider execution or discard a known identity.
+    public func refreshRepositoryIdentity(projectID: UUID) async throws -> RepositoryIdentity? {
+        _ = try await load()
+        if await waitForRemovalCommit(projectID: projectID) { throw CancellationError() }
+        try Task.checkCancellation()
+        guard let project = revision.snapshot.projects.first(where: { $0.id == projectID }), let incarnation = projectIncarnations[projectID] else { throw CancellationError() }
+        let task = try startIdentityRefresh(projectID: projectID)
+        return try await withTaskCancellationHandler {
+            do {
+                let value = try await task.value
+                let owned = await identityCallerIsCurrent(projectID: projectID, path: project.path, incarnation: incarnation)
+                try Task.checkCancellation()
+                guard owned, !task.isCancelled else { throw CancellationError() }
+                return value
+            } catch {
+                let owned = await identityCallerIsCurrent(projectID: projectID, path: project.path, incarnation: incarnation)
+                try Task.checkCancellation()
+                guard owned, !task.isCancelled else { throw CancellationError() }
+                throw error
+            }
+        } onCancel: { task.cancel() }
+    }
+    private func identityCallerIsCurrent(projectID: UUID, path: String, incarnation: UUID) async -> Bool {
+        if await waitForRemovalCommit(projectID: projectID) { return false }
+        return !closing && !stoppingEffects && fatalError == nil && projectIncarnations[projectID] == incarnation &&
+            revision.snapshot.projects.contains { $0.id == projectID && $0.path == path && ($0.clone == nil || $0.clone?.isReady == true) }
+    }
+    private func startIdentityRefresh(projectID: UUID) throws -> Task<RepositoryIdentity?, any Error> {
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let project = revision.snapshot.projects.first(where: { $0.id == projectID && ($0.clone == nil || $0.clone?.isReady == true) }),
+              let incarnation = projectIncarnations[projectID] else { throw CancellationError() }
+        if let current = identityRefreshes[projectID], current.incarnation == incarnation, current.path == project.path { return current.task }
+        let id = UUID(), path = project.path, resolver = identityResolver, gate = identityGate
+        // Four independent FIFO lanes cap local Git discovery without sharing mutation locks.
+        let lane = String(projectID.uuid.0 & 3)
+        let task: Task<RepositoryIdentity?, any Error> = Task { [weak self] in
+            do {
+                let identity = try await gate.perform(key: lane) { try await resolver(URL(fileURLWithPath: path)) }
+                try Task.checkCancellation()
+                guard let self else { throw CancellationError() }
+                let value = try await self.applyIdentityRefresh(projectID: projectID, path: path, incarnation: incarnation, requestID: id, identity: identity)
+                await self.identityRefreshFinished(projectID: projectID, requestID: id)
+                try Task.checkCancellation(); return value
+            } catch {
+                let owned = await self?.identityRefreshFailed(projectID: projectID, path: path, incarnation: incarnation, requestID: id) ?? false
+                try Task.checkCancellation()
+                guard owned else { throw CancellationError() }
+                throw error
+            }
+        }
+        identityRefreshes[projectID] = .init(id: id, incarnation: incarnation, path: path, task: task)
+        return task
+    }
+    private func ownsIdentityRefresh(projectID: UUID, path: String, incarnation: UUID, requestID: UUID) -> Bool {
+        guard !closing, !stoppingEffects, fatalError == nil, projectIncarnations[projectID] == incarnation,
+              let current = identityRefreshes[projectID], !current.task.isCancelled, current.id == requestID, current.incarnation == incarnation, current.path == path,
+              revision.snapshot.projects.contains(where: { $0.id == projectID && $0.path == path && ($0.clone == nil || $0.clone?.isReady == true) }) else { return false }
+        return true
+    }
+    private func applyIdentityRefresh(projectID: UUID, path: String, incarnation: UUID, requestID: UUID, identity: RepositoryIdentity?) async throws -> RepositoryIdentity? {
+        if await waitForRemovalCommit(projectID: projectID) { throw CancellationError() }
+        guard ownsIdentityRefresh(projectID: projectID, path: path, incarnation: incarnation, requestID: requestID),
+              let project = revision.snapshot.projects.first(where: { $0.id == projectID }) else { throw CancellationError() }
+        try Task.checkCancellation()
+        try WorkspaceJournal.validateRepositoryIdentity(identity, project: project)
+        if project.repositoryIdentity != identity {
+            _ = try await enqueue(.repositoryIdentityResolved(projectID: projectID, path: path, incarnation: incarnation, requestID: requestID, identity: identity))
+        }
+        if await waitForRemovalCommit(projectID: projectID) { throw CancellationError() }
+        guard ownsIdentityRefresh(projectID: projectID, path: path, incarnation: incarnation, requestID: requestID) else { throw CancellationError() }
+        try Task.checkCancellation(); return identity
+    }
+    private func identityRefreshFinished(projectID: UUID, requestID: UUID) {
+        if identityRefreshes[projectID]?.id == requestID { identityRefreshes.removeValue(forKey: projectID) }
+    }
+    private func identityRefreshFailed(projectID: UUID, path: String, incarnation: UUID, requestID: UUID) async -> Bool {
+        let removed = await waitForRemovalCommit(projectID: projectID)
+        let owned = !removed && ownsIdentityRefresh(projectID: projectID, path: path, incarnation: incarnation, requestID: requestID)
+        identityRefreshFinished(projectID: projectID, requestID: requestID)
+        return owned
+    }
+    private func scheduleIdentityRefreshes(previous: WorkspaceSnapshot?) {
+        guard loaded, !closing, !stoppingEffects, fatalError == nil else { return }
+        let old = Dictionary(uniqueKeysWithValues: (previous?.projects ?? []).map { ($0.id, $0) })
+        for project in revision.snapshot.projects where project.clone == nil || project.clone?.isReady == true {
+            let prior = old[project.id]
+            if prior == nil || prior?.path != project.path || (prior?.clone != nil && prior?.clone?.isReady != true) {
+                _ = try? startIdentityRefresh(projectID: project.id)
+            }
+        }
     }
     private func scheduleEffects() {
         effectWakeGeneration += 1
@@ -491,7 +613,15 @@ public actor WorkspaceEngine {
         guard fatalError == nil else { return }
         fatalError = "Workspace execution stopped: \(message)"; publish()
         for task in effects.values { task.cancel() }
+        cancelIdentityRefreshes()
         for id in Array(runtimes.keys) { await closeRuntime(id) }
+    }
+    private func cancelIdentityRefreshes() {
+        let refreshes = identityRefreshes; identityRefreshes = [:]
+        for (id, refresh) in refreshes {
+            refresh.task.cancel()
+            _ = startCleanup(projectIDs: [id], sessions: [], jobs: [Task { _ = try? await refresh.task.value }])
+        }
     }
     public func models(provider: ProviderKind) async throws -> [ProviderModel] {
         var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path)); thread.provider = provider
@@ -566,6 +696,7 @@ public actor WorkspaceEngine {
         stoppingEffects = true
         if loaded, fatalError == nil { _ = try? await enqueue(.pauseQueues) }
         closing = true
+        cancelIdentityRefreshes()
         let jobs = Array(effects.values); for job in jobs { job.cancel() }
         for id in Array(runtimes.keys) { await closeRuntime(id) }
         let metadata = Array(metadataSessions.values); metadataSessions = [:]

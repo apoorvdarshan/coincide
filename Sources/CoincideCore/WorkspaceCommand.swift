@@ -37,8 +37,14 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case removeProject(projectID: UUID, expectedThreadIDs: [UUID])
     case setProjectExpanded(projectID: UUID, expanded: Bool)
     case setProjectSortMode(ProjectSortMode)
+    case setProjectGroupingMode(ProjectGroupingMode)
+    case setProjectGroupingOverride(projectID: UUID, mode: ProjectGroupingMode?)
+    case setProjectGroupExpanded(groupKey: String, expectedProjectIDs: [UUID], expanded: Bool)
+    case setProjectGroupCheckout(groupKey: String, expectedProjectIDs: [UUID], projectID: UUID)
+    case selectConversation(threadID: UUID?)
     case moveProject(projectID: UUID, before: UUID?, expectedOrder: [UUID])
     case reorderProjects(projectIDs: [UUID], expectedOrder: [UUID])
+    case reorderProjectGroups(projectIDs: [UUID], expectedOrder: [UUID], expectedGroups: [String: [UUID]])
     case createThread(CodingThread)
     case editThread(UUID, ThreadEdit)
     case submit(threadID: UUID, text: String)
@@ -64,6 +70,7 @@ enum EngineCommand: Codable, Sendable {
     case pauseQueues
     case cloneStarted(projectID: UUID, attemptID: UUID)
     case cloneProgress(projectID: UUID, attemptID: UUID, progress: GitCloneProgress)
+    case repositoryIdentityResolved(projectID: UUID, path: String, incarnation: UUID, requestID: UUID, identity: RepositoryIdentity?)
 }
 enum EffectResult: Codable, Sendable { case succeeded, failed(String), cancelled, stopped }
 
@@ -78,6 +85,37 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
+        case .client(.selectConversation(let threadID)):
+            guard threadID.map({ id in decision.snapshot.threads.contains { $0.id == id } }) ?? true else { throw WorkspaceCommandError("This conversation is no longer available.") }
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            if preferences.selectedThreadID != threadID { preferences.selectedThreadID = threadID; decision.snapshot.sidebarPreferences = preferences }
+        case .client(.setProjectGroupingMode(let mode)):
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            if preferences.groupingMode != mode { preferences.groupingMode = mode; decision.snapshot.sidebarPreferences = preferences }
+        case .client(.setProjectGroupingOverride(let projectID, let mode)):
+            guard let key = decision.snapshot.physicalProjectKey(for: projectID) else { throw WorkspaceCommandError("This checkout is no longer available.") }
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            if preferences.groupingOverrides[key] != mode { preferences.groupingOverrides[key] = mode; decision.snapshot.sidebarPreferences = preferences }
+        case .client(.setProjectGroupExpanded(let key, let expected, let expanded)):
+            let group = try decision.validatedGroup(key, expected: expected)
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            preferences.groupExpandedByKey[key] = expanded
+            let ids = Set(group.memberProjectIDs)
+            preferences.collapsedProjectIDs.removeAll { ids.contains($0) }
+            if !expanded { preferences.collapsedProjectIDs += group.memberProjectIDs }
+            preferences.collapsedProjectIDs.sort { $0.uuidString < $1.uuidString }
+            decision.snapshot.sidebarPreferences = preferences
+        case .client(.setProjectGroupCheckout(let key, let expected, let projectID)):
+            let group = try decision.validatedGroup(key, expected: expected)
+            guard group.memberProjectIDs.contains(projectID), let project = decision.snapshot.projects.first(where: { $0.id == projectID }),
+                  project.clone == nil || project.clone?.isReady == true else { throw WorkspaceCommandError("Choose an available checkout whose clone has finished.") }
+            var preferences = decision.snapshot.effectiveSidebarPreferences; preferences.activeProjectByGroup[key] = projectID
+            decision.snapshot.sidebarPreferences = preferences
+        case .repositoryIdentityResolved(let projectID, let path, _, _, let identity):
+            if let i = decision.snapshot.projects.firstIndex(where: { $0.id == projectID && $0.path == path && ($0.clone == nil || $0.clone?.isReady == true) }) {
+                try WorkspaceJournal.validateRepositoryIdentity(identity, project: decision.snapshot.projects[i])
+                decision.snapshot.projects[i].repositoryIdentity = identity
+            }
         case .client(.removeProject(let projectID, let expectedThreadIDs)):
             guard decision.snapshot.projects.contains(where: { $0.id == projectID }) else { throw WorkspaceCommandError("This project is no longer available.") }
             let threadIDs = Set(decision.snapshot.threads.filter { $0.projectID == projectID }.map(\.id))
@@ -124,6 +162,15 @@ struct WorkspaceDecision: Sendable {
             }
         case .client(.reorderProjects(let order, let expected)):
             try decision.validateProjectOrder(expected)
+            guard order.count == expected.count, Set(order) == Set(expected) else { throw WorkspaceCommandError("Move only the projects currently shown in Manual order.") }
+            decision.reorderProjects(order)
+        case .client(.reorderProjectGroups(let order, let expected, let expectedGroups)):
+            try decision.validateProjectOrder(expected)
+            let groups = decision.snapshot.projectGroups
+            guard Set(expectedGroups.keys) == Set(groups.map(\.key)), groups.allSatisfy({ group in
+                guard let ids = expectedGroups[group.key] else { return false }
+                return Set(ids).count == ids.count && Set(ids) == Set(group.memberProjectIDs)
+            }) else { throw WorkspaceCommandError("The project groups changed. Review the current groups and try moving again.") }
             guard order.count == expected.count, Set(order) == Set(expected) else { throw WorkspaceCommandError("Move only the projects currently shown in Manual order.") }
             decision.reorderProjects(order)
         case .client(.addProjectWithThread(let project, let thread)):
@@ -276,7 +323,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .addProjectWithThread, .renameProject, .removeProject, .setProjectExpanded, .setProjectSortMode, .moveProject, .reorderProjects, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
+            case .addProject, .addProjectWithThread, .renameProject, .removeProject, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -308,8 +355,14 @@ struct WorkspaceDecision: Sendable {
                 clone.progress = progress; clone.updatedAt = now; decision.snapshot.projects[i].clone = clone
             }
         }
+        decision.snapshot.reconcileGroupingPreferences()
         try WorkspaceJournal.validate(decision.snapshot)
         return decision
+    }
+    private func validatedGroup(_ key: String, expected: [UUID]) throws -> ProjectGroup {
+        guard let group = snapshot.projectGroups.first(where: { $0.key == key }), Set(expected).count == expected.count,
+              Set(expected) == Set(group.memberProjectIDs) else { throw WorkspaceCommandError("This project's checkouts changed. Review the current group and try again.") }
+        return group
     }
     private func validateProjectOrder(_ expected: [UUID]) throws {
         guard snapshot.effectiveSidebarPreferences.sortMode == .manual else { throw WorkspaceCommandError("Choose Manual sorting before moving projects.") }
@@ -481,7 +534,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .addProjectWithThread, .renameProject, .removeProject, .setProjectExpanded, .setProjectSortMode, .moveProject, .reorderProjects, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
+        case .addProject, .addProjectWithThread, .renameProject, .removeProject, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
         case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

@@ -1,5 +1,47 @@
 # Validation record
 
+## 2026-10-22 — persisted logical checkout groups and conversation selection
+
+- Registered projects now acquire credential-free repository identity on load,
+  registration, and clone readiness through bounded native Git discovery. Request,
+  path, and project-incarnation checks fence both successful and failed results,
+  including explicit callers resuming after removal. Cleanup drains canceled
+  discovery outside the command inbox. Failures preserve known identity without
+  stopping agents; unchanged metadata does not add journal events or outbox work.
+  The exact SQLite commit/actor-ack interleaving is source-reviewed; held-result
+  and held-error tests reproduce removal and same-ID re-add boundaries.
+- Repository, repository-and-folder, and separate-checkout modes derive groups
+  while preserving physical project/thread records, fork identity, local folders,
+  and duplicate-path registration references. Preferences persist grouping mode,
+  physical-path overrides, expansion, and the future-conversation checkout.
+  Activity includes eligible conversations across all members. Group moves retain
+  untouched physical interleaving and reject stale order or membership; self drops
+  are no-ops. Collapse retains the selected eligible conversation.
+- Native menus expose physical checkout paths for new conversations and individual
+  rename/removal. Clone badges and readiness use each thread's actual owner.
+  Changing future checkout does not rebind a conversation, draft, queue, or agent.
+  Removal confirms the captured path and leaves sibling checkouts open. The last
+  selected conversation persists; archived selection restores the archived view.
+- Storage 8 to 9 migration retains absent/default legacy fields and protects the
+  new state from older writers. Journal replay covers identity, preferences, and
+  selection. Tests cover invalid metadata, forks/worktrees, monorepo boundaries,
+  duplicate physical paths, activity, stale commands, cleanup, clone readiness,
+  nonfatal discovery errors, restart, and unchanged thread/runtime/outbox state.
+- The full suite passed 235 tests: 195 core, 4 terminal, 13 Markdown, and 23 native
+  UI/store. The final pass includes the error-side and public-continuation owner
+  guards. Three CI-configuration tests pass, and the Xcode UI runner compiles
+  without local GUI execution. A third hosted GUI workflow uses two private real
+  Git repositories to check grouping, physical checkout routing, distinct drafts,
+  mode changes, selection restoration, and unchanged HEADs. All three workflows
+  must pass without skips; real hosted verification remains pending.
+- Native packaging/launch, strict deep app/runner signing, and bundled-font
+  runtime verification pass. A private backup preceded the real storage 8 to 9
+  migration. Canonical comparisons confirm all 3 existing conversations, their
+  25 messages, and every non-identity project field are unchanged. One existing
+  project acquired repository metadata; no user checkout was added or removed.
+
+Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
+
 ## 2026-10-22 — small-display window layout and native alert verification
 
 - The third hosted run verified real Git HEAD and draft entry. The rename dialog
@@ -11,8 +53,12 @@
   accept smaller proposed widths. Large displays retain the 1280 by 820 default.
 - Both hosted appearance workflows now require the entire window and each sidebar
   control to fit the actual display. All rename, draft, collapse, persistence,
-  removal, and preserved-file checks remain enabled. Hosted verification of this
-  layout correction is pending.
+  removal, and preserved-file checks remain enabled. The fourth hosted run
+  confirmed unclipped light/dark geometry, rename, collapse, graceful restart, and
+  retained draft/selection. It then stopped at the Add Project geometry lookup:
+  macOS removes the image-derived identifier after relaunch, while the native
+  title remains stable. The helper now queries that observed title and retains
+  every existence/bounds assertion. Complete hosted verification remains pending.
 - The full 220-test suite passed (183 core, 4 terminal, 13 Markdown, 20 native
   UI/store), including small-display sizing and offscreen narrow-detail checks.
   The Xcode UI runner compiled without launching a local GUI. Configuration tests,

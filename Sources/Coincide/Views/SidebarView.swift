@@ -10,36 +10,21 @@ struct SidebarView: View {
     @State private var removing: ProjectRemovalRequest?
     var body: some View {
         List(selection: $store.selectedThreadID) {
-            ForEach(store.orderedProjects) { project in
+            ForEach(store.orderedProjectGroups) { group in
                 Section {
-                    ForEach(store.sidebarThreads(projectID: project.id)) { thread in
-                        Label {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(thread.title).lineLimit(1)
-                                if let clone = project.clone, !clone.isReady {
-                                    Text(ProjectClonePresentation.title(clone)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                } else if thread.state != .idle {
-                                    Text(thread.state == .awaitingApproval ? "Needs your input" : thread.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                        } icon: {
-                            Image(systemName: thread.isPinned ? "pin" : thread.state == .running ? "circle.dotted" : "bubble.left")
-                        }
-                        .tag(thread.id)
-                        .accessibilityIdentifier("thread-\(thread.id.uuidString)")
-                        .contextMenu {
-                            Button(thread.isPinned ? "Unpin" : "Pin") { store.togglePin(thread.id) }
-                            Button("Rename…") { title = thread.title; renaming = .thread(thread.id) }
-                            Button(thread.isArchived ? "Unarchive" : "Archive") { store.toggleArchive(thread.id) }.disabled(store.isBusy(thread.id))
-                            Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
-                                .disabled(project.clone.map { !$0.isReady } ?? false)
+                    ForEach(store.sidebarThreads(groupKey: group.key)) { thread in
+                        threadRow(thread, group: group)
+                    }
+                    if store.isProjectGroupExpanded(group.key) {
+                        if group.members.count > 1 {
+                            Menu { newThreadCheckoutItems(group) } label: { Label("New Thread", systemImage: "plus") }
+                                .menuStyle(.borderlessButton).foregroundStyle(.secondary)
+                        } else if let project = group.members.first {
+                            Button { store.newThread(projectID: project.id) } label: { Label("New Thread", systemImage: "plus") }
+                                .buttonStyle(.plain).foregroundStyle(.secondary)
                         }
                     }
-                    if store.isProjectExpanded(project.id) {
-                        Button { store.newThread(projectID: project.id) } label: { Label("New Thread", systemImage: "plus") }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
-                    }
-                } header: { projectHeader(project) }
+                } header: { projectHeader(group) }
             }
             .onMove(perform: projectMoveAction)
         }
@@ -54,6 +39,15 @@ struct SidebarView: View {
                         sortModeItem(.updatedAt)
                         sortModeItem(.createdAt)
                         sortModeItem(.manual)
+                        Divider()
+                        Section("Group Projects") {
+                            ForEach(ProjectGroupingMode.allCases) { mode in
+                                Button { store.setProjectGroupingMode(mode) } label: {
+                                    if store.projectGroupingMode == mode { Label(mode.title, systemImage: "checkmark") }
+                                    else { Text(mode.title) }
+                                }
+                            }
+                        }
                     } label: { Image(systemName: "arrow.up.arrow.down") }
                     .menuStyle(.borderlessButton).fixedSize().help("Sort Projects")
                     .accessibilityLabel("Sort projects").accessibilityValue(store.projectSortMode.title)
@@ -109,35 +103,88 @@ struct SidebarView: View {
 
     private var projectMoveAction: ((IndexSet, Int) -> Void)? {
         guard store.projectSortMode == .manual else { return nil }
-        return { offsets, destination in store.moveProjects(fromOffsets: offsets, toOffset: destination) }
+        return { offsets, destination in store.moveProjectGroups(fromOffsets: offsets, toOffset: destination) }
     }
 
-    private func projectHeader(_ project: WorkspaceProject) -> some View {
-        Button { store.setProjectExpanded(project.id, expanded: !store.isProjectExpanded(project.id)) } label: {
+    private func threadRow(_ thread: CodingThread, group: ProjectGroup) -> some View {
+        let project = store.snapshot.projects.first { $0.id == thread.projectID }
+        return Label {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(thread.title).lineLimit(1)
+                if let clone = project?.clone, !clone.isReady {
+                    Text(ProjectClonePresentation.title(clone)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                } else if thread.state != .idle {
+                    Text(thread.state == .awaitingApproval ? "Needs your input" : thread.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                }
+                if group.members.count > 1, let project {
+                    Text(project.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                }
+            }
+        } icon: {
+            Image(systemName: thread.isPinned ? "pin" : thread.state == .running ? "circle.dotted" : "bubble.left")
+        }
+        .tag(thread.id)
+        .accessibilityIdentifier("thread-\(thread.id.uuidString)")
+        .contextMenu {
+            Button(thread.isPinned ? "Unpin" : "Pin") { store.togglePin(thread.id) }
+            Button("Rename…") { title = thread.title; renaming = .thread(thread.id) }
+            Button(thread.isArchived ? "Unarchive" : "Archive") { store.toggleArchive(thread.id) }.disabled(store.isBusy(thread.id))
+            Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
+                .disabled(project?.clone.map { !$0.isReady } ?? false)
+        }
+    }
+
+    private func projectHeader(_ group: ProjectGroup) -> some View {
+        Button { store.setProjectGroupExpanded(group, expanded: !store.isProjectGroupExpanded(group.key)) } label: {
             HStack(spacing: 5) {
-                Image(systemName: store.isProjectExpanded(project.id) ? "chevron.down" : "chevron.right")
+                Image(systemName: store.isProjectGroupExpanded(group.key) ? "chevron.down" : "chevron.right")
                     .font(.system(size: 9, weight: .semibold)).frame(width: 10)
-                Text(project.name).lineLimit(1)
+                Text(group.displayName).lineLimit(1)
                 Spacer(minLength: 0)
+                if group.members.count > 1 { Text(group.members.count, format: .number).font(.caption2).foregroundStyle(.secondary) }
             }.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(store.isProjectExpanded(project.id) ? Text("Collapse \(project.name)") : Text("Expand \(project.name)"))
-        .accessibilityValue(store.isProjectExpanded(project.id) ? Text("Expanded") : Text("Collapsed"))
+        .accessibilityLabel(store.isProjectGroupExpanded(group.key) ? Text("Collapse \(group.displayName)") : Text("Expand \(group.displayName)"))
+        .accessibilityValue(store.isProjectGroupExpanded(group.key) ? Text("Expanded") : Text("Collapsed"))
         .contextMenu {
-            Button("New Thread") { store.newThread(projectID: project.id) }
-            Button("Rename Project…") { title = project.name; renaming = .project(project.id) }
+            if group.members.count > 1 {
+                Menu("New Thread in Checkout") { newThreadCheckoutItems(group) }
+                Menu("Checkouts") {
+                    ForEach(group.members) { project in
+                        Menu(project.path) { checkoutActions(project) }
+                    }
+                }
+            } else if let project = group.members.first { checkoutActions(project) }
             if store.projectSortMode == .manual {
-                if store.orderedProjects.first?.id != project.id { Button("Move Up") { store.moveProject(project.id, by: -1) } }
-                if store.orderedProjects.last?.id != project.id { Button("Move Down") { store.moveProject(project.id, by: 1) } }
+                Divider()
+                if store.orderedProjectGroups.first?.id != group.id { Button("Move Up") { store.moveProjectGroup(group.key, by: -1) } }
+                if store.orderedProjectGroups.last?.id != group.id { Button("Move Down") { store.moveProjectGroup(group.key, by: 1) } }
             }
-            Divider()
-            Button("Remove Project…", role: .destructive) { removing = store.projectRemovalRequest(project.id) }
         }
     }
 
+    @ViewBuilder private func newThreadCheckoutItems(_ group: ProjectGroup) -> some View {
+        ForEach(group.members) { project in Button(project.path) { store.newThread(projectID: project.id) } }
+    }
+
+    @ViewBuilder private func checkoutActions(_ project: WorkspaceProject) -> some View {
+        Button("New Thread") { store.newThread(projectID: project.id) }
+        Button("Reveal Checkout") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
+            .disabled(project.clone.map { !$0.isReady } ?? false)
+        Button("Rename Project…") { title = project.name; renaming = .project(project.id) }
+        Menu("Group This Checkout") {
+            Button("Use Default") { store.setProjectGroupingOverride(project.id, mode: nil) }
+            ForEach(ProjectGroupingMode.allCases) { mode in Button(mode.title) { store.setProjectGroupingOverride(project.id, mode: mode) } }
+        }
+        Button("Refresh Repository Identity") { store.refreshRepositoryIdentity(project.id) }
+            .disabled(project.clone.map { !$0.isReady } ?? false)
+        Divider()
+        Button("Remove Project…", role: .destructive) { removing = store.projectRemovalRequest(project.id) }
+    }
+
     private func removalExplanation(_ request: ProjectRemovalRequest) -> String {
-        var text = String(localized: "This removes its active and archived conversations from the workspace and stops their agents, clone operation, and terminals.\n\nCoincide does not delete checkout, worktree, staging, or attachment files. Git may clean up unfinished files when an active clone is stopped. Conversation data remains in local recovery history; this is not secure erasure.")
+        var text = request.path + "\n\n" + String(localized: "This removes this checkout's active and archived conversations from the workspace and stops their agents, clone operation, and terminals. Other checkouts remain open.\n\nCoincide does not delete checkout, worktree, staging, or attachment files. Git may clean up unfinished files when an active clone is stopped. Conversation data remains in local recovery history; this is not secure erasure.")
         if !request.dirtyEditorIDs.isEmpty { text += "\n\n" + String(localized: "Unsaved file edits in this project will be discarded.") }
         return text
     }

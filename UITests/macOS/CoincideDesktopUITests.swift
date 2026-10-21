@@ -13,7 +13,117 @@ final class CoincideDesktopUITests: XCTestCase {
         try exerciseProjectWorkflow(appearance: "dark", useKeyboard: true)
     }
 
-    @MainActor private func exerciseProjectWorkflow(appearance: String, useKeyboard: Bool) throws {
+    @MainActor func testRepositoryGroupingKeepsCheckoutDrafts() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "grouping")
+        let app = fixture.app
+        let first = fixture.root.appendingPathComponent("Checkout One", isDirectory: true)
+        let second = fixture.root.appendingPathComponent("Checkout Two", isDirectory: true)
+        for checkout in [first, second] {
+            try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: false)
+            try "Synthetic local checkout: \(checkout.lastPathComponent)\n".write(to: checkout.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+            for arguments in [["init", "--initial-branch", "main"], ["remote", "add", "origin", "https://example.invalid/Team/Repo.git"], ["add", "README.md"], ["commit", "--message", "Synthetic UI fixture"]] {
+                _ = try runGit(["-C", checkout.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration,
+                               name: "grouping-\(checkout.lastPathComponent)-\(arguments[0])")
+            }
+        }
+        let firstHead = try verifyHead(gitPath: fixture.gitPath, project: first, configuration: fixture.configuration, name: "grouping-first-initial-head")
+        let secondHead = try verifyHead(gitPath: fixture.gitPath, project: second, configuration: fixture.configuration, name: "grouping-second-initial-head")
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        try openProject(first, in: app)
+        XCTAssertTrue(app.buttons["Collapse Checkout One"].waitForExistence(timeout: 10))
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let firstDraft = "Draft belonging only to checkout one"
+        composer.click(); composer.typeText(firstDraft)
+        XCTAssertEqual(composer.value as? String, firstDraft)
+        assertConversationWorkspace(app, path: first.path)
+        let firstThreadID = try selectedThreadIdentifier(in: app)
+
+        try openProject(second, in: app)
+        let groupedHeader = app.buttons["Collapse Team/Repo"]
+        XCTAssertTrue(groupedHeader.waitForExistence(timeout: 15), "Equivalent local Git remotes must form one repository group.")
+        XCTAssertEqual(projectHeaders(in: app).count, 1)
+        groupedHeader.rightClick()
+        let createInCheckout = app.menuItems["New Thread in Checkout"]
+        XCTAssertTrue(createInCheckout.waitForExistence(timeout: 5)); createInCheckout.click()
+        let secondCheckout = createInCheckout.menuItems[second.path]
+        XCTAssertTrue(secondCheckout.waitForExistence(timeout: 5)); secondCheckout.click()
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
+        assertConversationWorkspace(app, path: second.path)
+        let secondDraft = "Draft belonging only to checkout two"
+        composer.click(); composer.typeText(secondDraft)
+        XCTAssertEqual(composer.value as? String, secondDraft)
+        let secondThreadID = try selectedThreadIdentifier(in: app)
+        XCTAssertNotEqual(firstThreadID, secondThreadID)
+
+        groupedHeader.rightClick()
+        let checkouts = app.menuItems["Checkouts"]
+        XCTAssertTrue(checkouts.waitForExistence(timeout: 5)); checkouts.click()
+        XCTAssertTrue(checkouts.menuItems[first.path].waitForExistence(timeout: 5))
+        XCTAssertTrue(checkouts.menuItems[second.path].exists, "The native checkout menu must expose both physical paths.")
+        app.typeKey(.escape, modifierFlags: []); app.typeKey(.escape, modifierFlags: [])
+        let checkoutPreference = app.descendants(matching: .any).matching(identifier: "new-conversation-checkout").element
+        XCTAssertTrue(checkoutPreference.waitForExistence(timeout: 5)); checkoutPreference.click()
+        let firstChoice = app.menuItems[first.path]
+        XCTAssertTrue(firstChoice.waitForExistence(timeout: 5)); firstChoice.click()
+        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
+        XCTAssertEqual(composer.value as? String, secondDraft, "Choosing a future checkout must preserve the selected conversation's draft.")
+        assertConversationWorkspace(app, path: second.path)
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
+        assertConversationWorkspace(app, path: first.path)
+        let futureThreadID = try selectedThreadIdentifier(in: app)
+        XCTAssertNotEqual(futureThreadID, firstThreadID); XCTAssertNotEqual(futureThreadID, secondThreadID)
+        XCTAssertEqual(threadRows(in: app).count, 3)
+
+        threadRow(firstThreadID, in: app).click()
+        XCTAssertTrue(waitForValue(composer, value: firstDraft, timeout: 5))
+        assertConversationWorkspace(app, path: first.path)
+        threadRow(secondThreadID, in: app).click()
+        XCTAssertTrue(waitForValue(composer, value: secondDraft, timeout: 5))
+        assertConversationWorkspace(app, path: second.path)
+        assertSidebarFitsDisplay(app, projectHeader: groupedHeader, selectedConversation: threadRow(secondThreadID, in: app))
+        capture(app, name: "grouping-repository-with-checkout-drafts")
+
+        setGroupingMode("Separate Checkouts", in: app)
+        let firstHeader = app.buttons["Collapse Checkout One"], secondHeader = app.buttons["Collapse Checkout Two"]
+        XCTAssertTrue(firstHeader.waitForExistence(timeout: 5) && secondHeader.exists)
+        XCTAssertEqual(projectHeaders(in: app).count, 2)
+        XCTAssertEqual(threadRows(in: app).count, 3)
+        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
+        XCTAssertEqual(composer.value as? String, secondDraft)
+        assertConversationWorkspace(app, path: second.path)
+        assertSidebarFitsDisplay(app, projectHeader: firstHeader, selectedConversation: threadRow(secondThreadID, in: app))
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(secondHeader.frame))
+        capture(app, name: "grouping-separate-checkouts")
+        setGroupingMode("Repository", in: app)
+        XCTAssertTrue(groupedHeader.waitForExistence(timeout: 5))
+        XCTAssertEqual(projectHeaders(in: app).count, 1)
+        XCTAssertEqual(threadRows(in: app).count, 3)
+        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
+        XCTAssertEqual(composer.value as? String, secondDraft)
+        capture(app, name: "grouping-repository-restored")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(groupedHeader.waitForExistence(timeout: 10))
+        XCTAssertEqual(projectHeaders(in: app).count, 1)
+        XCTAssertEqual(threadRows(in: app).count, 3)
+        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
+        XCTAssertTrue(waitForValue(composer, value: secondDraft, timeout: 5))
+        assertConversationWorkspace(app, path: second.path)
+        capture(app, name: "grouping-reopened")
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: first, configuration: fixture.configuration, name: "grouping-first-final-head"), firstHead)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: second, configuration: fixture.configuration, name: "grouping-second-final-head"), secondHead)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
+    @MainActor private func prepareApplication(appearance: String, diagnosticPrefix: String? = nil) throws -> (app: XCUIApplication, root: URL, gitPath: String, configuration: URL) {
         let environment = ProcessInfo.processInfo.environment
         let appPath = try XCTUnwrap(environment["COINCIDE_UI_APP_PATH"], "The CI harness must supply the staged app.")
         let gitPath = try XCTUnwrap(environment["COINCIDE_UI_GIT_PATH"], "The CI harness must resolve the developer Git executable outside the sandbox.")
@@ -39,17 +149,24 @@ final class CoincideDesktopUITests: XCTestCase {
         app.launchEnvironment["GIT_CONFIG_GLOBAL"] = configuration.path
         app.launchEnvironment["GIT_CONFIG_NOSYSTEM"] = "1"
         app.launchArguments = ["-appearance", appearance]
+        let prefix = diagnosticPrefix ?? appearance
         // XCTest invokes teardown blocks even when a failed assertion aborts a test.
         addTeardownBlock { @MainActor [weak self] in
             if app.state != .notRunning {
-                let tree = XCTAttachment(string: app.debugDescription); tree.name = "\(appearance)-final-accessibility-tree"; tree.lifetime = .keepAlways; self?.add(tree)
+                let tree = XCTAttachment(string: app.debugDescription); tree.name = "\(prefix)-final-accessibility-tree"; tree.lifetime = .keepAlways; self?.add(tree)
                 if app.windows.firstMatch.exists {
                     let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-                    screenshot.name = "\(appearance)-final-window"; screenshot.lifetime = .keepAlways; self?.add(screenshot)
+                    screenshot.name = "\(prefix)-final-window"; screenshot.lifetime = .keepAlways; self?.add(screenshot)
                 }
                 app.terminate()
             }
         }
+        return (app, root, gitPath, configuration)
+    }
+
+    @MainActor private func exerciseProjectWorkflow(appearance: String, useKeyboard: Bool) throws {
+        let (app, root, gitPath, configuration) = try prepareApplication(appearance: appearance)
+        let manager = FileManager.default
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15), "The native app must have a foreground window.")
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
@@ -157,8 +274,16 @@ final class CoincideDesktopUITests: XCTestCase {
     }
 
     @MainActor private func verifyHead(gitPath: String, project: URL, configuration: URL, name: String) throws -> String {
+        let stdout = try runGit(["-C", project.path, "rev-parse", "--verify", "HEAD"], gitPath: gitPath, configuration: configuration, name: name,
+                                failure: "The created native project must contain its initial Git commit.")
+        let head = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(head.isEmpty)
+        return head
+    }
+
+    @MainActor private func runGit(_ arguments: [String], gitPath: String, configuration: URL, name: String, failure: String = "The synthetic local Git fixture command must succeed.") throws -> String {
         let git = Process(); git.executableURL = URL(fileURLWithPath: gitPath)
-        git.arguments = ["-C", project.path, "rev-parse", "--verify", "HEAD"]
+        git.arguments = arguments
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_CONFIG_GLOBAL"] = configuration.path; environment["GIT_CONFIG_NOSYSTEM"] = "1"
         git.environment = environment
@@ -166,12 +291,62 @@ final class CoincideDesktopUITests: XCTestCase {
         try git.run(); git.waitUntilExit()
         let stdout = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        let diagnostic = XCTAttachment(string: "Git: \(gitPath)\nExit: \(git.terminationStatus)\nstdout:\n\(stdout)\nstderr:\n\(stderr)")
+        let diagnostic = XCTAttachment(string: "Git: \(gitPath)\nArguments: \(arguments.joined(separator: " "))\nExit: \(git.terminationStatus)\nstdout:\n\(stdout)\nstderr:\n\(stderr)")
         diagnostic.name = name; diagnostic.lifetime = .keepAlways; add(diagnostic)
-        XCTAssertEqual(git.terminationStatus, 0, "The created native project must contain its initial Git commit. Git stderr: \(stderr)")
-        let head = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertFalse(head.isEmpty)
-        return head
+        XCTAssertEqual(git.terminationStatus, 0, "\(failure) Git stderr: \(stderr)")
+        return stdout
+    }
+
+    @MainActor private func openProject(_ directory: URL, in app: XCUIApplication) throws {
+        app.menuBars.menuBarItems["File"].click()
+        let open = app.menuItems["Add Project…"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5)); open.click()
+        let add = app.buttons["Add Project"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(directory.path)
+        app.typeKey(.return, modifierFlags: [])
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: add)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+        add.click()
+        XCTAssertTrue(waitForAbsence(add, timeout: 10), "The native folder panel must accept the chosen local checkout.")
+    }
+
+    @MainActor private func threadRows(in app: XCUIApplication) -> XCUIElementQuery {
+        app.outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH %@", "thread-"))
+    }
+
+    @MainActor private func projectHeaders(in app: XCUIApplication) -> XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Collapse ", "Expand "))
+    }
+
+    @MainActor private func threadRow(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+        app.outlineRows.containing(NSPredicate(format: "identifier == %@", identifier)).element
+    }
+
+    @MainActor private func selectedThreadIdentifier(in app: XCUIApplication) throws -> String {
+        let selected = threadRows(in: app).allElementsBoundByIndex.filter { $0.isSelected }
+        XCTAssertEqual(selected.count, 1)
+        let row = try XCTUnwrap(selected.first)
+        let identifier = try XCTUnwrap(row.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).allElementsBoundByIndex.first?.identifier)
+        return identifier
+    }
+
+    @MainActor private func assertConversationWorkspace(_ app: XCUIApplication, path: String) {
+        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
+        XCTAssertTrue(workspace.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForValue(workspace, value: path, timeout: 5), "The selected conversation must keep its own physical checkout: \(path).")
+    }
+
+    @MainActor private func setGroupingMode(_ title: String, in app: XCUIApplication) {
+        app.menuButtons["project-sort-menu"].click()
+        let mode = app.menuItems[title]
+        XCTAssertTrue(mode.waitForExistence(timeout: 5)); mode.click()
+    }
+
+    @MainActor private func waitForValue(_ element: XCUIElement, value: String, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value == %@", value), object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     @MainActor private func waitForAbsence(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
@@ -188,7 +363,7 @@ final class CoincideDesktopUITests: XCTestCase {
         // xcresulttool exports the retained PNG outside the sandbox after testing.
     }
 
-    @MainActor private func assertSidebarFitsDisplay(_ app: XCUIApplication, projectHeader: XCUIElement) {
+    @MainActor private func assertSidebarFitsDisplay(_ app: XCUIApplication, projectHeader: XCUIElement, selectedConversation: XCUIElement? = nil) {
         let display = CGDisplayBounds(CGMainDisplayID())
         let window = app.windows.firstMatch.frame
         XCTAssertTrue(display.contains(window), "The native window must fit the actual display \(display), without clipping: \(window).")
@@ -197,8 +372,8 @@ final class CoincideDesktopUITests: XCTestCase {
             ("Sort projects", app.menuButtons["project-sort-menu"]),
             ("Search conversations", app.textFields["Search conversations"]),
             ("Project header", projectHeader),
-            ("Selected conversation", app.outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).element),
-            ("Add Project", app.menuButtons["folder.badge.plus"]),
+            ("Selected conversation", selectedConversation ?? app.outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).element),
+            ("Add Project", app.menuButtons.matching(NSPredicate(format: "title == %@", "Add Project")).element),
             ("Settings", app.buttons["gearshape"]),
             ("Archive", app.checkBoxes["Archive"]),
         ]

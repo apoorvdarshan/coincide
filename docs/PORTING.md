@@ -52,7 +52,7 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 8 protects these fields
+  hold it for explicit resumption. Database storage version 9 protects these fields
   from older binaries. No exactly-once provider execution is claimed.
 - Background clones are project-owned outbox actions. The project and conversation
   appear as soon as their intent is saved; submitted messages retain their captured
@@ -74,11 +74,23 @@ must each be mapped and verified before declaring parity.
   their selected eligible conversation, and display renames preserve checkout
   paths. New projects have creation/activity dates; legacy unknown dates remain
   unset rather than being assigned synthetic migration timestamps.
-- A native, read-only repository identity resolver provides the foundation for
-  logical checkout grouping. It handles nested folders, detached worktrees,
+- A native, read-only repository identity resolver enriches registered projects
+  for logical checkout grouping. It handles nested folders, detached worktrees,
   explicit bare repositories, upstream/origin fork identity, and supported URL
   aliases. Credentials, queries, and fragments are removed before returning
-  metadata. Identity enrichment is not yet attached to saved projects or the UI.
+  metadata. Owned refreshes run after load, registration, and clone readiness;
+  removal/path/incarnation fences discard late results. Failures preserve the
+  previous identity and do not stop agents. Unchanged metadata adds no journal
+  event or outbox action.
+- Logical groups derive from physical project records. Repository, repository
+  and folder, separate-checkout modes, and physical-path overrides persist in
+  sidebar preferences. Groups aggregate activity and conversations while retaining
+  every project/thread identity. Atomic membership checks protect collapse,
+  checkout selection, and manual moves; moves preserve untouched interleaving.
+  Future-conversation checkout selection never retargets existing conversations.
+  Rename/removal menus choose one physical checkout, and the last selected
+  conversation restores its owner and archived view on restart. Storage version
+  9 protects these durable preferences and identity fields from older binaries.
 - Project removal commits all active/archived thread removals, project removal,
   collapsed-preference cleanup, and pending-action cancellation together. Running
   actions retain their leases until their owned executors settle; detached
@@ -90,7 +102,7 @@ must each be mapped and verified before declaring parity.
   not delete checkout, worktree, staging, or attachment files; Git may clean up its
   own unfinished files when an active clone is stopped. Append-only recovery
   history remains, so removal is explicitly described as workspace removal rather
-  than secure erasure. These changes use the existing storage version 8 format.
+  than secure erasure. Removal uses the existing journal event types.
 - Attachment bytes live in private, immutable app-owned files. Drafts, queued
   turns, messages, and outbox entries retain typed references. Images are normalized
   with ImageIO as needed and delivered through each provider's native image input;
@@ -103,7 +115,7 @@ must each be mapped and verified before declaring parity.
 
 | Area | Implemented now | Remaining work for parity |
 | --- | --- | --- |
-| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, project display renaming/collapse, persistent manual ordering and activity/thread-creation sorting, confirmed project removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, settings | Grouped logical checkouts, snooze/settle, undo, scratch projects, import/migration |
+| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, logical repository/folder/physical grouping and overrides, explicit checkout choice for new conversations, restored conversation selection, project display renaming/group collapse, persistent manual ordering and aggregated activity/thread-creation sorting, confirmed physical-project removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, settings | Group-wide rename/removal, snooze/settle, undo, scratch projects, import/migration |
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |

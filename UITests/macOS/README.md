@@ -26,16 +26,22 @@ The shell resolves the selected Xcode's real Git executable before entering the
 sandbox; commit verification avoids `/usr/bin/git`'s developer-tool shim and
 retains both output streams in the test result for diagnosis.
 
-The two tests exercise light/dark actual windows, File-menu or keyboard project
+The first two tests exercise light/dark actual windows, File-menu or keyboard project
 creation, an initial Git commit, project renaming, collapse with the selected
 conversation retained, and composer persistence across graceful quit/relaunch.
 They then cancel a project-removal confirmation, verify the selected draft is
 retained, confirm removal, and check the existing README, icon, HEAD bytes and
 resolved Git commit remain unchanged while the workspace becomes empty.
+The third test creates two private local Git repositories with the same
+synthetic remote URL, without fetching or contacting that host. It imports both
+through the native folder panel, creates conversations in each checkout, and
+checks repository grouping, explicit future-checkout selection, distinct drafts,
+separate-checkout mode, and persistence after relaunch. The existing checkout
+commits must remain unchanged.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires both tests to pass with zero
+gate requires all three tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 

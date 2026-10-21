@@ -13,6 +13,7 @@ struct FileNavigation: Equatable {
 struct ProjectRemovalRequest: Identifiable {
     let id: UUID
     let name: String
+    let path: String
     let threadIDs: [UUID]
     let dirtyEditorIDs: Set<UUID>
 }
@@ -29,7 +30,13 @@ final class WorkspaceStore {
     let worktreesRoot: URL
     private let projectCreator: ProjectCreator
     var snapshot = WorkspaceSnapshot()
-    var selectedThreadID: UUID?
+    var selectedThreadID: UUID? {
+        didSet {
+            guard !isLoading, !terminating, selectedThreadID != oldValue,
+                  selectedThreadID.map({ id in snapshot.threads.contains { $0.id == id } }) ?? true else { return }
+            sendCommand(.selectConversation(threadID: selectedThreadID))
+        }
+    }
     var selectedProjectID: UUID?
     var search = ""
     var showArchived = false
@@ -115,7 +122,70 @@ final class WorkspaceStore {
         }.sorted { $0.isPinned != $1.isPinned ? $0.isPinned : $0.updatedAt > $1.updatedAt }
     }
     var orderedProjects: [WorkspaceProject] { snapshot.orderedProjects }
+    var orderedProjectGroups: [ProjectGroup] { snapshot.orderedProjectGroups }
+    var projectGroupingMode: ProjectGroupingMode { snapshot.effectiveSidebarPreferences.groupingMode }
     var projectSortMode: ProjectSortMode { snapshot.effectiveSidebarPreferences.sortMode }
+    func projectGroup(containing projectID: UUID) -> ProjectGroup? {
+        snapshot.projectGroups.first { $0.memberProjectIDs.contains(projectID) }
+    }
+    func isProjectGroupExpanded(_ key: String) -> Bool { snapshot.isProjectGroupExpanded(key) }
+    func sidebarThreads(groupKey: String) -> [CodingThread] {
+        guard let group = snapshot.projectGroups.first(where: { $0.key == groupKey }) else { return [] }
+        let members = Set(group.memberProjectIDs)
+        let threads = visibleThreads.filter { members.contains($0.projectID) }
+        return isProjectGroupExpanded(groupKey) ? threads : threads.filter { $0.id == selectedThreadID }
+    }
+    func preferredProject(in group: ProjectGroup) -> WorkspaceProject? {
+        let members = Set(group.memberProjectIDs)
+        let activeID = snapshot.effectiveSidebarPreferences.activeProjectByGroup[group.key]
+        if let project = snapshot.projects.first(where: { $0.id == activeID && members.contains($0.id) && ($0.clone?.isReady ?? true) }) { return project }
+        let selectedID = selectedProjectID ?? selectedThread?.projectID
+        if let project = snapshot.projects.first(where: { $0.id == selectedID && members.contains($0.id) }) { return project }
+        return group.members.first(where: { $0.clone?.isReady ?? true }) ?? group.members.first
+    }
+    func setProjectGroupingMode(_ mode: ProjectGroupingMode) { sendCommand(.setProjectGroupingMode(mode)) }
+    func setProjectGroupingOverride(_ id: UUID, mode: ProjectGroupingMode?) { sendCommand(.setProjectGroupingOverride(projectID: id, mode: mode)) }
+    func setProjectGroupExpanded(_ group: ProjectGroup, expanded: Bool) {
+        sendCommand(.setProjectGroupExpanded(groupKey: group.key, expectedProjectIDs: group.memberProjectIDs, expanded: expanded))
+    }
+    func setProjectGroupCheckout(_ group: ProjectGroup, projectID: UUID) {
+        sendCommand(.setProjectGroupCheckout(groupKey: group.key, expectedProjectIDs: group.memberProjectIDs, projectID: projectID))
+    }
+    func refreshRepositoryIdentity(_ id: UUID) {
+        guard !terminating, let engine else { return }
+        Task {
+            do { _ = try await engine.refreshRepositoryIdentity(projectID: id); apply(await engine.current()) }
+            catch is CancellationError { }
+            catch { if !terminating, snapshot.projects.contains(where: { $0.id == id }) { errorMessage = GitService.redactURLs(error.localizedDescription) } }
+        }
+    }
+    func moveProjectGroup(_ key: String, by offset: Int) {
+        let groups = snapshot.projectGroups
+        guard projectSortMode == .manual, let index = groups.firstIndex(where: { $0.key == key }),
+              [-1, 1].contains(offset), groups.indices.contains(index + offset) else { return }
+        moveProjectGroups(fromOffsets: IndexSet(integer: index), toOffset: offset > 0 ? index + 2 : index - 1)
+    }
+    func moveProjectGroups(fromOffsets offsets: IndexSet, toOffset destination: Int) {
+        let groups = snapshot.projectGroups, order = snapshot.projects.map(\.id)
+        guard projectSortMode == .manual, !offsets.isEmpty, offsets.allSatisfy({ groups.indices.contains($0) }),
+              (0...groups.count).contains(destination) else { return }
+        let movingMembers = Set(offsets.flatMap { groups[$0].memberProjectIDs })
+        let moving = order.filter { movingMembers.contains($0) }
+        var next = order.filter { !movingMembers.contains($0) }
+        let remainingGroups = groups.enumerated().filter { !offsets.contains($0.offset) }.map(\.element)
+        let groupInsertion = destination - offsets.filter { $0 < destination }.count
+        var nextGroups = remainingGroups
+        nextGroups.insert(contentsOf: offsets.map { groups[$0] }, at: groupInsertion)
+        guard nextGroups.map(\.key) != groups.map(\.key) else { return }
+        let insertion: Int
+        if remainingGroups.indices.contains(groupInsertion) {
+            let target = Set(remainingGroups[groupInsertion].memberProjectIDs)
+            insertion = next.firstIndex(where: { target.contains($0) }) ?? next.count
+        } else { insertion = next.count }
+        next.insert(contentsOf: moving, at: insertion)
+        let membership = Dictionary(uniqueKeysWithValues: groups.map { ($0.key, $0.memberProjectIDs) })
+        sendCommand(.reorderProjectGroups(projectIDs: next, expectedOrder: order, expectedGroups: membership))
+    }
     func isProjectExpanded(_ id: UUID) -> Bool { snapshot.isProjectExpanded(id) }
     func sidebarThreads(projectID: UUID) -> [CodingThread] {
         let threads = visibleThreads.filter { $0.projectID == projectID }
@@ -136,12 +206,13 @@ final class WorkspaceStore {
         guard let project = snapshot.projects.first(where: { $0.id == id }) else { return nil }
         let threads = snapshot.threads.filter { $0.projectID == id }
         let paths = Set(([project.path] + threads.map(\.workspacePath)).map(Self.canonicalPath))
-        return .init(id: id, name: project.name, threadIDs: threads.map(\.id).sorted { $0.uuidString < $1.uuidString },
+        return .init(id: id, name: project.name, path: project.path, threadIDs: threads.map(\.id).sorted { $0.uuidString < $1.uuidString },
                      dirtyEditorIDs: Set(dirtyEditors.compactMap { paths.contains($0.value) ? $0.key : nil }))
     }
     func removeProject(_ request: ProjectRemovalRequest) async throws {
         guard !terminating, let engine, removalEditorLocks[request.id] == nil,
               let current = projectRemovalRequest(request.id), let project = snapshot.projects.first(where: { $0.id == request.id }) else { throw CancellationError() }
+        guard current.path == request.path else { throw CoincideError("The checkout changed. Review the project removal again.") }
         guard current.dirtyEditorIDs.isSubset(of: request.dirtyEditorIDs) else {
             throw CoincideError("New unsaved file edits appeared. Review the project removal again before discarding them.")
         }
@@ -149,6 +220,7 @@ final class WorkspaceStore {
         defer { removalEditorLocks.removeValue(forKey: request.id) }
         _ = try await enqueue(.removeProject(projectID: request.id, expectedThreadIDs: request.threadIDs), preflight: {
             guard let latest = self.projectRemovalRequest(request.id) else { throw CancellationError() }
+            guard latest.path == request.path else { throw CoincideError("The checkout changed. Review the project removal again.") }
             guard latest.dirtyEditorIDs.isSubset(of: request.dirtyEditorIDs) else {
                 throw CoincideError("New unsaved file edits appeared. Review the project removal again before discarding them.")
             }
@@ -190,8 +262,10 @@ final class WorkspaceStore {
             updatesTask = Task { [weak self] in for await value in stream { self?.apply(value) } }
             _ = try await engine.load()
             apply(await engine.current())
-            selectedProjectID = snapshot.projects.first?.id
-            selectedThreadID = snapshot.threads.first(where: { !$0.isArchived })?.id
+            selectedThreadID = snapshot.effectiveSidebarPreferences.selectedThreadID
+                ?? snapshot.threads.first(where: { !$0.isArchived })?.id
+            selectedProjectID = selectedThread?.projectID ?? snapshot.projects.first?.id
+            showArchived = selectedThread?.isArchived ?? false
         } catch { errorMessage = error.localizedDescription }
     }
     private func apply(_ update: WorkspaceUpdate) {
@@ -317,9 +391,16 @@ final class WorkspaceStore {
     }
     func isRetryingProjectClone(_ projectID: UUID) -> Bool { retryingProjectClones.contains(projectID) }
     func newThread(projectID: UUID? = nil) {
-        guard let project = snapshot.projects.first(where: { $0.id == (projectID ?? selectedProjectID ?? selectedProject?.id) }) ?? snapshot.projects.first else {
-            addProject(); return
-        }
+        let project: WorkspaceProject
+        if let projectID {
+            // A stale checkout menu must never redirect its action to another workspace.
+            guard let selected = snapshot.projects.first(where: { $0.id == projectID }) else { return }
+            project = selected
+        } else if let currentID = selectedProjectID ?? selectedThread?.projectID,
+                  let group = projectGroup(containing: currentID), let selected = preferredProject(in: group) {
+            project = selected
+        } else if let selected = snapshot.projects.first { project = selected }
+        else { addProject(); return }
         let thread = CodingThread(project: project)
         let task = enqueue(.createThread(thread))
         Task {

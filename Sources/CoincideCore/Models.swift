@@ -5,6 +5,7 @@ public struct WorkspaceProject: Codable, Identifiable, Sendable, Equatable {
     public var name: String
     public var path: String
     public var clone: ProjectCloneState?
+    public var repositoryIdentity: RepositoryIdentity?
     public var createdAt: Date?
     public var updatedAt: Date?
     public init(path: String) {

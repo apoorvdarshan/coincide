@@ -20,13 +20,10 @@ import Testing
     let thread = CodingThread(project: project)
     store.snapshot.projects = [project]; store.snapshot.threads = [thread]
     store.selectedThreadID = thread.id; store.selectedProjectID = project.id; store.isLoading = false
-    let hosting = NSHostingView(rootView: ChatView(store: store, threadID: thread.id))
-    hosting.sizingOptions = [.minSize]
-    let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: 620, height: 600), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-    window.isReleasedWhenClosed = false; window.contentView = hosting
-    hosting.layoutSubtreeIfNeeded()
-    // The hosted view's minimum width must fit next to a 268-point sidebar on a 900-point window.
-    #expect(window.contentMinSize.width <= 632)
-    window.close()
+    let detail = NSHostingController(rootView: ChatView(store: store, threadID: thread.id))
+    // Probe the SwiftUI minimum directly, rather than an NSWindow's default zero minimum.
+    #expect(detail.sizeThatFits(in: CGSize(width: 0, height: 600)).width <= 632)
+    let workspace = NSHostingController(rootView: ContentView(store: store).frame(minWidth: 900, minHeight: 600))
+    #expect(workspace.sizeThatFits(in: CGSize(width: 900, height: 600)).width <= 900)
     await store.shutdown()
 }

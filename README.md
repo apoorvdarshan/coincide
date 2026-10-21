@@ -70,16 +70,31 @@ chosen model and permissions, and can be edited or removed before it starts.
 continue; restarting the app also holds unfinished work rather than resending it.
 
 Click a project heading to collapse or expand it; its selected conversation stays
-visible. Right-click the heading to rename the project while keeping its folder
-path. The sidebar sort menu offers **Last user message** (including queued
+visible. Checkouts with the same Git repository appear together by default.
+The sidebar menu and General settings offer **Repository**, **Repository and
+Folder**, and **Separate Checkouts**, with individual overrides in each checkout's
+context menu. Local folders without a remote stay separate. Forks retain their
+own identity even when an upstream remote is configured.
+
+Grouped projects list each checkout's conversations and offer explicit paths for
+new threads, renaming, removal, and revealing files. The **New conversations**
+picker chooses the checkout for future conversations; existing conversations
+keep their workspace, draft, and agent. The last selected conversation reopens
+when Coincide restarts.
+
+Right-click a single project heading to rename it while keeping its folder path.
+The sidebar sort menu offers **Last user message** (including queued
 messages), **Created at** (the newest conversation in each project), and **Manual**.
-Manual mode supports dragging projects and Move Up/Down controls. Switching sort
-modes preserves your saved manual order. Archived conversations do not determine
-project activity or creation ranking.
+Activity includes all conversations in a group. Manual mode supports dragging
+groups and Move Up/Down controls, preserving other checkouts' relative order.
+Switching sort or grouping modes preserves your saved manual order. Archived
+conversations do not determine project activity or creation ranking.
 
 Right-click a project heading and choose **Remove Project** to remove its active
 and archived conversations from the workspace and stop their agents, clone, and
-terminals in every open window. Confirm any unsaved file edits before removal.
+terminals in every open window. For a group, choose the physical path under
+**Checkouts** first; sibling checkouts stay open. The confirmation includes the
+checkout path and any unsaved file edits.
 Coincide does not delete checkout, worktree, staging, or attachment files. Git may
 clean up unfinished files when an active clone is stopped. Conversation data
 remains in local recovery history; removal is not secure
