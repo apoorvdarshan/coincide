@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import Vision
 import XCTest
 
 final class CoincideDesktopUITests: XCTestCase {
@@ -312,20 +313,22 @@ final class CoincideDesktopUITests: XCTestCase {
         collapsedHeader.rightClick()
         let removeItem = app.menuItems["Remove Project…"]
         XCTAssertTrue(removeItem.waitForExistence(timeout: 5)); removeItem.click()
+        let confirmation = app.sheets.containing(NSPredicate(format: "label == %@", "Remove Project")).element
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         let removalTitle = "Remove “\(renamed)” from Coincide?"
-        let confirmationTitle = app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", removalTitle, removalTitle)).element
-        let confirmRemove = app.buttons["Remove Project"]
+        let confirmationTitle = confirmation.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", removalTitle, removalTitle)).element
+        let confirmRemove = confirmation.buttons["Remove Project"]
         XCTAssertTrue(confirmationTitle.waitForExistence(timeout: 5) && confirmRemove.exists)
-        let explanation = app.staticTexts.matching(NSPredicate(format: "(label CONTAINS %@ OR value CONTAINS %@) AND (label CONTAINS %@ OR value CONTAINS %@)", "Git may clean up unfinished files", "Git may clean up unfinished files", "local recovery history", "local recovery history")).element
-        XCTAssertTrue(explanation.waitForExistence(timeout: 5), "Removal must explain active-Git cleanup and retained recovery history.")
-        app.buttons["Cancel"].click()
+        try assertRemovalCaveats(confirmation, name: "\(appearance)-removal-cancel-review")
+        confirmation.buttons["Cancel"].click()
         XCTAssertTrue(waitForAbsence(confirmRemove, timeout: 5))
         XCTAssertTrue(collapsedHeader.exists && composer.exists)
         XCTAssertEqual(composer.value as? String, draft, "Cancelling removal must preserve the selected conversation and its draft.")
 
         collapsedHeader.rightClick()
         XCTAssertTrue(removeItem.waitForExistence(timeout: 5)); removeItem.click()
-        XCTAssertTrue(confirmationTitle.waitForExistence(timeout: 5) && confirmRemove.exists && explanation.exists)
+        XCTAssertTrue(confirmationTitle.waitForExistence(timeout: 5) && confirmRemove.exists)
+        try assertRemovalCaveats(confirmation, name: "\(appearance)-removal-confirm-review")
         confirmRemove.click()
         XCTAssertTrue(waitForAbsence(collapsedHeader, timeout: 10), "Confirmed removal must remove the project from the sidebar.")
         XCTAssertTrue(waitForAbsence(composer, timeout: 5), "Confirmed removal must clear the removed conversation.")
@@ -368,13 +371,19 @@ final class CoincideDesktopUITests: XCTestCase {
         app.menuBars.menuBarItems["File"].click()
         let open = app.menuItems["Add Project…"]
         XCTAssertTrue(open.waitForExistence(timeout: 5)); open.click()
-        let add = app.buttons["Add Project"]
+        let panel = app.windows["open-panel"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 10))
+        let add = panel.buttons["OKButton"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
+        XCTAssertEqual(add.title, "Add Project")
         app.typeKey("g", modifierFlags: [.command, .shift])
         app.typeText(directory.path)
         app.typeKey(.return, modifierFlags: [])
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: add)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+        let result = XCTWaiter.wait(for: [ready], timeout: 10)
+        let diagnostic = XCTAttachment(string: "Requested checkout: \(directory.path)\nPanel frame: \(panel.frame)\nConfirm frame: \(add.frame)\nEnabled: \(add.isEnabled)\nHittable: \(add.isHittable)\n\n\(panel.debugDescription)")
+        diagnostic.name = "open-panel-\(directory.lastPathComponent)"; diagnostic.lifetime = .keepAlways; self.add(diagnostic)
+        XCTAssertEqual(result, .completed)
         add.click()
         XCTAssertTrue(waitForAbsence(add, timeout: 10), "The native folder panel must accept the chosen local checkout.")
     }
@@ -431,6 +440,35 @@ final class CoincideDesktopUITests: XCTestCase {
     @MainActor private func waitForValue(_ element: XCUIElement, value: String, timeout: TimeInterval) -> Bool {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value == %@", value), object: element)
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    @MainActor private func assertRemovalCaveats(_ sheet: XCUIElement, name: String) throws {
+        let expected = ["Git may clean up unfinished files", "local recovery history"]
+        let attributes = sheet.staticTexts.allElementsBoundByIndex.flatMap { [($0.value as? String) ?? "", $0.label, $0.title] }
+        let accessibilityText = attributes.joined(separator: " ").split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        if expected.allSatisfy({ accessibilityText.localizedCaseInsensitiveContains($0) }) { return }
+        // The pinned XCTest runtime caps native alert text at 512 UTF-16 units.
+        // Check real rendered pixels only for that observed truncation case.
+        XCTAssertTrue(sheet.exists && sheet.buttons["Remove Project"].isHittable)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(sheet.frame))
+        let screenshot = sheet.screenshot()
+        let picture = XCTAttachment(screenshot: screenshot); picture.name = name; picture.lifetime = .keepAlways; add(picture)
+        let snapshot = XCTAttachment(string: "Attribute UTF-16 lengths: \(attributes.map { $0.utf16.count })\n\n\(accessibilityText)")
+        snapshot.name = name + "-accessibility-text"; snapshot.lifetime = .keepAlways; add(snapshot)
+        guard attributes.contains(where: { $0.utf16.count == 512 }) else {
+            XCTFail("Removal warning concepts are missing without the observed XCTest truncation boundary."); return
+        }
+        let bitmap = try XCTUnwrap(screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate; request.recognitionLanguages = ["en-US"]; request.usesLanguageCorrection = true
+        try VNImageRequestHandler(cgImage: bitmap).perform([request])
+        let lines = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
+        let recognized = lines.joined(separator: " ").split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        let diagnostic = XCTAttachment(string: "On-device Vision text from the native alert:\n\(recognized)")
+        diagnostic.name = name + "-recognized-text"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+        for phrase in expected {
+            XCTAssertTrue(recognized.localizedCaseInsensitiveContains(phrase), "The visible removal warning must include: \(phrase).")
+        }
     }
 
     @MainActor private func waitForAbsence(_ element: XCUIElement, timeout: TimeInterval) -> Bool {

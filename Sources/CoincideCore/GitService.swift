@@ -133,12 +133,17 @@ public struct GitService: Sendable {
     public func diff(file: ChangedFile? = nil, staged: Bool = false) async throws -> String {
         let repository = try await repositoryRoot()
         if let file, file.isUntracked {
-            let url = try WorkspaceFiles(root: repository).resolve(file.path)
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
-            guard size <= 2_000_000 else { return "Binary or large untracked file: \(file.path)" }
-            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-            guard data.count <= 2_000_000, let text = String(data: data, encoding: .utf8), !text.contains("\0") else { return "Binary or large untracked file: \(file.path)" }
-            return "+++ \(file.path) (untracked)\n" + text.split(separator: "\n", omittingEmptySubsequences: false).map { "+" + $0 }.joined(separator: "\n")
+            let files = WorkspaceFileService(root: repository)
+            do {
+                let document = try await files.readFile(relativePath: file.path, maxBytes: 2_000_000)
+                await files.close()
+                guard !document.truncated else { return "Binary or large untracked file: \(file.path)" }
+                return "+++ \(file.path) (untracked)\n" + document.contents.split(separator: "\n", omittingEmptySubsequences: false).map { "+" + $0 }.joined(separator: "\n")
+            } catch {
+                await files.close()
+                if let error = error as? WorkspaceFileError, [.binary, .invalidUTF8, .notFile].contains(error.failure) { return "Binary or large untracked file: \(file.path)" }
+                throw error
+            }
         }
         var args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color"]
         if staged { args.append("--cached") }

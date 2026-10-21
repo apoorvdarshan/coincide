@@ -6,6 +6,7 @@ struct ChatView: View {
     let threadID: UUID
     @State private var sending = false
     @State private var worktreeSheet = false
+    @State private var referenceFileSheet = false
     @State private var branch = ""
     private var thread: CodingThread? { store.thread(threadID) }
     private var draft: Binding<String> {
@@ -88,6 +89,7 @@ struct ChatView: View {
                     ComposerView(text: draft, provider: thread.provider, providerName: thread.providerName, permission: thread.permission,
                                  busy: store.isBusy(threadID), submitting: sending || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
                                  hasAttachments: !thread.draftAttachments.isEmpty, attach: { store.chooseAttachments(threadID: threadID) },
+                                 referenceFile: store.canAccessWorkspaceFiles(thread.workspacePath) ? { referenceFileSheet = true } : nil,
                                  importProviders: { store.importAttachments(providers: $0, threadID: threadID) },
                                  setPermission: { store.setPermission($0, id: threadID) },
                                  send: {
@@ -104,6 +106,12 @@ struct ChatView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity)
             .navigationTitle("Coincide")
+            .sheet(isPresented: $referenceFileSheet) {
+                WorkspaceFilePicker(workspace: store, path: thread.workspacePath) { path in
+                    referenceFileSheet = false
+                    Task { await store.insertWorkspaceReference(path: path, workspacePath: thread.workspacePath, threadID: threadID) }
+                } cancel: { referenceFileSheet = false }
+            }
             .sheet(isPresented: $worktreeSheet) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Create a Worktree").font(.title2)

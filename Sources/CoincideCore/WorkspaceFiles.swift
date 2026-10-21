@@ -12,7 +12,7 @@ public struct WorkspaceFiles: Sendable {
     public let root: URL
     public init(root: URL) { self.root = root.standardizedFileURL.resolvingSymlinksInPath() }
     public func resolve(_ relativePath: String) throws -> URL {
-        guard !relativePath.hasPrefix("/") else { throw CoincideError("Use a path relative to this workspace.") }
+        guard !relativePath.hasPrefix("/"), !relativePath.contains("\0"), relativePath.utf16.count <= 4_096 else { throw CoincideError("Use a path relative to this workspace.") }
         let components = relativePath.split(separator: "/")
         guard !components.contains("..") else { throw CoincideError("This file is outside the workspace.") }
         var url = root
@@ -25,21 +25,21 @@ public struct WorkspaceFiles: Sendable {
         return url
     }
     public func list(_ relativePath: String = "") throws -> [WorkspaceFile] {
-        let directory = try resolve(relativePath)
-        return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]).map {
-            WorkspaceFile(path: String($0.path.dropFirst(root.path.count + 1)), isDirectory: (try $0.resourceValues(forKeys: [.isDirectoryKey])).isDirectory == true)
-        }.sorted { $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let folder = try WorkspaceFileRoot(root: root); defer { folder.close() }
+        return try folder.list(relativePath).entries.map { WorkspaceFile(path: $0.path, isDirectory: $0.isDirectory) }
     }
     public func read(_ path: String) throws -> String {
-        let url = try resolve(path)
-        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size <= 2_000_000 else { throw CoincideError("This file is too large for the editor (2 MB limit).") }
-        guard let text = String(data: try Data(contentsOf: url), encoding: .utf8) else { throw CoincideError("This file is not UTF-8 text.") }
-        return text
+        let folder = try WorkspaceFileRoot(root: root); defer { folder.close() }
+        let document = try folder.read(path, allowMissing: false, maxBytes: 2_000_000)
+        guard !document.truncated else { throw CoincideError("This file is too large for the editor (2 MB limit).") }
+        return document.contents
     }
     public func write(_ path: String, text: String, expectedContents: String) throws {
-        let url = try resolve(path)
-        guard try read(path) == expectedContents else { throw CoincideError("The file changed on disk. Reload before saving to preserve those changes.") }
-        try text.write(to: url, atomically: true, encoding: .utf8)
+        let folder = try WorkspaceFileRoot(root: root); defer { folder.close() }
+        let document = try folder.read(path, allowMissing: false, maxBytes: 2_000_000)
+        guard !document.truncated, document.contents == expectedContents, let revision = document.revision else {
+            throw CoincideError("The file changed on disk. Reload before saving to preserve those changes.")
+        }
+        _ = try folder.write(path, contents: text, expected: .matching(revision))
     }
 }

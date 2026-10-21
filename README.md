@@ -34,6 +34,20 @@ Push use your existing Git credentials. A folder without Git can initialize a
 repository; staging and unstaging also work before its first commit. A new thread
 can create a separate Git worktree before its first message.
 
+The inspector's **Files** tab lists hidden files and empty folders, labels ignored
+entries, and searches workspace paths using Git ignore rules. Open or create a
+UTF-8 file, edit it, and save. Files over 1 MiB open as read-only previews. Binary
+and invalid UTF-8 files are rejected. External updates refresh clean buffers;
+unsaved edits stay in memory until saved or explicitly discarded. Hiding the
+inspector or changing conversations retains them, and quitting asks before
+discarding unsaved files. Save checks the original file revision before replacing
+it; concurrent external writers can still race the final check, so this is not
+cross-process locking.
+
+Use **@** beside the composer to search for a workspace file or folder and insert
+a relative link into that conversation's draft. References do not copy file
+contents or attach files automatically.
+
 Use **File → New Project** (⇧⌘N), or the sidebar's project menu, to create a
 project in `~/Library/Application Support/Coincide/Projects/`. Coincide makes a
 new folder, initializes Git using your configured default branch (or `main`),

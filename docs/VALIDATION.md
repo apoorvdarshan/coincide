@@ -1,5 +1,58 @@
 # Validation record
 
+## 2026-10-22 — native workspace file sessions and editor integration
+
+- Added local async listing, path search, ignored-file inventory, bounded UTF-8
+  reads, exclusive creation, revision-checked saves, and advisory recursive
+  FSEvents invalidations. Immediate listing includes hidden/empty/ignored entries;
+  path search excludes ignored paths, including tracked files matching ignore
+  rules, while tracked files are not labelled ignored in immediate listings.
+  Search has a 256-UTF-16 query limit, 200-result ceiling, 25,000-entry scan ceiling,
+  and shared 15-second scan budget. Ranking is native, not upstream fff ranking.
+- Filesystem workers use owned directory descriptors and nonblocking regular-file
+  reads. Tests cover repeated enumeration, internal/dangling/escaping links,
+  special nodes, named/resolved Git and bare/linked-worktree metadata, optional
+  absence, strict UTF-8 and partial Unicode previews, binary rejection, stale
+  revisions, same-byte inode replacement, executable mode, exclusive-create races,
+  root replacement, and cancellation. Real Git ignore probes use bounded private
+  input/output and sanitized context; a config FIFO verifies cancellation waits
+  until the owned Git process has exited. Watch streams are ready before return,
+  bounded/coalesced, and finished/drained on close.
+- The inspector now uses background services end to end. Cached editors retain
+  unsaved buffers through inspector visibility, tab, and conversation changes.
+  Clean buffers reload on invalidation; dirty buffers and external bytes survive
+  conflicts. Truncated previews are read-only. Normal Quit offers Cancel or an
+  explicit discard choice. Native file/folder search inserts an escaped relative
+  link into the captured conversation only, retaining selection, provider, queue,
+  attachments, and drafts across restart. Last-owner cleanup drains editors and
+  services; a shared-path surviving project retains both. Legacy synchronous
+  compatibility reads/writes share anchored checks, and untracked Git diff reads
+  now use the bounded async service.
+- The full suite passed 257 tests: 212 core, 4 terminal, 13 Markdown, and 28 native
+  UI/store. All 11 file-service core tests, the untracked Git-preview regression,
+  and both new UI/store workflows ran, including real Git cancellation.
+  Independent service and UI lifecycle
+  reviews found no remaining blocker. No local interactive GUI test ran.
+- Packaging/launch, strict deep app signing, and bundled-font rendering pass.
+  The Xcode GUI runner compiles and passes strict deep signature verification.
+  Canonical comparison confirms all 3 existing conversations, 25 messages, and
+  non-identity project fields are unchanged; storage remains version 9.
+- Hosted run 39690616352 passed the 243-test production suite and ran all three
+  real GUI workflows without skips. Light/dark reached physical removal and
+  displayed the complete warning; XCTest truncated its informative value at
+  512 UTF-16 units. The grouping workflow reached the correct native folder but
+  its global confirm-button query also matched an offscreen Touch Bar button.
+  Harness queries now scope native panels/sheets and their observed identifiers.
+  For the observed text-truncation boundary only, on-device Vision checks both
+  warning concepts in retained native-alert pixels. All functional, copy, and
+  geometry assertions remain enabled. Complete hosted GUI verification is pending.
+- Revision saves are a guarded check followed by atomic replacement, with a final
+  check-to-rename race against arbitrary external writers. They are not atomic
+  cross-process compare-and-save. Content/regex search, host/remote file APIs,
+  external-editor integration, and crash recovery remain pending.
+
+Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
+
 ## 2026-10-22 — atomic group rename and removal
 
 - Whole-group rename and removal validate every registration ID and literal

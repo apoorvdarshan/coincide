@@ -7,11 +7,13 @@ struct SourceEditor: NSViewRepresentable {
     @Binding var text: String
     let path: String
     let navigation: FileNavigation?
+    var isEditable = true
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView(); scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         guard let editor = scroll.documentView as? NSTextView else { return scroll }
         editor.isRichText = false; editor.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        editor.isEditable = isEditable
         editor.allowsUndo = true
         editor.isAutomaticQuoteSubstitutionEnabled = false; editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false; editor.isAutomaticSpellingCorrectionEnabled = false
@@ -24,6 +26,7 @@ struct SourceEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let editor = scroll.documentView as? NSTextView else { return }
         context.coordinator.parent = self
+        editor.isEditable = isEditable
         if context.coordinator.path != path { editor.undoManager?.removeAllActions(); context.coordinator.path = path }
         if editor.string != text { editor.string = text; editor.undoManager?.removeAllActions() }
         guard let navigation, context.coordinator.navigationID != navigation.id else { return }

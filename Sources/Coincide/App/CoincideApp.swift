@@ -71,6 +71,7 @@ enum MainWindowSizing {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var store: WorkspaceStore?
     private var pendingProjects: [URL] = []
+    private var isQuitting = false
     func attach(_ store: WorkspaceStore) {
         self.store = store
         for url in pendingProjects { store.addProject(at: url) }
@@ -85,6 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store else { return .terminateNow }
+        guard !isQuitting else { return .terminateLater }
+        if store.hasUnsavedFileEdits {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Quit with unsaved file edits?")
+            alert.informativeText = String(localized: "Unsaved file edits will be discarded. Cancel to return to your files and save them before quitting.")
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            alert.addButton(withTitle: String(localized: "Quit and Discard"))
+            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        }
+        isQuitting = true
         Task { await store.shutdown(); sender.reply(toApplicationShouldTerminate: true) }
         return .terminateLater
     }

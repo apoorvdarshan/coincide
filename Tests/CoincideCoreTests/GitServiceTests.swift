@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 @testable import CoincideCore
 
@@ -18,6 +19,25 @@ private func writeGitFile(_ root: URL, _ name: String, _ value: String) throws {
 private func gitCommit(_ root: URL, _ name: String, _ value: String) async throws {
     try writeGitFile(root, name, value)
     let git = GitService(root: root); try await git.stage([name]); try await git.commit(message: "Change " + name)
+}
+
+@Test(.timeLimit(.minutes(1))) func nativeUntrackedDiffBoundsPreviewsAndRejectsBinarySpecialAndEscapingFiles() async throws {
+    let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
+    let outside = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: outside) }
+    let git = GitService(root: root); try await git.initialize()
+    try writeGitFile(root, "plain.txt", "Readable\n")
+    try Data([0, 65, 255]).write(to: root.appendingPathComponent("binary.dat"))
+    try Data(repeating: 65, count: 2_000_001).write(to: root.appendingPathComponent("large.txt"))
+    #expect(mkfifo(root.appendingPathComponent("pipe").path, 0o600) == 0)
+    func untracked(_ path: String) -> ChangedFile { .init(path: path, indexStatus: "?", worktreeStatus: "?") }
+    #expect(try await git.diff(file: untracked("plain.txt")) == "+++ plain.txt (untracked)\n+Readable\n+")
+    for path in ["binary.dat", "large.txt", "pipe"] {
+        #expect(try await git.diff(file: untracked(path)) == "Binary or large untracked file: " + path)
+    }
+    try writeGitFile(outside, "private.txt", "Do not read outside the workspace")
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("escape"), withDestinationURL: outside)
+    await #expect(throws: WorkspaceFileError.self) { try await git.diff(file: untracked("escape/private.txt")) }
+    #expect(try String(contentsOf: outside.appendingPathComponent("private.txt"), encoding: .utf8) == "Do not read outside the workspace")
 }
 
 @Test func nativeGitInitializesAnUnbornBranchAndUnstagesModifiedInitialFilesWithoutLosingBytes() async throws {

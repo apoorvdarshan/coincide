@@ -25,6 +25,10 @@ text remains unsent; no coding agent or network provider is invoked.
 The shell resolves the selected Xcode's real Git executable before entering the
 sandbox; commit verification avoids `/usr/bin/git`'s developer-tool shim and
 retains both output streams in the test result for diagnosis.
+Native panel and alert buttons are scoped to their visible containers so Touch
+Bar duplicates cannot satisfy a query. For the pinned XCTest runtime's observed
+512-unit alert-text truncation, on-device Vision checks both warning phrases in
+the actual alert screenshot; the image and recognized text remain in the result.
 
 The first two tests exercise light/dark actual windows, File-menu or keyboard project
 creation, an initial Git commit, project renaming, collapse with the selected

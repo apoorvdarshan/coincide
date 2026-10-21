@@ -31,6 +31,11 @@ private struct ProjectRemovalCleanup {
     let task: Task<Void, Never>
 }
 
+private struct WorkspaceFileCleanup {
+    let projectIDs: Set<UUID>
+    let task: Task<Void, Never>
+}
+
 @MainActor private final class WeakTerminalStore {
     weak var value: TerminalWorkspaceStore?
     init(_ value: TerminalWorkspaceStore) { self.value = value }
@@ -78,6 +83,9 @@ final class WorkspaceStore {
     private var dirtyEditors: [UUID: String] = [:]
     private var removalEditorLocks: [UUID: Set<String>] = [:]
     private var gitInspectors: [String: GitInspectorStore] = [:]
+    private var fileServices: [String: WorkspaceFileService] = [:]
+    private var fileBrowsers: [String: FileBrowserStore] = [:]
+    private var fileServiceCleanupTasks: [String: WorkspaceFileCleanup] = [:]
     private var retryingProjectClones: Set<UUID> = []
     private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
     private var lastSequence: Int64 = -1
@@ -128,6 +136,46 @@ final class WorkspaceStore {
         let model = GitInspectorStore(path: path)
         if terminating { model.prepareForShutdown() }
         gitInspectors[path] = model; return model
+    }
+    func canAccessWorkspaceFiles(_ path: String) -> Bool {
+        let path = Self.canonicalPath(path)
+        guard canEditWorkspace(path), fileServiceCleanupTasks[path] == nil else { return false }
+        let projects = snapshot.projects.filter { Self.canonicalPath($0.path) == path }
+        let threads = snapshot.threads.filter { Self.canonicalPath($0.workspacePath) == path }
+        guard !projects.isEmpty || !threads.isEmpty else { return false }
+        return projects.allSatisfy { $0.clone?.isReady ?? true } && threads.allSatisfy { workspaceReady(for: $0) }
+    }
+    func fileService(path: String) throws -> WorkspaceFileService {
+        guard canAccessWorkspaceFiles(path) else { throw CoincideError("This workspace is unavailable. Wait for cloning or removal to finish before accessing its files.") }
+        let path = Self.canonicalPath(path)
+        if let service = fileServices[path] { return service }
+        let service = WorkspaceFileService(root: URL(fileURLWithPath: path))
+        fileServices[path] = service
+        return service
+    }
+    func fileBrowser(path: String) throws -> FileBrowserStore {
+        let service = try fileService(path: path), path = Self.canonicalPath(path)
+        if let model = fileBrowsers[path] { return model }
+        let model = FileBrowserStore(workspace: self, path: path, service: service)
+        fileBrowsers[path] = model
+        return model
+    }
+    private func closeUnreferencedFileServices(previous: WorkspaceSnapshot) {
+        let referenced = Set((snapshot.projects.map(\.path) + snapshot.threads.map(\.workspacePath)).map(Self.canonicalPath))
+        let removed = fileServices.filter { !referenced.contains($0.key) }
+        for (path, service) in removed {
+            fileServices.removeValue(forKey: path)
+            let browser = fileBrowsers.removeValue(forKey: path)
+            browser?.prepareForShutdown()
+            let owners = Set(previous.projects.filter { Self.canonicalPath($0.path) == path }.map(\.id)
+                + previous.threads.filter { Self.canonicalPath($0.workspacePath) == path }.map(\.projectID))
+            let task = Task { [weak self] in
+                await browser?.shutdown()
+                await service.close()
+                self?.fileServiceCleanupTasks.removeValue(forKey: path)
+            }
+            fileServiceCleanupTasks[path] = .init(projectIDs: owners, task: task)
+        }
     }
     var visibleThreads: [CodingThread] {
         snapshot.threads.filter {
@@ -213,6 +261,7 @@ final class WorkspaceStore {
     func setEditorDirty(_ id: UUID, workspacePath: String, dirty: Bool) {
         if dirty { dirtyEditors[id] = Self.canonicalPath(workspacePath) } else { dirtyEditors.removeValue(forKey: id) }
     }
+    var hasUnsavedFileEdits: Bool { !dirtyEditors.isEmpty }
     func canEditWorkspace(_ path: String) -> Bool {
         let path = Self.canonicalPath(path)
         guard !terminating, !removalEditorLocks.values.contains(where: { $0.contains(path) }) else { return false }
@@ -342,7 +391,9 @@ final class WorkspaceStore {
         }
         let removedThreads = Set(snapshot.threads.map(\.id)).subtracting(update.snapshot.threads.map(\.id))
         let removedProjects = Set(snapshot.projects.map(\.id)).subtracting(update.snapshot.projects.map(\.id))
+        let previous = snapshot
         lastSequence = update.sequence; snapshot = update.snapshot
+        closeUnreferencedFileServices(previous: previous)
         if !removedThreads.isEmpty || !removedProjects.isEmpty { reconcileRemovedResources(threadIDs: removedThreads, projectIDs: removedProjects) }
         if let error = update.error, !terminating { errorMessage = error }
     }
@@ -357,6 +408,7 @@ final class WorkspaceStore {
         let terminals = terminalStores.values.compactMap(\.value)
         terminalStores = terminalStores.filter { $0.value.value != nil }
         let closingTerminals = terminals.flatMap { $0.remove(threadIDs: threadIDs) }
+        let closingFileServices = fileServiceCleanupTasks.values.filter { !$0.projectIDs.isDisjoint(with: projectIDs) }.map(\.task)
         let referencedPaths = Set((snapshot.projects.map(\.path) + snapshot.threads.map(\.workspacePath)).map(Self.canonicalPath))
         dirtyEditors = dirtyEditors.filter { referencedPaths.contains($0.value) }
         let discardedInspectors = gitInspectors.filter { !referencedPaths.contains($0.key) }
@@ -378,6 +430,7 @@ final class WorkspaceStore {
             for task in retries { await task.value }
             for terminal in closingTerminals { await terminal.waitForClose() }
             for inspector in discardedInspectors.values { await inspector.shutdown() }
+            for task in closingFileServices { await task.value }
             self?.removalCleanupTasks.removeValue(forKey: cleanupID)
         }
         removalCleanupTasks[cleanupID] = .init(projectIDs: projectIDs, task: task)
@@ -504,6 +557,21 @@ final class WorkspaceStore {
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
             self?.flushDrafts()
         }
+    }
+    func insertWorkspaceReference(path: String, workspacePath: String, threadID: UUID) async {
+        guard let thread = thread(threadID), Self.canonicalPath(thread.workspacePath) == Self.canonicalPath(workspacePath), canAccessWorkspaceFiles(workspacePath) else { return }
+        do {
+            let service = try fileService(path: workspacePath)
+            _ = try WorkspaceFiles(root: URL(fileURLWithPath: workspacePath)).resolve(path)
+            let directory = (path as NSString).deletingLastPathComponent
+            let page = try await service.listEntries(directoryPath: directory)
+            guard page.entries.contains(where: { $0.path == path }) else { throw CoincideError("This file or folder is no longer available. Search again before referencing it.") }
+            try Task.checkCancellation()
+            guard let current = self.thread(threadID), Self.canonicalPath(current.workspacePath) == Self.canonicalPath(workspacePath), canAccessWorkspaceFiles(workspacePath) else { return }
+            let separator = current.draft.isEmpty || current.draft.last?.isWhitespace == true ? "" : " "
+            setDraft(current.draft + separator + WorkspaceFileReference.markdown(path: path) + " ", id: threadID)
+        } catch is CancellationError { }
+        catch { if !terminating, self.thread(threadID) != nil { errorMessage = error.localizedDescription } }
     }
     private func flushDrafts() {
         let values = pendingDrafts; pendingDrafts = [:]
@@ -716,6 +784,12 @@ final class WorkspaceStore {
         let inspectors = Array(gitInspectors.values)
         for model in inspectors { model.prepareForShutdown() }
         for model in inspectors { await model.shutdown() }
+        let browsers = Array(fileBrowsers.values); fileBrowsers.removeAll()
+        for model in browsers { model.prepareForShutdown() }
+        for model in browsers { await model.shutdown() }
+        let services = Array(fileServices.values); fileServices.removeAll()
+        for service in services { await service.close() }
+        for cleanup in Array(fileServiceCleanupTasks.values) { await cleanup.task.value }
         let imports = Array(attachmentImportTasks.values); for task in imports { task.cancel() }; for task in imports { await task.value }
         draftSaveTask?.cancel(); flushDrafts()
         await commandTail?.value

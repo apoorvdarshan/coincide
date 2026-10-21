@@ -11,6 +11,7 @@ struct ComposerView: View {
     let submitting: Bool
     let hasAttachments: Bool
     let attach: () -> Void
+    var referenceFile: (() -> Void)? = nil
     let importProviders: ([NSItemProvider]) -> Void
     let setPermission: (PermissionMode) -> Void
     let send: () -> Void
@@ -38,6 +39,11 @@ struct ComposerView: View {
             HStack {
                 Button(action: attach) { Image(systemName: "plus").frame(width: 24, height: 24) }
                     .buttonStyle(.plain).help("Attach files").accessibilityLabel("Attach files").disabled(submitting)
+                if let referenceFile {
+                    Button(action: referenceFile) { Image(systemName: "at").frame(width: 24, height: 24) }
+                        .buttonStyle(.plain).help("Reference a workspace file or folder").accessibilityLabel("Reference workspace file")
+                        .accessibilityIdentifier("composer-reference-file").disabled(submitting)
+                }
                 if provider == .acp {
                     Label("Agent permissions", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
                         .help("The agent enforces its own sandbox. Coincide shows the permission requests it sends.")
