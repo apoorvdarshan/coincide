@@ -1,5 +1,6 @@
 import CoincideCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ComposerView: View {
     @Binding var text: String
@@ -7,10 +8,15 @@ struct ComposerView: View {
     let permission: PermissionMode
     let busy: Bool
     let submitting: Bool
+    let hasAttachments: Bool
+    let attach: () -> Void
+    let importProviders: ([NSItemProvider]) -> Void
     let setPermission: (PermissionMode) -> Void
     let send: () -> Void
     let stop: () -> Void
     @FocusState private var editorFocused: Bool
+    @State private var dropTargeted = false
+    private var canSend: Bool { !submitting && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
     private var height: CGFloat { min(150, max(40, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -22,11 +28,14 @@ struct ComposerView: View {
                     .scrollContentBackground(.hidden).accessibilityLabel("Message to \(provider.name)")
                     .onKeyPress(keys: [.return], phases: .down) { event in
                         guard !event.modifiers.contains(.shift), !event.modifiers.contains(.option) else { return .ignored }
-                        guard !submitting, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .ignored }
+                        guard canSend else { return .ignored }
                         send(); return .handled
                     }
+                    .onPasteCommand(of: [UTType.fileURL, UTType.image]) { importProviders($0) }
             }
             HStack {
+                Button(action: attach) { Image(systemName: "plus").frame(width: 24, height: 24) }
+                    .buttonStyle(.plain).help("Attach files").accessibilityLabel("Attach files").disabled(submitting)
                 Menu {
                     ForEach(PermissionMode.allCases) { mode in
                         Button { setPermission(mode) } label: {
@@ -49,11 +58,13 @@ struct ComposerView: View {
                 .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command)
                 .accessibilityLabel(busy ? "Queue message" : "Send message")
                 .help(busy ? "Send after the current turn" : "Send message")
-                .disabled(submitting || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!canSend)
             }
         }
         .padding(14)
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 23))
         .overlay { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1) }
+        .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $dropTargeted) { providers in importProviders(providers); return true }
+        .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false) } }
     }
 }

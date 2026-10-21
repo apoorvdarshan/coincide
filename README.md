@@ -35,6 +35,14 @@ chosen model and permissions, and can be edited or removed before it starts.
 **Stop** interrupts the current turn and holds the queue. Use **Resume Queue** to
 continue; restarting the app also holds unfinished work rather than resending it.
 
+Use **+** in the composer to attach files, or paste/drop local files and images.
+Attachments stay with drafts, queued turns, and sent messages across restarts.
+Image previews include copy, save, and open controls. Codex and Claude receive
+supported images directly and other files as paths to private local copies.
+The limit is 100 files per message, 10 MiB per normalized image and 80 MiB of
+images per message, or 50 MiB per other file. HEIC, TIFF, and oversized images
+are converted or resized natively; original files are preserved.
+
 Responses render native Markdown headings, lists, task lists, quotes, tables, and
 code blocks with copy controls and basic syntax coloring. Workspace file links
 open the native editor at the referenced line. Web links use the default browser;
@@ -62,6 +70,7 @@ Tests cover process streaming/failure/cancellation, protocol framing and request
 correlation, deterministic Codex and Claude approval conversations, journal replay,
 atomic commit failures, accepted/rejected command deduplication, queued execution,
 approval responsiveness, Stop, stale provider events, lease loss, migration/restart,
+attachment import/integrity/conversion, native paste cancellation,
 file conflicts/path containment, and Git/worktree operations. See the porting
 document for live checks and their limitations.
 

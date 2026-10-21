@@ -1,6 +1,7 @@
 import AppKit
 import CoincideCore
 import Observation
+import UniformTypeIdentifiers
 
 struct FileNavigation: Equatable {
     let id = UUID()
@@ -30,11 +31,14 @@ final class WorkspaceStore {
     private var draftOverrides: [UUID: String] = [:]
     private var pendingDrafts: [UUID: String] = [:]
     private var preparingWorkspaces: Set<UUID> = []
+    private var attachmentImportCounts: [UUID: Int] = [:]
+    private var attachmentImportTasks: [UUID: Task<Void, Never>] = [:]
     private var lastSequence: Int64 = -1
     private var terminating = false
 
-    init() {
+    init(databaseURL: URL? = nil) {
         do {
+            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL); return }
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Coincide", isDirectory: true)
             engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"))
@@ -161,10 +165,96 @@ final class WorkspaceStore {
     func rename(_ id: UUID, title: String) { sendCommand(.editThread(id, .title(title))) }
     func isBusy(_ id: UUID) -> Bool { thread(id)?.isBusy == true }
     func isPreparingWorkspace(_ id: UUID) -> Bool { preparingWorkspaces.contains(id) }
+    func isImportingAttachments(_ id: UUID) -> Bool { attachmentImportCounts[id, default: 0] > 0 }
+    func chooseAttachments(threadID: UUID) {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true; panel.prompt = "Attach"
+        panel.begin { [weak self] response in
+            guard response == .OK else { return }; self?.importAttachments(files: panel.urls, threadID: threadID)
+        }
+    }
+    func importAttachments(files: [URL] = [], providers: [NSItemProvider] = [], threadID: UUID) {
+        guard !terminating, let engine else { return }
+        guard files.count + providers.count <= AttachmentLimits.count else { errorMessage = "Attach up to 100 files per message."; return }
+        let taskID = UUID()
+        attachmentImportCounts[threadID, default: 0] += 1
+        attachmentImportTasks[taskID] = Task {
+            defer {
+                attachmentImportCounts[threadID, default: 1] -= 1
+                attachmentImportTasks.removeValue(forKey: taskID)
+            }
+            var references: [ChatAttachment] = [], errors: [String] = []
+            for file in files {
+                do { try Task.checkCancellation(); references.append(try await engine.attachments.importFile(file)) }
+                catch is CancellationError { return }
+                catch { errors.append("\(file.lastPathComponent): \(error.localizedDescription)") }
+            }
+            for provider in providers {
+                do {
+                    try Task.checkCancellation()
+                    if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                        let data = try await NativePasteData.load(provider, type: UTType.fileURL.identifier)
+                        guard let url = URL(dataRepresentation: data, relativeTo: nil), url.isFileURL else { throw CoincideError("This is not a local file.") }
+                        references.append(try await engine.attachments.importFile(url))
+                    } else if let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) {
+                        let data = try await NativePasteData.load(provider, type: type)
+                        let suffix = UTType(type)?.preferredFilenameExtension ?? "png"
+                        references.append(try await engine.attachments.importData(data, name: provider.suggestedName ?? "Pasted image.\(suffix)"))
+                    }
+                } catch is CancellationError { return }
+                catch { errors.append(error.localizedDescription) }
+            }
+            guard !terminating, !Task.isCancelled else { return }
+            if !references.isEmpty {
+                do { _ = try await enqueue(.addAttachments(threadID: threadID, attachments: references)).value }
+                catch { errors.append(error.localizedDescription) }
+            }
+            if !errors.isEmpty { errorMessage = errors.joined(separator: "\n") }
+        }
+    }
+    func removeAttachment(_ attachmentID: UUID, threadID: UUID) { sendCommand(.removeAttachment(threadID: threadID, attachmentID: attachmentID)) }
+    func attachmentData(_ attachment: ChatAttachment) async throws -> Data {
+        guard let engine else { throw CoincideError("The workspace runtime is unavailable.") }
+        return try await engine.attachments.data(for: attachment)
+    }
+    func openAttachment(_ attachment: ChatAttachment) async {
+        guard let engine else { return }
+        do {
+            _ = try await engine.attachments.data(for: attachment)
+            let url = try await engine.attachments.url(for: attachment)
+            guard !terminating else { return }
+            if !NSWorkspace.shared.open(url) { errorMessage = "No application could open this attachment." }
+        } catch { errorMessage = error.localizedDescription }
+    }
+    func copyAttachmentImage(_ attachment: ChatAttachment) async {
+        do {
+            let data = try await attachmentData(attachment)
+            guard !terminating, attachment.isImage, let image = NSImage(data: data) else { return }
+            NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([image])
+        } catch { if !terminating { errorMessage = error.localizedDescription } }
+    }
+    func saveAttachment(_ attachment: ChatAttachment) {
+        let panel = NSSavePanel()
+        let base = (attachment.name as NSString).deletingPathExtension
+        panel.nameFieldStringValue = attachment.fileExtension.isEmpty ? attachment.name : base + "." + attachment.fileExtension
+        if let type = UTType(mimeType: attachment.mimeType) { panel.allowedContentTypes = [type] }
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            Task {
+                do {
+                    let bytes = try await self.attachmentData(attachment)
+                    guard !self.terminating else { return }
+                    let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    try bytes.write(to: url, options: .atomic)
+                } catch { if !self.terminating { self.errorMessage = error.localizedDescription } }
+            }
+        }
+    }
 
     func submit(_ text: String, threadID id: UUID) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, let thread = thread(id), !preparingWorkspaces.contains(id) else { return Task { false } }
+        guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
+              !preparingWorkspaces.contains(id), !isImportingAttachments(id) else { return Task { false } }
         guard ProcessChannel.findExecutable(thread.provider.executable) != nil else {
             errorMessage = "Install and sign in to \(thread.provider.name) CLI before sending a message."
             return Task { false }
@@ -228,7 +318,9 @@ final class WorkspaceStore {
         } catch { errorMessage = error.localizedDescription }
     }
     func shutdown() async {
-        terminating = true; draftSaveTask?.cancel(); flushDrafts()
+        terminating = true
+        let imports = Array(attachmentImportTasks.values); for task in imports { task.cancel() }; for task in imports { await task.value }
+        draftSaveTask?.cancel(); flushDrafts()
         await commandTail?.value
         await engine?.shutdown()
         updatesTask?.cancel(); updatesTask = nil

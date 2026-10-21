@@ -82,6 +82,11 @@ public enum WorkspaceJournal {
               }) else {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
+        for thread in snapshot.threads {
+            try AttachmentLimits.validate(thread.draftAttachments)
+            for queued in thread.queuedTurns { try AttachmentLimits.validate(queued.attachments ?? []) }
+            for message in thread.messages { try AttachmentLimits.validate(message.attachments ?? []) }
+        }
     }
 
     public static func changes(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) throws -> [WorkspaceEvent] {
@@ -105,7 +110,7 @@ public enum WorkspaceJournal {
                 if index < oldMessages.count {
                     let old = oldMessages[index]
                     if old == message { continue }
-                    if old.id == message.id, old.role == message.role, old.createdAt == message.createdAt, message.text.utf8.starts(with: old.text.utf8) {
+                    if old.id == message.id, old.role == message.role, old.createdAt == message.createdAt, old.attachments == message.attachments, message.text.utf8.starts(with: old.text.utf8) {
                         let tail = String(decoding: message.text.utf8.dropFirst(old.text.utf8.count), as: UTF8.self)
                         events.append(.messageTextAppended(threadID: thread.id, index: index, messageID: message.id, text: tail))
                         continue

@@ -18,7 +18,7 @@ public actor CodexSession: ProviderSession {
     public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"]) throws {
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
         self.events = events; self.continuation = continuation
-        rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd)
+        rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd, maximumFrameSize: 128 * 1_024 * 1_024)
     }
     public func connect() async throws {
         guard !initialized else { return }
@@ -41,6 +41,9 @@ public actor CodexSession: ProviderSession {
         }
     }
     public func send(text: String, thread: CodingThread) async throws {
+        try await send(input: ProviderInput(text: text), thread: thread)
+    }
+    public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard !working else { throw CoincideError("A turn is already running in this thread.") }
         working = true
         sendGeneration += 1
@@ -61,8 +64,10 @@ public actor CodexSession: ProviderSession {
                 guard let id = response["thread"]["id"].string else { throw CoincideError("Codex did not return a thread id.") }
                 threadID = id; emit(.thread(id))
             }
+            var items: [JSONValue] = input.text.isEmpty ? [] : [.object(["type": .string("text"), "text": .string(input.text)])]
+            items += input.images.map { .object(["type": .string("image"), "url": .string("data:\($0.mimeType);base64,\($0.data.base64EncodedString())")]) }
             var params: [String: JSONValue] = ["threadId": .string(threadID!), "cwd": .string(thread.workspacePath),
-                "input": .array([.object(["type": .string("text"), "text": .string(text)])]),
+                "input": .array(items),
                 "approvalPolicy": thread.permission.approvalPolicy, "approvalsReviewer": thread.permission.reviewer,
                 "sandboxPolicy": thread.permission.sandbox(cwd: thread.workspacePath)]
             if !thread.model.isEmpty { params["model"] = .string(thread.model) }

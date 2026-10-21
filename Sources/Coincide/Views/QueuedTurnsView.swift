@@ -16,7 +16,11 @@ struct QueuedTurnsView: View {
                 VStack(spacing: 8) {
                     ForEach(thread.queuedTurns) { queued in
                         HStack(alignment: .top, spacing: 10) {
-                            Text(queued.text).font(.caption).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                            if let first = queued.attachments?.first { AttachmentThumbnail(store: store, attachment: first) }
+                            VStack(alignment: .leading, spacing: 3) {
+                                if !queued.text.isEmpty { Text(queued.text).font(.caption).lineLimit(2) }
+                                if let files = queued.attachments, !files.isEmpty { Label("\(files.count) attachment\(files.count == 1 ? "" : "s")", systemImage: "paperclip").font(.caption2).foregroundStyle(.secondary) }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
                             Button { store.editQueued(queued.id, threadID: thread.id) } label: { Image(systemName: "pencil") }
                                 .help("Edit queued message").accessibilityLabel("Edit queued message")
                             Button { store.removeQueued(queued.id, threadID: thread.id) } label: { Image(systemName: "xmark") }
@@ -24,7 +28,7 @@ struct QueuedTurnsView: View {
                         }.buttonStyle(.borderless)
                     }
                 }
-            }.frame(height: min(150, CGFloat(thread.queuedTurns.count) * 37))
+            }.frame(height: min(200, CGFloat(thread.queuedTurns.count) * (thread.queuedTurns.contains { !($0.attachments ?? []).isEmpty } ? 55 : 37)))
         }.padding(12).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
     }
 }

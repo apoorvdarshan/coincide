@@ -12,8 +12,12 @@ private actor RuntimeProvider: ProviderSession {
     var closed = false
     var interrupts = 0
     var receivedAnswers: [String: String] = [:]
+    var imageCounts: [Int] = []
     init() { let pair = AsyncStream<ProviderEvent>.makeStream(); events = pair.stream; continuation = pair.continuation }
     func models() -> [ProviderModel] { [.init(id: "fixture", name: "Fixture")] }
+    func send(input: ProviderInput, thread: CodingThread) async throws {
+        imageCounts.append(input.images.count); try await send(text: input.text, thread: thread)
+    }
     func send(text: String, thread: CodingThread) async throws {
         guard !closed else { throw CoincideError("Fixture session closed") }
         sent.append(text); modelsUsed.append(thread.model); run = thread.activeRun?.id
@@ -46,7 +50,48 @@ private actor RuntimeProvider: ProviderSession {
     func usedModels() -> [String] { modelsUsed }
     func interruptionCount() -> Int { interrupts }
     func answers() -> [String: String] { receivedAnswers }
+    func imagesReceived() -> [Int] { imageCounts }
     func crash() { continuation.yield(.connectionClosed("Fixture process lost")); continuation.finish() }
+}
+
+@Test(.timeLimit(.minutes(1))) func attachmentsKeepDraftQueueHistoryAndImageInputAcrossRuntimeRestart() async throws {
+    try await withRuntime { f in
+        let note = try await f.engine.attachments.importData(Data("Saved note".utf8), name: "note.txt")
+        let image = try await f.engine.attachments.importData(attachmentImageData(), name: "picture.png")
+        try await f.engine.dispatch(.addAttachments(threadID: f.thread.id, attachments: [note]))
+        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "first"))
+        try await waitRuntime {
+            guard let provider = f.harness.providers(f.thread.id).first else { return false }
+            return await provider.prompts().count == 1
+        }
+        try await f.engine.dispatch(.addAttachments(threadID: f.thread.id, attachments: [image]))
+        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: ""))
+        try await f.engine.dispatch(.addAttachments(threadID: f.thread.id, attachments: [note]))
+        await f.engine.shutdown()
+        let reopened = try WorkspaceEngine(url: f.root.appendingPathComponent("workspace.sqlite"), providerFactory: { f.harness.make($0) })
+        do {
+            let snapshot = try await reopened.load(), thread = try #require(snapshot.threads.first)
+            #expect(thread.messages.first?.attachments == [note])
+            #expect(thread.queuedTurns.first?.attachments == [image] && thread.queuePaused)
+            #expect(thread.draftAttachments == [note])
+            #expect(try await reopened.attachments.data(for: note) == Data("Saved note".utf8))
+            await #expect(throws: (any Error).self) { try await reopened.dispatch(.editQueued(threadID: thread.id, queuedID: thread.queuedTurns[0].id)) }
+            try await reopened.dispatch(.removeAttachment(threadID: thread.id, attachmentID: note.id))
+            try await reopened.dispatch(.editQueued(threadID: thread.id, queuedID: thread.queuedTurns[0].id))
+            #expect(await reopened.current().snapshot.threads[0].draftAttachments == [image])
+            try await reopened.dispatch(.submit(threadID: thread.id, text: "second"))
+            try await waitRuntime { f.harness.providers(f.thread.id).count == 2 }
+            let provider = try #require(f.harness.providers(f.thread.id).last)
+            try await waitRuntime { await provider.imagesReceived() == [1] }
+            #expect(await reopened.current().snapshot.threads[0].messages.last(where: { $0.role == .user })?.attachments == [image])
+            await provider.finish()
+            try await waitRuntime { await reopened.current().snapshot.threads[0].state == .idle }
+            let database = try WorkspaceDatabase(url: f.root.appendingPathComponent("workspace.sqlite"))
+            let replayed = try await database.rebuildProjection().snapshot, current = await reopened.current().snapshot
+            #expect(replayed == current)
+            await reopened.shutdown()
+        } catch { await reopened.shutdown(); throw error }
+    }
 }
 
 private final class RuntimeHarness: @unchecked Sendable {

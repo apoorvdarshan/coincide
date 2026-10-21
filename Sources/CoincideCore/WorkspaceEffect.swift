@@ -19,12 +19,12 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
 
 /// Process-bound actions are never replayed automatically after losing their runtime.
 public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
-    case providerStart(threadID: UUID, runID: UUID, configuration: ProviderConfiguration, prompt: String)
+    case providerStart(threadID: UUID, runID: UUID, configuration: ProviderConfiguration, prompt: String, attachments: [ChatAttachment]? = nil)
     case providerInterrupt(threadID: UUID, runID: UUID)
     case providerRespond(threadID: UUID, runID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     public var threadID: UUID {
         switch self {
-        case .providerStart(let id, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _): id
+        case .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _): id
         }
     }
 }

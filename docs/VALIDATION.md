@@ -1,5 +1,51 @@
 # Validation record
 
+## 2026-10-22 — durable native attachments
+
+- `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 COINCIDE_LIVE_ATTACHMENTS=1 swift test`
+  passed all 74 tests: 54 core, 4 terminal, 13 Markdown, and 3 native UI/store tests.
+  The installed-provider attachment test ran two real-provider cases. CI leaves
+  the provider-dependent discovery/model-turn checks disabled.
+- Real Codex and Claude each read a random marker rendered into a synthetic image
+  and a different random marker stored in an attached text file. Both returned the
+  exact combined markers through the native command engine. The final two-provider
+  smoke check passed in about 11 seconds after the transport correction below.
+  No user file was attached, no network tool was permitted, and only the generated
+  text file's Claude Read approval could be accepted by the test.
+- Tests verify immutable private copies after source deletion, mode 700 directories
+  and mode 600 files, image type detection, TIFF conversion, resizing, SVG-as-file
+  handling, long names, size/count limits, checksum changes, symlink rejection,
+  attachment-only queued turns, draft/queue/history restoration, queue editing,
+  native image payloads, and attachment-only journal mutations. Storage version 3
+  prevents older builds from silently discarding these references.
+- Native NSItemProvider tests cover file-URL paste, image-data paste, concurrent
+  imports, partial failure, removal, and persistent drafts. Cancellation also
+  completes when a provider never calls back, so shutdown cannot wait indefinitely
+  for clipboard data. Light/dark offscreen AppKit captures of the attachment shelf
+  and image preview were inspected. Actual keyboard-paste/drop and copy/save-panel
+  interaction still require an unlocked-desktop smoke check.
+- Provider transports now allow bounded 128 MiB incoming frames for image-bearing
+  messages; the default transport limit remains 16 MiB. The incremental decoder
+  scans only newly appended bytes. A 17 MiB fragmented-frame regression verifies
+  decoding and the smaller default's rejection.
+- A blocked-stdin regression crashed the previous implementation with SIGPIPE.
+  Provider input now uses per-descriptor signal suppression and a serial queue of
+  nonblocking writes. RPC actors remain responsive during backpressure; timeout,
+  cancellation, and close stop a partial frame without replay. Tests also verify
+  whole-frame concurrent writes and cancellation before a write starts. The
+  previously crashing regression passed, as did the complete suite and real
+  Codex/Claude image/file turns after the fix.
+- Native packaging, launch, strict signature verification, and bundled-font
+  runtime verification passed. A private backup preceded migration of the real
+  workspace from storage version 2 to 3. Canonical comparison, excluding only new
+  empty attachment defaults, confirmed all 3 conversations and 25 prior messages
+  were unchanged.
+
+Removed or failed-import attachment copies are retained for now; reference-aware
+cleanup is pending. Files remain local, and remote upload, question attachments,
+long-paste conversion, prompt stash, and larger source-image handling are not yet
+implemented. This does not establish full T3 attachment or overall feature parity.
+
 ## 2026-10-22 — native display equations and packaged fonts
 
 - Added SwiftMath 1.7.3 at the locked revision, with its MIT notice and original

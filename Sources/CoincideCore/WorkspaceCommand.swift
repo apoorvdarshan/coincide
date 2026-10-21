@@ -5,6 +5,7 @@ public struct QueuedTurn: Codable, Sendable, Equatable, Identifiable {
     public var text: String
     public var configuration: ProviderConfiguration
     public var createdAt: Date
+    public var attachments: [ChatAttachment]? = nil
 }
 public struct ActiveRun: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
@@ -34,6 +35,8 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case removeQueued(threadID: UUID, queuedID: UUID)
     case editQueued(threadID: UUID, queuedID: UUID)
     case resumeQueue(threadID: UUID)
+    case addAttachments(threadID: UUID, attachments: [ChatAttachment])
+    case removeAttachment(threadID: UUID, attachmentID: UUID)
 }
 
 enum EngineCommand: Codable, Sendable {
@@ -88,9 +91,11 @@ struct WorkspaceDecision: Sendable {
                 }
             case .submit(_, let text):
                 let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty, !thread.isArchived else { throw WorkspaceCommandError("Enter a message in an active conversation.") }
-                let queued = QueuedTurn(id: id, text: text, configuration: .init(thread: thread), createdAt: now)
-                thread.draft = ""
+                guard (!text.isEmpty || !thread.draftAttachments.isEmpty), !thread.isArchived else { throw WorkspaceCommandError("Enter a message or attach a file in an active conversation.") }
+                guard text.utf16.count <= 120_000 else { throw WorkspaceCommandError("Messages can contain up to 120,000 characters. Shorten the draft or attach it as a file.") }
+                let queued = QueuedTurn(id: id, text: text, configuration: .init(thread: thread), createdAt: now,
+                                        attachments: thread.draftAttachments.isEmpty ? nil : thread.draftAttachments)
+                thread.draft = ""; thread.draftAttachments = []
                 if thread.isBusy { thread.queuedTurns.append(queued) }
                 else {
                     if thread.queuedTurns.isEmpty { thread.queuePaused = false }
@@ -116,11 +121,17 @@ struct WorkspaceDecision: Sendable {
                 decision.effects.append(.init(id: id, request: .providerRespond(threadID: thread.id, runID: run.id, request: request, response: response)))
             case .removeQueued(_, let queuedID): thread.queuedTurns.removeAll { $0.id == queuedID }
             case .editQueued(_, let queuedID):
-                guard thread.draft.isEmpty, let item = thread.queuedTurns.first(where: { $0.id == queuedID }) else { throw WorkspaceCommandError("Clear the composer before editing a queued message.") }
-                thread.draft = item.text; thread.queuedTurns.removeAll { $0.id == queuedID }
+                guard thread.draft.isEmpty, thread.draftAttachments.isEmpty, let item = thread.queuedTurns.first(where: { $0.id == queuedID }) else { throw WorkspaceCommandError("Clear the composer before editing a queued message.") }
+                thread.draft = item.text; thread.draftAttachments = item.attachments ?? []; thread.queuedTurns.removeAll { $0.id == queuedID }
             case .resumeQueue:
                 guard !thread.isBusy, !thread.isArchived else { throw WorkspaceCommandError("Wait for the current turn before resuming the queue.") }
                 thread.queuePaused = false; decision.startNext(in: &thread, now: now)
+            case .addAttachments(_, let attachments):
+                guard !thread.isArchived else { throw WorkspaceCommandError("Restore this conversation before attaching files.") }
+                do { try AttachmentLimits.validate(thread.draftAttachments + attachments) }
+                catch { throw WorkspaceCommandError(error.localizedDescription) }
+                thread.draftAttachments += attachments
+            case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
             case .addProject, .createThread: break
             }
             if thread != decision.snapshot.threads[index] {
@@ -145,10 +156,10 @@ struct WorkspaceDecision: Sendable {
     private mutating func start(_ queued: QueuedTurn, in thread: inout CodingThread, now: Date) {
         var configuration = queued.configuration; configuration.nativeThreadID = thread.providerThreadID
         thread.activeRun = ActiveRun(id: queued.id, configuration: configuration, startedAt: now)
-        if thread.messages.isEmpty { thread.title = String(queued.text.prefix(80)) }
-        var message = ChatMessage(id: "user-\(queued.id.uuidString)", role: .user, text: queued.text); message.createdAt = queued.createdAt
+        if thread.messages.isEmpty { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
+        var message = ChatMessage(id: "user-\(queued.id.uuidString)", role: .user, text: queued.text, attachments: queued.attachments); message.createdAt = queued.createdAt
         thread.messages.append(message); thread.state = .running; thread.runtimeRequests = []
-        effects.append(.init(id: queued.id, request: .providerStart(threadID: thread.id, runID: queued.id, configuration: configuration, prompt: queued.text)))
+        effects.append(.init(id: queued.id, request: .providerStart(threadID: thread.id, runID: queued.id, configuration: configuration, prompt: queued.text, attachments: queued.attachments)))
     }
     private mutating func startNext(in thread: inout CodingThread, now: Date) {
         guard !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
@@ -201,7 +212,7 @@ struct WorkspaceDecision: Sendable {
         guard let index = snapshot.threads.firstIndex(where: { $0.id == request.threadID }) else { return }
         var thread = snapshot.threads[index]
         switch request {
-        case .providerStart(_, let runID, _, _):
+        case .providerStart(_, let runID, _, _, _):
             guard thread.activeRun?.id == runID else { return }
             if case .failed(let message) = result {
                 thread.state = thread.activeRun?.stopRequested == true ? .interrupted : .failed
@@ -231,7 +242,7 @@ private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
         case .addProject, .createThread: nil
-        case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id): id
+        case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }
 }

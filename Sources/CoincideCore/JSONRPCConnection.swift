@@ -3,19 +3,22 @@ import OSLog
 
 public struct NDJSONDecoder: Sendable {
     private var buffer = Data()
+    private var searchOffset = 0
     public let maximumFrameSize: Int
     public init(maximumFrameSize: Int = 16 * 1_024 * 1_024) { self.maximumFrameSize = maximumFrameSize }
     public mutating func append(_ bytes: Data) throws -> [JSONValue] {
         buffer.append(bytes)
         var values: [JSONValue] = []
-        while let newline = buffer.firstIndex(of: 10) {
+        while let newline = buffer[searchOffset...].firstIndex(of: 10) {
             let line = buffer[..<newline]
             guard line.count <= maximumFrameSize else { throw CoincideError("Provider frame exceeded the size limit.") }
             if !line.allSatisfy({ $0 == 13 || $0 == 32 || $0 == 9 }) {
                 values.append(try JSONDecoder().decode(JSONValue.self, from: line))
             }
             buffer.removeSubrange(...newline)
+            searchOffset = 0
         }
+        searchOffset = buffer.endIndex
         guard buffer.count <= maximumFrameSize else { throw CoincideError("Provider frame exceeded the size limit.") }
         return values
     }
@@ -42,14 +45,16 @@ public actor JSONRPCConnection {
     private var reader: Task<Void, Never>?
     private var pending: [JSONValue: CheckedContinuation<JSONValue, any Error>] = [:]
     private var timeouts: [JSONValue: Task<Void, Never>] = [:]
+    private var writes: [JSONValue: Task<Void, Never>] = [:]
     private var nextID = 0
-    private var decoder = NDJSONDecoder()
+    private var decoder: NDJSONDecoder
     private var ended = false
 
-    public init(executable: URL, arguments: [String], cwd: URL? = nil, dialect: StdioDialect = .jsonRPC) throws {
+    public init(executable: URL, arguments: [String], cwd: URL? = nil, dialect: StdioDialect = .jsonRPC, maximumFrameSize: Int = 16 * 1_024 * 1_024) throws {
         let (events, continuation) = AsyncStream<RPCEvent>.makeStream()
         self.events = events; self.continuation = continuation
         self.dialect = dialect
+        decoder = NDJSONDecoder(maximumFrameSize: maximumFrameSize)
         channel = try ProcessChannel(executable: executable, arguments: arguments, cwd: cwd)
     }
     public func start() {
@@ -71,44 +76,49 @@ public actor JSONRPCConnection {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { response in
                 pending[id] = response
-                do {
-                    if dialect == .claudeControl {
-                        var request = params.object ?? [:]; request["subtype"] = .string(method)
-                        try send(.object(["type": .string("control_request"), "request_id": id, "request": .object(request)]))
-                    } else { try send(.object(["id": id, "method": .string(method), "params": params])) }
-                    timeouts[id] = Task { [weak self] in
-                        do { try await Task.sleep(for: timeout) } catch { return }
-                        await self?.fail(id, error: CoincideError("\(method) timed out."))
-                    }
-                } catch { fail(id, error: error) }
+                let frame: JSONValue
+                if dialect == .claudeControl {
+                    var request = params.object ?? [:]; request["subtype"] = .string(method)
+                    frame = .object(["type": .string("control_request"), "request_id": id, "request": .object(request)])
+                } else { frame = .object(["id": id, "method": .string(method), "params": params]) }
+                writes[id] = Task { [weak self] in
+                    guard let self else { return }
+                    do { try await self.send(frame); await self.writeFinished(id) }
+                    catch { await self.fail(id, error: error) }
+                }
+                timeouts[id] = Task { [weak self] in
+                    do { try await Task.sleep(for: timeout) } catch { return }
+                    await self?.fail(id, error: CoincideError("\(method) timed out."))
+                }
             }
         } onCancel: { Task { await self.fail(id, error: CancellationError()) } }
     }
-    public func notify(_ method: String, params: JSONValue? = nil) throws {
+    public func notify(_ method: String, params: JSONValue? = nil) async throws {
         var frame: [String: JSONValue] = ["method": .string(method)]
         if let params { frame["params"] = params }
-        try send(.object(frame))
+        try await send(.object(frame))
     }
-    public func sendFrame(_ frame: JSONValue) throws { try send(frame) }
-    public func respond(id: JSONValue, result: JSONValue) throws {
+    public func sendFrame(_ frame: JSONValue) async throws { try await send(frame) }
+    public func respond(id: JSONValue, result: JSONValue) async throws {
         if dialect == .claudeControl {
-            try send(.object(["type": .string("control_response"), "response": .object([
+            try await send(.object(["type": .string("control_response"), "response": .object([
                 "subtype": .string("success"), "request_id": id, "response": result])]))
-        } else { try send(.object(["id": id, "result": result])) }
+        } else { try await send(.object(["id": id, "result": result])) }
     }
-    public func reject(id: JSONValue, message: String) throws {
+    public func reject(id: JSONValue, message: String) async throws {
         if dialect == .claudeControl {
-            try send(.object(["type": .string("control_response"), "response": .object([
+            try await send(.object(["type": .string("control_response"), "response": .object([
                 "subtype": .string("error"), "request_id": id, "error": .string(message)])]))
-        } else { try send(.object(["id": id, "error": .object(["code": .number(-32601), "message": .string(message)])])) }
+        } else { try await send(.object(["id": id, "error": .object(["code": .number(-32601), "message": .string(message)])])) }
     }
     public func close() {
         disconnect("Connection closed."); channel.stop(); reader?.cancel(); reader = nil
     }
-    private func send(_ value: JSONValue) throws {
+    private func send(_ value: JSONValue) async throws {
         guard !ended else { throw CoincideError("The provider connection is closed.") }
-        var data = try JSONEncoder().encode(value); data.append(10); try channel.write(data)
+        var data = try JSONEncoder().encode(value); data.append(10); try await channel.write(data)
     }
+    private func writeFinished(_ id: JSONValue) { writes.removeValue(forKey: id) }
     private func consume(_ event: ProcessEvent) {
         do {
             switch event {
@@ -148,15 +158,17 @@ public actor JSONRPCConnection {
     private func resolve(_ id: JSONValue, result: JSONValue) {
         logger.debug("Provider request completed")
         timeouts.removeValue(forKey: id)?.cancel(); pending.removeValue(forKey: id)?.resume(returning: result)
+        writes.removeValue(forKey: id) // A valid response must not cancel a completed write.
     }
     private func fail(_ id: JSONValue, error: any Error) {
         logger.debug("Provider request failed")
         timeouts.removeValue(forKey: id)?.cancel(); pending.removeValue(forKey: id)?.resume(throwing: error)
+        writes.removeValue(forKey: id)?.cancel()
     }
     private func disconnect(_ message: String) {
         guard !ended else { return }; ended = true
         for id in Array(pending.keys) { fail(id, error: CoincideError(message)) }
         continuation.yield(.disconnected(message)); continuation.finish()
     }
-    deinit { channel.stop(); reader?.cancel(); for timeout in timeouts.values { timeout.cancel() } }
+    deinit { channel.stop(); reader?.cancel(); for timeout in timeouts.values { timeout.cancel() }; for write in writes.values { write.cancel() } }
 }

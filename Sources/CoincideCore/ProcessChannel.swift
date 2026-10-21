@@ -9,6 +9,7 @@ public final class ProcessChannel: @unchecked Sendable {
     private let process: Process
     private let input: Pipe
     private let lock = NSLock()
+    private let writer = DispatchQueue(label: "Coincide.provider-input", qos: .userInitiated)
     private var closed = false
 
     public init(executable: URL, arguments: [String], cwd: URL? = nil, environment: [String: String]? = nil) throws {
@@ -19,6 +20,10 @@ public final class ProcessChannel: @unchecked Sendable {
         process.executableURL = executable; process.arguments = arguments; process.currentDirectoryURL = cwd
         process.environment = environment ?? Self.environment()
         process.standardInput = input; process.standardOutput = output; process.standardError = errors
+        let descriptor = input.fileHandleForWriting.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0,
+              fcntl(descriptor, F_SETNOSIGPIPE, 1) == 0 else { throw CoincideError("Could not configure provider input.") }
         let readers = DispatchGroup()
         readers.enter(); readers.enter()
         process.terminationHandler = { child in
@@ -37,10 +42,48 @@ public final class ProcessChannel: @unchecked Sendable {
         }
     }
 
-    public func write(_ data: Data) throws {
-        lock.lock(); defer { lock.unlock() }
-        guard !closed, process.isRunning else { throw CoincideError("The provider process is no longer running.") }
-        try input.fileHandleForWriting.write(contentsOf: data)
+    public func write(_ data: Data) async throws {
+        let pending = PendingProcessWrite()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            do {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                    guard pending.install(continuation) else { return }
+                    writer.async {
+                        guard pending.begin() else { return }
+                        do { try self.writeBytes(data); pending.finish(.success(())) }
+                        catch { pending.finish(.failure(error)) }
+                    }
+                }
+                try Task.checkCancellation()
+            } catch { try Task.checkCancellation(); throw error }
+        } onCancel: {
+            let (started, continuation) = pending.cancel()
+            if started { self.stop() } // A partially written frame cannot be reused safely.
+            continuation?.resume(throwing: CancellationError())
+        }
+    }
+    private func writeBytes(_ data: Data) throws {
+        try data.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                // Nonblocking writes hold the state lock only for one short syscall.
+                // Closing input can therefore interrupt backpressure immediately.
+                lock.lock()
+                guard !closed, process.isRunning else { lock.unlock(); throw CoincideError("The provider process is no longer running.") }
+                let descriptor = input.fileHandleForWriting.fileDescriptor
+                let count = Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), min(65_536, bytes.count - offset))
+                let failure = errno
+                lock.unlock()
+                if count > 0 { offset += count; continue }
+                if count < 0 && failure == EINTR { continue }
+                if count < 0 && (failure == EAGAIN || failure == EWOULDBLOCK) {
+                    var readiness = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+                    _ = poll(&readiness, 1, 50); continue
+                }
+                throw CoincideError("Could not write provider input.")
+            }
+        }
     }
     public func finishInput() {
         lock.lock(); defer { lock.unlock() }
@@ -92,6 +135,32 @@ public final class ProcessChannel: @unchecked Sendable {
     }
 }
 
+private final class PendingProcessWrite: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, any Error>?
+    private var started = false
+    private var finished = false
+    func install(_ continuation: CheckedContinuation<Void, any Error>) -> Bool {
+        lock.lock()
+        guard !finished else { lock.unlock(); continuation.resume(throwing: CancellationError()); return false }
+        self.continuation = continuation; lock.unlock(); return true
+    }
+    func begin() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !finished else { return false }; started = true; return true
+    }
+    func finish(_ result: Result<Void, any Error>) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        finished = true; let saved = continuation; continuation = nil; lock.unlock(); saved?.resume(with: result)
+    }
+    func cancel() -> (Bool, CheckedContinuation<Void, any Error>?) {
+        lock.lock(); defer { lock.unlock() }
+        guard !finished else { return (false, nil) }
+        finished = true; let saved = continuation; continuation = nil; return (started, saved)
+    }
+}
+
 public struct CommandResult: Sendable {
     public var output: Data
     public var error: Data
@@ -125,7 +194,7 @@ public enum CommandRunner {
                     channel.stop(); throw CoincideError("Command timed out.")
                 }
                 do {
-                    if let input { try channel.write(input) }
+                    if let input { try await channel.write(input) }
                     channel.finishInput()
                     let result = try await group.next()!
                     group.cancelAll(); return result

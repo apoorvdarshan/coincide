@@ -22,6 +22,7 @@ public actor WorkspaceEngine {
         var reader: Task<Void, Never>?
     }
     private let database: WorkspaceDatabase
+    public nonisolated let attachments: AttachmentStore
     private let ownership: WorkspaceRuntimeLock
     private let factory: ProviderFactory
     private let workerID = UUID()
@@ -49,6 +50,7 @@ public actor WorkspaceEngine {
     public init(url: URL, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) }) throws {
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
+        attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
         factory = providerFactory
         let pair = AsyncStream<Envelope>.makeStream()
         inbox = pair.stream; incoming = pair.continuation
@@ -214,8 +216,12 @@ public actor WorkspaceEngine {
         guard !stoppingEffects, fatalError == nil else { throw CancellationError() }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }) else { return .cancelled }
         switch request {
-        case .providerStart(_, let runID, let configuration, let prompt):
+        case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
+            let input = try await attachments.prepare(text: prompt, attachments: references ?? [])
+            guard !closing, !stoppingEffects,
+                  revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
+                  revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false else { return .cancelled }
             var configured = thread
             configured.provider = configuration.provider; configured.workspacePath = configuration.workspacePath
             configured.providerThreadID = configuration.nativeThreadID; configured.model = configuration.model; configured.permission = configuration.permission
@@ -224,7 +230,7 @@ public actor WorkspaceEngine {
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false,
                   runtimes[thread.id]?.id == runtime.id else { return .cancelled }
             try Task.checkCancellation()
-            try await runtime.session.send(text: prompt, thread: configured)
+            try await runtime.session.send(input: input, thread: configured)
             return .succeeded
         case .providerInterrupt(_, let runID):
             guard thread.activeRun?.id == runID else { return .cancelled }

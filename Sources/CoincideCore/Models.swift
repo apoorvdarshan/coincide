@@ -42,8 +42,9 @@ public struct ChatMessage: Codable, Identifiable, Sendable, Equatable {
     public var role: MessageRole
     public var text: String
     public var createdAt: Date
-    public init(id: String = UUID().uuidString, role: MessageRole, text: String) {
-        self.id = id; self.role = role; self.text = text; self.createdAt = Date()
+    public var attachments: [ChatAttachment]?
+    public init(id: String = UUID().uuidString, role: MessageRole, text: String, attachments: [ChatAttachment]? = nil) {
+        self.id = id; self.role = role; self.text = text; self.createdAt = Date(); self.attachments = attachments
     }
 }
 
@@ -55,6 +56,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var providerThreadID: String?
     public var provider: ProviderKind
     public var draft: String
+    public var draftAttachments: [ChatAttachment]
     public var model: String
     public var permission: PermissionMode
     public var state: ThreadState
@@ -70,13 +72,14 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var updatedAt: Date
     public init(project: WorkspaceProject, model: String = "") {
         id = UUID(); projectID = project.id; title = "New thread"; workspacePath = project.path
-        self.model = model; provider = .codex; draft = ""; permission = .supervised; state = .idle; messages = []
+        self.model = model; provider = .codex; draft = ""; draftAttachments = []; permission = .supervised; state = .idle; messages = []
         queuedTurns = []; queuePaused = false; runtimeRequests = []
         isPinned = false; isArchived = false; createdAt = Date(); updatedAt = Date()
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
         case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests
+        case draftAttachments
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -87,6 +90,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
         provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
         draft = try values.decodeIfPresent(String.self, forKey: .draft) ?? ""
+        draftAttachments = try values.decodeIfPresent([ChatAttachment].self, forKey: .draftAttachments) ?? []
         model = try values.decode(String.self, forKey: .model)
         permission = try values.decode(PermissionMode.self, forKey: .permission)
         state = try values.decode(ThreadState.self, forKey: .state)

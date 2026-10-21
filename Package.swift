@@ -17,6 +17,7 @@ let package = Package(
         .executableTarget(name: "Coincide", dependencies: ["CoincideCore", "CoincideTerminal", "CoincideMarkdown"]),
         .testTarget(name: "CoincideCoreTests", dependencies: ["CoincideCore", "CSQLite"], resources: [.copy("Fixtures")]),
         .testTarget(name: "CoincideTerminalTests", dependencies: ["CoincideTerminal"]),
-        .testTarget(name: "CoincideMarkdownTests", dependencies: ["CoincideMarkdown"])
+        .testTarget(name: "CoincideMarkdownTests", dependencies: ["CoincideMarkdown"]),
+        .testTarget(name: "CoincideUITests", dependencies: ["Coincide", "CoincideCore"])
     ]
 )

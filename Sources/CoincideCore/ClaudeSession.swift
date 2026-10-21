@@ -26,7 +26,7 @@ public actor ClaudeSession: ProviderSession {
             "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio",
             "--allow-dangerously-skip-permissions"]
         if arguments == nil, let resumeID { args += ["--resume", resumeID] }
-        rpc = try JSONRPCConnection(executable: executable, arguments: args, cwd: cwd, dialect: .claudeControl)
+        rpc = try JSONRPCConnection(executable: executable, arguments: args, cwd: cwd, dialect: .claudeControl, maximumFrameSize: 128 * 1_024 * 1_024)
     }
     public func connect() async throws {
         guard !initialized else { return }
@@ -60,6 +60,9 @@ public actor ClaudeSession: ProviderSession {
         }
     }
     public func send(text: String, thread: CodingThread) async throws {
+        try await send(input: ProviderInput(text: text), thread: thread)
+    }
+    public func send(input: ProviderInput, thread: CodingThread) async throws {
         let submittedRunID = thread.activeRun?.id
         guard !working else { throw CoincideError("A turn is already running in this thread.") }
         eventRunID = submittedRunID
@@ -69,8 +72,14 @@ public actor ClaudeSession: ProviderSession {
             _ = try await rpc.request("set_permission_mode", params: .object(["mode": .string(Self.permissionMode(thread.permission))]))
             _ = try await rpc.request("set_model", params: .object(["model": thread.model.isEmpty ? .null : .string(thread.model)]))
             let promptID = UUID().uuidString
+            var images: [JSONValue] = input.images.map { image in
+                .object(["type": .string("image"), "source": .object(["type": .string("base64"),
+                    "media_type": .string(image.mimeType), "data": .string(image.data.base64EncodedString())])])
+            }
+            if !input.text.isEmpty { images.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+            let content: JSONValue = input.images.isEmpty ? .string(input.text) : .array(images)
             try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(promptID),
-                "message": .object(["role": .string("user"), "content": .string(text)]), "parent_tool_use_id": .null]))
+                "message": .object(["role": .string("user"), "content": content]), "parent_tool_use_id": .null]))
             emit(.turn(promptID), runID: submittedRunID)
         } catch { working = false; throw error }
     }

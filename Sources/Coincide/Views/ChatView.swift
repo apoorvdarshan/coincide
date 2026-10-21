@@ -35,7 +35,7 @@ struct ChatView: View {
                                 }.frame(maxWidth: .infinity).padding(.top, 100).padding(.bottom, 60)
                             }
                             ForEach(thread.messages) { message in
-                                MessageView(message: message, providerName: thread.provider.name, workspacePath: thread.workspacePath,
+                                MessageView(store: store, message: message, providerName: thread.provider.name, workspacePath: thread.workspacePath,
                                             openFile: { url, line in store.openFile(url, line: line, workspacePath: thread.workspacePath) })
                             }
                             if thread.state == .running {
@@ -55,8 +55,12 @@ struct ChatView: View {
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } })
                     }
                     if !thread.queuedTurns.isEmpty { QueuedTurnsView(store: store, thread: thread) }
+                    if !thread.draftAttachments.isEmpty { AttachmentShelf(store: store, attachments: thread.draftAttachments, remove: { store.removeAttachment($0, threadID: threadID) }) }
+                    if store.isImportingAttachments(threadID) { HStack { ProgressView().controlSize(.small); Text("Adding attachments…").font(.caption).foregroundStyle(.secondary); Spacer() } }
                     ComposerView(text: draft, provider: thread.provider, permission: thread.permission,
-                                 busy: store.isBusy(threadID), submitting: sending || store.isPreparingWorkspace(threadID),
+                                 busy: store.isBusy(threadID), submitting: sending || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
+                                 hasAttachments: !thread.draftAttachments.isEmpty, attach: { store.chooseAttachments(threadID: threadID) },
+                                 importProviders: { store.importAttachments(providers: $0, threadID: threadID) },
                                  setPermission: { store.setPermission($0, id: threadID) },
                                  send: {
                                      guard !sending else { return }; sending = true

@@ -24,10 +24,18 @@ public protocol ProviderSession: Actor {
     nonisolated var events: AsyncStream<ProviderEvent> { get }
     func models() async throws -> [ProviderModel]
     func send(text: String, thread: CodingThread) async throws
+    func send(input: ProviderInput, thread: CodingThread) async throws
     func interrupt() async throws
     func respond(_ request: ApprovalRequest, allow: Bool) async throws
     func answer(_ request: ApprovalRequest, answers: [String: String]) async throws
     func close() async
+}
+
+extension ProviderSession {
+    public func send(input: ProviderInput, thread: CodingThread) async throws {
+        guard input.images.isEmpty else { throw CoincideError("This provider does not support image input.") }
+        try await send(text: input.text, thread: thread)
+    }
 }
 
 public enum ProviderSessions {

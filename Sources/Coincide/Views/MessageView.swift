@@ -3,6 +3,7 @@ import CoincideMarkdown
 import SwiftUI
 
 struct MessageView: View {
+    var store: WorkspaceStore
     let message: ChatMessage
     let providerName: String
     let workspacePath: String
@@ -12,7 +13,10 @@ struct MessageView: View {
             if message.role == .user {
                 HStack {
                     Spacer(minLength: 80)
-                    Text(message.text).textSelection(.enabled).padding(.horizontal, 18).padding(.vertical, 12)
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let attachments = message.attachments, !attachments.isEmpty { AttachmentShelf(store: store, attachments: attachments) }
+                        if !message.text.isEmpty { Text(message.text).textSelection(.enabled) }
+                    }.padding(.horizontal, 18).padding(.vertical, 12)
                         .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 22))
                 }
             } else if message.role == .tool || message.role == .reasoning {
