@@ -58,6 +58,7 @@ struct ContentView: View {
         .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .disabled(store.isLoading)
+        .task { await store.refreshExternalEditors() }
         .onAppear { store.registerTerminals(terminals) }
         .onDisappear { terminals.closeAll(); store.unregisterTerminals(terminals) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in terminals.closeAll() }

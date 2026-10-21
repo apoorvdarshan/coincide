@@ -1,5 +1,51 @@
 # Validation record
 
+## 2026-10-22 — native external-editor handoffs
+
+- Added the pinned editor catalog and native Xcode support, local preferred-editor
+  settings, explicit file/result/checkout actions, and separate Finder reveal.
+  Discovery inspects application metadata and contained launchers, including
+  stable/Insiders separation, versioned JetBrains bundles, and Antigravity IDE
+  versus Hub. It does not execute PATH wrappers. Bundle identifiers and launcher
+  layouts were checked against current Homebrew package manifests; this is not
+  vendor-signature validation or proof every installed editor works.
+- Existing file/directory metadata uses anchored descriptors without reading file
+  contents. Binary files and internal links are supported; escaping links, special
+  files, replaced roots, and unavailable owners are rejected. The selected bundle
+  and captured workspace owner are rechecked after asynchronous preparation and
+  immediately before synchronous submission. Native buffers remain unsaved and
+  unchanged; external apps receive the saved disk version. Native actions pass a
+  line, without asserting cross-editor Unicode column conventions.
+- Launch Services completion errors reach the caller. CLI argument vectors remain
+  literal; detached children use null standard streams, are reaped on exit, and
+  never receive Coincide timeout/shutdown signals. A synchronous request returns
+  its completion receipt before any await, preserving the final ownership boundary.
+  Accepted external apps and delayed completion remain independent of later
+  cancellation, removal, and shutdown. Pending preparation cancels; shutdown drains
+  the actual shared discovery scan even after its callers have detached.
+- Eight core and ten UI/store regressions cover catalog/position/argument rules,
+  fixture-bundle discovery and replacement, metadata containment, preference
+  fallback, dirty buffers, same-ID owner replacement, shared-root survival, final
+  target revalidation, completion failure, concurrent discovery/cancellation, and
+  shutdown before and after handoff. An initial shared-waiter test exposed a wait
+  on the uncancelled common task; per-caller continuations now release cancelled
+  waiters while retaining the underlying scan's independent ownership and drain.
+  No installed editor, Finder window, or local interactive GUI was launched.
+- The full suite passed 290 tests: 233 core, 4 terminal, 13 Markdown, and 40 native
+  UI/store. Packaging/launch, strict deep app signing, bundled-font rendering, and
+  all three CI-configuration tests pass. Canonical comparison confirms the existing
+  3 conversations, 25 messages, and non-identity project fields are unchanged;
+  storage remains version 9. The GUI runner compiles and passes strict deep
+  signature verification without local interactive execution.
+- Hosted run 39693126654 passed both complete light/dark workflows. Grouping
+  passed checkout creation/preferences and draft capture, then XCTest could not
+  click a visible native OutlineRow. Retained screenshot/accessibility evidence
+  shows its identified title inside the row. The harness now clicks that visible
+  title and requires the actual row to become selected; all three workflows remain
+  required, with complete grouping GUI verification pending the next hosted run.
+
+Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
+
 ## 2026-10-22 — native workspace content search
 
 - Added whitespace-preserving literal/regex search with case and Unicode whole-word

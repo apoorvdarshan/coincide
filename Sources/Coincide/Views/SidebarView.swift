@@ -196,6 +196,7 @@ struct SidebarView: View {
         Button("New Thread") { store.newThread(projectID: project.id) }
         Button("Reveal Checkout") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
             .disabled(project.clone.map { !$0.isReady } ?? false)
+        ExternalEditorMenu(store: store, workspacePath: project.path, title: "Open Checkout in…")
         Button("Rename Project…") { title = project.name; renaming = .project(project.id) }
         Menu("Group This Checkout") {
             Button("Use Default") { store.setProjectGroupingOverride(project.id, mode: nil) }

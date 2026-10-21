@@ -49,6 +49,14 @@ Switch file search to **Contents** to search text across the workspace. **Aa**,
 show matching lines and highlight occurrences; choosing one opens its file at
 the match. Partial results and unsupported expressions are shown explicitly.
 
+Use **Open With…** on workspace files or search results, the editor's external-app
+button, or a checkout's menu to open saved files in an installed editor. General
+settings keep the preferred editor. Automatic chooses an inspected installed
+editor, then the default macOS application when none is available. **Reveal in
+Finder** is available separately. File links still open inside Coincide; external
+actions retain unsaved native buffers and open the version on disk. Supported
+editors receive a selected result's line; Unicode column conversion is not claimed.
+
 Use **@** beside the composer to search for a workspace file or folder and insert
 a relative link into that conversation's draft. References do not copy file
 contents or attach files automatically.

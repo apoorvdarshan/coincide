@@ -22,6 +22,7 @@ struct ChatView: View {
                         Text(thread.workspacePath)
                         Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
                             .disabled(store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false)
+                        ExternalEditorMenu(store: store, workspacePath: thread.workspacePath, title: "Open Workspace in…")
                         if thread.messages.isEmpty {
                             Button("Create Worktree…") { worktreeSheet = true }
                                 .disabled(store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false)

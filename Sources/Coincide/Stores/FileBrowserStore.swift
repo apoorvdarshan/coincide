@@ -26,6 +26,7 @@ final class FileBrowserStore {
     let workspacePath: String
     let service: WorkspaceFileService
     private weak var workspace: WorkspaceStore?
+    var workspaceStore: WorkspaceStore? { workspace }
     private let loadDocument: DocumentLoader
     private let editorID = UUID()
     var directory = ""

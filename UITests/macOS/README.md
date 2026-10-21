@@ -31,6 +31,9 @@ Bar duplicates cannot satisfy a query. For the pinned XCTest runtime's observed
 the actual alert screenshot; the image and recognized text remain in the result.
 Full checkout paths use exact menu-title predicates because XCTest's convenience
 identifier queries reject strings longer than 128 characters.
+After an observed OutlineRow hit-testing failure, conversation selection targets
+the row's identified native title, requires it to be hittable, and verifies
+the containing row becomes selected.
 
 The first two tests exercise light/dark actual windows, File-menu or keyboard project
 creation, an initial Git commit, project renaming, collapse with the selected

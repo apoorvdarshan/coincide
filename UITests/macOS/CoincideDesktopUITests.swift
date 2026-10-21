@@ -90,10 +90,10 @@ final class CoincideDesktopUITests: XCTestCase {
         composer.click(); composer.typeText(futureDraft)
         XCTAssertEqual(composer.value as? String, futureDraft)
 
-        threadRow(firstThreadID, in: app).click()
+        selectThread(firstThreadID, in: app)
         XCTAssertTrue(waitForValue(composer, value: firstDraft, timeout: 5))
         assertConversationWorkspace(app, path: first.path)
-        threadRow(secondThreadID, in: app).click()
+        selectThread(secondThreadID, in: app)
         XCTAssertTrue(waitForValue(composer, value: secondDraft, timeout: 5))
         assertConversationWorkspace(app, path: second.path)
         assertSidebarFitsDisplay(app, projectHeader: groupedHeader, selectedConversation: threadRow(secondThreadID, in: app))
@@ -166,7 +166,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let drafts = [(firstThreadID, firstDraft, first.path), (futureThreadID, futureDraft, first.path), (secondThreadID, secondDraft, second.path)]
         for (identifier, draft, path) in drafts {
             let row = threadRow(identifier, in: app)
-            XCTAssertTrue(row.exists); row.click()
+            XCTAssertTrue(row.exists); selectThread(identifier, in: app)
             XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5), "Cancelling group removal must preserve every conversation's draft.")
             assertConversationWorkspace(app, path: path)
         }
@@ -398,6 +398,17 @@ final class CoincideDesktopUITests: XCTestCase {
 
     @MainActor private func threadRow(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
         app.outlineRows.containing(NSPredicate(format: "identifier == %@", identifier)).element
+    }
+
+    @MainActor private func selectThread(_ identifier: String, in app: XCUIApplication) {
+        let row = threadRow(identifier, in: app)
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        // XCTest could not click the visible OutlineRow; target its identified native title.
+        let title = row.staticTexts.matching(identifier: identifier).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertTrue(title.isHittable, "The identified conversation title must be visible and interactive.")
+        title.click()
+        XCTAssertTrue(row.isSelected, "Clicking the conversation title must select its containing row.")
     }
 
     @MainActor private func selectedThreadIdentifier(in app: XCUIApplication) throws -> String {

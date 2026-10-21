@@ -193,6 +193,35 @@ final class WorkspaceFileRoot: @unchecked Sendable {
         guard fstatat(dir.fd, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { return nil }
         try validate(dir); return regular(info) ? Int(info.st_size) : nil
     }
+    func metadata(_ relative: String) throws -> WorkspaceFileMetadata {
+        try Task.checkCancellation(); try validate()
+        let pieces = try components(relative, allowRoot: true)
+        if pieces.isEmpty {
+            try denyGit("", resolved: ".coincide-metadata-check")
+            return .init(relativePath: relative, resolvedURL: URL(fileURLWithPath: path, isDirectory: true), kind: .directory, byteLength: 0)
+        }
+        let (dir, name, resolved) = try parent(relative, denyMetadata: true)
+        try denyGit(relative, resolved: resolved)
+        var named = stat()
+        guard fstatat(dir.fd, name, &named, AT_SYMLINK_NOFOLLOW) == 0 else { throw fileFailure() }
+        guard regular(named) || directory(named) else {
+            throw WorkspaceFileError(.notFile, "Only existing regular files and folders can be opened externally.")
+        }
+        // Special files are rejected before open, and O_NONBLOCK keeps a replacement FIFO
+        // from blocking before the descriptor's type and identity can be checked.
+        let node = try elevatedFileFD(openat(dir.fd, name, O_EVTONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC))
+        defer { Darwin.close(node) }
+        var opened = stat(), final = stat()
+        guard fstat(node, &opened) == 0, sameFile(named, opened),
+              regular(opened) || directory(opened),
+              fstatat(dir.fd, name, &final, AT_SYMLINK_NOFOLLOW) == 0, sameFile(final, opened) else {
+            throw WorkspaceFileError(.conflict, "This workspace path changed while it was being checked.")
+        }
+        try validate(dir)
+        try denyGit(relative, resolved: directory(opened) ? resolved + "/.coincide-metadata-check" : resolved)
+        return .init(relativePath: relative, resolvedURL: URL(fileURLWithPath: path).appendingPathComponent(resolved, isDirectory: directory(opened)),
+                     kind: directory(opened) ? .directory : .file, byteLength: regular(opened) ? Int(opened.st_size) : 0)
+    }
     func read(_ relative: String, allowMissing: Bool, maxBytes: Int, onRead: (Int) -> Void = { _ in }) throws -> WorkspaceTextDocument {
         let target: (WorkspaceFileDirectory, String, String)
         do { target = try parent(relative) }

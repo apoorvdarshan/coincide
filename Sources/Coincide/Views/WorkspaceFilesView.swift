@@ -38,7 +38,7 @@ struct WorkspaceFilesView: View {
             if model.isLoading { ProgressView().controlSize(.small) }
             if let error = model.listingError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal) }
             if model.searchMode == .contents {
-                WorkspaceContentSearchResults(matches: model.contentMatches) { match in
+                WorkspaceContentSearchResults(store: model.workspaceStore, workspacePath: model.workspacePath, matches: model.contentMatches) { match in
                     let range = match.matchRanges.first
                     let navigation = FileNavigation(workspacePath: model.workspacePath, path: match.path, line: match.lineNumber,
                                                     utf16Column: range?.start, utf16Length: range.map { $0.end - $0.start })
@@ -53,6 +53,7 @@ struct WorkspaceFilesView: View {
                     Text(document.relativePath).font(.caption).lineLimit(1).truncationMode(.middle)
                     if model.isDirty { Text("Edited").font(.caption2).foregroundStyle(.secondary) }
                     Spacer()
+                    if let store = model.workspaceStore { ExternalEditorMenu(store: store, workspacePath: model.workspacePath, relativePath: document.relativePath, line: model.navigation?.line, compact: true) }
                     Button("Reload") { requestOpen(document.relativePath) }.disabled(model.isSaving)
                     Button("Save") { Task { await model.save() } }.disabled(!model.canWrite || !model.isDirty)
                         .accessibilityIdentifier("workspace-file-save")
@@ -118,6 +119,7 @@ struct WorkspaceFilesView: View {
                     if entry.ignored == true { Text("Ignored").font(.caption2).foregroundStyle(.secondary) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(.plain).accessibilityIdentifier("workspace-entry-" + entry.path)
+                .contextMenu { if let store = model.workspaceStore { ExternalEditorMenu(store: store, workspacePath: model.workspacePath, relativePath: entry.path) } }
         }
     }
 }

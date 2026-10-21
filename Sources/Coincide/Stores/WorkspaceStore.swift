@@ -92,6 +92,8 @@ final class WorkspaceStore {
     private var fileServices: [String: WorkspaceFileService] = [:]
     private var fileBrowsers: [String: FileBrowserStore] = [:]
     private var fileServiceCleanupTasks: [String: WorkspaceFileCleanup] = [:]
+    private var externalEditorService: NativeExternalEditorService?
+    private(set) var availableExternalEditors: [ExternalEditorDescriptor] = []
     private var retryingProjectClones: Set<UUID> = []
     private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
     private var lastSequence: Int64 = -1
@@ -165,6 +167,22 @@ final class WorkspaceStore {
         let model = FileBrowserStore(workspace: self, path: path, service: service)
         fileBrowsers[path] = model
         return model
+    }
+    func externalEditors() -> NativeExternalEditorService {
+        if let service = externalEditorService { return service }
+        let service = NativeExternalEditorService(resolveWorkspace: { [weak self] root in
+            guard let self else { throw CancellationError() }
+            return try self.fileService(path: root.path)
+        }, authorize: { [weak self] root, captured in
+            guard let self, self.canAccessWorkspaceFiles(root.path), let current = try? self.fileService(path: root.path) else { return false }
+            return current === captured
+        })
+        externalEditorService = service; return service
+    }
+    func refreshExternalEditors(forceRefresh: Bool = false) async {
+        guard !terminating else { return }
+        let editors = await externalEditors().availableEditors(forceRefresh: forceRefresh)
+        if !terminating { availableExternalEditors = editors }
     }
     private func closeUnreferencedFileServices(previous: WorkspaceSnapshot) {
         let referenced = Set((snapshot.projects.map(\.path) + snapshot.threads.map(\.workspacePath)).map(Self.canonicalPath))
@@ -782,6 +800,7 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        await externalEditorService?.shutdown()
         let creations = Array(projectCreationTasks.values)
         for task in creations { task.cancel() }
         for task in creations { _ = await task.result }

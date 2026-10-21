@@ -2,6 +2,8 @@ import CoincideCore
 import SwiftUI
 
 struct WorkspaceContentSearchResults: View {
+    let store: WorkspaceStore?
+    let workspacePath: String
     let matches: [WorkspaceContentMatch]
     let select: (WorkspaceContentMatch) -> Void
     private var paths: [String] {
@@ -22,6 +24,7 @@ struct WorkspaceContentSearchResults: View {
                             }.font(.system(.caption, design: .monospaced))
                         }.buttonStyle(.plain)
                             .accessibilityIdentifier("workspace-match-\(path)-\(match.lineNumber)")
+                            .contextMenu { if let store { ExternalEditorMenu(store: store, workspacePath: workspacePath, relativePath: path, line: match.lineNumber) } }
                     }
                 } header: { Text(path).lineLimit(1).truncationMode(.middle) }
             }

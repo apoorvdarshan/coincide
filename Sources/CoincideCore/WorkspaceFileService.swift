@@ -15,6 +15,13 @@ public struct WorkspaceEntryPage: Sendable, Equatable {
     public let truncated: Bool
     public init(entries: [WorkspaceEntry], truncated: Bool) { self.entries = entries; self.truncated = truncated }
 }
+/// Existing regular-file or directory metadata, without reading the file's contents.
+public struct WorkspaceFileMetadata: Sendable, Equatable {
+    public let relativePath: String
+    public let resolvedURL: URL
+    public let kind: WorkspaceEntryKind
+    public let byteLength: Int
+}
 public struct WorkspaceIgnoredFile: Sendable, Equatable {
     public let path: String
     public let byteLength: Int
@@ -154,6 +161,9 @@ public actor WorkspaceFileService {
     }
     public func listIgnoredFiles() async throws -> WorkspaceIgnoredFilePage {
         try await perform { folder, git in try await git.inventory(root: folder) }
+    }
+    public func metadata(relativePath: String = "") async throws -> WorkspaceFileMetadata {
+        try await perform { folder, _ in try folder.metadata(relativePath) }
     }
     public func readFile(relativePath: String, allowMissing: Bool = false, maxBytes: Int = 1_048_576) async throws -> WorkspaceTextDocument {
         guard (1...2_000_000).contains(maxBytes) else { throw WorkspaceFileError(.invalidQuery, "File previews must be between 1 byte and 2 MB.") }
