@@ -1,0 +1,1309 @@
+{
+  "upstream": "https://github.com/pingdotgg/t3code",
+  "revision": "680152e27b2a961686389ca69a1557cbb2c55f08",
+  "scope": "Complete native Swift macOS port, including core services and all applicable desktop features. No Node/Electron/T3 backend dependency in the final app. Remote service protocols remain a required parity area.",
+  "rpc_methods": [
+    {
+      "key": "projectsList",
+      "method": "projects.list",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsAdd",
+      "method": "projects.add",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsRemove",
+      "method": "projects.remove",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsListEntries",
+      "method": "projects.listEntries",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsListIgnoredFiles",
+      "method": "projects.listIgnoredFiles",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsReadFile",
+      "method": "projects.readFile",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsSearchContents",
+      "method": "projects.searchContents",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsSearchEntries",
+      "method": "projects.searchEntries",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsWriteFile",
+      "method": "projects.writeFile",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsMutate",
+      "method": "projects.mutate",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsEnsureScratch",
+      "method": "projects.ensureScratch",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectsCreateNew",
+      "method": "projects.createNew",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "shellOpenInEditor",
+      "method": "shell.openInEditor",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "filesystemBrowse",
+      "method": "filesystem.browse",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "filesystemGetMetadata",
+      "method": "filesystem.getMetadata",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "agentSessionsScan",
+      "method": "agentSessions.scan",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "agentSessionsImport",
+      "method": "agentSessions.import",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "assetsCreateUrl",
+      "method": "assets.createUrl",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "assetsPersistChatAttachments",
+      "method": "assets.persistChatAttachments",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "attachmentsCreateUploadUrl",
+      "method": "attachments.createUploadUrl",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "attachmentsDelete",
+      "method": "attachments.delete",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "mcpAppsCallTool",
+      "method": "mcpApps.callTool",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "mcpAppsToolInfo",
+      "method": "mcpApps.toolInfo",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "mcpAppsReadResource",
+      "method": "mcpApps.readResource",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "mcpAppsUpdateModelContext",
+      "method": "mcpApps.updateModelContext",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerUploadFeedback",
+      "method": "provider.uploadFeedback",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerAuthStart",
+      "method": "provider.auth.start",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerConsumeResetCredit",
+      "method": "provider.consumeResetCredit",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerAuthComplete",
+      "method": "provider.auth.complete",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "chatGptReconnectProfile",
+      "method": "provider.chatgpt.reconnect-profile",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "chatGptImportProfile",
+      "method": "provider.chatgpt.import-profile",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "chatGptHandoffSubscribe",
+      "method": "provider.chatgpt.handoff.subscribe",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "codexAuthCallbackSubscribe",
+      "method": "provider.codex.auth-callback.subscribe",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerAuthRespond",
+      "method": "provider.auth.respond",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerAuthCancel",
+      "method": "provider.auth.cancel",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerAuthLogout",
+      "method": "provider.auth.logout",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerAuthSubscribe",
+      "method": "provider.auth.subscribe",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerInstallStart",
+      "method": "provider.install.start",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerInstallCancel",
+      "method": "provider.install.cancel",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerInstallSubscribe",
+      "method": "provider.install.subscribe",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "providerInstallRemove",
+      "method": "provider.install.remove",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "vcsPull",
+      "method": "vcs.pull",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "vcsRefreshStatus",
+      "method": "vcs.refreshStatus",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "vcsListRefs",
+      "method": "vcs.listRefs",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "vcsCreateWorktree",
+      "method": "vcs.createWorktree",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "vcsRemoveWorktree",
+      "method": "vcs.removeWorktree",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "vcsCreateRef",
+      "method": "vcs.createRef",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "vcsSwitchRef",
+      "method": "vcs.switchRef",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "vcsInit",
+      "method": "vcs.init",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "gitRunStackedAction",
+      "method": "git.runStackedAction",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "gitResolvePullRequest",
+      "method": "git.resolvePullRequest",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "gitPreparePullRequestThread",
+      "method": "git.preparePullRequestThread",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "reviewGetDiffPreview",
+      "method": "review.getDiffPreview",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "reviewGetDiffFileContents",
+      "method": "review.getDiffFileContents",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "terminalOpen",
+      "method": "terminal.open",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "terminalAttach",
+      "method": "terminal.attach",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "terminalObserve",
+      "method": "terminal.observe",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "terminalWrite",
+      "method": "terminal.write",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "terminalResize",
+      "method": "terminal.resize",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "terminalClear",
+      "method": "terminal.clear",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "terminalRestart",
+      "method": "terminal.restart",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "terminalClose",
+      "method": "terminal.close",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewOpen",
+      "method": "preview.open",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewNavigate",
+      "method": "preview.navigate",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewResize",
+      "method": "preview.resize",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewAdjust",
+      "method": "preview.adjust",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewRefresh",
+      "method": "preview.refresh",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewClose",
+      "method": "preview.close",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewList",
+      "method": "preview.list",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewClearProfile",
+      "method": "preview.clearProfile",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewReportProfiles",
+      "method": "preview.reportProfiles",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "previewReportStatus",
+      "method": "preview.reportStatus",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceConfigure",
+      "method": "device.configure",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceList",
+      "method": "device.list",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceTestHost",
+      "method": "device.testHost",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceEasAccount",
+      "method": "device.easAccount",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceOpen",
+      "method": "device.open",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceClose",
+      "method": "device.close",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceShutdown",
+      "method": "device.shutdown",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceDetail",
+      "method": "device.detail",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "deviceAction",
+      "method": "device.action",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverProbe",
+      "method": "server.probe",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetConfig",
+      "method": "server.getConfig",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverRefreshProviders",
+      "method": "server.refreshProviders",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverUpdateProvider",
+      "method": "server.updateProvider",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverUpdateServer",
+      "method": "server.updateServer",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverUpdateServerWithProgress",
+      "method": "server.updateServerWithProgress",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverCommitDesktopUpdate",
+      "method": "server.commitDesktopUpdate",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverUpsertKeybinding",
+      "method": "server.upsertKeybinding",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverRemoveKeybinding",
+      "method": "server.removeKeybinding",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverRunStorageCleanup",
+      "method": "server.runStorageCleanup",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetStorageCleanupReport",
+      "method": "server.getStorageCleanupReport",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetDatabaseStorage",
+      "method": "server.getDatabaseStorage",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetSettings",
+      "method": "server.getSettings",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverUpdateSettings",
+      "method": "server.updateSettings",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverDiscoverSourceControl",
+      "method": "server.discoverSourceControl",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverSearchAcpRegistry",
+      "method": "server.searchAcpRegistry",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverPrepareAcpRegistryAgent",
+      "method": "server.prepareAcpRegistryAgent",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverUninstallAcpRegistryManagedBinary",
+      "method": "server.uninstallAcpRegistryManagedBinary",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverAcceptAcpRegistryUrlAuth",
+      "method": "server.acceptAcpRegistryUrlAuth",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverListAcpRegistrySessions",
+      "method": "server.listAcpRegistrySessions",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverImportAcpRegistrySession",
+      "method": "server.importAcpRegistrySession",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverDeleteAcpRegistrySession",
+      "method": "server.deleteAcpRegistrySession",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverListAcpRegistryProviders",
+      "method": "server.listAcpRegistryProviders",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverSetAcpRegistryProvider",
+      "method": "server.setAcpRegistryProvider",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverDisableAcpRegistryProvider",
+      "method": "server.disableAcpRegistryProvider",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverLogoutAcpRegistry",
+      "method": "server.logoutAcpRegistry",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetTraceDiagnostics",
+      "method": "server.getTraceDiagnostics",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetProcessDiagnostics",
+      "method": "server.getProcessDiagnostics",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetHostResources",
+      "method": "server.getHostResources",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetProcessResourceHistory",
+      "method": "server.getProcessResourceHistory",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetResourceTelemetryHistory",
+      "method": "server.getResourceTelemetryHistory",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverRetryResourceTelemetry",
+      "method": "server.retryResourceTelemetry",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverCheckOtlpEndpoint",
+      "method": "server.checkOtlpEndpoint",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverSignalProcess",
+      "method": "server.signalProcess",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverReportClientActivity",
+      "method": "server.reportClientActivity",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverReportHostPowerState",
+      "method": "server.reportHostPowerState",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetBackgroundPolicy",
+      "method": "server.getBackgroundPolicy",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverGetUsageSummary",
+      "method": "server.getUsageSummary",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "serverRefreshUsageRates",
+      "method": "server.refreshUsageRates",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksList",
+      "method": "scheduledTasks.list",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksSubscribe",
+      "method": "scheduledTasks.subscribe",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksUpsert",
+      "method": "scheduledTasks.upsert",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksSetEnabled",
+      "method": "scheduledTasks.setEnabled",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksDelete",
+      "method": "scheduledTasks.delete",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksRunNow",
+      "method": "scheduledTasks.runNow",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksRotateWebhookToken",
+      "method": "scheduledTasks.rotateWebhookToken",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "secretsAnswerRequest",
+      "method": "secrets.answerRequest",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksListWebhookDeliveries",
+      "method": "scheduledTasks.listWebhookDeliveries",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "scheduledTasksGetWebhookDelivery",
+      "method": "scheduledTasks.getWebhookDelivery",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "cloudGetRelayClientStatus",
+      "method": "cloud.getRelayClientStatus",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "cloudInstallRelayClient",
+      "method": "cloud.installRelayClient",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsList",
+      "method": "pullRequests.list",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsListStats",
+      "method": "pullRequests.listStats",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsSummary",
+      "method": "pullRequests.summary",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsRouting",
+      "method": "pullRequests.routing",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsRoutingIdentity",
+      "method": "pullRequests.routingIdentity",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsStack",
+      "method": "pullRequests.stack",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsLinkedThreads",
+      "method": "pullRequests.linkedThreads",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsDetail",
+      "method": "pullRequests.detail",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsPreview",
+      "method": "pullRequests.preview",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsChecks",
+      "method": "pullRequests.checks",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsActivity",
+      "method": "pullRequests.activity",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsReviewGuide",
+      "method": "pullRequests.reviewGuide",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsGenerateReviewGuide",
+      "method": "pullRequests.generateReviewGuide",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsThreadComments",
+      "method": "pullRequests.threadComments",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsDiffFileContents",
+      "method": "pullRequests.diffFileContents",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsFilesViewed",
+      "method": "pullRequests.filesViewed",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsChangeBreakdown",
+      "method": "pullRequests.changeBreakdown",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsSetFilesViewed",
+      "method": "pullRequests.setFilesViewed",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsRunAction",
+      "method": "pullRequests.runAction",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsUpdate",
+      "method": "pullRequests.update",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsComment",
+      "method": "pullRequests.comment",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsUpdateComment",
+      "method": "pullRequests.updateComment",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsSubmitReview",
+      "method": "pullRequests.submitReview",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsReplyToThread",
+      "method": "pullRequests.replyToThread",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsSetThreadResolution",
+      "method": "pullRequests.setThreadResolution",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsSetReaction",
+      "method": "pullRequests.setReaction",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsInvalidate",
+      "method": "pullRequests.invalidate",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsReportState",
+      "method": "pullRequests.reportState",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsSubscribeRefreshes",
+      "method": "pullRequests.subscribeRefreshes",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsReviewerCandidates",
+      "method": "pullRequests.reviewerCandidates",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsRequestReviewers",
+      "method": "pullRequests.requestReviewers",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsLabelCandidates",
+      "method": "pullRequests.labelCandidates",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "pullRequestsSetLabels",
+      "method": "pullRequests.setLabels",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "sourceControlLookupRepository",
+      "method": "sourceControl.lookupRepository",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "sourceControlCloneRepository",
+      "method": "sourceControl.cloneRepository",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "sourceControlPublishRepository",
+      "method": "sourceControl.publishRepository",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectCloneStart",
+      "method": "projectClone.start",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectCloneCancel",
+      "method": "projectClone.cancel",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "projectCloneRetry",
+      "method": "projectClone.retry",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeProjectClones",
+      "method": "subscribeProjectClones",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeVcsStatus",
+      "method": "subscribeVcsStatus",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeWorktreeSetup",
+      "method": "subscribeWorktreeSetup",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "worktreeSetupCancel",
+      "method": "worktreeSetup.cancel",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeTerminalEvents",
+      "method": "subscribeTerminalEvents",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeTerminalMetadata",
+      "method": "subscribeTerminalMetadata",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribePreviewEvents",
+      "method": "subscribePreviewEvents",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeDiscoveredLocalServers",
+      "method": "subscribeDiscoveredLocalServers",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeDeviceState",
+      "method": "subscribeDeviceState",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeServerConfig",
+      "method": "subscribeServerConfig",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeServerLifecycle",
+      "method": "subscribeServerLifecycle",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeAuthAccess",
+      "method": "subscribeAuthAccess",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeBackgroundPolicy",
+      "method": "subscribeBackgroundPolicy",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    },
+    {
+      "key": "subscribeResourceTelemetry",
+      "method": "subscribeResourceTelemetry",
+      "status": "pending",
+      "note": "Inventory entry; no claim of wire compatibility."
+    }
+  ],
+  "user_guides": [
+    {
+      "source": "docs/user/activity-log.md",
+      "title": "Activity log",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/appearance.md",
+      "title": "Appearance and themes",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/background-service.md",
+      "title": "Running T3 Code in the background",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/browser-import.md",
+      "title": "Import browser sessions",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/composer.md",
+      "title": "Messages and context",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/cursor.md",
+      "title": "Cursor",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/default-browser.md",
+      "title": "Use T3 Code as your default browser",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/devices.md",
+      "title": "Devices",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/html-renders.md",
+      "title": "Visual replies",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/install.md",
+      "title": "Install T3 Code",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/keybindings.md",
+      "title": "Keybindings",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/keyboard-focus.md",
+      "title": "Keyboard focus",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/mobile-notifications.md",
+      "title": "Mobile notifications",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/open-source-licenses.md",
+      "title": "Open source licenses",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/outside-agents.md",
+      "title": "Outside agents",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/permission-modes.md",
+      "title": "Permission modes",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/portable-handoffs.md",
+      "title": "Context in portable handoffs",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/project-settings.md",
+      "title": "Settings and project overrides",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/prompt-links.md",
+      "title": "Prompt links",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/providers-acp.md",
+      "title": "ACP providers",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/providers-antigravity.md",
+      "title": "Antigravity",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/providers-claude.md",
+      "title": "Claude",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/providers-codex.md",
+      "title": "Codex",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/providers-muse.md",
+      "title": "Muse Code",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/providers-opencode.md",
+      "title": "OpenCode",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/providers-pi.md",
+      "title": "Pi",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/question-attachments.md",
+      "title": "Files in question answers",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/remote-access.md",
+      "title": "Remote access",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/snap-shot.md",
+      "title": "SnapShots",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/source-control.md",
+      "title": "Source control",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/t3-connect-troubleshooting.md",
+      "title": "T3 Connect troubleshooting",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/telemetry.md",
+      "title": "Product usage data",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/terminal.md",
+      "title": "Terminal history",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/thread-migration.md",
+      "title": "Threads from older T3 Code versions",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/thread-sidebar.md",
+      "title": "Working with threads",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/updating.md",
+      "title": "Updating T3 Code",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/usage.md",
+      "title": "Usage and limits",
+      "status": "pending"
+    },
+    {
+      "source": "docs/user/welcome-wizard.md",
+      "title": "Welcome wizard",
+      "status": "pending"
+    }
+  ]
+}
