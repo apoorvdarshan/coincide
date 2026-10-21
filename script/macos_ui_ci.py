@@ -25,9 +25,9 @@ def test_targets(configuration):
     return [value for key, value in configuration.items() if not key.startswith("__") and isinstance(value, dict)]
 
 
-def prepare_configuration(configuration, app, workspace_parent, bootstrap, artifacts):
-    app, workspace_parent, bootstrap, artifacts = map(Path, (app, workspace_parent, bootstrap, artifacts))
-    for path in (app, workspace_parent, bootstrap, artifacts):
+def prepare_configuration(configuration, app, bootstrap):
+    app, bootstrap = map(Path, (app, bootstrap))
+    for path in (app, bootstrap):
         if not path.is_absolute() or not path.is_dir() or path.is_symlink():
             raise ValueError("UI artifact locations must be existing absolute directories without a final symlink.")
     if not bootstrap.name.startswith("coincide-ui-testing-"):
@@ -49,8 +49,6 @@ def prepare_configuration(configuration, app, workspace_parent, bootstrap, artif
     target["DependentProductPaths"] = [str(app) if path == previous_app else path for path in target.get("DependentProductPaths", [])]
     target.setdefault("EnvironmentVariables", {}).update({
         "COINCIDE_UI_APP_PATH": str(app),
-        "COINCIDE_UI_TEST_ROOT_BASE": str(workspace_parent),
-        "COINCIDE_UI_ARTIFACTS": str(artifacts),
     })
     # Keep even an automatic target-app launch away from the normal workspace.
     target.setdefault("UITargetAppEnvironmentVariables", {}).update({
@@ -90,7 +88,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("changes")
     prepare = commands.add_parser("prepare")
-    for name in ("xctestrun", "app", "workspace-parent", "bootstrap", "artifacts"):
+    for name in ("xctestrun", "app", "bootstrap"):
         prepare.add_argument("--" + name, required=True)
     results = commands.add_parser("verify-results"); results.add_argument("summary")
     arguments = parser.parse_args()
@@ -103,7 +101,7 @@ def main():
     elif arguments.command == "prepare":
         path = Path(arguments.xctestrun)
         with path.open("rb") as handle:
-            configuration = prepare_configuration(plistlib.load(handle), arguments.app, arguments.workspace_parent, arguments.bootstrap, arguments.artifacts)
+            configuration = prepare_configuration(plistlib.load(handle), arguments.app, arguments.bootstrap)
         with path.open("wb") as handle:
             plistlib.dump(configuration, handle)
     else:

@@ -15,10 +15,10 @@ final class CoincideDesktopUITests: XCTestCase {
     @MainActor private func exerciseProjectWorkflow(appearance: String, useKeyboard: Bool) throws {
         let environment = ProcessInfo.processInfo.environment
         let appPath = try XCTUnwrap(environment["COINCIDE_UI_APP_PATH"], "The CI harness must supply the staged app.")
-        let basePath = try XCTUnwrap(environment["COINCIDE_UI_TEST_ROOT_BASE"], "The CI harness must supply a temporary workspace parent.")
-        let artifacts = try XCTUnwrap(environment["COINCIDE_UI_ARTIFACTS"], "The CI harness must supply an artifact directory.")
         let manager = FileManager.default
-        let requestedRoot = URL(fileURLWithPath: basePath).appendingPathComponent("coincide-ui-testing-" + UUID().uuidString, isDirectory: true)
+        // Xcode sandboxes its generated runner, even with ENABLE_APP_SANDBOX=NO.
+        // Foundation supplies writable temporary storage belonging to that runner.
+        let requestedRoot = manager.temporaryDirectory.appendingPathComponent("coincide-ui-testing-" + UUID().uuidString, isDirectory: true)
         try manager.createDirectory(at: requestedRoot, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let root = requestedRoot.resolvingSymlinksInPath()
         defer { try? manager.removeItem(at: root) }
@@ -91,7 +91,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let selected = outlineRow.exists ? outlineRow : app.tableRows.containing(.staticText, identifier: "New thread").firstMatch
         XCTAssertTrue(selected.waitForExistence(timeout: 5) && selected.isSelected, "Collapsing must keep the selected conversation visible.")
         XCTAssertEqual(composer.value as? String, draft)
-        try capture(app, name: "\(appearance)-collapsed-selected", artifacts: artifacts)
+        capture(app, name: "\(appearance)-collapsed-selected")
 
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "Graceful quit must flush the composer draft.")
@@ -100,7 +100,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Expand \(renamed)"].waitForExistence(timeout: 10), "The renamed project and collapsed state must persist.")
         XCTAssertTrue(composer.waitForExistence(timeout: 10)); XCTAssertEqual(composer.value as? String, draft)
         XCTAssertTrue(selected.exists && selected.isSelected)
-        try capture(app, name: "\(appearance)-reopened", artifacts: artifacts)
+        capture(app, name: "\(appearance)-reopened")
         let tree = XCTAttachment(string: app.debugDescription); tree.name = "\(appearance)-reopened-accessibility-tree"; tree.lifetime = .keepAlways; add(tree)
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
@@ -111,13 +111,11 @@ final class CoincideDesktopUITests: XCTestCase {
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
-    @MainActor private func capture(_ app: XCUIApplication, name: String, artifacts: String) throws {
+    @MainActor private func capture(_ app: XCUIApplication, name: String) {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.exists && window.isHittable && app.state == .runningForeground)
         let screenshot = window.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
-        let directory = URL(fileURLWithPath: artifacts).appendingPathComponent("screenshots", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try screenshot.pngRepresentation.write(to: directory.appendingPathComponent(name + ".png"))
+        // xcresulttool exports the retained PNG outside the sandbox after testing.
     }
 }

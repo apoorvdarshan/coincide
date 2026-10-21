@@ -49,7 +49,7 @@ STAGED_APP="$SCRATCH/CoincideUITestApp.app"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.apoorvdarshan.coincide.uitesting' "$STAGED_APP/Contents/Info.plist"
 codesign --force --sign - "$STAGED_APP"
 codesign --verify --deep --strict "$STAGED_APP"
-mkdir -m 700 "$SCRATCH/workspaces" "$SCRATCH/coincide-ui-testing-bootstrap"
+mkdir -m 700 "$SCRATCH/coincide-ui-testing-bootstrap"
 XCTESTRUN="$(python3 - "$DERIVED_DATA/Build/Products" <<'PY'
 from pathlib import Path
 import sys
@@ -60,7 +60,7 @@ print(files[0])
 PY
 )"
 python3 "$ROOT_DIR/script/macos_ui_ci.py" prepare --xctestrun "$XCTESTRUN" --app "$STAGED_APP" \
-  --workspace-parent "$SCRATCH/workspaces" --bootstrap "$SCRATCH/coincide-ui-testing-bootstrap" --artifacts "$ARTIFACTS"
+  --bootstrap "$SCRATCH/coincide-ui-testing-bootstrap"
 set +e
 xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination 'platform=macOS' \
   -parallel-testing-enabled NO -collect-test-diagnostics never -resultBundlePath "$ARTIFACTS/Results.xcresult" \

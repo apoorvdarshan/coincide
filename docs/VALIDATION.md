@@ -39,9 +39,13 @@
   GUI execution. A copied app uses a dedicated bundle identifier and DEBUG-only
   private workspace; invalid test configuration cannot fall back to user data.
   Hosted light/dark workflows cover project creation and initial Git commit,
-  rename/collapse, retained selection/draft, and graceful quit/reopen. Their actual
-  hosted execution and screenshot inspection are pending the first CI run; build
-  success alone does not establish visual correctness.
+  rename/collapse, retained selection/draft, and graceful quit/reopen. The first
+  hosted run passed all 209 SwiftPM tests but both GUI tests failed before app
+  launch: Xcode's generated runner is sandboxed and could not create fixtures in
+  shell-owned scratch. Fixtures now use the runner's Foundation temporary
+  directory; screenshots remain retained XCTest attachments exported after the
+  run. Local compile/configuration checks pass. The hosted retry and screenshot
+  inspection remain required; build success does not establish visual correctness.
 
 Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas.
 

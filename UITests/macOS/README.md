@@ -14,7 +14,9 @@ dedicated `com.apoorvdarshan.coincide.uitesting` bundle identifier, signs it ad
 hoc, and points the generated `.xctestrun` at that copy. Neither `dist/` nor an
 installed app is replaced. GUI execution refuses to run outside GitHub Actions.
 
-Every UI test creates a private `coincide-ui-testing-*` workspace. The app's
+Every UI test creates a private `coincide-ui-testing-*` workspace in Foundation's
+runner-owned temporary directory. Xcode sandboxes its generated UI runner;
+shell-created scratch directories are not writable from that runner. The app's
 DEBUG launch configuration requires that prefix, the dedicated bundle ID, and
 explicit environment opt-in; invalid configuration must never fall back to
 normal app data. Git identity and hooks are configured through a private
@@ -24,8 +26,10 @@ text remains unsent; no coding agent or network provider is invoked.
 The two tests exercise light/dark actual windows, File-menu or keyboard project
 creation, an initial Git commit, project renaming, collapse with the selected
 conversation retained, and composer persistence across graceful quit/relaunch.
-Screenshots and accessibility trees are retained in the `.xcresult` and uploaded
-alongside PNG copies. The result gate requires both tests to pass with zero
+Screenshots and accessibility trees are retained in the `.xcresult` and exported
+by `xcresulttool` into the uploaded attachments directory after testing. The
+runner never writes directly to the shell-owned artifact directory. The result
+gate requires both tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 
