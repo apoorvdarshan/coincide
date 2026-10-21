@@ -100,8 +100,10 @@ func claudeInterruptCancellationAndProviderFailure() async throws {
     let thread = CodingThread(project: WorkspaceProject(path: "/tmp"))
     var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(thread)) as? [String: Any])
     json.removeValue(forKey: "provider"); json.removeValue(forKey: "draft")
+    for key in ["queuedTurns", "queuePaused", "activeRun", "runtimeID", "runtimeRequests"] { json.removeValue(forKey: key) }
     var restored = try JSONDecoder().decode(CodingThread.self, from: JSONSerialization.data(withJSONObject: json))
     #expect(restored.provider == .codex); #expect(restored.draft.isEmpty)
+    #expect(restored.queuedTurns.isEmpty && !restored.queuePaused && restored.activeRun == nil && restored.runtimeID == nil && restored.runtimeRequests.isEmpty)
     restored.provider = .claude; restored.draft = "Unsent prompt"
     #expect(try JSONDecoder().decode(CodingThread.self, from: JSONEncoder().encode(restored)) == restored)
 }

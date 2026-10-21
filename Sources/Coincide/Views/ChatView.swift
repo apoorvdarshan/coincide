@@ -7,7 +7,7 @@ struct ChatView: View {
     @State private var sending = false
     @State private var worktreeSheet = false
     @State private var branch = ""
-    private var thread: CodingThread? { store.snapshot.threads.first { $0.id == threadID } }
+    private var thread: CodingThread? { store.thread(threadID) }
     private var draft: Binding<String> {
         Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
     }
@@ -48,17 +48,19 @@ struct ChatView: View {
                 }
                 VStack(spacing: 10) {
                     ForEach(store.approvals[threadID, default: []]) { request in
-                        ApprovalView(request: request, onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
+                        ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } })
                     }
+                    if !thread.queuedTurns.isEmpty { QueuedTurnsView(store: store, thread: thread) }
                     ComposerView(text: draft, provider: thread.provider, permission: thread.permission,
-                                 busy: store.isBusy(threadID) || sending,
+                                 busy: store.isBusy(threadID), submitting: sending || store.isPreparingWorkspace(threadID),
                                  setPermission: { store.setPermission($0, id: threadID) },
                                  send: {
                                      guard !sending else { return }; sending = true
                                      let prompt = thread.draft
+                                     let submitted = store.submit(prompt, threadID: threadID)
                                      Task {
-                                         _ = await store.send(prompt, threadID: threadID)
+                                         _ = await submitted.value
                                          sending = false
                                      }
                                  }, stop: { Task { await store.interrupt(threadID) } })

@@ -59,6 +59,11 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var permission: PermissionMode
     public var state: ThreadState
     public var messages: [ChatMessage]
+    public var queuedTurns: [QueuedTurn]
+    public var queuePaused: Bool
+    public var activeRun: ActiveRun?
+    public var runtimeID: UUID?
+    public var runtimeRequests: [RuntimeRequest]
     public var isPinned: Bool
     public var isArchived: Bool
     public var createdAt: Date
@@ -66,10 +71,12 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public init(project: WorkspaceProject, model: String = "") {
         id = UUID(); projectID = project.id; title = "New thread"; workspacePath = project.path
         self.model = model; provider = .codex; draft = ""; permission = .supervised; state = .idle; messages = []
+        queuedTurns = []; queuePaused = false; runtimeRequests = []
         isPinned = false; isArchived = false; createdAt = Date(); updatedAt = Date()
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
+        case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -84,11 +91,17 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         permission = try values.decode(PermissionMode.self, forKey: .permission)
         state = try values.decode(ThreadState.self, forKey: .state)
         messages = try values.decode([ChatMessage].self, forKey: .messages)
+        queuedTurns = try values.decodeIfPresent([QueuedTurn].self, forKey: .queuedTurns) ?? []
+        queuePaused = try values.decodeIfPresent(Bool.self, forKey: .queuePaused) ?? false
+        activeRun = try values.decodeIfPresent(ActiveRun.self, forKey: .activeRun)
+        runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
+        runtimeRequests = try values.decodeIfPresent([RuntimeRequest].self, forKey: .runtimeRequests) ?? []
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
         isArchived = try values.decode(Bool.self, forKey: .isArchived)
         createdAt = try values.decode(Date.self, forKey: .createdAt)
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
     }
+    public var isBusy: Bool { activeRun != nil || state == .running || state == .awaitingApproval }
 }
 
 public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
@@ -98,9 +111,13 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public init() {}
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
-        for i in threads.indices where threads[i].state == .running || threads[i].state == .awaitingApproval {
-            threads[i].state = .interrupted
-            threads[i].messages.append(.init(role: .system, text: "The app closed during this turn. Resume by sending another message."))
+        for i in threads.indices {
+            if threads[i].isBusy {
+                threads[i].state = .interrupted
+                threads[i].messages.append(.init(role: .system, text: "The app closed during this turn. Resume by sending another message."))
+            }
+            threads[i].activeRun = nil; threads[i].runtimeID = nil; threads[i].runtimeRequests = []
+            if !threads[i].queuedTurns.isEmpty { threads[i].queuePaused = true }
         }
     }
 }

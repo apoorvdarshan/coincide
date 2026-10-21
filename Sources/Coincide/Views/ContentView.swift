@@ -46,6 +46,7 @@ struct ContentView: View {
         } message: { Text(store.errorMessage ?? "") }
         .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+        .disabled(store.isLoading)
         .onDisappear { terminals.closeAll() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in terminals.closeAll() }
     }

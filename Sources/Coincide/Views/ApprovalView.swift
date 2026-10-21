@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ApprovalView: View {
     let request: ApprovalRequest
+    var isResponding = false
     let onDecision: (Bool) -> Void
     let onAnswer: ([String: String]) -> Void
     @State private var answers: [String: String] = [:]
@@ -28,6 +29,7 @@ struct ApprovalView: View {
                 ScrollView { Text(request.detail).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 140)
                 HStack { Spacer(); Button("Decline") { onDecision(false) }; Button("Approve Once") { onDecision(true) }.buttonStyle(.borderedProminent) }
             }
-        }.padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            if isResponding { HStack { ProgressView().controlSize(.small); Text("Sending response…").font(.caption) } }
+        }.padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)).disabled(isResponding)
     }
 }

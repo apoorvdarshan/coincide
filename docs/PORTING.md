@@ -22,9 +22,15 @@ must each be mapped and verified before declaring parity.
   selection, and persisted conversation. Persistence commits versioned entity and
   message mutations, the cached projection, a command receipt, and an audit marker
   together. Legacy snapshots are imported once and projections can be rebuilt.
-  Provider effects can join that transaction in a leased, fenced outbox. The
-  execution worker and normalized command-decision engine still need to replace
-  the desktop's direct dispatch path; this is not yet upstream orchestration parity.
+  A single native engine serializes typed commands and decisions, then runs provider
+  I/O separately through the leased, fenced outbox. The desktop observes committed
+  state rather than writing whole snapshots. Rejected commands also retain their
+  idempotency receipts. Runtime ownership is exclusive per database, and provider
+  events are scoped to a connection and run so stale replies cannot reopen a turn.
+- Queued turns capture their model, permission, and workspace configuration. Normal
+  completion advances the queue; Stop, provider failure, and application restart
+  hold it for explicit resumption. Database storage version 2 protects these fields
+  from older binaries. No exactly-once provider execution is claimed.
 - Default permission mode is supervised. Full access is available as an explicit
   per-thread choice. Unsupported interactive provider requests fail explicitly.
 
@@ -36,15 +42,15 @@ must each be mapped and verified before declaring parity.
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Not implemented | Cursor, Grok, OpenCode, Antigravity, Pi, Muse, ACP registry and custom providers |
-| Durable orchestration | Replayable SQLite journal, atomic projections/receipts/audit/outbox, command-ID deduplication and revision checks, effect leases/fencing and process-loss cancellation, legacy migration | Normalized decisions and execution-worker integration, queued turns, complete provider recovery, checkpoints/finalization, incremental projection storage/performance |
-| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, inline Markdown, tool/reasoning disclosure, copy, Enter/Shift-Enter | Full Markdown/code/math, citations, attachments, slash/skill/file pickers, plans, steering |
+| Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, legacy migration | Complete provider recovery, checkpoints/finalization and run history, incremental projection storage/performance, full upstream command coverage |
+| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, inline Markdown, tool/reasoning disclosure, copy, focused Enter/Shift-Enter input | Full Markdown/code/math, citations, attachments, slash/skill/file pickers, plans, steering |
 | Git/workspaces | Status, staged/unstaged diff, stage/unstage, commit, branches, worktree creation | Checkout/clone, pull/push, PRs/stacks/multiple hosts, checkpoints/revert, worktree lifecycle/setup |
 | Files | Browse/read/edit UTF-8 with conflict detection and workspace path checks | Search/ignore support, large/binary files, filesystem watching, editor integration |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup | Durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |
 | Desktop integration | App bundle, commands/shortcuts, appearance | Notifications, deep links, updates, browser/preview, screenshot/import features, power/resources, accessibility QA |
-| Distribution | Local ad-hoc signed development bundle | Release signing/notarization, installer/update validation, full notices |
-| Validation | Deterministic core/protocol tests and CI workflow | Upstream replay corpus, real provider turn tests, UI automation, full parity and failure audit |
+| Distribution | Local development-identity or ad-hoc signed bundle | Release signing/notarization, installer/update validation, full notices |
+| Validation | Deterministic core/protocol/orchestration tests, CI workflow, native Codex/Claude turn and queue smoke checks | Upstream replay corpus, broader live tool/approval coverage, UI automation, full parity and failure audit |
 
 ## Validation commands
 

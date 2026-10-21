@@ -63,6 +63,7 @@ public struct WorkspaceCommandReceipt: Codable, Sendable, Equatable {
     public var sequence: Int64
     public var eventCount: Int
     public var acceptedAt: Date
+    public var rejection: String?
 }
 
 public struct WorkspaceRevision: Sendable, Equatable {
@@ -74,7 +75,11 @@ public enum WorkspaceJournal {
     public static func validate(_ snapshot: WorkspaceSnapshot) throws {
         let projects = Set(snapshot.projects.map(\.id)), threads = Set(snapshot.threads.map(\.id))
         guard snapshot.schemaVersion == 1, projects.count == snapshot.projects.count, threads.count == snapshot.threads.count,
-              snapshot.threads.allSatisfy({ projects.contains($0.projectID) && Set($0.messages.map(\.id)).count == $0.messages.count }) else {
+              snapshot.threads.allSatisfy({ thread in
+                  projects.contains(thread.projectID) && Set(thread.messages.map(\.id)).count == thread.messages.count &&
+                  Set(thread.queuedTurns.map(\.id)).count == thread.queuedTurns.count &&
+                  !thread.queuedTurns.contains { $0.id == thread.activeRun?.id }
+              }) else {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
     }

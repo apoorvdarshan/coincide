@@ -30,6 +30,11 @@ changes in the conversation. Use the inspector to browse/edit files or inspect,
 stage, and commit Git changes. A new thread can create a separate Git worktree
 before its first message.
 
+Send another message during a turn to queue it. Each queued message keeps its
+chosen model and permissions, and can be edited or removed before it starts.
+**Stop** interrupts the current turn and holds the queue. Use **Resume Queue** to
+continue; restarting the app also holds unfinished work rather than resending it.
+
 Open **Terminal** in the toolbar (⌥⌘T) for a native terminal in the conversation's
 workspace. Create multiple tabs, resize the panel, or hide it while commands keep
 running. Terminals stay attached to their conversation while the window is open;
@@ -47,7 +52,8 @@ swift test
 
 Tests cover process streaming/failure/cancellation, protocol framing and request
 correlation, deterministic Codex and Claude approval conversations, journal replay,
-atomic commit failures, command deduplication, migration/restart,
+atomic commit failures, accepted/rejected command deduplication, queued execution,
+approval responsiveness, Stop, stale provider events, lease loss, migration/restart,
 file conflicts/path containment, and Git/worktree operations. See the porting
 document for live checks and their limitations.
 

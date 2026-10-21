@@ -38,7 +38,7 @@ public actor WorkspaceDatabase {
         let versionStatus = sqlite3_step(version)
         let storageVersion = sqlite3_column_int(version, 0)
         sqlite3_finalize(version)
-        guard versionStatus == SQLITE_ROW, (0...1).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
+        guard versionStatus == SQLITE_ROW, (0...2).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
         let setup = """
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=FULL;
@@ -49,7 +49,7 @@ public actor WorkspaceDatabase {
         CREATE TABLE IF NOT EXISTS workspace_receipts (id TEXT PRIMARY KEY, fingerprint BLOB NOT NULL, payload BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS workspace_effects (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, command_id TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, payload BLOB NOT NULL);
         CREATE INDEX IF NOT EXISTS workspace_effects_pending ON workspace_effects(status,sequence);
-        PRAGMA user_version=1;
+        PRAGMA user_version=2;
         """
         guard sqlite3_exec(connection, setup, nil, nil, nil) == SQLITE_OK else { throw CoincideError("Could not initialize the workspace database.") }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -89,11 +89,11 @@ public actor WorkspaceDatabase {
         try bootstrap(); try execute("BEGIN IMMEDIATE")
         do {
             if let stored = try existingReceipt(commandID) {
-                guard stored.fingerprint == fingerprint else { throw CoincideError("This command ID was already used for different workspace changes.") }
+                guard stored.fingerprint == fingerprint else { throw WorkspaceCommitError.commandIDCollision }
                 try execute("COMMIT"); return stored.receipt
             }
             let before = try currentRevision()
-            if let expectedSequence, expectedSequence != before.sequence { throw CoincideError("The workspace changed. Reload it before retrying this command.") }
+            if let expectedSequence, expectedSequence != before.sequence { throw WorkspaceCommitError.revisionChanged }
             let changes = try WorkspaceJournal.changes(from: before.snapshot, to: snapshot)
             var sequence = before.sequence
             for change in changes {
@@ -117,11 +117,25 @@ public actor WorkspaceDatabase {
     public func receipt(_ id: UUID) throws -> WorkspaceCommandReceipt? { try existingReceipt(id)?.receipt }
     public func receipt(_ id: UUID, matching commandPayload: Data) throws -> WorkspaceCommandReceipt? {
         guard let stored = try existingReceipt(id) else { return nil }
-        guard stored.fingerprint == commandFingerprint(commandPayload) else { throw CoincideError("This command ID was already used for different workspace changes.") }
+        guard stored.fingerprint == commandFingerprint(commandPayload) else { throw WorkspaceCommitError.commandIDCollision }
         return stored.receipt
     }
     private func commandFingerprint(_ payload: Data) -> Data {
         Data(SHA256.hash(data: Data("coincide-command-v1\n".utf8) + payload))
+    }
+    public func rejectCommand(_ id: UUID, matching payload: Data, reason: String, expectedSequence: Int64) throws -> WorkspaceCommandReceipt {
+        try bootstrap(); try execute("BEGIN IMMEDIATE")
+        do {
+            if let existing = try existingReceipt(id) {
+                guard existing.fingerprint == commandFingerprint(payload) else { throw WorkspaceCommitError.commandIDCollision }
+                try execute("COMMIT"); return existing.receipt
+            }
+            let current = try currentRevision()
+            guard current.sequence == expectedSequence else { throw WorkspaceCommitError.revisionChanged }
+            let receipt = WorkspaceCommandReceipt(commandID: id, sequence: current.sequence, eventCount: 0, acceptedAt: Date(), rejection: reason)
+            try insertReceipt(receipt, fingerprint: commandFingerprint(payload)); try audit("command.rejected")
+            try execute("COMMIT"); return receipt
+        } catch { try? execute("ROLLBACK"); throw error }
     }
 
     public func journal(after sequence: Int64 = 0, limit: Int = 500) throws -> [WorkspaceJournalRecord] {
@@ -270,6 +284,13 @@ public actor WorkspaceDatabase {
 }
 
 extension WorkspaceDatabase {
+    public func cancelEffect(_ id: UUID, workerID: UUID, reason: String, now: Date = Date()) throws -> Bool {
+        try effectTransaction {
+            guard var effect = try ownedEffect(id, workerID: workerID, now: now) else { return false }
+            effect.status = .cancelled; effect.leaseOwner = nil; effect.leaseExpiresAt = nil
+            effect.updatedAt = now; effect.lastError = reason; try writeEffect(effect); return true
+        }
+    }
     public func effects(commandID: UUID? = nil) throws -> [WorkspaceEffect] {
         let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects" + (commandID == nil ? "" : " WHERE command_id=?") + " ORDER BY sequence")
         defer { sqlite3_finalize(statement) }
@@ -279,18 +300,21 @@ extension WorkspaceDatabase {
 
     /// A pending action can be claimed once. Expired process-bound actions are
     /// deliberately not reclaimed: their external execution may already have begun.
-    public func claimNextEffect(workerID: UUID, leaseDuration: TimeInterval = 120, now: Date = Date()) throws -> WorkspaceEffect? {
+    public func claimNextEffect(workerID: UUID, leaseDuration: TimeInterval = 120, now: Date = Date(), includeProviderStarts: Bool = true) throws -> WorkspaceEffect? {
         try validateLease(leaseDuration, now: now)
         return try effectTransaction {
-            let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects WHERE status='pending' ORDER BY sequence LIMIT 1")
+            let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects WHERE status='pending' ORDER BY sequence")
             defer { sqlite3_finalize(statement) }
-            let status = sqlite3_step(statement)
-            if status == SQLITE_DONE { return nil }; try checkRow(status)
-            var effect = try readEffect(statement)
-            effect.status = .running; effect.attemptCount += 1; effect.leaseOwner = workerID
-            effect.leaseExpiresAt = now.addingTimeInterval(leaseDuration); effect.updatedAt = now
-            try writeEffect(effect)
-            return effect
+            while true {
+                let status = sqlite3_step(statement)
+                if status == SQLITE_DONE { return nil }; try checkRow(status)
+                var effect = try readEffect(statement)
+                if !includeProviderStarts, case .providerStart = effect.request { continue }
+                effect.status = .running; effect.attemptCount += 1; effect.leaseOwner = workerID
+                effect.leaseExpiresAt = now.addingTimeInterval(leaseDuration); effect.updatedAt = now
+                try writeEffect(effect)
+                return effect
+            }
         }
     }
 

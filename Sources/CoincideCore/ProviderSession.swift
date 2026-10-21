@@ -7,7 +7,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     public var executable: String { self == .codex ? "codex" : "claude" }
 }
 
-public enum ProviderEvent: Sendable {
+public enum ProviderEvent: Codable, Sendable, Equatable {
     case thread(String)
     case turn(String)
     case delta(id: String, role: MessageRole, text: String)
@@ -16,6 +16,8 @@ public enum ProviderEvent: Sendable {
     case approvalDismissed(JSONValue)
     case completed(ThreadState)
     case failure(String)
+    case connectionClosed(String)
+    indirect case context(runID: UUID, event: ProviderEvent)
 }
 
 public protocol ProviderSession: Actor {

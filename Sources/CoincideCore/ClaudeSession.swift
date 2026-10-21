@@ -11,6 +11,7 @@ public actor ClaudeSession: ProviderSession {
     private var reader: Task<Void, Never>?
     private var initialized = false
     private var shuttingDown = false
+    private var eventRunID: UUID?
     private var working = false
     private var requestedInterrupt = false
     private var messageID = ""
@@ -59,7 +60,9 @@ public actor ClaudeSession: ProviderSession {
         }
     }
     public func send(text: String, thread: CodingThread) async throws {
+        let submittedRunID = thread.activeRun?.id
         guard !working else { throw CoincideError("A turn is already running in this thread.") }
+        eventRunID = submittedRunID
         working = true; requestedInterrupt = false; emittedAssistant = false
         do {
             try await connect()
@@ -68,7 +71,7 @@ public actor ClaudeSession: ProviderSession {
             let promptID = UUID().uuidString
             try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(promptID),
                 "message": .object(["role": .string("user"), "content": .string(text)]), "parent_tool_use_id": .null]))
-            continuation.yield(.turn(promptID))
+            emit(.turn(promptID), runID: submittedRunID)
         } catch { working = false; throw error }
     }
     public func interrupt() async throws {
@@ -98,41 +101,41 @@ public actor ClaudeSession: ProviderSession {
     private func consume(_ event: RPCEvent) async {
         switch event {
         case .disconnected(let reason):
-            if !shuttingDown { continuation.yield(.failure(reason)) }
+            if !shuttingDown { continuation.yield(.connectionClosed(reason)) }
             working = false; continuation.finish()
         case .request(let id, let method, let params):
             if method == "can_use_tool" {
                 let request = ApprovalRequest(id: id, method: method, params: params)
-                pendingApprovals[id] = request; continuation.yield(.approval(request))
+                pendingApprovals[id] = request; emit(.approval(request))
             } else {
                 try? await rpc.reject(id: id, message: "Coincide does not support this Claude control request yet.")
-                continuation.yield(.message(.init(role: .system, text: "Unsupported Claude control request: \(method).")))
+                emit(.message(.init(role: .system, text: "Unsupported Claude control request: \(method).")))
             }
         case .notification(let method, let frame):
-            if let id = frame["session_id"].string { continuation.yield(.thread(id)) }
+            if let id = frame["session_id"].string { emit(.thread(id)) }
             switch method {
             case "control_cancel_request":
                 let id = frame["request_id"]
-                pendingApprovals.removeValue(forKey: id); continuation.yield(.approvalDismissed(id))
+                pendingApprovals.removeValue(forKey: id); emit(.approvalDismissed(id))
             case "stream_event": consumeStream(frame["event"])
             case "assistant": consumeAssistant(frame["message"])
             case "user":
                 for block in frame["message"]["content"].array ?? [] where block["type"].string == "tool_result" {
                     let id = block["tool_use_id"].string ?? UUID().uuidString
                     let text = block["content"].string ?? (block["content"].array ?? []).compactMap { $0["text"].string }.joined(separator: "\n")
-                    continuation.yield(.message(.init(id: "result-\(id)", role: .tool, text: text)))
+                    emit(.message(.init(id: "result-\(id)", role: .tool, text: text)))
                 }
             case "result":
                 working = false; pendingApprovals.removeAll()
-                if requestedInterrupt { continuation.yield(.completed(.interrupted)) }
+                if requestedInterrupt { emit(.completed(.interrupted)) }
                 else if frame["is_error"] == .bool(true) {
                     let errors = (frame["errors"].array ?? []).compactMap(\.string).joined(separator: "\n")
-                    continuation.yield(.failure(errors.isEmpty ? frame["result"].string ?? "Claude could not complete the turn." : errors))
+                    emit(.failure(errors.isEmpty ? frame["result"].string ?? "Claude could not complete the turn." : errors))
                 } else {
                     if !emittedAssistant, let result = frame["result"].string, !result.isEmpty {
-                        continuation.yield(.message(.init(role: .assistant, text: result)))
+                        emit(.message(.init(role: .assistant, text: result)))
                     }
-                    continuation.yield(.completed(.idle))
+                    emit(.completed(.idle))
                 }
             default: break
             }
@@ -145,14 +148,14 @@ public actor ClaudeSession: ProviderSession {
             let block = event["content_block"], id = blockID(index: event["index"])
             if block["type"].string == "tool_use" {
                 let toolID = block["id"].string ?? id
-                continuation.yield(.message(.init(id: toolID, role: .tool, text: block["name"].string ?? "Tool")))
+                emit(.message(.init(id: toolID, role: .tool, text: block["name"].string ?? "Tool")))
             } else if let text = block["text"].string, !text.isEmpty {
-                emittedAssistant = true; continuation.yield(.delta(id: id, role: .assistant, text: text))
+                emittedAssistant = true; emit(.delta(id: id, role: .assistant, text: text))
             }
         case "content_block_delta":
             let delta = event["delta"], id = blockID(index: event["index"])
-            if let text = delta["text"].string { emittedAssistant = true; continuation.yield(.delta(id: id, role: .assistant, text: text)) }
-            else if let text = delta["thinking"].string { continuation.yield(.delta(id: id, role: .reasoning, text: text)) }
+            if let text = delta["text"].string { emittedAssistant = true; emit(.delta(id: id, role: .assistant, text: text)) }
+            else if let text = delta["thinking"].string { emit(.delta(id: id, role: .reasoning, text: text)) }
         default: break
         }
     }
@@ -162,10 +165,10 @@ public actor ClaudeSession: ProviderSession {
             switch block["type"].string {
             case "text":
                 emittedAssistant = true
-                continuation.yield(.message(.init(id: "\(id)-\(index)", role: .assistant, text: block["text"].string ?? "")))
-            case "thinking": continuation.yield(.message(.init(id: "\(id)-\(index)", role: .reasoning, text: block["thinking"].string ?? "")))
+                emit(.message(.init(id: "\(id)-\(index)", role: .assistant, text: block["text"].string ?? "")))
+            case "thinking": emit(.message(.init(id: "\(id)-\(index)", role: .reasoning, text: block["thinking"].string ?? "")))
             case "tool_use":
-                continuation.yield(.message(.init(id: block["id"].string ?? "\(id)-\(index)", role: .tool,
+                emit(.message(.init(id: block["id"].string ?? "\(id)-\(index)", role: .tool,
                     text: "\(block["name"].string ?? "Tool")\n\(block["input"].pretty)")))
             default: break
             }
@@ -174,6 +177,10 @@ public actor ClaudeSession: ProviderSession {
     private func blockID(index: JSONValue) -> String {
         if case .number(let index) = index { return "\(messageID)-\(Int(index))" }
         return "\(messageID)-0"
+    }
+    private func emit(_ event: ProviderEvent, runID: UUID? = nil) {
+        if let id = runID ?? eventRunID { continuation.yield(.context(runID: id, event: event)) }
+        else { continuation.yield(event) }
     }
     deinit { reader?.cancel() }
 }

@@ -1,5 +1,40 @@
 # Validation record
 
+## 2026-10-22 — native command engine and queued turns
+
+- `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test` passed 47 tests:
+  43 core and 4 terminal. Installed-provider tests perform only handshake/model
+  discovery; deterministic fixtures verify execution and failure behavior.
+- Runtime tests cover ordered queues and captured configuration, durable command
+  retries/rejections, responsive approvals while start acknowledgement is pending,
+  reserved control capacity with eight blocked starts, stale run/connection events,
+  questions, native interruption, Stop during startup, process loss, concurrent
+  draft/pin edits, queue editing, restart, exclusive ownership, and lost effect leases.
+- A controlled Codex fixture completes two turns before acknowledging their start,
+  starts a third, and then delivers the older acknowledgements. The previous guard
+  failed by targeting a completed turn on interrupt; the corrected implementation
+  passed and targets the third turn. The source was restored after that comparison.
+- Native Claude QA sent two prompts in rapid succession. The second appeared in the
+  queue, both expected markers arrived in order, and the thread returned to idle.
+  A later long response was stopped with a queued message waiting. The app held the
+  queue, preserved the same queued ID across a graceful rebuild/restart, and returned
+  the expected marker after **Resume Queue**. No queued turn replayed on restart.
+- Native Codex QA created a conversation, typed directly into the automatically
+  focused composer, and submitted with Return. The real provider returned
+  `COINCIDE_NATIVE_ENGINE_CODEX_OK`; state returned to idle and the outbox recorded
+  success. These model prompts requested no tool or filesystem actions.
+- The database was backed up before migration. Stripping only the newly added
+  queue/runtime fields produced an identical canonical snapshot: the existing
+  project, both conversations, and all 14 prior messages were preserved. Storage
+  version 2 prevents older binaries from silently discarding the new fields.
+- Final native development packaging, launch, and strict code-signature
+  verification passed after the lease-ownership failure handling change.
+
+This establishes the native orchestration milestone, not full T3 parity. Provider
+effects cannot guarantee exactly-once external execution. The current projection
+cache still writes a full snapshot; broader live approvals, all providers, remote
+environments, checkpoints, and complete transcript rendering remain pending.
+
 ## 2026-10-22 — transactional provider outbox foundation
 
 - `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test`: all 33 tests passed
