@@ -1,5 +1,35 @@
 # Validation record
 
+## 2026-10-21 — native terminal
+
+- Added SwiftTerm 1.99.1 at locked revision
+  `2f573f73af5e768d90847dce20c97fa9535d7164`, with the native macOS frontend and
+  PTY backend. No browser terminal or Node terminal service is involved.
+- `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test` passed all 23 tests
+  across the core (19) and terminal (4) test targets. Focused terminal tests were
+  repeated after the final accessibility/focus change. Tests verify an actual
+  PTY in a workspace containing spaces, Unicode/ANSI rendering, final output and
+  exit status, PTY resize, interrupt while keeping the shell alive, closure of
+  the foreground job, idempotent close, and rejection of an unavailable folder.
+- Native UI QA typed and observed `COINCIDE_TERMINAL_UI_OK`, the workspace path,
+  and markers in two separate terminal tabs. Hiding and showing the panel kept
+  a shell variable set to `kept`. Creating or closing a tab correctly focused
+  the resulting terminal. The terminal exposes its visible text and a focus
+  action through accessibility; full screen-reader text navigation needs work.
+- Rebuilds now ask only this repository's development bundle to quit through
+  AppKit, wait for it to finish, and stop the build if it refuses. They do not
+  force-quit another installation. Rebuild QA recorded both owned shell PIDs and
+  verified that neither survived shutdown. Workspace close/open events were
+  also persisted. The bundled SwiftTerm and T3 license notices were verified,
+  and strict code-signature validation passed.
+- After further binary rebuilds, Claude model discovery from the native header
+  completed in about 0.7 seconds with the stable development signature. It no
+  longer stalled on the Documents permission request seen with ad-hoc rebuilds.
+
+Terminal history and processes currently survive panel hiding and thread changes
+within a window, not application restarts. Remote terminals, durable attachment,
+search/settings, and broad terminal compatibility remain pending.
+
 ## 2026-10-21 — Claude and native chat interface
 
 - `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test`: 19 tests passed.

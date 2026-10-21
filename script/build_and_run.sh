@@ -7,11 +7,13 @@ BUNDLE_ID="com.apoorvdarshan.coincide"
 APP_BUNDLE="$ROOT_DIR/dist/$APP_NAME.app"
 cd "$ROOT_DIR"
 case "$MODE" in run|--debug|--logs|--telemetry|--verify|--build-only) ;; *) echo "usage: $0 [--build-only|--debug|--logs|--telemetry|--verify]" >&2; exit 2 ;; esac
-if [[ "$MODE" != "--build-only" ]]; then pkill -x "$APP_NAME" >/dev/null 2>&1 || true; fi
+if [[ "$MODE" != "--build-only" ]]; then swift "$ROOT_DIR/script/stop_app.swift" "$APP_BUNDLE"; fi
 swift build
 BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 cp "$BUILD_BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+mkdir -p "$APP_BUNDLE/Contents/Resources/Notices"
+cp "$ROOT_DIR/docs/T3-CODE-LICENSE.txt" "$ROOT_DIR/docs/SwiftTerm-LICENSE.txt" "$APP_BUNDLE/Contents/Resources/Notices/"
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

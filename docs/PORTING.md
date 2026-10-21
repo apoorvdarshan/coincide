@@ -37,7 +37,7 @@ must each be mapped and verified before declaring parity.
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, inline Markdown, tool/reasoning disclosure, copy, Enter/Shift-Enter | Full Markdown/code/math, citations, attachments, slash/skill/file pickers, plans, steering |
 | Git/workspaces | Status, staged/unstaged diff, stage/unstage, commit, branches, worktree creation | Checkout/clone, pull/push, PRs/stacks/multiple hosts, checkpoints/revert, worktree lifecycle/setup |
 | Files | Browse/read/edit UTF-8 with conflict detection and workspace path checks | Search/ignore support, large/binary files, filesystem watching, editor integration |
-| Terminal | Not implemented | PTY sessions, native emulator, resize/input, scrollback, restoration |
+| Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup | Durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |
 | Desktop integration | App bundle, commands/shortcuts, appearance | Notifications, deep links, updates, browser/preview, screenshot/import features, power/resources, accessibility QA |
 | Distribution | Local ad-hoc signed development bundle | Release signing/notarization, installer/update validation, full notices |

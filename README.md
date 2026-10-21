@@ -30,6 +30,11 @@ changes in the conversation. Use the inspector to browse/edit files or inspect,
 stage, and commit Git changes. A new thread can create a separate Git worktree
 before its first message.
 
+Open **Terminal** in the toolbar (⌥⌘T) for a native terminal in the conversation's
+workspace. Create multiple tabs, resize the panel, or hide it while commands keep
+running. Terminals stay attached to their conversation while the window is open;
+closing a tab or quitting the app ends its local processes.
+
 The app uses SwiftUI/AppKit and a Swift core; it does not launch Electron or a T3
 Code server. Workspace data stays in `~/Library/Application Support/Coincide/`.
 Worktree folders are preserved when conversations are archived.
@@ -44,6 +49,9 @@ Tests cover process streaming/failure/cancellation, protocol framing and request
 correlation, deterministic Codex and Claude approval conversations, persistence/restart,
 file conflicts/path containment, and Git/worktree operations. See the porting
 document for live checks and their limitations.
+
+The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), with its
+[MIT notice](docs/SwiftTerm-LICENSE.txt) bundled in the development app.
 
 T3 Code is copyright © 2026 T3 Tools Inc.; its [MIT license](docs/T3-CODE-LICENSE.txt)
 is preserved here. Coincide is an independent project.
