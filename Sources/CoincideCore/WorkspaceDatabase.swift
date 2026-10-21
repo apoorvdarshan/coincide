@@ -9,7 +9,7 @@ private final class DatabaseHandle: @unchecked Sendable {
     deinit { sqlite3_close(value) }
 }
 
-/// Commits the replayable journal, projection, receipt, and audit marker atomically.
+/// Commits the journal, projection, receipt, pending effects, and audit marker atomically.
 public actor WorkspaceDatabase {
     private let handle: DatabaseHandle
     private var db: OpaquePointer { handle.value }
@@ -47,6 +47,8 @@ public actor WorkspaceDatabase {
         CREATE TABLE IF NOT EXISTS workspace_journal (sequence INTEGER PRIMARY KEY, payload BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS workspace_projection (id INTEGER PRIMARY KEY CHECK(id=1), sequence INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS workspace_receipts (id TEXT PRIMARY KEY, fingerprint BLOB NOT NULL, payload BLOB NOT NULL);
+        CREATE TABLE IF NOT EXISTS workspace_effects (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, command_id TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, payload BLOB NOT NULL);
+        CREATE INDEX IF NOT EXISTS workspace_effects_pending ON workspace_effects(status,sequence);
         PRAGMA user_version=1;
         """
         guard sqlite3_exec(connection, setup, nil, nil, nil) == SQLITE_OK else { throw CoincideError("Could not initialize the workspace database.") }
@@ -71,10 +73,19 @@ public actor WorkspaceDatabase {
     /// Retries of one command ID return the original receipt. Reusing it for a
     /// different payload or committing a stale explicit revision fails closed.
     public func commit(_ snapshot: WorkspaceSnapshot, event: String, commandID: UUID,
-                       expectedSequence: Int64? = nil) throws -> WorkspaceCommandReceipt {
+                       expectedSequence: Int64? = nil, effects: [PendingWorkspaceEffect] = [],
+                       deduplicationPayload: Data? = nil) throws -> WorkspaceCommandReceipt {
         try WorkspaceJournal.validate(snapshot)
         struct FingerprintInput: Encodable { let snapshot: WorkspaceSnapshot; let event: String }
-        let fingerprint = Data(SHA256.hash(data: try encoder.encode(FingerprintInput(snapshot: snapshot, event: event))))
+        struct EffectFingerprintInput: Encodable { let snapshot: WorkspaceSnapshot; let event: String; let effects: [PendingWorkspaceEffect] }
+        let fingerprint: Data
+        if let deduplicationPayload { fingerprint = commandFingerprint(deduplicationPayload) }
+        else if effects.isEmpty { fingerprint = Data(SHA256.hash(data: try encoder.encode(FingerprintInput(snapshot: snapshot, event: event)))) }
+        else { fingerprint = Data(SHA256.hash(data: try encoder.encode(EffectFingerprintInput(snapshot: snapshot, event: event, effects: effects)))) }
+        guard Set(effects.map(\.id)).count == effects.count,
+              effects.allSatisfy({ effect in snapshot.threads.contains { $0.id == effect.request.threadID } }) else {
+            throw CoincideError("Workspace effects must have unique identities and belong to an existing thread.")
+        }
         try bootstrap(); try execute("BEGIN IMMEDIATE")
         do {
             if let stored = try existingReceipt(commandID) {
@@ -92,6 +103,10 @@ public actor WorkspaceDatabase {
             let receipt = WorkspaceCommandReceipt(commandID: commandID, sequence: sequence, eventCount: changes.count, acceptedAt: Date())
             try writeProjection(snapshot, through: sequence)
             try insertReceipt(receipt, fingerprint: fingerprint)
+            for pending in effects {
+                try insertEffect(.init(id: pending.id, commandID: commandID, request: pending.request, status: .pending,
+                                       attemptCount: 0, createdAt: receipt.acceptedAt, updatedAt: receipt.acceptedAt))
+            }
             try audit(event)
             try execute("COMMIT")
             cached = WorkspaceRevision(snapshot: snapshot, sequence: sequence)
@@ -100,6 +115,14 @@ public actor WorkspaceDatabase {
     }
 
     public func receipt(_ id: UUID) throws -> WorkspaceCommandReceipt? { try existingReceipt(id)?.receipt }
+    public func receipt(_ id: UUID, matching commandPayload: Data) throws -> WorkspaceCommandReceipt? {
+        guard let stored = try existingReceipt(id) else { return nil }
+        guard stored.fingerprint == commandFingerprint(commandPayload) else { throw CoincideError("This command ID was already used for different workspace changes.") }
+        return stored.receipt
+    }
+    private func commandFingerprint(_ payload: Data) -> Data {
+        Data(SHA256.hash(data: Data("coincide-command-v1\n".utf8) + payload))
+    }
 
     public func journal(after sequence: Int64 = 0, limit: Int = 500) throws -> [WorkspaceJournalRecord] {
         try bootstrap()
@@ -243,5 +266,123 @@ public actor WorkspaceDatabase {
     }
     private func check(_ code: Int32) throws {
         guard code == SQLITE_OK || code == SQLITE_DONE else { throw CoincideError(String(cString: sqlite3_errmsg(db))) }
+    }
+}
+
+extension WorkspaceDatabase {
+    public func effects(commandID: UUID? = nil) throws -> [WorkspaceEffect] {
+        let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects" + (commandID == nil ? "" : " WHERE command_id=?") + " ORDER BY sequence")
+        defer { sqlite3_finalize(statement) }
+        if let commandID { try bind(commandID.uuidString, to: statement, index: 1) }
+        return try readEffects(statement)
+    }
+
+    /// A pending action can be claimed once. Expired process-bound actions are
+    /// deliberately not reclaimed: their external execution may already have begun.
+    public func claimNextEffect(workerID: UUID, leaseDuration: TimeInterval = 120, now: Date = Date()) throws -> WorkspaceEffect? {
+        try validateLease(leaseDuration, now: now)
+        return try effectTransaction {
+            let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects WHERE status='pending' ORDER BY sequence LIMIT 1")
+            defer { sqlite3_finalize(statement) }
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { return nil }; try checkRow(status)
+            var effect = try readEffect(statement)
+            effect.status = .running; effect.attemptCount += 1; effect.leaseOwner = workerID
+            effect.leaseExpiresAt = now.addingTimeInterval(leaseDuration); effect.updatedAt = now
+            try writeEffect(effect)
+            return effect
+        }
+    }
+
+    public func renewEffectLease(_ id: UUID, workerID: UUID, leaseDuration: TimeInterval = 120, now: Date = Date()) throws -> Bool {
+        try validateLease(leaseDuration, now: now)
+        return try effectTransaction {
+            guard var effect = try ownedEffect(id, workerID: workerID, now: now) else { return false }
+            effect.leaseExpiresAt = now.addingTimeInterval(leaseDuration); effect.updatedAt = now
+            try writeEffect(effect); return true
+        }
+    }
+
+    public func settleEffect(_ id: UUID, workerID: UUID, error: String? = nil, now: Date = Date()) throws -> Bool {
+        try effectTransaction {
+            guard var effect = try ownedEffect(id, workerID: workerID, now: now) else { return false }
+            effect.status = error == nil ? .succeeded : .failed
+            effect.leaseOwner = nil; effect.leaseExpiresAt = nil; effect.updatedAt = now; effect.lastError = error
+            try writeEffect(effect); return true
+        }
+    }
+
+    /// Called only after runtime loss, before admitting new provider work.
+    /// Queued user messages are separate domain state and are not deleted here.
+    public func cancelEffectsAfterProcessLoss(reason: String = "The provider runtime was lost.", now: Date = Date()) throws -> [UUID] {
+        try effectTransaction {
+            let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects WHERE status IN ('pending','running') ORDER BY sequence")
+            defer { sqlite3_finalize(statement) }
+            let effects = try readEffects(statement)
+            for var effect in effects {
+                effect.status = .cancelled; effect.leaseOwner = nil; effect.leaseExpiresAt = nil
+                effect.updatedAt = now; effect.lastError = reason
+                try writeEffect(effect)
+            }
+            return effects.map(\.id)
+        }
+    }
+
+    private func insertEffect(_ effect: WorkspaceEffect) throws {
+        let statement = try prepare("INSERT INTO workspace_effects(id,command_id,thread_id,status,payload) VALUES(?,?,?,?,?)")
+        defer { sqlite3_finalize(statement) }
+        try bind(effect.id.uuidString, to: statement, index: 1)
+        try bind(effect.commandID.uuidString, to: statement, index: 2)
+        try bind(effect.request.threadID.uuidString, to: statement, index: 3)
+        try bind(effect.status.rawValue, to: statement, index: 4)
+        try bind(try encoder.encode(effect), to: statement, index: 5)
+        try check(sqlite3_step(statement))
+    }
+    private func writeEffect(_ effect: WorkspaceEffect) throws {
+        let statement = try prepare("UPDATE workspace_effects SET status=?,payload=? WHERE id=?")
+        defer { sqlite3_finalize(statement) }
+        try bind(effect.status.rawValue, to: statement, index: 1)
+        try bind(try encoder.encode(effect), to: statement, index: 2)
+        try bind(effect.id.uuidString, to: statement, index: 3)
+        try check(sqlite3_step(statement))
+        guard sqlite3_changes(db) == 1 else { throw CoincideError("The workspace effect no longer exists.") }
+    }
+    private func ownedEffect(_ id: UUID, workerID: UUID, now: Date) throws -> WorkspaceEffect? {
+        let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects WHERE id=?")
+        defer { sqlite3_finalize(statement) }
+        try bind(id.uuidString, to: statement, index: 1)
+        let status = sqlite3_step(statement)
+        if status == SQLITE_DONE { return nil }; try checkRow(status)
+        let effect = try readEffect(statement)
+        guard effect.status == .running, effect.leaseOwner == workerID, let expires = effect.leaseExpiresAt, expires > now else { return nil }
+        return effect
+    }
+    private func readEffects(_ statement: OpaquePointer) throws -> [WorkspaceEffect] {
+        var values: [WorkspaceEffect] = []
+        while true {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { return values }; try checkRow(status)
+            values.append(try readEffect(statement))
+        }
+    }
+    private func readEffect(_ statement: OpaquePointer) throws -> WorkspaceEffect {
+        let effect = try JSONDecoder().decode(WorkspaceEffect.self, from: blob(statement, column: 0))
+        let expected = [effect.id.uuidString, effect.commandID.uuidString, effect.request.threadID.uuidString, effect.status.rawValue]
+        for (offset, value) in expected.enumerated() {
+            guard let bytes = sqlite3_column_text(statement, Int32(offset + 1)), String(cString: bytes) == value else {
+                throw CoincideError("The workspace outbox contains inconsistent data.")
+            }
+        }
+        return effect
+    }
+    private func validateLease(_ duration: TimeInterval, now: Date) throws {
+        guard duration.isFinite, duration > 0, now.addingTimeInterval(duration).timeIntervalSince1970.isFinite else {
+            throw CoincideError("An effect lease must have a positive, finite duration.")
+        }
+    }
+    private func effectTransaction<T>(_ operation: () throws -> T) throws -> T {
+        try execute("BEGIN IMMEDIATE")
+        do { let result = try operation(); try execute("COMMIT"); return result }
+        catch { try? execute("ROLLBACK"); throw error }
     }
 }

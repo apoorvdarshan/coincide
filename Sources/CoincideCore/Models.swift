@@ -111,7 +111,7 @@ public struct ProviderModel: Identifiable, Sendable, Equatable {
     public init(id: String, name: String) { self.id = id; self.name = name }
 }
 
-public struct ApprovalRequest: Identifiable, Sendable {
+public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var id: JSONValue
     public var method: String
     public var params: JSONValue

@@ -1,5 +1,23 @@
 # Validation record
 
+## 2026-10-22 — transactional provider outbox foundation
+
+- `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test`: all 33 tests passed
+  across core (29) and terminal (4). New tests verify atomic effect/intent rollback,
+  logical command retries after newer state commits, concurrent claims, owner and
+  expiry fencing, lease renewal, failure handling, and cancellation after process
+  loss. Expired process-bound effects are not automatically reclaimed or replayed.
+- Turn-start, interrupt, and approval/answer intents have typed Swift payloads.
+  Turn configuration excludes transcript history and credentials. Pending effects
+  commit with the journal, projection, command receipt, and audit marker.
+- Native development packaging/launch and strict signature verification passed.
+  Canonical JSON comparison confirmed that adding the outbox tables left both
+  existing conversations and all 14 messages unchanged.
+
+This is the durable outbox API and its failure/ownership contract. The desktop
+still dispatches provider actions directly after persistence; the execution
+worker, normalized decisions, and queued-message UI are not yet wired in.
+
 ## 2026-10-21 — replayable workspace journal
 
 - `COINCIDE_LIVE_CLAUDE=1 COINCIDE_LIVE_CODEX=1 swift test`: all 29 tests passed

@@ -132,3 +132,82 @@ private func sql(_ url: URL, _ sql: String, data: Data? = nil) throws {
     #expect(try await second.load() == WorkspaceSnapshot())
     #expect(try await second.journalEventCount() == 0)
 }
+
+@Test func outboxCommitAndLogicalCommandRetryDoNotDuplicateActions() async throws {
+    let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
+    let database = try WorkspaceDatabase(url: root.appendingPathComponent("workspace.sqlite"))
+    let snapshot = journalFixture(root), command = UUID(), payload = Data("submit this exact turn".utf8)
+    let pending = PendingWorkspaceEffect(request: .providerStart(threadID: snapshot.threads[0].id, runID: command,
+        configuration: .init(thread: snapshot.threads[0]), prompt: "Fixture prompt"))
+    let receipt = try await database.commit(snapshot, event: "turn.requested", commandID: command, effects: [pending], deduplicationPayload: payload)
+    var newer = snapshot; newer.threads[0].title = "A newer title"
+    try await database.save(newer, event: "thread.renamed")
+    let duplicate = try await database.commit(snapshot, event: "turn.requested", commandID: command, effects: [pending], deduplicationPayload: payload)
+    #expect(duplicate == receipt)
+    #expect(try await database.receipt(command, matching: payload) == receipt)
+    await #expect(throws: (any Error).self) { try await database.receipt(command, matching: Data("different command".utf8)) }
+    #expect(try await database.load() == newer)
+    let effects = try await database.effects(commandID: command)
+    #expect(effects.count == 1 && effects[0].id == pending.id && effects[0].status == .pending)
+}
+
+@Test func outboxClaimsAndLeaseFencesRejectDuplicateOwnership() async throws {
+    let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("workspace.sqlite"), snapshot = journalFixture(root)
+    let first = try WorkspaceDatabase(url: url), second = try WorkspaceDatabase(url: url)
+    let command = UUID(), workerA = UUID(), workerB = UUID(), now = Date()
+    let actions = (0..<2).map { _ in PendingWorkspaceEffect(request: .providerInterrupt(threadID: snapshot.threads[0].id, runID: UUID())) }
+    _ = try await first.commit(snapshot, event: "fixture", commandID: command, effects: actions)
+    async let a = first.claimNextEffect(workerID: workerA, leaseDuration: 60, now: now)
+    async let b = second.claimNextEffect(workerID: workerB, leaseDuration: 60, now: now)
+    let results = try await (a, b)
+    let one = try #require(results.0), two = try #require(results.1)
+    #expect(one.id != two.id && one.attemptCount == 1 && two.attemptCount == 1)
+    #expect(try await first.claimNextEffect(workerID: UUID(), now: now) == nil)
+    #expect(try await first.renewEffectLease(one.id, workerID: workerB, now: now) == false)
+    #expect(try await first.settleEffect(one.id, workerID: workerB, now: now) == false)
+    #expect(try await first.renewEffectLease(one.id, workerID: workerA, leaseDuration: 120, now: now.addingTimeInterval(1)))
+    #expect(try await first.settleEffect(one.id, workerID: workerA, now: now.addingTimeInterval(2)))
+    #expect(try await first.settleEffect(one.id, workerID: workerA, now: now.addingTimeInterval(3)) == false)
+    let expired = now.addingTimeInterval(1_000)
+    #expect(try await second.renewEffectLease(two.id, workerID: workerB, now: expired) == false)
+    #expect(try await second.settleEffect(two.id, workerID: workerB, now: expired) == false)
+    #expect(try await second.claimNextEffect(workerID: UUID(), now: expired) == nil)
+    #expect(try await second.cancelEffectsAfterProcessLoss(now: expired) == [two.id])
+    #expect(try await first.effects().map(\.status).filter { $0 == .succeeded }.count == 1)
+}
+
+@Test func outboxRollsBackWithIntentAndCancelsAfterRuntimeLoss() async throws {
+    let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("workspace.sqlite"), before = journalFixture(root)
+    let database = try WorkspaceDatabase(url: url), command = UUID()
+    try await database.save(before, event: "thread.created")
+    let count = try await database.journalEventCount()
+    var after = before; after.threads[0].state = .running
+    let pending = PendingWorkspaceEffect(request: .providerInterrupt(threadID: before.threads[0].id, runID: UUID()))
+    try sql(url, "CREATE TRIGGER fail_audit BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT,'test interruption'); END")
+    await #expect(throws: (any Error).self) { try await database.commit(after, event: "fixture", commandID: command, effects: [pending]) }
+    #expect(try await database.effects().isEmpty)
+    #expect(try await database.receipt(command) == nil)
+    #expect(try await database.journalEventCount() == count)
+    #expect(try await database.load() == before)
+    try sql(url, "DROP TRIGGER fail_audit")
+    _ = try await database.commit(after, event: "fixture", commandID: command, effects: [pending])
+    let reopened = try WorkspaceDatabase(url: url)
+    #expect(try await reopened.cancelEffectsAfterProcessLoss() == [pending.id])
+    #expect(try await reopened.effects().first?.status == .cancelled)
+    #expect(try await reopened.claimNextEffect(workerID: UUID()) == nil)
+}
+
+@Test func outboxRejectsInvalidLeasesAndDoesNotRetryProviderFailures() async throws {
+    let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
+    let database = try WorkspaceDatabase(url: root.appendingPathComponent("workspace.sqlite")), snapshot = journalFixture(root)
+    let pending = PendingWorkspaceEffect(request: .providerInterrupt(threadID: snapshot.threads[0].id, runID: UUID()))
+    _ = try await database.commit(snapshot, event: "fixture", commandID: UUID(), effects: [pending])
+    await #expect(throws: (any Error).self) { try await database.claimNextEffect(workerID: UUID(), leaseDuration: -.infinity) }
+    let worker = UUID(), effect = try #require(try await database.claimNextEffect(workerID: worker))
+    #expect(try await database.settleEffect(effect.id, workerID: worker, error: "Fixture provider failed"))
+    let failed = try #require(try await database.effects().first)
+    #expect(failed.status == .failed && failed.leaseOwner == nil && failed.lastError == "Fixture provider failed")
+    #expect(try await database.claimNextEffect(workerID: UUID()) == nil)
+}

@@ -22,8 +22,9 @@ must each be mapped and verified before declaring parity.
   selection, and persisted conversation. Persistence commits versioned entity and
   message mutations, the cached projection, a command receipt, and an audit marker
   together. Legacy snapshots are imported once and projections can be rebuilt.
-  The normalized command-decision engine and transactional effect outbox are
-  still pending; this is not yet equivalent to upstream's orchestration.
+  Provider effects can join that transaction in a leased, fenced outbox. The
+  execution worker and normalized command-decision engine still need to replace
+  the desktop's direct dispatch path; this is not yet upstream orchestration parity.
 - Default permission mode is supervised. Full access is available as an explicit
   per-thread choice. Unsupported interactive provider requests fail explicitly.
 
@@ -35,7 +36,7 @@ must each be mapped and verified before declaring parity.
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Not implemented | Cursor, Grok, OpenCode, Antigravity, Pi, Muse, ACP registry and custom providers |
-| Durable orchestration | Replayable SQLite journal, atomic projections/receipts/audit, explicit command-ID deduplication and revision checks, legacy migration and interrupted-run recovery | Normalized command decisions, transactional effect outbox/worker, queued turns, provider recovery, checkpoints/finalization, incremental projection storage/performance |
+| Durable orchestration | Replayable SQLite journal, atomic projections/receipts/audit/outbox, command-ID deduplication and revision checks, effect leases/fencing and process-loss cancellation, legacy migration | Normalized decisions and execution-worker integration, queued turns, complete provider recovery, checkpoints/finalization, incremental projection storage/performance |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, inline Markdown, tool/reasoning disclosure, copy, Enter/Shift-Enter | Full Markdown/code/math, citations, attachments, slash/skill/file pickers, plans, steering |
 | Git/workspaces | Status, staged/unstaged diff, stage/unstage, commit, branches, worktree creation | Checkout/clone, pull/push, PRs/stacks/multiple hosts, checkpoints/revert, worktree lifecycle/setup |
 | Files | Browse/read/edit UTF-8 with conflict detection and workspace path checks | Search/ignore support, large/binary files, filesystem watching, editor integration |
