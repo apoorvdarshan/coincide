@@ -69,6 +69,14 @@ chosen model and permissions, and can be edited or removed before it starts.
 **Stop** interrupts the current turn and holds the queue. Use **Resume Queue** to
 continue; restarting the app also holds unfinished work rather than resending it.
 
+Click a project heading to collapse or expand it; its selected conversation stays
+visible. Right-click the heading to rename the project while keeping its folder
+path. The sidebar sort menu offers **Last user message** (including queued
+messages), **Created at** (the newest conversation in each project), and **Manual**.
+Manual mode supports dragging projects and Move Up/Down controls. Switching sort
+modes preserves your saved manual order. Archived conversations do not determine
+project activity or creation ranking.
+
 Use **+** in the composer to attach files, or paste/drop local files and images.
 Attachments stay with drafts, queued turns, and sent messages across restarts.
 Image previews include copy, save, and open controls. Codex and Claude receive

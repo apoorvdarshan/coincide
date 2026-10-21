@@ -1,5 +1,49 @@
 # Validation record
 
+## 2026-10-22 — persistent native project organization
+
+- Added native project collapse/expand, display-name editing, a project-sort menu,
+  and Manual drag/context-menu ordering. Collapse retains the selected eligible
+  conversation; existing search/archive filters still apply. It does not alter
+  drafts, queues, provider connections, or running turns. Rename preserves project
+  and thread identities, checkout paths, clone state, and canonical manual order.
+- Last user message is the default sort. Ranking includes accepted queued input
+  before provider execution, and later assistant/tool activity cannot outrank an
+  existing user-input date. Created at ranks by the newest nonarchived conversation
+  in each project. Empty projects use their available project timestamps; legacy
+  projects without dates retain their relative canonical order. Dated ties use
+  localized title and stable identity. Search and archived-view filters do not
+  rewrite the activity score.
+- Switching sort modes retains the exact saved Manual order. Moves require
+  Manual mode and the current expected project order; stale moves are rejected
+  without partial reordering. Native multi-row moves commit one complete order.
+  Preferences and rename/order mutations use journal events with command receipts
+  and transaction rollback. Default-expanded/default-activity preferences and
+  absent legacy project dates decode without synthetic migration timestamps.
+  Storage version 8 prevents older binaries from dropping the new state.
+- `COINCIDE_RENDER_ORGANIZATION=1 swift test --no-parallel` passed all 197 tests:
+  166 core, 4 terminal, 13 Markdown, and 14 native UI/store tests. Coverage includes
+  user/assistant/queued dates, newly created threads, archived exclusion, invalid
+  dates, stable fallbacks/ties, Manual round trips, multiple-index moves, rename
+  validation, deduplication, concurrent/stale commands, malformed preferences,
+  atomic rollback, restart, projection rebuild, and storage 7 → 8 compatibility.
+  A gated provider regression confirms queueing changes activity ranking while
+  leaving the active run and transcript intact, then drains that queue normally.
+- Native packaging/launch, strict deep signature verification, and bundled-font
+  runtime verification passed. A private backup preceded the actual storage
+  migration from 7 to 8. Canonical JSON comparison confirmed the existing
+  3 conversations and 25 messages were unchanged, with old project dates unset.
+- Offscreen AppKit captures at 280 and 340 points were inspected in light/dark
+  appearance. Headers, layout, and row presence are visible. The light selected
+  row appears black, and some SF Symbols stay dark. These captures do not establish
+  whether that is a capture limitation or a live rendering issue. Live contrast,
+  pointer drag behavior, menus, and keyboard interaction remain
+  unverified while the desktop is locked; no production palette workaround was
+  added to conceal that verification limit.
+
+Logical checkout grouping, project removal/cleanup, and the other remaining areas
+in `PORTING.md` are still required for full T3 Code parity.
+
 ## 2026-10-22 — managed native New Project
 
 - Added a focused-window New Project sheet and File/sidebar actions. Creation

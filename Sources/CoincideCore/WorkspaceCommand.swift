@@ -33,6 +33,11 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case addProject(WorkspaceProject)
     case addProjectWithThread(project: WorkspaceProject, thread: CodingThread)
+    case renameProject(projectID: UUID, title: String)
+    case setProjectExpanded(projectID: UUID, expanded: Bool)
+    case setProjectSortMode(ProjectSortMode)
+    case moveProject(projectID: UUID, before: UUID?, expectedOrder: [UUID])
+    case reorderProjects(projectIDs: [UUID], expectedOrder: [UUID])
     case createThread(CodingThread)
     case editThread(UUID, ThreadEdit)
     case submit(threadID: UUID, text: String)
@@ -70,6 +75,42 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
+        case .client(.renameProject(let projectID, let requested)):
+            let title: String
+            do { title = try ManagedProjectService.validatedName(requested) }
+            catch { throw WorkspaceCommandError(error.localizedDescription) }
+            guard let index = decision.snapshot.projects.firstIndex(where: { $0.id == projectID }) else { throw WorkspaceCommandError("This project is no longer available.") }
+            if decision.snapshot.projects[index].name != title {
+                decision.snapshot.projects[index].name = title
+                decision.snapshot.projects[index].updatedAt = now
+            }
+        case .client(.setProjectExpanded(let projectID, let expanded)):
+            guard decision.snapshot.projects.contains(where: { $0.id == projectID }) else { throw WorkspaceCommandError("This project is no longer available.") }
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            if decision.snapshot.isProjectExpanded(projectID) != expanded {
+                preferences.collapsedProjectIDs.removeAll { $0 == projectID }
+                if !expanded { preferences.collapsedProjectIDs.append(projectID) }
+                preferences.collapsedProjectIDs.sort { $0.uuidString < $1.uuidString }
+                decision.snapshot.sidebarPreferences = preferences
+            }
+        case .client(.setProjectSortMode(let mode)):
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            if preferences.sortMode != mode {
+                preferences.sortMode = mode; decision.snapshot.sidebarPreferences = preferences
+            }
+        case .client(.moveProject(let projectID, let before, let expected)):
+            try decision.validateProjectOrder(expected)
+            guard expected.contains(projectID), before.map({ expected.contains($0) }) ?? true else { throw WorkspaceCommandError("The project being moved is no longer available.") }
+            if before != projectID {
+                var order = expected.filter { $0 != projectID }
+                let index = before.flatMap { order.firstIndex(of: $0) } ?? order.endIndex
+                order.insert(projectID, at: index)
+                decision.reorderProjects(order)
+            }
+        case .client(.reorderProjects(let order, let expected)):
+            try decision.validateProjectOrder(expected)
+            guard order.count == expected.count, Set(order) == Set(expected) else { throw WorkspaceCommandError("Move only the projects currently shown in Manual order.") }
+            decision.reorderProjects(order)
         case .client(.addProjectWithThread(let project, let thread)):
             guard project.clone == nil, thread.projectID == project.id, thread.workspacePath == project.path,
                   !decision.snapshot.projects.contains(where: { $0.id == project.id || $0.path == project.path }) else {
@@ -220,7 +261,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .addProjectWithThread, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
+            case .addProject, .addProjectWithThread, .renameProject, .setProjectExpanded, .setProjectSortMode, .moveProject, .reorderProjects, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -254,6 +295,14 @@ struct WorkspaceDecision: Sendable {
         }
         try WorkspaceJournal.validate(decision.snapshot)
         return decision
+    }
+    private func validateProjectOrder(_ expected: [UUID]) throws {
+        guard snapshot.effectiveSidebarPreferences.sortMode == .manual else { throw WorkspaceCommandError("Choose Manual sorting before moving projects.") }
+        guard snapshot.projects.map(\.id) == expected else { throw WorkspaceCommandError("The project order changed. Try moving the project again.") }
+    }
+    private mutating func reorderProjects(_ order: [UUID]) {
+        let projects = Dictionary(uniqueKeysWithValues: snapshot.projects.map { ($0.id, $0) })
+        snapshot.projects = order.compactMap { projects[$0] }
     }
 
     private mutating func start(_ queued: QueuedTurn, in thread: inout CodingThread, now: Date) {
@@ -417,7 +466,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .addProjectWithThread, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
+        case .addProject, .addProjectWithThread, .renameProject, .setProjectExpanded, .setProjectSortMode, .moveProject, .reorderProjects, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
         case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

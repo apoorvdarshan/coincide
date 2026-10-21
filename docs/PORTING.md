@@ -47,7 +47,7 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 7 protects these fields
+  hold it for explicit resumption. Database storage version 8 protects these fields
   from older binaries. No exactly-once provider execution is claimed.
 - Background clones are project-owned outbox actions. The project and conversation
   appear as soon as their intent is saved; submitted messages retain their captured
@@ -62,6 +62,13 @@ must each be mapped and verified before declaring parity.
   the user's Git branch, identity, hooks, and signing settings. Initial-commit
   failure is a warning with a usable repository. The prepared project and its
   first conversation register atomically; interrupted setup preserves its folder.
+- Sidebar organization persists through the same journal. Canonical project order
+  is retained for Manual mode, while activity/creation order is derived from
+  nonarchived conversations. Accepted queued input counts as user activity;
+  assistant output cannot outrank existing user input. Collapsed projects retain
+  their selected eligible conversation, and display renames preserve checkout
+  paths. New projects have creation/activity dates; legacy unknown dates remain
+  unset rather than being assigned synthetic migration timestamps.
 - Attachment bytes live in private, immutable app-owned files. Drafts, queued
   turns, messages, and outbox entries retain typed references. Images are normalized
   with ImageIO as needed and delivered through each provider's native image input;
@@ -74,7 +81,7 @@ must each be mapped and verified before declaring parity.
 
 | Area | Implemented now | Remaining work for parity |
 | --- | --- | --- |
-| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, thread search/rename/pin/archive, settings | Project rename/removal/collapse, groups, sorting/reorder, snooze/settle, undo, scratch projects, import/migration |
+| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, project display renaming/collapse, persistent manual ordering and activity/thread-creation sorting, thread search/rename/pin/archive, settings | Project removal, grouped logical checkouts, snooze/settle, undo, scratch projects, import/migration |
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |

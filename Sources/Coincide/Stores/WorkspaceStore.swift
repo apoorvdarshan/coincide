@@ -92,6 +92,32 @@ final class WorkspaceStore {
             $0.isArchived == showArchived && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.messages.contains { $0.text.localizedCaseInsensitiveContains(search) })
         }.sorted { $0.isPinned != $1.isPinned ? $0.isPinned : $0.updatedAt > $1.updatedAt }
     }
+    var orderedProjects: [WorkspaceProject] { snapshot.orderedProjects }
+    var projectSortMode: ProjectSortMode { snapshot.effectiveSidebarPreferences.sortMode }
+    func isProjectExpanded(_ id: UUID) -> Bool { snapshot.isProjectExpanded(id) }
+    func sidebarThreads(projectID: UUID) -> [CodingThread] {
+        let threads = visibleThreads.filter { $0.projectID == projectID }
+        return isProjectExpanded(projectID) ? threads : threads.filter { $0.id == selectedThreadID }
+    }
+    func renameProject(_ id: UUID, title: String) { sendCommand(.renameProject(projectID: id, title: title)) }
+    func setProjectExpanded(_ id: UUID, expanded: Bool) { sendCommand(.setProjectExpanded(projectID: id, expanded: expanded)) }
+    func setProjectSortMode(_ mode: ProjectSortMode) { sendCommand(.setProjectSortMode(mode)) }
+    func moveProject(_ id: UUID, by offset: Int) {
+        let order = snapshot.projects.map(\.id)
+        guard projectSortMode == .manual, let index = order.firstIndex(of: id), [-1, 1].contains(offset), order.indices.contains(index + offset) else { return }
+        var next = order; next.remove(at: index); next.insert(id, at: index + offset)
+        sendCommand(.reorderProjects(projectIDs: next, expectedOrder: order))
+    }
+    func moveProjects(fromOffsets offsets: IndexSet, toOffset destination: Int) {
+        let order = snapshot.projects.map(\.id)
+        guard projectSortMode == .manual, !offsets.isEmpty,
+              offsets.allSatisfy({ order.indices.contains($0) }), (0...order.count).contains(destination) else { return }
+        let moving = offsets.map { order[$0] }
+        var next = order.enumerated().filter { !offsets.contains($0.offset) }.map(\.element)
+        let insertion = destination - offsets.filter { $0 < destination }.count
+        next.insert(contentsOf: moving, at: insertion)
+        sendCommand(.reorderProjects(projectIDs: next, expectedOrder: order))
+    }
     func load() async {
         if let loadingTask { await loadingTask.value; return }
         let task = Task<Void, Never> { await self.loadRuntime() }

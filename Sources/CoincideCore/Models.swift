@@ -5,10 +5,13 @@ public struct WorkspaceProject: Codable, Identifiable, Sendable, Equatable {
     public var name: String
     public var path: String
     public var clone: ProjectCloneState?
+    public var createdAt: Date?
+    public var updatedAt: Date?
     public init(path: String) {
         self.id = UUID()
         let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
         self.path = url.path; self.name = url.lastPathComponent
+        let now = Date(); self.createdAt = now; self.updatedAt = now
     }
 }
 
@@ -131,14 +134,16 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var projects: [WorkspaceProject] = []
     public var threads: [CodingThread] = []
     public var acpAgents: [ACPAgentConfiguration] = []
+    public var sidebarPreferences: SidebarPreferences?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         projects = try values.decodeIfPresent([WorkspaceProject].self, forKey: .projects) ?? []
         threads = try values.decodeIfPresent([CodingThread].self, forKey: .threads) ?? []
         acpAgents = try values.decodeIfPresent([ACPAgentConfiguration].self, forKey: .acpAgents) ?? []
+        sidebarPreferences = try values.decodeIfPresent(SidebarPreferences.self, forKey: .sidebarPreferences)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
