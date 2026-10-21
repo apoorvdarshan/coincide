@@ -43,6 +43,11 @@ public final class ProcessChannel: @unchecked Sendable {
     }
 
     public func write(_ data: Data) async throws {
+        try await writePayload { data }
+    }
+    /// Serialize large payloads on the same non-cooperative queue as pipe I/O,
+    /// preserving frame order while protocol actors can process cancellation.
+    func writePayload(_ makeData: @escaping @Sendable () throws -> Data) async throws {
         let pending = PendingProcessWrite()
         try await withTaskCancellationHandler {
             try Task.checkCancellation()
@@ -51,7 +56,11 @@ public final class ProcessChannel: @unchecked Sendable {
                     guard pending.install(continuation) else { return }
                     writer.async {
                         guard pending.begin() else { return }
-                        do { try self.writeBytes(data); pending.finish(.success(())) }
+                        do {
+                            let data = try makeData()
+                            guard pending.beginWriting() else { return }
+                            try self.writeBytes(data); pending.finish(.success(()))
+                        }
                         catch { pending.finish(.failure(error)) }
                     }
                 }
@@ -146,6 +155,10 @@ private final class PendingProcessWrite: @unchecked Sendable {
         self.continuation = continuation; lock.unlock(); return true
     }
     func begin() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !finished
+    }
+    func beginWriting() -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard !finished else { return false }; started = true; return true
     }

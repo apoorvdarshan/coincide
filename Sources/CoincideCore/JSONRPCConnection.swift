@@ -116,7 +116,9 @@ public actor JSONRPCConnection {
     }
     private func send(_ value: JSONValue) async throws {
         guard !ended else { throw CoincideError("The provider connection is closed.") }
-        var data = try JSONEncoder().encode(value); data.append(10); try await channel.write(data)
+        try await channel.writePayload {
+            var data = try JSONEncoder().encode(value); data.append(10); return data
+        }
     }
     private func writeFinished(_ id: JSONValue) { writes.removeValue(forKey: id) }
     private func consume(_ event: ProcessEvent) {

@@ -35,6 +35,12 @@
   whole-frame concurrent writes and cancellation before a write starts. The
   previously crashing regression passed, as did the complete suite and real
   Codex/Claude image/file turns after the fix.
+- GitHub's slower runner then exposed an additional responsiveness failure while
+  a large JSON payload was being serialized. Encoding now runs on the serial input
+  queue, outside the protocol actor and Swift's cooperative executor. Cancellation
+  before pipe writing begins leaves the connection intact. The deadline assertions
+  remain unchanged; the full 74-test suite and both live attachment cases passed
+  again locally after this correction.
 - Native packaging, launch, strict signature verification, and bundled-font
   runtime verification passed. A private backup preceded migration of the real
   workspace from storage version 2 to 3. Canonical comparison, excluding only new
