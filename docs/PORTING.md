@@ -57,6 +57,11 @@ must each be mapped and verified before declaring parity.
   exclusive, and retry checks local completion evidence before creating another
   attempt. Coincide preserves previous staging folders; Git itself may remove
   files when a clone fails. Partial network transfers are not resumed.
+- Managed New Project creates a distinct folder under the app's `Projects` data
+  directory, initializes Git, and generates a starter README/icon. It respects
+  the user's Git branch, identity, hooks, and signing settings. Initial-commit
+  failure is a warning with a usable repository. The prepared project and its
+  first conversation register atomically; interrupted setup preserves its folder.
 - Attachment bytes live in private, immutable app-owned files. Drafts, queued
   turns, messages, and outbox entries retain typed references. Images are normalized
   with ImageIO as needed and delivered through each provider's native image input;
@@ -69,7 +74,7 @@ must each be mapped and verified before declaring parity.
 
 | Area | Implemented now | Remaining work for parity |
 | --- | --- | --- |
-| Native workspace | Projects, new threads, search, rename, pin, archive, settings | Groups, sorting/reorder, snooze/settle, undo, scratch projects, import/migration |
+| Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, thread search/rename/pin/archive, settings | Project rename/removal/collapse, groups, sorting/reorder, snooze/settle, undo, scratch projects, import/migration |
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |

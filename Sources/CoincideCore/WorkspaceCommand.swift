@@ -32,6 +32,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case addProject(WorkspaceProject)
+    case addProjectWithThread(project: WorkspaceProject, thread: CodingThread)
     case createThread(CodingThread)
     case editThread(UUID, ThreadEdit)
     case submit(threadID: UUID, text: String)
@@ -69,6 +70,13 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
+        case .client(.addProjectWithThread(let project, let thread)):
+            guard project.clone == nil, thread.projectID == project.id, thread.workspacePath == project.path,
+                  !decision.snapshot.projects.contains(where: { $0.id == project.id || $0.path == project.path }) else {
+                throw WorkspaceCommandError("This project is already open, or its first conversation uses another workspace.")
+            }
+            decision.snapshot.projects.append(project)
+            decision = try Self.make(.client(.createThread(thread)), id: id, snapshot: decision.snapshot, now: now)
         case .client(.startProjectClone(var project, let thread)):
             guard let submitted = project.clone else { throw WorkspaceCommandError("Choose a repository to clone.") }
             do { try submitted.plan.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
@@ -212,7 +220,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
+            case .addProject, .addProjectWithThread, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -409,7 +417,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
+        case .addProject, .addProjectWithThread, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
         case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

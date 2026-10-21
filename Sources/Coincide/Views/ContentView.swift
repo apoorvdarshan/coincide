@@ -7,9 +7,10 @@ struct ContentView: View {
     @State private var terminals = TerminalWorkspaceStore()
     @State private var terminalVisible = false
     @State private var cloneSheetPresented = false
+    @State private var newProjectSheetPresented = false
     var body: some View {
         NavigationSplitView {
-            SidebarView(store: store, onClone: { cloneSheetPresented = true })
+            SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true })
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
         } detail: {
             if let thread = store.selectedThread {
@@ -32,6 +33,7 @@ struct ContentView: View {
                 } description: {
                     Text("Your projects and coding agents, in a native Mac workspace.")
                 } actions: {
+                    Button("New Project…") { newProjectSheetPresented = true }
                     Button("Add Project…") { store.addProject() }
                     if !store.snapshot.projects.isEmpty { Button("New Thread") { store.newThread() } }
                 }
@@ -49,7 +51,9 @@ struct ContentView: View {
             Button("OK") { store.errorMessage = nil }
         } message: { Text(store.errorMessage ?? "") }
         .sheet(isPresented: $cloneSheetPresented) { CloneRepositorySheet(store: store) }
-        .focusedSceneValue(\.cloneRepositoryPresentation, $cloneSheetPresented)
+        .sheet(isPresented: $newProjectSheetPresented) { NewProjectSheet(store: store) }
+        .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented ? nil : $cloneSheetPresented)
+        .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented ? nil : $newProjectSheetPresented)
         .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .disabled(store.isLoading)

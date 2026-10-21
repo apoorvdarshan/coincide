@@ -12,6 +12,9 @@ struct FileNavigation: Equatable {
 
 @MainActor @Observable
 final class WorkspaceStore {
+    typealias ProjectCreator = @Sendable (String, URL) async throws -> ManagedProjectCreationResult
+    let managedProjectsRoot: URL
+    private let projectCreator: ProjectCreator
     var snapshot = WorkspaceSnapshot()
     var selectedThreadID: UUID?
     var selectedProjectID: UUID?
@@ -36,10 +39,13 @@ final class WorkspaceStore {
     private var attachmentImportTasks: [UUID: Task<Void, Never>] = [:]
     private var gitInspectors: [String: GitInspectorStore] = [:]
     private var retryingProjectClones: Set<UUID> = []
+    private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
     private var lastSequence: Int64 = -1
     private var terminating = false
 
     init(databaseURL: URL? = nil) {
+        managedProjectsRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Projects", isDirectory: true)
+        projectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }
         do {
             if let databaseURL { engine = try WorkspaceEngine(url: databaseURL); return }
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -47,7 +53,17 @@ final class WorkspaceStore {
             engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"))
         } catch { errorMessage = error.localizedDescription }
     }
-    init(engine: WorkspaceEngine) { self.engine = engine }
+    init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil,
+         projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
+        self.engine = engine
+        self.managedProjectsRoot = managedProjectsRoot ?? Self.applicationDataRoot.appendingPathComponent("Projects", isDirectory: true)
+        self.projectCreator = projectCreator
+    }
+    private static var applicationDataRoot: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+        return support.appendingPathComponent("Coincide", isDirectory: true)
+    }
     func thread(_ id: UUID) -> CodingThread? {
         guard var value = snapshot.threads.first(where: { $0.id == id }) else { return nil }
         if let draft = draftOverrides[id] { value.draft = draft }
@@ -142,6 +158,24 @@ final class WorkspaceStore {
         }
     }
     func workspaceReady(for thread: CodingThread) -> Bool { snapshot.workspaceReady(for: thread) }
+    func createManagedProject(name: String) async throws -> ManagedProjectCreationResult {
+        guard !terminating, engine != nil else { throw CancellationError() }
+        let name = try ManagedProjectService.validatedName(name)
+        let root = managedProjectsRoot, creator = projectCreator, id = UUID()
+        let task = Task.detached(priority: .userInitiated) { try await creator(name, root) }
+        projectCreationTasks[id] = task
+        defer { projectCreationTasks.removeValue(forKey: id) }
+        let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        try Task.checkCancellation()
+        guard !terminating else { throw CancellationError() }
+        let thread = CodingThread(project: result.project)
+        do { _ = try await enqueue(.addProjectWithThread(project: result.project, thread: thread)).value }
+        catch {
+            throw CoincideError("The project files are preserved at \(result.project.path), but the project could not be opened. \(GitService.redactURLs(error.localizedDescription))")
+        }
+        selectedProjectID = result.project.id; selectedThreadID = thread.id; showArchived = false
+        return result
+    }
     func cloneRepository(source: String, destination: URL) async throws {
         let plan = try GitClonePlan.prepare(source: source, destination: destination)
         var project = WorkspaceProject(path: plan.destinationPath); project.clone = .init(plan: plan)
@@ -380,6 +414,9 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        let creations = Array(projectCreationTasks.values)
+        for task in creations { task.cancel() }
+        for task in creations { _ = await task.result }
         let inspectors = Array(gitInspectors.values)
         for model in inspectors { model.prepareForShutdown() }
         for model in inspectors { await model.shutdown() }

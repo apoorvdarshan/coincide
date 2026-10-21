@@ -34,6 +34,13 @@ Push use your existing Git credentials. A folder without Git can initialize a
 repository; staging and unstaging also work before its first commit. A new thread
 can create a separate Git worktree before its first message.
 
+Use **File → New Project** (⇧⌘N), or the sidebar's project menu, to create a
+project in `~/Library/Application Support/Coincide/Projects/`. Coincide makes a
+new folder, initializes Git using your configured default branch (or `main`),
+adds a starter README and icon, and opens its first conversation. Existing names
+receive a numeric suffix. If Git cannot make the initial commit, the project
+stays ready and a notice explains how to commit its staged starter files.
+
 Choose **Clone Repository** from the sidebar's project menu or **File → Clone
 Repository** (⇧⌘O). Choose a new destination folder and keep writing while Git
 downloads in the background. Submitted messages wait for the checkout, then run

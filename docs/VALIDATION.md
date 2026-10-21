@@ -1,5 +1,53 @@
 # Validation record
 
+## 2026-10-22 — managed native New Project
+
+- Added a focused-window New Project sheet and File/sidebar actions. Creation
+  runs off the main actor, while existing workspace commands remain usable.
+  A single journal command saves the prepared project and first conversation
+  together; invalid starters, duplicate paths/identities, and command collisions
+  leave the existing workspace intact. The first conversation uses the created
+  folder, and saved titles/drafts survive restart and projection rebuild.
+- Managed folders live under Coincide's application-data `Projects` directory.
+  Folder names follow the pinned upstream NFKD/ASCII slug rules, 64-character
+  truncation, reserved-name suffixes, and up to 100 atomically claimed collision
+  candidates. Display names remain intact, with the upstream 200-UTF-16-unit limit.
+  Unicode line separators are rejected; emoji ZWJ sequences remain valid.
+  Existing files, directories, and symlinks are preserved.
+- Git initialization respects `init.defaultBranch`, falling back to `main`.
+  Coincide generates its own README and SVG icon, force-stages those two paths
+  despite global ignore rules, then attempts `Initial commit`. Git identity,
+  hooks, and signing settings are retained. Missing identity, failed signing or
+  hooks, and commit timeout produce a visible Project Created warning with a
+  usable repository; they do not offer a second Create action for that result.
+- Git mutations explicitly target the new `.git` and worktree, and inherited
+  Git directory/index/config overrides cannot redirect staging into another
+  repository. Diagnostics are bounded and URL credentials are redacted. Setup
+  failures report the preserved folder for recovery. Shutdown cancels owned
+  creation tasks before draining accepted workspace commands; a cancelled setup
+  never registers an unfinished project. Cancellation after registration has been
+  accepted does not undo a saved project or delete its files.
+- `swift test --no-parallel` passed all 172 tests: 143 core, 4 terminal,
+  13 Markdown, and 12 native UI/store tests. New real-Git fixtures use isolated
+  identity/global configuration and cover starter content/commit, configured
+  branches, global ignores, missing identity, signing/hook/timeout warnings,
+  collision exhaustion, concurrent claims, unsafe inherited Git context,
+  cancellation, and recovery paths. The cancellation fixture observes its hook
+  process exiting; it does not require a killed hook to write a final marker.
+  A store test opens the same folder during creation and confirms registration
+  refusal preserves the already-open project and prepared files.
+- Light/dark offscreen AppKit captures of the native sheet and commit-warning
+  content were inspected. Native packaging/launch, strict deep signature checks,
+  and bundled-font runtime verification passed. Storage remains at version 7;
+  canonical JSON comparison confirmed the existing 3 conversations and 25
+  messages were unchanged. Physical menu, keyboard, and sheet interaction still
+  need an unlocked desktop. Live signing-provider interaction and behavior under
+  an active same-user process replacing project directories remain unverified.
+  Timeout tests do not establish complete arbitrary hook-descendant cleanup.
+
+Project rename/removal, collapse, sorting/reorder, hosting/publishing, and other
+remaining work in `PORTING.md` are still required for full parity.
+
 ## 2026-10-22 — native background repository cloning
 
 - Added a native Clone Repository sheet, focused-window File command, sidebar

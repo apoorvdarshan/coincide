@@ -4,6 +4,7 @@ import SwiftUI
 struct SidebarView: View {
     @Bindable var store: WorkspaceStore
     let onClone: () -> Void
+    let onNewProject: () -> Void
     @State private var renaming: UUID?
     @State private var title = ""
     var body: some View {
@@ -51,6 +52,7 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Menu {
+                    Button("New Project…", action: onNewProject)
                     Button("Open Folder…") { store.addProject() }
                     Button("Clone Repository…", action: onClone)
                 } label: { Label("Add Project", systemImage: "folder.badge.plus") }
