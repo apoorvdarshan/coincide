@@ -1,6 +1,7 @@
 import Foundation
 
 public enum ACPConfigurationOptions {
+    public static func id(_ option: JSONValue) -> String? { option["configId"].string ?? option["id"].string }
     public static func values(_ option: JSONValue) -> [JSONValue] {
         (option["options"].array ?? []).flatMap { item in item["options"].array ?? [item] }
     }

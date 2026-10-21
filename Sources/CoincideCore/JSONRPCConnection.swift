@@ -33,9 +33,18 @@ public enum RPCEvent: Sendable {
     case request(id: JSONValue, method: String, params: JSONValue)
     case disconnected(String)
     case barrier(@Sendable () -> Void)
+    case callback(@Sendable () async -> Void)
 }
+public typealias RPCResponseHandler = @Sendable (Result<JSONValue, any Error>) async -> Void
 
 public enum StdioDialect: Sendable { case jsonRPC, jsonRPC2, claudeControl }
+
+public struct JSONRPCRemoteError: LocalizedError, Sendable {
+    public var code: Int?
+    public var message: String
+    public var data: JSONValue
+    public var errorDescription: String? { message }
+}
 
 public actor JSONRPCConnection {
     private let logger = Logger(subsystem: "com.apoorvdarshan.coincide", category: "ProviderTransport")
@@ -48,6 +57,7 @@ public actor JSONRPCConnection {
     private var timeouts: [JSONValue: Task<Void, Never>] = [:]
     private var writes: [JSONValue: Task<Void, Never>] = [:]
     private var barriers: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var responseHandlers: [JSONValue: RPCResponseHandler] = [:]
     private var nextID = 0
     private var decoder: NDJSONDecoder
     private var ended = false
@@ -69,7 +79,9 @@ public actor JSONRPCConnection {
             }
         }
     }
-    public func request(_ method: String, params: JSONValue = .object([:]), timeout: Duration = .seconds(30), onSent: (@Sendable () -> Void)? = nil) async throws -> JSONValue {
+    /// `onResponse` is delivered in protocol order through `RPCEvent.callback`.
+    /// Event consumers must await that callback before processing the next event.
+    public func request(_ method: String, params: JSONValue = .object([:]), timeout: Duration = .seconds(30), onRegistered: (@Sendable (JSONValue) -> Void)? = nil, onSent: (@Sendable () -> Void)? = nil, onResponse: RPCResponseHandler? = nil) async throws -> JSONValue {
         guard !ended else { throw CoincideError("The provider connection is closed.") }
         start(); nextID += 1
         logger.debug("Provider request started: \(method, privacy: .public)")
@@ -78,6 +90,8 @@ public actor JSONRPCConnection {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { response in
                 pending[id] = response
+                responseHandlers[id] = onResponse
+                onRegistered?(id)
                 let frame: JSONValue
                 if dialect == .claudeControl {
                     var request = params.object ?? [:]; request["subtype"] = .string(method)
@@ -176,18 +190,26 @@ public actor JSONRPCConnection {
             } else { continuation.yield(.notification(method: method, params: frame["params"])) }
         } else if frame.object?["id"] != nil {
             let id = frame["id"]
-            if frame.object?["error"] != nil { fail(id, error: CoincideError(frame["error"]["message"].string ?? "Provider request failed.")) }
+            if frame.object?["error"] != nil {
+                let value = frame["error"]
+                let code: Int? = if case .number(let n) = value["code"] { Int(exactly: n) } else { nil }
+                fail(id, error: JSONRPCRemoteError(code: code, message: value["message"].string ?? "Provider request failed.", data: value["data"]))
+            }
             else { resolve(id, result: frame["result"]) }
         }
     }
     private func resolve(_ id: JSONValue, result: JSONValue) {
         logger.debug("Provider request completed")
-        timeouts.removeValue(forKey: id)?.cancel(); pending.removeValue(forKey: id)?.resume(returning: result)
+        timeouts.removeValue(forKey: id)?.cancel()
+        if let handler = responseHandlers.removeValue(forKey: id) { continuation.yield(.callback { await handler(.success(result)) }) }
+        pending.removeValue(forKey: id)?.resume(returning: result)
         writes.removeValue(forKey: id) // A valid response must not cancel a completed write.
     }
     private func fail(_ id: JSONValue, error: any Error) {
         logger.debug("Provider request failed")
-        timeouts.removeValue(forKey: id)?.cancel(); pending.removeValue(forKey: id)?.resume(throwing: error)
+        timeouts.removeValue(forKey: id)?.cancel()
+        if let handler = responseHandlers.removeValue(forKey: id) { continuation.yield(.callback { await handler(.failure(error)) }) }
+        pending.removeValue(forKey: id)?.resume(throwing: error)
         writes.removeValue(forKey: id)?.cancel()
     }
     private func disconnect(_ message: String) {

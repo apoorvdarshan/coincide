@@ -37,9 +37,13 @@ Arguments are passed literally. Model discovery supports the agent's config
 options and older model lists; mode and other select options appear after session
 setup. Permission buttons preserve the choices the agent supplies. ACP agents
 enforce their own sandbox and use their own sign-in. Editing or removing a saved
-agent leaves existing conversations' saved invocations intact. ACP v2, managed
-registry installs, client-side filesystem/terminal delegation, and native agent
-authentication flows are still pending.
+agent leaves existing conversations' saved invocations intact. **Use ACP v2
+(experimental)** enables the current v2 draft with v1 fallback on the same
+connection. V2 supports typed configuration, user-message identity, foreground
+state updates, and independent background permissions/results. Rejected or
+unconfirmed submissions remain visible and are never automatically resent.
+Managed registry installs, client-side filesystem/terminal delegation, and native
+agent authentication flows are still pending.
 
 Send another message during a turn to queue it. Each queued message keeps its
 chosen model and permissions, and can be edited or removed before it starts.

@@ -17,6 +17,7 @@ public struct ActiveRun: Codable, Sendable, Equatable, Identifiable {
 public struct RuntimeRequest: Codable, Sendable, Equatable, Identifiable {
     public var request: ApprovalRequest
     public var responding = false
+    public var sessionScoped: Bool?
     public var id: JSONValue { request.id }
 }
 
@@ -25,6 +26,8 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case draft(String), pinned(Bool), archived(Bool), workspacePath(String)
     case acpAgent(ACPAgentConfiguration), agentMode(String?)
     case agentConfig(id: String, value: String?)
+    case agentConfiguration(id: String, value: JSONValue?)
+    case resetAgentOptions
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -75,7 +78,7 @@ struct WorkspaceDecision: Sendable {
             if thread.provider == .acp {
                 guard let agent = thread.acpAgent, decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
             }
-            var thread = thread; thread.runtimeID = nil; thread.runtimeRequests = []
+            var thread = thread; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil
             decision.snapshot.threads.insert(thread, at: 0)
         case .client(let action):
             guard let threadID = action.threadID, let index = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
@@ -92,24 +95,33 @@ struct WorkspaceDecision: Sendable {
                 case .agentConfig(let id, let value):
                     guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
                     var values = thread.agentConfigValues ?? [:]; values[id] = value; thread.agentConfigValues = values.isEmpty ? nil : values
+                case .agentConfiguration(let id, let value):
+                    guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
+                    if let value { guard value.string != nil || value == .bool(true) || value == .bool(false) else { throw WorkspaceCommandError("Choose a supported agent configuration value.") } }
+                    var values = thread.agentConfiguration ?? [:]; values[id] = value; thread.agentConfiguration = values.isEmpty ? nil : values
+                    thread.agentConfigValues?.removeValue(forKey: id)
+                case .resetAgentOptions:
+                    guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
+                    thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.agentModeID = nil; thread.model = ""
                 case .provider(let kind):
                     guard kind != .acp else { throw WorkspaceCommandError("Choose a configured ACP agent.") }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
-                    decision.closeRuntime = thread.id; thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil; thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
+                    decision.closeRuntime = thread.id; thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
                     guard decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Save this agent in Settings first.") }
                     decision.closeRuntime = thread.id; thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
                     thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
+                    thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value
                 case .pinned(let value): thread.isPinned = value
                 case .archived(let value):
                     guard !thread.isBusy else { throw WorkspaceCommandError("Stop the running turn before archiving this conversation.") }
                     thread.isArchived = value
-                    if value { thread.queuePaused = true; decision.closeRuntime = thread.id; thread.runtimeID = nil }
+                    if value { thread.queuePaused = true; decision.closeRuntime = thread.id; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil }
                 case .workspacePath(let path):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Change the workspace before sending the first message.") }
-                    thread.workspacePath = path; decision.closeRuntime = thread.id; thread.runtimeID = nil
+                    thread.workspacePath = path; decision.closeRuntime = thread.id; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
                 }
             case .submit(_, let text):
                 let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -130,9 +142,11 @@ struct WorkspaceDecision: Sendable {
                     decision.effects.append(.init(id: id, request: .providerInterrupt(threadID: thread.id, runID: run.id)))
                 }
             case .respond(_, let requestID, let response):
-                guard let run = thread.activeRun, !run.stopRequested, let i = thread.runtimeRequests.firstIndex(where: { $0.id == requestID }), !thread.runtimeRequests[i].responding else {
+                guard let i = thread.runtimeRequests.firstIndex(where: { $0.id == requestID }), !thread.runtimeRequests[i].responding else {
                     throw WorkspaceCommandError("This provider request is no longer awaiting a response.")
                 }
+                let sessionScoped = thread.runtimeRequests[i].sessionScoped == true
+                guard sessionScoped ? thread.runtimeID != nil : (thread.activeRun != nil && thread.activeRun?.stopRequested == false) else { throw WorkspaceCommandError("This provider request is no longer awaiting a response.") }
                 let request = thread.runtimeRequests[i].request
                 switch response {
                 case .option(let id):
@@ -144,7 +158,11 @@ struct WorkspaceDecision: Sendable {
                     guard request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
                 }
                 thread.runtimeRequests[i].responding = true
-                decision.effects.append(.init(id: id, request: .providerRespond(threadID: thread.id, runID: run.id, request: request, response: response)))
+                if sessionScoped, let runtimeID = thread.runtimeID {
+                    decision.effects.append(.init(id: id, request: .providerSessionRespond(threadID: thread.id, runtimeID: runtimeID, request: request, response: response)))
+                } else if let run = thread.activeRun {
+                    decision.effects.append(.init(id: id, request: .providerRespond(threadID: thread.id, runID: run.id, request: request, response: response)))
+                }
             case .removeQueued(_, let queuedID): thread.queuedTurns.removeAll { $0.id == queuedID }
             case .editQueued(_, let queuedID):
                 guard thread.draft.isEmpty, thread.draftAttachments.isEmpty, let item = thread.queuedTurns.first(where: { $0.id == queuedID }) else { throw WorkspaceCommandError("Clear the composer before editing a queued message.") }
@@ -187,7 +205,7 @@ struct WorkspaceDecision: Sendable {
         thread.activeRun = ActiveRun(id: queued.id, configuration: configuration, startedAt: now)
         if thread.messages.isEmpty { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
         var message = ChatMessage(id: "user-\(queued.id.uuidString)", role: .user, text: queued.text, attachments: queued.attachments); message.createdAt = queued.createdAt
-        thread.messages.append(message); thread.state = .running; thread.runtimeRequests = []
+        thread.messages.append(message); thread.state = .running; thread.runtimeRequests.removeAll { $0.sessionScoped != true }
         effects.append(.init(id: queued.id, request: .providerStart(threadID: thread.id, runID: queued.id, configuration: configuration, prompt: queued.text, attachments: queued.attachments)))
     }
     private mutating func startNext(in thread: inout CodingThread, now: Date) {
@@ -202,6 +220,32 @@ struct WorkspaceDecision: Sendable {
             try receive(inner, threadID: threadID, runtimeID: runtimeID, now: now); return
         }
         switch event {
+        case .submissionFailed(let id, let reason):
+            if let i = thread.messages.firstIndex(where: { $0.id == id && $0.role == .user }) { thread.messages[i].submissionError = reason; thread.queuePaused = true }
+        case .activity(let activity):
+            thread.providerActivity = activity
+            if activity.state != .idle {
+                if thread.activeRun == nil { thread.activeRun = .init(id: activity.id, configuration: .init(thread: thread), startedAt: now) }
+                thread.activeRun?.nativeTurnID = activity.id.uuidString
+                thread.state = activity.state == .requiresAction ? .awaitingApproval : .running
+            } else if activity.finishesRun, let run = thread.activeRun, run.nativeTurnID == activity.id.uuidString {
+                let reason = activity.stopReason?.string
+                thread.activeRun = nil; thread.runtimeRequests.removeAll { $0.sessionScoped != true }
+                if run.stopRequested || reason == "cancelled" { thread.state = .interrupted }
+                else if reason == "error" {
+                    thread.state = .failed
+                    thread.messages.append(.init(role: .system, text: activity.error?["message"].string ?? "The agent stopped because of an error."))
+                } else { thread.state = .idle }
+                let normalCompletion = ["end_turn", "max_tokens", "max_turn_requests", "refusal"].contains(reason ?? "")
+                if thread.state == .idle, normalCompletion, reason != "end_turn" {
+                    thread.messages.append(.init(role: .system, text: "The agent stopped: \((reason ?? "").replacingOccurrences(of: "_", with: " "))."))
+                }
+                if thread.state != .idle || !normalCompletion { thread.queuePaused = true }
+                else { startNext(in: &thread, now: now) }
+            }
+        case .sessionApproval(let request):
+            if !thread.runtimeRequests.contains(where: { $0.id == request.id }) { thread.runtimeRequests.append(.init(request: request, sessionScoped: true)) }
+        case .sessionApprovalDismissed(let id): thread.runtimeRequests.removeAll { $0.id == id && $0.sessionScoped == true }
         case .entity(let update):
             if let i = thread.messages.firstIndex(where: { $0.providerEntity?.key == update.key }) {
                 let entity = try update.apply(to: thread.messages[i].providerEntity)
@@ -245,6 +289,7 @@ struct WorkspaceDecision: Sendable {
             else { startNext(in: &thread, now: now) }
         case .failure(let message), .connectionClosed(let message):
             closeRuntime = thread.id; thread.runtimeID = nil
+            thread.providerActivity = nil
             if thread.activeRun != nil {
                 thread.state = thread.activeRun?.stopRequested == true ? .interrupted : .failed
                 thread.messages.append(.init(role: .system, text: message))
@@ -259,11 +304,18 @@ struct WorkspaceDecision: Sendable {
         guard let index = snapshot.threads.firstIndex(where: { $0.id == request.threadID }) else { return }
         var thread = snapshot.threads[index]
         switch request {
+        case .providerSessionRespond(_, let runtimeID, let request, _):
+            guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
+            if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
+            else {
+                thread.runtimeRequests[i].responding = false
+                if case .failed(let message) = result { thread.messages.append(.init(role: .system, text: message)) }
+            }
         case .providerStart(_, let runID, _, _, _):
             guard thread.activeRun?.id == runID else { return }
             if case .failed(let message) = result {
                 thread.state = thread.activeRun?.stopRequested == true ? .interrupted : .failed
-                thread.activeRun = nil; thread.runtimeRequests = []; thread.queuePaused = true
+                thread.activeRun = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.queuePaused = true
                 thread.messages.append(.init(role: .system, text: message)); closeRuntime = thread.id; thread.runtimeID = nil
             }
         case .providerInterrupt(_, let runID):
@@ -271,6 +323,7 @@ struct WorkspaceDecision: Sendable {
             guard case .stopped = result else { return }
             thread.activeRun = nil; thread.runtimeRequests = []; thread.state = .interrupted; thread.queuePaused = true
             thread.runtimeID = nil; closeRuntime = thread.id
+            thread.providerActivity = nil
         case .providerRespond(_, let runID, let request, _):
             guard thread.activeRun?.id == runID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id }) else { return }
             if case .succeeded = result { thread.runtimeRequests.remove(at: i) }

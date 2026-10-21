@@ -15,11 +15,13 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
     public var acpAgent: ACPAgentConfiguration?
     public var agentModeID: String?
     public var agentConfigValues: [String: String]?
+    public var agentConfiguration: [String: JSONValue]?
     public init(thread: CodingThread) {
         provider = thread.provider; workspacePath = thread.workspacePath
         nativeThreadID = thread.providerThreadID; model = thread.model; permission = thread.permission
         acpAgent = thread.acpAgent; agentModeID = thread.agentModeID
         agentConfigValues = thread.agentConfigValues
+        agentConfiguration = thread.agentConfiguration
     }
 }
 
@@ -28,9 +30,10 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     case providerStart(threadID: UUID, runID: UUID, configuration: ProviderConfiguration, prompt: String, attachments: [ChatAttachment]? = nil)
     case providerInterrupt(threadID: UUID, runID: UUID)
     case providerRespond(threadID: UUID, runID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
+    case providerSessionRespond(threadID: UUID, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     public var threadID: UUID {
         switch self {
-        case .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _): id
+        case .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }
 }

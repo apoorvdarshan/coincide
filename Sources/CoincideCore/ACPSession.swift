@@ -36,15 +36,24 @@ public actor ACPSession: ProviderSession {
         rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd,
                                     dialect: .jsonRPC2, maximumFrameSize: 128 * 1_024 * 1_024)
     }
+    /// A negotiated v1 fallback adopts the existing transport; it never launches
+    /// another process or consumes the same stream as a second adapter.
+    init(adopting rpc: JSONRPCConnection, cwd: URL, initialization: JSONValue) {
+        let pair = AsyncStream<ProviderEvent>.makeStream()
+        events = pair.stream; continuation = pair.continuation; self.cwd = cwd
+        self.rpc = rpc; self.initialization = initialization; cancellationTimeout = .seconds(10)
+    }
     @discardableResult public func connect() async throws -> JSONValue {
         guard !closing else { throw CancellationError() }
+        if reader == nil {
+            let stream = rpc.events
+            reader = Task { [weak self] in for await event in stream { await self?.consume(event) } }
+        }
         if let initialization { return initialization }
         if let connecting {
             let result = try await connecting.value; guard !closing else { throw CancellationError() }
             initialization = result; return result
         }
-        let stream = rpc.events
-        reader = Task { [weak self] in for await event in stream { await self?.consume(event) } }
         let rpc = rpc
         let task = Task<JSONValue, any Error> {
             let result = try await rpc.request("initialize", params: .object([
@@ -184,6 +193,7 @@ public actor ACPSession: ProviderSession {
     }
     private func consume(_ event: RPCEvent) async {
         switch event {
+        case .callback(let work): await work()
         case .barrier(let complete): complete()
         case .disconnected(let reason):
             if !closing { continuation.yield(.connectionClosed(reason)) }
@@ -272,13 +282,14 @@ public actor ACPSession: ProviderSession {
         let modelOptionID = initial.first(where: { $0["category"].string == "model" })?["id"].string
         let modeOptionID = initial.first(where: { $0["category"].string == "mode" })?["id"].string
         let known = Set(initial.compactMap { $0["id"].string })
-        guard Set((thread.agentConfigValues ?? [:]).keys).isSubset(of: known) else { throw CoincideError("An agent configuration option is no longer available.") }
+        guard Set((thread.agentConfigValues ?? [:]).keys).union((thread.agentConfiguration ?? [:]).keys).isSubset(of: known),
+              (thread.agentConfiguration ?? [:]).values.allSatisfy({ $0.string != nil }) else { throw CoincideError("An agent configuration option or value is no longer available.") }
         for original in initial {
             guard let id = original["id"].string, original["type"].string == "select" else { continue }
             guard let option = setup["configOptions"].array?.first(where: { $0["id"].string == id }) else {
                 if thread.agentConfigValues?[id] != nil { throw CoincideError("The agent removed a selected configuration option.") }; continue
             }
-            var requested = thread.agentConfigValues?[id]
+            var requested = thread.agentConfiguration?[id]?.string ?? thread.agentConfigValues?[id]
             if id == modelOptionID, requested == nil, !thread.model.isEmpty { requested = thread.model }
             if id == modeOptionID, requested == nil { requested = thread.agentModeID }
             if requested == nil { requested = defaults["configOptions"].array?.first(where: { $0["id"].string == id })?["currentValue"].string }

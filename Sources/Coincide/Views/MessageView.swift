@@ -16,6 +16,7 @@ struct MessageView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         if let attachments = message.attachments, !attachments.isEmpty { AttachmentShelf(store: store, attachments: attachments) }
                         if !message.text.isEmpty { Text(message.text).textSelection(.enabled) }
+                        if let error = message.submissionError { Label(error, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                     }.padding(.horizontal, 18).padding(.vertical, 12)
                         .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 22))
                 }

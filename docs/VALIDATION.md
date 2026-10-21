@@ -1,5 +1,57 @@
 # Validation record
 
+## 2026-10-22 — opt-in ACP v2 connections and foreground lifecycle
+
+- Added an opt-in native adapter for the current ACP v2 draft, using the same
+  [official schema baseline](https://github.com/agentclientprotocol/agent-client-protocol/blob/main/schema/v2/schema.json)
+  (`e47fe81d2db877fe182bdca2ce4ac52ffd62ec61`) inspected for transcript entities.
+  Initialization supplies v2 `info`/`capabilities` plus legacy fields for agents
+  choosing v1. A v1 result adopts the existing connection without another process
+  or handshake. The per-agent **Use ACP v2 (experimental)** switch defaults off.
+- Prompt responses associate the inserted native user ID with its client command;
+  they never imply completion. Foreground state updates control busy/action/idle
+  state independently of pending session-level permission requests. Native
+  agent-initiated work creates no synthetic user message. Early setup/resume
+  notifications are drained in order, and repeated idle snapshots do not complete
+  a new submission. Unknown idle outcomes end busy state but hold the queue.
+- Native select/boolean options use v2 `configId` and the schema's `id`/`boolean`
+  request value types. Each queued turn captures its own typed configuration.
+  Reset Agent Options clears overrides without changing saved invocations.
+  Native settings/store tests verify experimental-mode and boolean persistence.
+- Permission responses use a runtime-pinned outbox action, so a background request
+  can remain pending through another foreground turn. Resolving one of several
+  requests never infers that the agent has resumed; its state update is authoritative.
+  Rejected and unconfirmed user submissions retain visible error information and
+  are never automatically retried. Request cancellation before insertion uses
+  `$/cancel_request`; active work uses `session/cancel`. Unresponsive cancellation
+  stops only the owned process after the configured timeout.
+- The transport now retains JSON-RPC error code/data and can deliver a request's
+  outcome in order with notifications and disconnection. A regression confirms
+  acceptance is associated even when the peer immediately exits. Other tests cover
+  echo-before/after acceptance, idle-before-ack, repeated idle, pre-insertion hook
+  failure, lost acceptance response, concurrent/background permissions, autonomous
+  activity, resume while waiting for permission, cancellation before/after insertion,
+  unknown outcomes, queue configuration, and journal rebuild after restart.
+- Review found a startup Stop race: an early native running snapshot could make
+  Stop available while configuration was still waiting. The adapter now cancels
+  that unsent input and checks cancellation after setup/configuration. A gated
+  regression verifies the start effect becomes cancelled and the peer never receives
+  `session/prompt`, even after releasing its delayed configuration response.
+- The complete suite passed 107 tests (86 core, 4 terminal, 13 Markdown, 4 native
+  UI/store) with Codex/Claude discovery and image/file turns, OpenCode discovery
+  and a real marker turn, and the v2-negotiation marker turn enabled. Installed
+  OpenCode selected **v1**, and fallback completed a real turn. This is not live
+  v2-server validation; the v2 lifecycle cases use deterministic stdio peers.
+- Native packaging, launch, strict signature verification, and bundled-font runtime
+  verification passed. A private backup preceded storage migration 5 → 6; canonical
+  comparison excluding only new optional fields preserved all 3 existing
+  conversations and 25 messages. Physical interaction with the new settings and
+  state/error UI remains part of unlocked-desktop QA.
+
+The v2 protocol is still a draft. Older draft variants, live v2-provider checks,
+native authentication/elicitation, managed agents, session browsing/import/fork,
+live notices, richer media, and display-terminal UI remain open parity work.
+
 ## 2026-10-22 — durable provider transcript entities
 
 - Added native transcript entities keyed by session, type, and opaque ID. The

@@ -7,6 +7,7 @@ public struct ACPAgentConfiguration: Codable, Identifiable, Sendable, Equatable,
     public var name: String
     public var executable: String
     public var arguments: [String]
+    public var experimentalV2: Bool?
     public init(id: UUID = UUID(), name: String, executable: String, arguments: [String] = []) {
         self.id = id; self.name = name; self.executable = executable; self.arguments = arguments
     }

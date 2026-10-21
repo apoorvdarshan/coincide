@@ -38,8 +38,11 @@ struct ChatView: View {
                                 MessageView(store: store, message: message, providerName: thread.providerName, workspacePath: thread.workspacePath,
                                             openFile: { url, line in store.openFile(url, line: line, workspacePath: thread.workspacePath) })
                             }
-                            if thread.state == .running {
-                                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("\(thread.providerName) is working…").font(.caption).foregroundStyle(.secondary) }
+                            if thread.state == .running || thread.state == .awaitingApproval {
+                                HStack(spacing: 8) {
+                                    ProgressView().controlSize(.small)
+                                    Text(thread.state == .awaitingApproval ? "Waiting for input…" : thread.providerActivity?.state == .idle ? "Waiting for agent confirmation…" : "\(thread.providerName) is working…").font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                             Color.clear.frame(height: 1).id("latest")
                         }
@@ -110,17 +113,28 @@ private struct ProviderMenu: View {
             ForEach(store.models(for: thread)) { model in Button(model.name) { store.setModel(model.id, id: thread.id) } }
             if thread.provider == .acp {
                 Divider()
+                Button("Reset Agent Options") { store.resetAgentOptions(thread.id) }
                 if let options = thread.providerMetadata?["configOptions"].array {
                     ForEach(options, id: \.self) { option in
-                        if option["type"].string == "select", option["category"].string != "model", let id = option["id"].string {
+                        if option["type"].string == "select", option["category"].string != "model", let id = ACPConfigurationOptions.id(option) {
                             Menu(option["name"].string ?? id) {
-                                Button("Agent Default") { store.setAgentConfig(id, value: nil, id: thread.id) }
+                                Button("Agent Default") {
+                                    if option["configId"].string != nil { store.setAgentConfiguration(id, value: nil, id: thread.id) }
+                                    else { store.setAgentConfig(id, value: nil, id: thread.id) }
+                                }
                                 ForEach(ACPConfigurationOptions.values(option), id: \.self) { value in
                                     if let selected = value["value"].string {
-                                        Button(value["name"].string ?? selected) { store.setAgentConfig(id, value: selected, id: thread.id) }
+                                        Button(value["name"].string ?? selected) {
+                                            if option["configId"].string != nil { store.setAgentConfiguration(id, value: .string(selected), id: thread.id) }
+                                            else { store.setAgentConfig(id, value: selected, id: thread.id) }
+                                        }
                                     }
                                 }
                             }
+                        } else if option["type"].string == "boolean", let id = ACPConfigurationOptions.id(option) {
+                            Toggle(option["name"].string ?? id, isOn: Binding(
+                                get: { (thread.agentConfiguration?[id] ?? option["currentValue"]) == .bool(true) },
+                                set: { store.setAgentConfiguration(id, value: .bool($0), id: thread.id) }))
                         }
                     }
                 } else {

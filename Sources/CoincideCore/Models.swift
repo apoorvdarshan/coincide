@@ -44,6 +44,7 @@ public struct ChatMessage: Codable, Identifiable, Sendable, Equatable {
     public var createdAt: Date
     public var attachments: [ChatAttachment]?
     public var providerEntity: ProviderEntity?
+    public var submissionError: String?
     public init(id: String = UUID().uuidString, role: MessageRole, text: String, attachments: [ChatAttachment]? = nil) {
         self.id = id; self.role = role; self.text = text; self.createdAt = Date(); self.attachments = attachments
     }
@@ -60,6 +61,8 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var agentModeID: String?
     public var agentConfigValues: [String: String]?
     public var providerMetadata: JSONValue?
+    public var providerActivity: ProviderActivity?
+    public var agentConfiguration: [String: JSONValue]?
     public var draft: String
     public var draftAttachments: [ChatAttachment]
     public var model: String
@@ -86,6 +89,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests
         case draftAttachments
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
+        case providerActivity, agentConfiguration
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -99,6 +103,8 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         agentModeID = try values.decodeIfPresent(String.self, forKey: .agentModeID)
         agentConfigValues = try values.decodeIfPresent([String: String].self, forKey: .agentConfigValues)
         providerMetadata = try values.decodeIfPresent(JSONValue.self, forKey: .providerMetadata)
+        providerActivity = try values.decodeIfPresent(ProviderActivity.self, forKey: .providerActivity)
+        agentConfiguration = try values.decodeIfPresent([String: JSONValue].self, forKey: .agentConfiguration)
         draft = try values.decodeIfPresent(String.self, forKey: .draft) ?? ""
         draftAttachments = try values.decodeIfPresent([ChatAttachment].self, forKey: .draftAttachments) ?? []
         model = try values.decode(String.self, forKey: .model)
@@ -141,6 +147,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
                 threads[i].messages.append(.init(role: .system, text: "The app closed during this turn. Resume by sending another message."))
             }
             threads[i].activeRun = nil; threads[i].runtimeID = nil; threads[i].runtimeRequests = []
+            threads[i].providerActivity = nil
             if !threads[i].queuedTurns.isEmpty { threads[i].queuePaused = true }
         }
     }
@@ -168,12 +175,15 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
-        if method == "session/request_permission" { return params["toolCall"]["title"].string ?? "Approve agent tool" }
+        if method == "session/request_permission" { return params["title"].string ?? params["toolCall"]["title"].string ?? "Approve agent tool" }
         if method == "can_use_tool" { return "Approve \(params["tool_name"].string ?? "tool")" }
         return method.contains("fileChange") ? "Approve file changes" : "Approve command"
     }
     public var detail: String {
-        if method == "session/request_permission" { return params["toolCall"]["rawInput"].pretty }
+        if method == "session/request_permission" {
+            if params.object?["subject"] != nil { return [params["description"].string, params["subject"].pretty].compactMap { $0 }.joined(separator: "\n") }
+            return params["description"].string ?? params["toolCall"]["rawInput"].pretty
+        }
         if method == "can_use_tool" { return params["input"]["command"].string ?? params["input"].pretty }
         return params["command"].string ?? params["reason"].string ?? params.pretty
     }

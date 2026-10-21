@@ -21,6 +21,10 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     case configuration(JSONValue)
     case entity(ProviderEntityUpdate)
     case associateEntity(ProviderEntityKey, clientMessageID: String)
+    case activity(ProviderActivity)
+    case sessionApproval(ApprovalRequest)
+    case sessionApprovalDismissed(JSONValue)
+    case submissionFailed(clientMessageID: String, reason: String)
     indirect case context(runID: UUID, event: ProviderEvent)
 }
 
@@ -54,7 +58,9 @@ public enum ProviderSessions {
             guard let executable = ProcessChannel.findExecutable(agent.executable) else {
                 throw CoincideError("The executable for \(agent.name) is not installed or executable.")
             }
-            return try ACPSession(executable: executable, arguments: agent.arguments, cwd: URL(fileURLWithPath: thread.workspacePath))
+            let cwd = URL(fileURLWithPath: thread.workspacePath)
+            if agent.experimentalV2 == true { return try ACP2Session(executable: executable, arguments: agent.arguments, cwd: cwd) }
+            return try ACPSession(executable: executable, arguments: agent.arguments, cwd: cwd)
         }
         guard let executable = ProcessChannel.findExecutable(thread.provider.executable) else {
             throw CoincideError("Install and sign in to \(thread.provider.name) CLI before sending a message.")

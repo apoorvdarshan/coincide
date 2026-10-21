@@ -57,7 +57,7 @@ for line in sys.stdin:
     method = request.get("method")
     params = request.get("params", {})
     if method == "initialize":
-        assert params["protocolVersion"] == 1
+        assert params["protocolVersion"] == (2 if mode == "v2_fallback" else 1)
         assert params["clientCapabilities"] == {}
         result(request, {"protocolVersion": 2 if mode == "unsupported" else 1,
                          "agentCapabilities": {"loadSession": mode != "noresume",

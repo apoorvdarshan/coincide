@@ -150,6 +150,8 @@ final class WorkspaceStore {
     func setACPAgent(_ agent: ACPAgentConfiguration, id: UUID) { sendCommand(.editThread(id, .acpAgent(agent))) }
     func setAgentMode(_ mode: String?, id: UUID) { sendCommand(.editThread(id, .agentMode(mode))) }
     func setAgentConfig(_ optionID: String, value: String?, id: UUID) { sendCommand(.editThread(id, .agentConfig(id: optionID, value: value))) }
+    func setAgentConfiguration(_ optionID: String, value: JSONValue?, id: UUID) { sendCommand(.editThread(id, .agentConfiguration(id: optionID, value: value))) }
+    func resetAgentOptions(_ id: UUID) { sendCommand(.editThread(id, .resetAgentOptions)) }
     func saveACPAgent(_ agent: ACPAgentConfiguration) async throws { _ = try await enqueue(.saveACPAgent(agent)).value }
     func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] { providerModels[provider] ?? [] }

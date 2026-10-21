@@ -96,6 +96,7 @@ public actor CodexSession: ProviderSession {
     }
     private func consume(_ event: RPCEvent) async {
         switch event {
+        case .callback(let work): await work()
         case .barrier(let complete): complete()
         case .disconnected(let reason):
             if !shuttingDown { continuation.yield(.connectionClosed(reason)) }

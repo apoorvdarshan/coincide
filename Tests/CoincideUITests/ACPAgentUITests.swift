@@ -19,7 +19,8 @@ import Testing
     let database = root.appendingPathComponent("workspace.sqlite"), store = WorkspaceStore(databaseURL: database)
     await store.load()
     do {
-        let agent = ACPAgentConfiguration(name: "Native Fixture", executable: "/usr/bin/true", arguments: ["path with spaces", "$(literal)"])
+        var agent = ACPAgentConfiguration(name: "Native Fixture", executable: "/usr/bin/true", arguments: ["path with spaces", "$(literal)"])
+        agent.experimentalV2 = true
         try await store.saveACPAgent(agent)
         #expect(store.snapshot.acpAgents == [agent])
         store.addProject(at: root); try await waitACPUI { store.snapshot.projects.count == 1 }
@@ -28,6 +29,8 @@ import Testing
         store.setACPAgent(agent, id: id); try await waitACPUI { store.thread(id)?.acpAgent == agent }
         store.setAgentConfig("reasoning", value: "high", id: id)
         try await waitACPUI { store.thread(id)?.agentConfigValues?["reasoning"] == "high" }
+        store.setAgentConfiguration("boolean", value: .bool(true), id: id)
+        try await waitACPUI { store.thread(id)?.agentConfiguration?["boolean"] == .bool(true) }
         if ProcessInfo.processInfo.environment["COINCIDE_RENDER_ACP"] == "1" { try await captureACPSettings(store) }
         var updated = agent; updated.name = "Edited Fixture"; updated.arguments = ["different"]
         try await store.saveACPAgent(updated)
@@ -39,6 +42,9 @@ import Testing
         await reopened.load()
         #expect(reopened.thread(id)?.acpAgent == agent && reopened.thread(id)?.providerName == "Native Fixture")
         #expect(reopened.thread(id)?.agentConfigValues?["reasoning"] == "high")
+        #expect(reopened.thread(id)?.agentConfiguration?["boolean"] == .bool(true) && reopened.thread(id)?.acpAgent?.experimentalV2 == true)
+        reopened.resetAgentOptions(id)
+        try await waitACPUI { reopened.thread(id)?.agentConfiguration == nil && reopened.thread(id)?.agentConfigValues == nil }
         await reopened.shutdown()
     } catch { await store.shutdown(); throw error }
 }

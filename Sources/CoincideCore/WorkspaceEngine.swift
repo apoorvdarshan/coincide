@@ -228,6 +228,7 @@ public actor WorkspaceEngine {
             configured.providerThreadID = configuration.nativeThreadID; configured.model = configuration.model; configured.permission = configuration.permission
             configured.acpAgent = configuration.acpAgent; configured.agentModeID = configuration.agentModeID
             configured.agentConfigValues = configuration.agentConfigValues
+            configured.agentConfiguration = configuration.agentConfiguration
             let runtime = try await runtime(for: configured, runID: runID)
             guard !closing, !stoppingEffects, revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false,
@@ -247,6 +248,15 @@ public actor WorkspaceEngine {
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false,
                   thread.runtimeRequests.contains(where: { $0.id == request.id && $0.responding }),
                   let runtime = runtimes[thread.id], runtime.id == thread.runtimeID else { return .cancelled }
+            switch response {
+            case .option(let id): try await runtime.session.choose(request, optionID: id)
+            case .decision(let allow): try await runtime.session.respond(request, allow: allow)
+            case .answers(let answers): try await runtime.session.answer(request, answers: answers)
+            }
+            return .succeeded
+        case .providerSessionRespond(_, let runtimeID, let request, let response):
+            guard thread.runtimeID == runtimeID, thread.runtimeRequests.contains(where: { $0.id == request.id && $0.responding && $0.sessionScoped == true }),
+                  let runtime = runtimes[thread.id], runtime.id == runtimeID else { return .cancelled }
             switch response {
             case .option(let id): try await runtime.session.choose(request, optionID: id)
             case .decision(let allow): try await runtime.session.respond(request, allow: allow)
