@@ -4,13 +4,15 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var store: WorkspaceStore
     @AppStorage("appearance") private var appearance = "system"
+    @State private var provider = ProviderKind.codex
     var body: some View {
         TabView {
             Form {
-                LabeledContent("Codex CLI", value: ProcessChannel.findExecutable("codex")?.path ?? "Not installed")
-                Text("Coincide uses Codex CLI’s existing sign-in and settings. Run codex login in Terminal if sign-in is required.").foregroundStyle(.secondary)
-                Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels() } }.disabled(store.isRefreshingModels)
-                LabeledContent("Available models", value: "\(store.models.count)")
+                Picker("Provider", selection: $provider) { ForEach(ProviderKind.allCases) { Text($0.name).tag($0) } }
+                LabeledContent("CLI", value: ProcessChannel.findExecutable(provider.executable)?.path ?? "Not installed")
+                Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)
+                Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels(provider: provider) } }.disabled(store.isRefreshingModels)
+                LabeledContent("Available models", value: "\(store.models(for: provider).count)")
                 Divider()
                 Text("Additional T3 Code providers are being ported. See the feature parity document for current implementation status.").font(.caption).foregroundStyle(.secondary)
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "cpu") }

@@ -16,7 +16,7 @@ must each be mapped and verified before declaring parity.
   ownership, JSON-RPC transport, provider adapters, Git, and file services.
 - `Coincide`: SwiftUI scenes with native macOS controls; AppKit for application
   lifecycle, file selection, reveal-in-Finder, and clipboard integration.
-- Codex runs as its own installed CLI process over stdio. Coincide uses existing
+- Codex and Claude run as installed CLI processes over stdio. Coincide uses existing
   provider authentication; no API key is embedded or copied into the workspace.
 - Each local thread has its own provider connection, workspace path, permission
   selection, and persisted conversation. Persistence commits the snapshot and
@@ -31,9 +31,10 @@ must each be mapped and verified before declaring parity.
 | --- | --- | --- |
 | Native workspace | Projects, new threads, search, rename, pin, archive, settings | Groups, sorting/reorder, snooze/settle, undo, scratch projects, import/migration |
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
-| Other providers | Not implemented | Claude, Cursor, Grok, OpenCode, Antigravity, Pi, Muse, ACP registry and custom providers |
+| Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
+| Other providers | Not implemented | Cursor, Grok, OpenCode, Antigravity, Pi, Muse, ACP registry and custom providers |
 | Durable orchestration | SQLite snapshots and audit markers; interrupted-run recovery | Durable event decisions/outbox, queued turns, retry/idempotency, checkpoints/finalization, provider recovery |
-| Composer/transcript | Native text composer, inline Markdown, tool/reasoning disclosure, copy | Full Markdown/code/math, citations, attachments, slash/skill/file pickers, plans, steering, per-thread drafts |
+| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, inline Markdown, tool/reasoning disclosure, copy, Enter/Shift-Enter | Full Markdown/code/math, citations, attachments, slash/skill/file pickers, plans, steering |
 | Git/workspaces | Status, staged/unstaged diff, stage/unstage, commit, branches, worktree creation | Checkout/clone, pull/push, PRs/stacks/multiple hosts, checkpoints/revert, worktree lifecycle/setup |
 | Files | Browse/read/edit UTF-8 with conflict detection and workspace path checks | Search/ignore support, large/binary files, filesystem watching, editor integration |
 | Terminal | Not implemented | PTY sessions, native emulator, resize/input, scrollback, restoration |
@@ -49,6 +50,7 @@ swift test
 ./script/build_and_run.sh --build-only
 ./script/build_and_run.sh --verify
 COINCIDE_LIVE_CODEX=1 swift test --filter installedCodexHandshakeAndModelDiscovery
+COINCIDE_LIVE_CLAUDE=1 swift test --filter installedClaudeHandshakeAndModelDiscovery
 ```
 
 The live discovery test performs a handshake and model listing only. It does not

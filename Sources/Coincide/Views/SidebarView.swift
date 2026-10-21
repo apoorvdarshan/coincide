@@ -31,11 +31,22 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .searchable(text: $store.search, prompt: "Search conversations")
+        .safeAreaInset(edge: .top) {
+            VStack(spacing: 12) {
+                Button { store.newThread() } label: {
+                    Label("New conversation", systemImage: "square.and.pencil").frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.plain)
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search conversations", text: $store.search).textFieldStyle(.plain).accessibilityLabel("Search conversations")
+                }.font(.system(size: 12)).padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            }.padding(.horizontal, 16).padding(.vertical, 14)
+        }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button { store.addProject() } label: { Label("Add Project", systemImage: "folder.badge.plus") }
                 Spacer()
+                SettingsLink { Image(systemName: "gearshape") }.help("Settings")
                 Toggle(isOn: $store.showArchived) { Image(systemName: "archivebox") }.toggleStyle(.button).help("Show archived threads")
             }.buttonStyle(.borderless).padding(12)
         }

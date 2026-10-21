@@ -3,37 +3,49 @@ import SwiftUI
 
 struct ComposerView: View {
     @Binding var text: String
-    let models: [ProviderModel]
-    let model: String
+    let provider: ProviderKind
     let permission: PermissionMode
     let busy: Bool
-    let setModel: (String) -> Void
     let setPermission: (PermissionMode) -> Void
-    let refreshModels: () -> Void
     let send: () -> Void
     let stop: () -> Void
+    private var height: CGFloat { min(150, max(40, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
     var body: some View {
-        VStack(spacing: 12) {
-            TextEditor(text: $text).font(.body).frame(minHeight: 65, maxHeight: 150)
-                .scrollContentBackground(.hidden).accessibilityLabel("Message to Codex")
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty { Text("Message \(provider.name)…").foregroundStyle(.tertiary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
+                TextEditor(text: $text).font(.system(size: 15)).frame(height: height)
+                    .scrollContentBackground(.hidden).accessibilityLabel("Message to \(provider.name)")
+                    .onKeyPress(keys: [.return], phases: .down) { event in
+                        guard !event.modifiers.contains(.shift), !event.modifiers.contains(.option) else { return .ignored }
+                        guard !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .ignored }
+                        send(); return .handled
+                    }
+            }
             HStack {
                 Menu {
-                    Button("Provider default") { setModel("") }
-                    ForEach(models) { entry in Button(entry.name) { setModel(entry.id) } }
-                    Divider(); Button("Refresh Models", action: refreshModels)
-                } label: { Label(model.isEmpty ? "Codex · Default model" : model, systemImage: "cpu") }
-                .disabled(busy)
-                Picker("Permissions", selection: Binding(get: { permission }, set: { setPermission($0) })) {
-                    ForEach(PermissionMode.allCases) { Text($0.title).tag($0) }
-                }.labelsHidden().frame(maxWidth: 180).disabled(busy)
+                    ForEach(PermissionMode.allCases) { mode in
+                        Button { setPermission(mode) } label: {
+                            if mode == permission { Label(mode.title, systemImage: "checkmark") } else { Text(mode.title) }
+                        }
+                    }
+                } label: { Label(permission.title, systemImage: "slider.horizontal.3").font(.caption) }
+                .menuStyle(.borderlessButton).fixedSize().disabled(busy)
                 Spacer()
-                if busy {
-                    Button(action: stop) { Label("Stop", systemImage: "stop.fill") }
-                } else {
-                    Button(action: send) { Label("Send", systemImage: "arrow.up") }.keyboardShortcut(.return, modifiers: .command)
-                        .buttonStyle(.borderedProminent).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Text("⇧ Return for a new line").font(.caption2).foregroundStyle(.tertiary)
+                Button(action: busy ? stop : send) {
+                    Image(systemName: busy ? "stop.fill" : "arrow.up").font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color(nsColor: .controlBackgroundColor))
+                        .frame(width: 30, height: 30).background(Color.primary, in: Circle())
                 }
-            }.controlSize(.small)
-        }.padding(16)
+                .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command)
+                .accessibilityLabel(busy ? "Stop turn" : "Send message")
+                .help(busy ? "Stop turn" : "Send message")
+                .disabled(!busy && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 23))
+        .overlay { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1) }
     }
 }

@@ -1,17 +1,7 @@
 import Foundation
 
-public enum ProviderEvent: Sendable {
-    case thread(String)
-    case turn(String)
-    case delta(id: String, role: MessageRole, text: String)
-    case message(ChatMessage)
-    case approval(ApprovalRequest)
-    case completed(ThreadState)
-    case failure(String)
-}
-
 /// Native stdio client for the same Codex app-server protocol used by T3 Code.
-public actor CodexSession {
+public actor CodexSession: ProviderSession {
     public nonisolated let events: AsyncStream<ProviderEvent>
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
@@ -104,6 +94,7 @@ public actor CodexSession {
         case .notification(let method, let params):
             if let id = params["threadId"].string, let threadID, id != threadID { return }
             switch method {
+            case "serverRequest/resolved": continuation.yield(.approvalDismissed(params["requestId"]))
             case "turn/started":
                 if let id = params["turn"]["id"].string { turnID = id; continuation.yield(.turn(id)) }
             case "item/agentMessage/delta", "item/reasoning/summaryTextDelta", "item/commandExecution/outputDelta":

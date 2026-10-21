@@ -10,15 +10,16 @@ final class WorkspaceStore {
     var search = ""
     var showArchived = false
     var errorMessage: String?
-    var models: [ProviderModel] = []
+    var providerModels: [ProviderKind: [ProviderModel]] = [:]
     var approvals: [UUID: [ApprovalRequest]] = [:]
     var isLoading = true
     var isRefreshingModels = false
-    var inspectorVisible = true
+    var inspectorVisible = false
     private var database: WorkspaceDatabase?
-    private var sessions: [UUID: CodexSession] = [:]
+    private var sessions: [UUID: any ProviderSession] = [:]
     private var eventTasks: [UUID: Task<Void, Never>] = [:]
     private var writeTask: Task<Void, any Error>?
+    private var draftSaveTask: Task<Void, Never>?
 
     init() {
         do {
@@ -81,6 +82,23 @@ final class WorkspaceStore {
     func setModel(_ model: String, id: UUID) {
         updateThread(id) { $0.model = model }; Task { await save("thread.model") }
     }
+    func setProvider(_ provider: ProviderKind, id: UUID) {
+        guard let thread = snapshot.threads.first(where: { $0.id == id }), thread.messages.isEmpty else {
+            errorMessage = "Start a new thread to use a different provider."; return
+        }
+        updateThread(id) { $0.provider = provider; $0.model = ""; $0.providerThreadID = nil }
+        Task { await save("thread.provider") }
+    }
+    func models(for provider: ProviderKind) -> [ProviderModel] { providerModels[provider] ?? [] }
+    func setDraft(_ text: String, id: UUID) {
+        guard let i = snapshot.threads.firstIndex(where: { $0.id == id }) else { return }
+        snapshot.threads[i].draft = text
+        draftSaveTask?.cancel()
+        draftSaveTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+            await self?.save("thread.draft")
+        }
+    }
     func setPermission(_ mode: PermissionMode, id: UUID) {
         updateThread(id) { $0.permission = mode }; Task { await save("thread.permissions") }
     }
@@ -100,18 +118,21 @@ final class WorkspaceStore {
     func send(_ text: String, threadID id: UUID) async -> Bool {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy(id), let thread = snapshot.threads.first(where: { $0.id == id }) else { return false }
-        guard let executable = ProcessChannel.findExecutable("codex") else { errorMessage = "Install and sign in to Codex CLI before sending a message."; return false }
+        guard ProcessChannel.findExecutable(thread.provider.executable) != nil else {
+            errorMessage = "Install and sign in to \(thread.provider.name) CLI before sending a message."; return false
+        }
         updateThread(id) {
             if $0.messages.isEmpty { $0.title = String(prompt.prefix(80)) }
             $0.messages.append(.init(role: .user, text: prompt)); $0.state = .running
+            if $0.draft == text { $0.draft = "" }
         }
         do {
             // Durable intent comes before a provider process is allowed to act.
             try await persist("turn.requested")
-            let session: CodexSession
+            let session: any ProviderSession
             if let existing = sessions[id] { session = existing }
             else {
-                session = try CodexSession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath))
+                session = try ProviderSessions.make(for: thread)
                 sessions[id] = session
                 let events = session.events
                 eventTasks[id] = Task { [weak self] in
@@ -149,13 +170,15 @@ final class WorkspaceStore {
             try await persist("question.answered")
         } catch { errorMessage = error.localizedDescription }
     }
-    func refreshModels() async {
+    func refreshModels(provider: ProviderKind? = nil) async {
         guard !isRefreshingModels else { return }; isRefreshingModels = true
         defer { isRefreshingModels = false }
         do {
-            guard let executable = ProcessChannel.findExecutable("codex") else { throw CoincideError("Codex CLI was not found.") }
-            let session = try CodexSession(executable: executable, cwd: FileManager.default.homeDirectoryForCurrentUser)
-            do { models = try await session.models(); await session.close() }
+            let kind = provider ?? selectedThread?.provider ?? .codex
+            var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path))
+            thread.provider = kind
+            let session = try ProviderSessions.make(for: thread)
+            do { providerModels[kind] = try await session.models(); await session.close() }
             catch { await session.close(); throw error }
         } catch { errorMessage = error.localizedDescription }
     }
@@ -174,6 +197,7 @@ final class WorkspaceStore {
         } catch { errorMessage = error.localizedDescription }
     }
     func shutdown() async {
+        draftSaveTask?.cancel()
         for session in sessions.values { await session.close() }
         sessions.removeAll()
         for task in eventTasks.values { task.cancel() }; eventTasks.removeAll()
@@ -192,6 +216,9 @@ final class WorkspaceStore {
                 else { thread.messages.append(message) }
             case .approval(let request):
                 approvals[id, default: []].append(request); thread.state = .awaitingApproval
+            case .approvalDismissed(let requestID):
+                approvals[id]?.removeAll { $0.id == requestID }
+                if thread.state == .awaitingApproval && approvals[id, default: []].isEmpty { thread.state = .running }
             case .completed(let state): thread.state = state; approvals[id] = []
             case .failure(let message): thread.state = .failed; thread.messages.append(.init(role: .system, text: message)); approvals[id] = []
             }

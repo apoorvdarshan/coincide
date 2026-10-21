@@ -4,54 +4,68 @@ import SwiftUI
 struct ChatView: View {
     @Bindable var store: WorkspaceStore
     let threadID: UUID
-    @State private var draft = ""
     @State private var sending = false
     @State private var worktreeSheet = false
     @State private var branch = ""
     private var thread: CodingThread? { store.snapshot.threads.first { $0.id == threadID } }
+    private var draft: Binding<String> {
+        Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
+    }
     var body: some View {
         if let thread {
             VStack(spacing: 0) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(thread.title).font(.headline).lineLimit(1)
-                        Text(thread.workspacePath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                    }
+                HStack(spacing: 12) {
+                    ProviderMenu(store: store, thread: thread)
                     Spacer()
-                    if thread.messages.isEmpty { Button("New Worktree…") { worktreeSheet = true } }
-                }.padding()
-                Divider()
+                    Menu {
+                        Text(thread.workspacePath)
+                        Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
+                        if thread.messages.isEmpty { Button("Create Worktree…") { worktreeSheet = true } }
+                    } label: { Label(store.selectedProject?.name ?? "Workspace", systemImage: "folder").font(.caption).foregroundStyle(.secondary) }
+                    .menuStyle(.borderlessButton).fixedSize()
+                }.padding(.horizontal, 24).padding(.vertical, 12)
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 22) {
+                        LazyVStack(alignment: .leading, spacing: 28) {
                             if thread.messages.isEmpty {
-                                ContentUnavailableView("What are we working on?", systemImage: "sparkle", description: Text("Codex uses its existing sign-in on this Mac. Choose a model and permission mode below."))
-                                    .frame(maxWidth: .infinity).padding(.top, 70)
+                                VStack(spacing: 12) {
+                                    Text("What are we building?").font(.system(size: 29, weight: .medium))
+                                    Text("Start a conversation in \(store.selectedProject?.name ?? "your project").")
+                                        .font(.subheadline).foregroundStyle(.secondary)
+                                }.frame(maxWidth: .infinity).padding(.top, 100).padding(.bottom, 60)
                             }
-                            ForEach(thread.messages) { MessageView(message: $0) }
+                            ForEach(thread.messages) { MessageView(message: $0, providerName: thread.provider.name) }
+                            if thread.state == .running {
+                                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("\(thread.provider.name) is working…").font(.caption).foregroundStyle(.secondary) }
+                            }
                             Color.clear.frame(height: 1).id("latest")
-                        }.padding(24)
+                        }
+                        .frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 18)
+                        .frame(maxWidth: .infinity)
                     }
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: thread.messages.count) { proxy.scrollTo("latest", anchor: .bottom) }
                 }
-                ForEach(store.approvals[threadID, default: []]) { request in
-                    ApprovalView(request: request, onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
-                                 onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } })
-                        .padding(.horizontal).padding(.bottom, 8)
+                VStack(spacing: 10) {
+                    ForEach(store.approvals[threadID, default: []]) { request in
+                        ApprovalView(request: request, onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
+                                     onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } })
+                    }
+                    ComposerView(text: draft, provider: thread.provider, permission: thread.permission,
+                                 busy: store.isBusy(threadID) || sending,
+                                 setPermission: { store.setPermission($0, id: threadID) },
+                                 send: {
+                                     guard !sending else { return }; sending = true
+                                     let prompt = thread.draft
+                                     Task {
+                                         _ = await store.send(prompt, threadID: threadID)
+                                         sending = false
+                                     }
+                                 }, stop: { Task { await store.interrupt(threadID) } })
                 }
-                Divider()
-                ComposerView(text: $draft, models: store.models, model: thread.model, permission: thread.permission,
-                             busy: store.isBusy(threadID) || sending,
-                             setModel: { store.setModel($0, id: threadID) }, setPermission: { store.setPermission($0, id: threadID) },
-                             refreshModels: { Task { await store.refreshModels() } },
-                             send: {
-                                 guard !sending else { return }; sending = true
-                                 let prompt = draft
-                                 Task { if await store.send(prompt, threadID: threadID), draft == prompt { draft = "" }; sending = false }
-                             }, stop: { Task { await store.interrupt(threadID) } })
+                .frame(maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(maxWidth: .infinity)
             }
-            .navigationTitle(thread.title)
+            .navigationTitle("Coincide")
             .sheet(isPresented: $worktreeSheet) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Create a Worktree").font(.title2)
@@ -64,26 +78,30 @@ struct ChatView: View {
     }
 }
 
-private struct MessageView: View {
-    let message: ChatMessage
+private struct ProviderMenu: View {
+    var store: WorkspaceStore
+    let thread: CodingThread
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label(message.role == .assistant ? "Codex" : message.role.rawValue.capitalized, systemImage: icon).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer()
-                Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string) } label: { Image(systemName: "doc.on.doc") }.buttonStyle(.borderless).help("Copy message")
-            }
-            if message.role == .tool || message.role == .reasoning {
-                DisclosureGroup(message.role == .tool ? "Tool activity" : "Reasoning") {
-                    Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
+        Menu {
+            if thread.messages.isEmpty {
+                ForEach(ProviderKind.allCases) { provider in
+                    Button { store.setProvider(provider, id: thread.id) } label: {
+                        if provider == thread.provider { Label(provider.name, systemImage: "checkmark") } else { Text(provider.name) }
+                    }
                 }
-            } else {
-                Text((try? AttributedString(markdown: message.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.text))
-                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                Divider()
             }
-        }.padding(14).background(message.role == .user ? Color.accentColor.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-    }
-    private var icon: String {
-        switch message.role { case .user: "person"; case .assistant: "sparkles"; case .tool: "terminal"; case .system: "info.circle"; case .reasoning: "brain" }
+            Button("Default Model") { store.setModel("", id: thread.id) }
+            ForEach(store.models(for: thread.provider)) { model in Button(model.name) { store.setModel(model.id, id: thread.id) } }
+            Divider()
+            Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
+        } label: {
+            HStack(spacing: 6) {
+                Text(thread.provider.name).font(.system(size: 17, weight: .semibold))
+                if !thread.model.isEmpty { Text(thread.model).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+            }
+        }
+        .menuStyle(.borderlessButton).fixedSize().disabled(store.isBusy(thread.id))
+        .accessibilityLabel("Provider and model")
     }
 }

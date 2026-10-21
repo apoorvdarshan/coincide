@@ -24,6 +24,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSDocumentsFolderUsageDescription</key><string>Coincide and its coding agents access project files and the instructions you configure in Documents.</string>
 <key>CFBundleDocumentTypes</key><array><dict>
 <key>CFBundleTypeName</key><string>Project Folder</string>
 <key>CFBundleTypeRole</key><string>Viewer</string>
@@ -32,7 +33,13 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 </dict></array>
 </dict></plist>
 PLIST
-codesign --force --sign - "$APP_BUNDLE" >/dev/null 2>&1
+# A stable development identity preserves macOS file-access consent between builds.
+# Hosted CI has no identity and uses ad-hoc signing. An explicit override wins.
+SIGN_IDENTITY="${COINCIDE_SIGN_IDENTITY:-}"
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  SIGN_IDENTITY="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null | /usr/bin/awk '/"Apple Development:/ && !found { print $2; found=1 }')"
+fi
+codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE" >/dev/null
 case "$MODE" in
   --build-only) echo "$APP_BUNDLE" ;;
   --debug) lldb -- "$APP_BUNDLE/Contents/MacOS/$APP_NAME" ;;

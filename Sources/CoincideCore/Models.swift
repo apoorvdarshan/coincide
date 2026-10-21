@@ -53,6 +53,8 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var title: String
     public var workspacePath: String
     public var providerThreadID: String?
+    public var provider: ProviderKind
+    public var draft: String
     public var model: String
     public var permission: PermissionMode
     public var state: ThreadState
@@ -63,8 +65,29 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var updatedAt: Date
     public init(project: WorkspaceProject, model: String = "") {
         id = UUID(); projectID = project.id; title = "New thread"; workspacePath = project.path
-        self.model = model; permission = .supervised; state = .idle; messages = []
+        self.model = model; provider = .codex; draft = ""; permission = .supervised; state = .idle; messages = []
         isPinned = false; isArchived = false; createdAt = Date(); updatedAt = Date()
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
+    }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        projectID = try values.decode(UUID.self, forKey: .projectID)
+        title = try values.decode(String.self, forKey: .title)
+        workspacePath = try values.decode(String.self, forKey: .workspacePath)
+        providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
+        provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
+        draft = try values.decodeIfPresent(String.self, forKey: .draft) ?? ""
+        model = try values.decode(String.self, forKey: .model)
+        permission = try values.decode(PermissionMode.self, forKey: .permission)
+        state = try values.decode(ThreadState.self, forKey: .state)
+        messages = try values.decode([ChatMessage].self, forKey: .messages)
+        isPinned = try values.decode(Bool.self, forKey: .isPinned)
+        isArchived = try values.decode(Bool.self, forKey: .isArchived)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        updatedAt = try values.decode(Date.self, forKey: .updatedAt)
     }
 }
 
@@ -92,9 +115,24 @@ public struct ApprovalRequest: Identifiable, Sendable {
     public var id: JSONValue
     public var method: String
     public var params: JSONValue
-    public var title: String { method.contains("fileChange") ? "Approve file changes" : "Approve command" }
+    public var isQuestion: Bool { method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") }
+    public var questions: [JSONValue] {
+        if method == "can_use_tool" {
+            return (params["input"]["questions"].array ?? []).map { question in
+                var item = question.object ?? [:]
+                item["id"] = question["question"]
+                return .object(item)
+            }
+        }
+        return params["questions"].array ?? []
+    }
+    public var title: String {
+        if method == "can_use_tool" { return "Approve \(params["tool_name"].string ?? "tool")" }
+        return method.contains("fileChange") ? "Approve file changes" : "Approve command"
+    }
     public var detail: String {
-        params["command"].string ?? params["reason"].string ?? params.pretty
+        if method == "can_use_tool" { return params["input"]["command"].string ?? params["input"].pretty }
+        return params["command"].string ?? params["reason"].string ?? params.pretty
     }
 }
 

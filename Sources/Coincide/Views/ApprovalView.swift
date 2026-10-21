@@ -6,11 +6,11 @@ struct ApprovalView: View {
     let onDecision: (Bool) -> Void
     let onAnswer: ([String: String]) -> Void
     @State private var answers: [String: String] = [:]
-    private var questions: [JSONValue] { request.params["questions"].array ?? [] }
+    private var questions: [JSONValue] { request.questions }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if request.method == "item/tool/requestUserInput" {
-                Text("Codex needs your input").font(.headline)
+            if request.isQuestion {
+                Text("Your agent needs input").font(.headline)
                 ForEach(questions, id: \.self) { question in
                     if let id = question["id"].string {
                         Text(question["question"].string ?? "Question").font(.subheadline)
