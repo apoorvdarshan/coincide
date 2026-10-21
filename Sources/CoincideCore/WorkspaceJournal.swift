@@ -85,7 +85,16 @@ public enum WorkspaceJournal {
               }) else {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
+        var cloneIDs: Set<UUID> = []
+        for project in snapshot.projects {
+            guard let clone = project.clone else { continue }
+            try clone.validate(project: project)
+            for plan in clone.previousPlans + [clone.plan] {
+                guard cloneIDs.insert(plan.id).inserted else { throw CoincideError("Clone attempts must have unique identities.") }
+            }
+        }
         for thread in snapshot.threads {
+            guard snapshot.workspaceReady(for: thread) || !thread.isBusy else { throw CoincideError("A conversation cannot run before its repository is ready.") }
             if let agent = thread.acpAgent { try agent.validate() }
             if thread.provider == .acp, thread.acpAgent == nil { throw CoincideError("This conversation has no ACP agent configuration.") }
             try AttachmentLimits.validate(thread.draftAttachments)

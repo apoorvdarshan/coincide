@@ -4,6 +4,7 @@ public struct WorkspaceProject: Codable, Identifiable, Sendable, Equatable {
     public var id: UUID
     public var name: String
     public var path: String
+    public var clone: ProjectCloneState?
     public init(path: String) {
         self.id = UUID()
         let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
@@ -141,6 +142,12 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        for i in projects.indices {
+            guard var clone = projects[i].clone, clone.isRunning else { continue }
+            clone.phase = .interrupted; clone.cancelRequested = false; clone.progress.stalled = false
+            clone.error = "The app closed during cloning. Retry when you are ready; existing files are preserved."
+            projects[i].clone = clone
+        }
         for i in threads.indices {
             if threads[i].isBusy {
                 threads[i].state = .interrupted

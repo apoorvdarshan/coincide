@@ -38,7 +38,7 @@ public actor WorkspaceDatabase {
         let versionStatus = sqlite3_step(version)
         let storageVersion = sqlite3_column_int(version, 0)
         sqlite3_finalize(version)
-        guard versionStatus == SQLITE_ROW, (0...6).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
+        guard versionStatus == SQLITE_ROW, (0...7).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
         let setup = """
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=FULL;
@@ -49,7 +49,7 @@ public actor WorkspaceDatabase {
         CREATE TABLE IF NOT EXISTS workspace_receipts (id TEXT PRIMARY KEY, fingerprint BLOB NOT NULL, payload BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS workspace_effects (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, command_id TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, payload BLOB NOT NULL);
         CREATE INDEX IF NOT EXISTS workspace_effects_pending ON workspace_effects(status,sequence);
-        PRAGMA user_version=6;
+        PRAGMA user_version=7;
         """
         guard sqlite3_exec(connection, setup, nil, nil, nil) == SQLITE_OK else { throw CoincideError("Could not initialize the workspace database.") }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -83,8 +83,14 @@ public actor WorkspaceDatabase {
         else if effects.isEmpty { fingerprint = Data(SHA256.hash(data: try encoder.encode(FingerprintInput(snapshot: snapshot, event: event)))) }
         else { fingerprint = Data(SHA256.hash(data: try encoder.encode(EffectFingerprintInput(snapshot: snapshot, event: event, effects: effects)))) }
         guard Set(effects.map(\.id)).count == effects.count,
-              effects.allSatisfy({ effect in snapshot.threads.contains { $0.id == effect.request.threadID } }) else {
-            throw CoincideError("Workspace effects must have unique identities and belong to an existing thread.")
+              effects.allSatisfy({ effect in
+                  if let id = effect.request.threadID { return snapshot.threads.contains { $0.id == id } }
+                  if case .projectClone(let id, let plan) = effect.request {
+                      return snapshot.projects.contains { $0.id == id && $0.clone?.plan == plan && $0.clone?.isRunning == true } && effect.id == plan.id
+                  }
+                  return false
+              }) else {
+            throw CoincideError("Workspace effects must have unique identities and belong to an existing thread or project.")
         }
         try bootstrap(); try execute("BEGIN IMMEDIATE")
         do {
@@ -94,6 +100,14 @@ public actor WorkspaceDatabase {
             }
             let before = try currentRevision()
             if let expectedSequence, expectedSequence != before.sequence { throw WorkspaceCommitError.revisionChanged }
+            for pending in effects {
+                let check = try prepare("SELECT 1 FROM workspace_effects WHERE id=?")
+                defer { sqlite3_finalize(check) }
+                try bind(pending.id.uuidString, to: check, index: 1)
+                let status = sqlite3_step(check)
+                if status == SQLITE_ROW { throw WorkspaceCommitError.effectIDCollision }
+                guard status == SQLITE_DONE else { throw CoincideError("Could not verify this operation identity.") }
+            }
             let changes = try WorkspaceJournal.changes(from: before.snapshot, to: snapshot)
             var sequence = before.sequence
             for change in changes {
@@ -357,7 +371,8 @@ extension WorkspaceDatabase {
         defer { sqlite3_finalize(statement) }
         try bind(effect.id.uuidString, to: statement, index: 1)
         try bind(effect.commandID.uuidString, to: statement, index: 2)
-        try bind(effect.request.threadID.uuidString, to: statement, index: 3)
+        // Legacy column name; storage version 7 also indexes project-owned actions here.
+        try bind(effect.request.targetID.uuidString, to: statement, index: 3)
         try bind(effect.status.rawValue, to: statement, index: 4)
         try bind(try encoder.encode(effect), to: statement, index: 5)
         try check(sqlite3_step(statement))
@@ -391,7 +406,7 @@ extension WorkspaceDatabase {
     }
     private func readEffect(_ statement: OpaquePointer) throws -> WorkspaceEffect {
         let effect = try JSONDecoder().decode(WorkspaceEffect.self, from: blob(statement, column: 0))
-        let expected = [effect.id.uuidString, effect.commandID.uuidString, effect.request.threadID.uuidString, effect.status.rawValue]
+        let expected = [effect.id.uuidString, effect.commandID.uuidString, effect.request.targetID.uuidString, effect.status.rawValue]
         for (offset, value) in expected.enumerated() {
             guard let bytes = sqlite3_column_text(statement, Int32(offset + 1)), String(cString: bytes) == value else {
                 throw CoincideError("The workspace outbox contains inconsistent data.")

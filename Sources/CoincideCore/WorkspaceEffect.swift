@@ -31,8 +31,17 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     case providerInterrupt(threadID: UUID, runID: UUID)
     case providerRespond(threadID: UUID, runID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case providerSessionRespond(threadID: UUID, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
-    public var threadID: UUID {
+    case projectClone(projectID: UUID, plan: GitClonePlan)
+    public var threadID: UUID? {
         switch self {
+        case .projectClone: nil
+        case .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
+        }
+    }
+    public var projectID: UUID? { if case .projectClone(let id, _) = self { id } else { nil } }
+    public var targetID: UUID {
+        switch self {
+        case .projectClone(let id, _): id
         case .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }

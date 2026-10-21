@@ -44,6 +44,9 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case removeAttachment(threadID: UUID, attachmentID: UUID)
     case saveACPAgent(ACPAgentConfiguration)
     case removeACPAgent(UUID)
+    case startProjectClone(project: WorkspaceProject, thread: CodingThread)
+    case cancelProjectClone(UUID)
+    case retryProjectClone(projectID: UUID, plan: GitClonePlan)
 }
 
 enum EngineCommand: Codable, Sendable {
@@ -52,6 +55,8 @@ enum EngineCommand: Codable, Sendable {
     case provider(threadID: UUID, runtimeID: UUID, event: ProviderEvent)
     case effectResult(WorkspaceEffectRequest, EffectResult)
     case pauseQueues
+    case cloneStarted(projectID: UUID, attemptID: UUID)
+    case cloneProgress(projectID: UUID, attemptID: UUID, progress: GitCloneProgress)
 }
 enum EffectResult: Codable, Sendable { case succeeded, failed(String), cancelled, stopped }
 
@@ -59,22 +64,49 @@ struct WorkspaceDecision: Sendable {
     var snapshot: WorkspaceSnapshot
     var effects: [PendingWorkspaceEffect] = []
     var closeRuntime: UUID?
+    var cancelCloneAttempt: UUID?
 
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
+        case .client(.startProjectClone(var project, let thread)):
+            guard let submitted = project.clone else { throw WorkspaceCommandError("Choose a repository to clone.") }
+            do { try submitted.plan.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
+            guard submitted.plan.destinationPath == project.path, thread.projectID == project.id, thread.workspacePath == project.path,
+                  !decision.snapshot.projects.contains(where: { $0.id == project.id || $0.path == project.path }),
+                  !decision.snapshot.cloneAttemptIDs.contains(submitted.plan.id) else { throw WorkspaceCommandError("This project or clone destination is already in use.") }
+            project.clone = .init(plan: submitted.plan, now: now)
+            decision.snapshot.projects.append(project)
+            decision = try Self.make(.client(.createThread(thread)), id: id, snapshot: decision.snapshot, now: now)
+            decision.effects.append(.init(id: submitted.plan.id, request: .projectClone(projectID: project.id, plan: submitted.plan)))
+        case .client(.cancelProjectClone(let projectID)):
+            guard let i = decision.snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = decision.snapshot.projects[i].clone else { throw WorkspaceCommandError("This project has no clone to cancel.") }
+            if clone.isRunning, !clone.cancelRequested {
+                clone.cancelRequested = true; clone.updatedAt = now; decision.snapshot.projects[i].clone = clone
+                decision.cancelCloneAttempt = clone.id
+                for j in decision.snapshot.threads.indices where decision.snapshot.threads[j].projectID == projectID { decision.snapshot.threads[j].queuePaused = true }
+            }
+        case .client(.retryProjectClone(let projectID, let plan)):
+            do { try plan.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
+            guard let i = decision.snapshot.projects.firstIndex(where: { $0.id == projectID }), let old = decision.snapshot.projects[i].clone,
+                  old.canRetry, old.plan.source == plan.source, old.plan.destinationPath == plan.destinationPath,
+                  !decision.snapshot.cloneAttemptIDs.contains(plan.id) else { throw WorkspaceCommandError("This clone cannot be retried now. Refresh its status first.") }
+            decision.snapshot.projects[i].clone = .init(plan: plan, now: now, previousPlans: old.previousPlans + [old.plan])
+            decision.effects.append(.init(id: plan.id, request: .projectClone(projectID: projectID, plan: plan)))
         case .client(.saveACPAgent(let agent)):
             do { try agent.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
             if let i = decision.snapshot.acpAgents.firstIndex(where: { $0.id == agent.id }) { decision.snapshot.acpAgents[i] = agent }
             else { decision.snapshot.acpAgents.append(agent) }
         case .client(.removeACPAgent(let id)): decision.snapshot.acpAgents.removeAll { $0.id == id }
         case .client(.addProject(let project)):
+            guard project.clone == nil else { throw WorkspaceCommandError("Use Clone Repository to create a cloning project.") }
             if decision.snapshot.projects.contains(where: { $0.path == project.path }) { return decision }
             guard !decision.snapshot.projects.contains(where: { $0.id == project.id }) else { throw WorkspaceCommandError("This project identity is already in use.") }
             decision.snapshot.projects.append(project)
         case .client(.createThread(let thread)):
             guard decision.snapshot.projects.contains(where: { $0.id == thread.projectID }), !decision.snapshot.threads.contains(where: { $0.id == thread.id }),
                   thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
+            guard decision.snapshot.workspaceReady(for: thread) || decision.snapshot.projects.first(where: { $0.id == thread.projectID })?.path == thread.workspacePath else { throw WorkspaceCommandError("Wait for the clone before choosing another workspace.") }
             if thread.provider == .acp {
                 guard let agent = thread.acpAgent, decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
             }
@@ -121,6 +153,7 @@ struct WorkspaceDecision: Sendable {
                     if value { thread.queuePaused = true; decision.closeRuntime = thread.id; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil }
                 case .workspacePath(let path):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Change the workspace before sending the first message.") }
+                    guard decision.snapshot.workspaceReady(for: thread) else { throw WorkspaceCommandError("Wait for the clone before changing workspaces.") }
                     thread.workspacePath = path; decision.closeRuntime = thread.id; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
                 }
             case .submit(_, let text):
@@ -130,7 +163,10 @@ struct WorkspaceDecision: Sendable {
                 let queued = QueuedTurn(id: id, text: text, configuration: .init(thread: thread), createdAt: now,
                                         attachments: thread.draftAttachments.isEmpty ? nil : thread.draftAttachments)
                 thread.draft = ""; thread.draftAttachments = []
-                if thread.isBusy { thread.queuedTurns.append(queued) }
+                if thread.isBusy || !decision.snapshot.workspaceReady(for: thread) {
+                    if thread.queuedTurns.isEmpty, !thread.isBusy { thread.queuePaused = false }
+                    thread.queuedTurns.append(queued)
+                }
                 else {
                     if thread.queuedTurns.isEmpty { thread.queuePaused = false }
                     decision.start(queued, in: &thread, now: now)
@@ -176,7 +212,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .createThread, .saveACPAgent, .removeACPAgent: break
+            case .addProject, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -195,6 +231,18 @@ struct WorkspaceDecision: Sendable {
             decision.finished(request, result: result, now: now)
         case .pauseQueues:
             for i in decision.snapshot.threads.indices where !decision.snapshot.threads[i].queuedTurns.isEmpty { decision.snapshot.threads[i].queuePaused = true }
+        case .cloneStarted(let projectID, let attemptID):
+            if let i = decision.snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = decision.snapshot.projects[i].clone,
+               clone.id == attemptID, clone.isRunning, !clone.cancelRequested {
+                clone.phase = .running; clone.updatedAt = now; decision.snapshot.projects[i].clone = clone
+            }
+        case .cloneProgress(let projectID, let attemptID, var progress):
+            if let i = decision.snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = decision.snapshot.projects[i].clone,
+               clone.id == attemptID, clone.isRunning, !clone.cancelRequested {
+                progress.percent = progress.percent.map { min(100, max(0, $0)) }
+                progress.detail = progress.detail.map { String(GitService.redactURLs($0).prefix(500)) }
+                clone.progress = progress; clone.updatedAt = now; decision.snapshot.projects[i].clone = clone
+            }
         }
         try WorkspaceJournal.validate(decision.snapshot)
         return decision
@@ -209,7 +257,7 @@ struct WorkspaceDecision: Sendable {
         effects.append(.init(id: queued.id, request: .providerStart(threadID: thread.id, runID: queued.id, configuration: configuration, prompt: queued.text, attachments: queued.attachments)))
     }
     private mutating func startNext(in thread: inout CodingThread, now: Date) {
-        guard !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
+        guard snapshot.workspaceReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
         let queued = thread.queuedTurns.removeFirst(); start(queued, in: &thread, now: now)
     }
     private mutating func receive(_ event: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
@@ -301,9 +349,29 @@ struct WorkspaceDecision: Sendable {
         snapshot.threads[index] = thread
     }
     private mutating func finished(_ request: WorkspaceEffectRequest, result: EffectResult, now: Date) {
+        if case .projectClone(let projectID, let plan) = request {
+            guard let i = snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = snapshot.projects[i].clone,
+                  clone.id == plan.id, !clone.isReady else { return }
+            switch result {
+            case .succeeded:
+                clone.phase = .completed; clone.error = nil; clone.progress = .init(stage: .checkout, percent: 100, detail: nil, stalled: false)
+            case .failed(let message): clone.phase = .failed; clone.error = String(GitService.redactURLs(message).prefix(4_000))
+            case .cancelled, .stopped:
+                clone.phase = clone.cancelRequested ? .cancelled : .interrupted; clone.error = nil
+            }
+            clone.cancelRequested = false; clone.progress.stalled = false; clone.updatedAt = now; clone.endedAt = now
+            snapshot.projects[i].clone = clone
+            if clone.isReady {
+                for index in snapshot.threads.indices where snapshot.threads[index].projectID == projectID {
+                    var thread = snapshot.threads[index]; startNext(in: &thread, now: now); snapshot.threads[index] = thread
+                }
+            }
+            return
+        }
         guard let index = snapshot.threads.firstIndex(where: { $0.id == request.threadID }) else { return }
         var thread = snapshot.threads[index]
         switch request {
+        case .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
             if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
@@ -341,7 +409,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .createThread, .saveACPAgent, .removeACPAgent: nil
+        case .addProject, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelProjectClone, .retryProjectClone: nil
         case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

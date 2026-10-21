@@ -34,6 +34,15 @@ Push use your existing Git credentials. A folder without Git can initialize a
 repository; staging and unstaging also work before its first commit. A new thread
 can create a separate Git worktree before its first message.
 
+Choose **Clone Repository** from the sidebar's project menu or **File → Clone
+Repository** (⇧⌘O). Choose a new destination folder and keep writing while Git
+downloads in the background. Submitted messages wait for the checkout, then run
+in order. Progress, stalls, cancellation, and Retry appear in the conversation.
+Cancelling or restarting holds queued messages for **Resume Queue**. Retry uses a
+fresh staging folder and preserves earlier attempts; it does not resume a partial
+network transfer. Existing destination folders are never overwritten. Git uses
+your existing credentials and SSH setup without opening an interactive prompt.
+
 In **Settings → Providers → ACP Agents**, save an agent name, executable, and
 arguments (one per line), then choose it in a new conversation's header.
 Arguments are passed literally. Model discovery supports the agent's config
@@ -91,7 +100,8 @@ atomic commit failures, accepted/rejected command deduplication, queued executio
 approval responsiveness, Stop, stale provider events, lease loss, migration/restart,
 attachment import/integrity/conversion, native paste cancellation,
 file conflicts/path containment, and real local Git/remotes, branch tracking,
-divergence, conflicts, hooks, cancellation, and worktree operations. See the porting
+divergence, conflicts, hooks, cancellation, background cloning, queue gating,
+clone retry/recovery, and worktree operations. See the porting
 document for live checks and their limitations.
 
 The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), with its

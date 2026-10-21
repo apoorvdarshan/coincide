@@ -47,8 +47,16 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 6 protects these fields
+  hold it for explicit resumption. Database storage version 7 protects these fields
   from older binaries. No exactly-once provider execution is claimed.
+- Background clones are project-owned outbox actions. The project and conversation
+  appear as soon as their intent is saved; submitted messages retain their captured
+  configuration and attachments while waiting for a checkout. A completed clone
+  releases eligible queues; Cancel and restart hold them for explicit resumption.
+  Git runs in an owned process group and a private staging folder. Publication is
+  exclusive, and retry checks local completion evidence before creating another
+  attempt. Coincide preserves previous staging folders; Git itself may remove
+  files when a clone fails. Partial network transfers are not resumed.
 - Attachment bytes live in private, immutable app-owned files. Drafts, queued
   turns, messages, and outbox entries retain typed references. Images are normalized
   with ImageIO as needed and delivered through each provider's native image input;
@@ -68,7 +76,7 @@ must each be mapped and verified before declaring parity.
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, legacy migration | Complete provider recovery, checkpoints/finalization and run history, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill/file pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
-| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, cancellable operations and app-shutdown cleanup, worktree creation | Clone/progress/retry, PRs/stacks/host integrations, checkpoints/revert, worktree lifecycle/setup, automatic pull policies, broader credential and network failure coverage |
+| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, queued-message readiness and restart recovery, cancellable operations and app-shutdown cleanup, worktree creation | PRs/stacks/host integrations, checkpoints/revert, worktree lifecycle/setup, automatic pull policies, broader credential and network failure coverage |
 | Files | Browse/read/edit UTF-8 with conflict detection and workspace path checks | Search/ignore support, large/binary files, filesystem watching, editor integration |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup | Durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |

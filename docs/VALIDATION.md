@@ -1,5 +1,57 @@
 # Validation record
 
+## 2026-10-22 — native background repository cloning
+
+- Added a native Clone Repository sheet, focused-window File command, sidebar
+  status, and conversation progress/cancel/retry controls. A project and its first
+  conversation appear after one atomic journal/outbox commit, while Git runs
+  separately. Drafts remain editable, submitted turns retain their configuration
+  and attachments, and no provider or workspace terminal starts before the
+  checkout is ready. Other projects remain responsive during a gated clone.
+- Clone attempts use distinct private staging folders and never replace an
+  existing destination. Git runs with a retained checkout directory as its working
+  directory; metadata uses retained directory handles. Identity checks surround
+  completion-marker writes and exclusive promotion. Gated tests replace the
+  checkout, staging folder, or parent while Git runs, and verify writes stay in the
+  original checkout and replacement folders receive no completion marker.
+  These checks do not claim atomic source-identity protection against an active
+  same-user process swapping paths between the check and rename.
+- Cancellation stops the owned Git process group and awaits cleanup. A lost-child
+  observation disables all later signals and closes only owned pipe readers;
+  a regression reaps the fixture child early while another helper retains its
+  pipes, then verifies no process signal was attempted. Bounded backpressure
+  preserves raw stderr chunks before CR/LF parsing and URL redaction. Stress
+  fixtures exercise 40,000 progress frames, split UTF-8, oversized remote noise,
+  cancellation under continuous output, and stalled progress.
+- Unexpected FIFO metadata and lock files fail promptly without being removed.
+  Directory descriptors are kept above standard input/output descriptors before
+  spawn actions; that closed-stdio edge was source-reviewed, not tested by closing
+  the shared test runner's descriptors. Existing Git credentials and SSH setup are
+  retained; interactive credential prompts are disabled. Password/userinfo HTTP
+  URLs and query/fragment sources are rejected before journal or outbox persistence.
+- Retry uses a fresh attempt and preserves previous staging folders. Coincide
+  does not delete partial files, although Git may roll back its own failed clone;
+  partial network transfers are not resumed. Late Cancel and restart first inspect
+  local ownership/completion evidence. Restart never reruns a lost clone or sends
+  waiting messages automatically. Explicit Cancel holds queues even if the clone
+  finished at the same moment. Stale attempt callbacks cannot alter a retry.
+- `swift test --no-parallel` passed all 148 tests: 122 core, 4 terminal,
+  13 Markdown, and 9 native UI/store tests. Real Git fixtures clone isolated local
+  bare repositories and file URLs, including paths with spaces. Engine/store
+  tests cover queue order, captured options/attachments, failure/retry, held
+  queues, restart, completion recovery, privacy, and atomic effect-ID collisions.
+  Light/dark offscreen AppKit captures of the sheet and six progress/error states
+  were inspected. Native packaging/launch, strict deep signature verification,
+  and bundled-font runtime verification passed. A private backup preceded the
+  actual workspace migration from storage 6 to 7; canonical JSON comparison
+  confirmed all 3 existing conversations and 25 messages were unchanged.
+  Physical menu, sheet, and keyboard QA still needs an unlocked
+  desktop; live SSH/HTTPS authentication and network recovery remain unverified.
+
+This establishes native background cloning, not full T3 Code Git parity.
+Managed New Project, project organization/removal, PR/stack/host integrations,
+checkpoints, and broader worktree lifecycle behavior remain open.
+
 ## 2026-10-22 — native Git branches and synchronization
 
 - Replaced the HEAD-dependent status read with a single NUL-delimited

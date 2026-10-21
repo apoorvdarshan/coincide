@@ -20,7 +20,11 @@ struct ChatView: View {
                     Menu {
                         Text(thread.workspacePath)
                         Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
-                        if thread.messages.isEmpty { Button("Create Worktree…") { worktreeSheet = true } }
+                            .disabled(store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false)
+                        if thread.messages.isEmpty {
+                            Button("Create Worktree…") { worktreeSheet = true }
+                                .disabled(store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false)
+                        }
                     } label: { Label(store.selectedProject?.name ?? "Workspace", systemImage: "folder").font(.caption).foregroundStyle(.secondary) }
                     .menuStyle(.borderlessButton).fixedSize()
                 }.padding(.horizontal, 24).padding(.vertical, 12)
@@ -53,6 +57,10 @@ struct ChatView: View {
                     .onChange(of: thread.messages.count) { proxy.scrollTo("latest", anchor: .bottom) }
                 }
                 VStack(spacing: 10) {
+                    if let project = store.snapshot.projects.first(where: { $0.id == thread.projectID }) {
+                        ProjectCloneBanner(project: project, cancel: { store.cancelProjectClone(project.id) }, retry: { store.retryProjectClone(project.id) },
+                                           retrying: store.isRetryingProjectClone(project.id))
+                    }
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },
@@ -146,6 +154,7 @@ private struct ProviderMenu: View {
             }
             Divider()
             Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
+                .disabled(thread.provider == .acp && !store.workspaceReady(for: thread))
         } label: {
             HStack(spacing: 6) {
                 Text(thread.providerName).font(.system(size: 17, weight: .semibold))

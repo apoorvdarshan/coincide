@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SidebarView: View {
     @Bindable var store: WorkspaceStore
+    let onClone: () -> Void
     @State private var renaming: UUID?
     @State private var title = ""
     var body: some View {
@@ -13,7 +14,11 @@ struct SidebarView: View {
                         Label {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(thread.title).lineLimit(1)
-                                if thread.state != .idle { Text(thread.state == .awaitingApproval ? "Needs your input" : thread.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary) }
+                                if let clone = project.clone, !clone.isReady {
+                                    Text(ProjectClonePresentation.title(clone)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                } else if thread.state != .idle {
+                                    Text(thread.state == .awaitingApproval ? "Needs your input" : thread.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                         } icon: {
                             Image(systemName: thread.isPinned ? "pin" : thread.state == .running ? "circle.dotted" : "bubble.left")
@@ -24,6 +29,7 @@ struct SidebarView: View {
                             Button("Rename…") { title = thread.title; renaming = thread.id }
                             Button(thread.isArchived ? "Unarchive" : "Archive") { store.toggleArchive(thread.id) }.disabled(store.isBusy(thread.id))
                             Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
+                                .disabled(project.clone.map { !$0.isReady } ?? false)
                         }
                     }
                     Button { store.newThread(projectID: project.id) } label: { Label("New Thread", systemImage: "plus") }.buttonStyle(.plain).foregroundStyle(.secondary)
@@ -44,7 +50,11 @@ struct SidebarView: View {
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
-                Button { store.addProject() } label: { Label("Add Project", systemImage: "folder.badge.plus") }
+                Menu {
+                    Button("Open Folder…") { store.addProject() }
+                    Button("Clone Repository…", action: onClone)
+                } label: { Label("Add Project", systemImage: "folder.badge.plus") }
+                    .menuStyle(.borderlessButton).fixedSize()
                 Spacer()
                 SettingsLink { Image(systemName: "gearshape") }.help("Settings")
                 Toggle(isOn: $store.showArchived) { Image(systemName: "archivebox") }.toggleStyle(.button).help("Show archived threads")

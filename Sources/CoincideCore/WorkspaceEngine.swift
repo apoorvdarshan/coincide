@@ -9,6 +9,7 @@ public struct WorkspaceUpdate: Sendable {
 /// Serial command decisions and durable commits are independent of provider I/O.
 public actor WorkspaceEngine {
     public typealias ProviderFactory = @Sendable (CodingThread) throws -> any ProviderSession
+    public typealias CloneFactory = @Sendable (GitClonePlan) throws -> any ProjectCloneSession
     private struct Envelope: Sendable {
         var id: UUID
         var command: EngineCommand
@@ -26,6 +27,7 @@ public actor WorkspaceEngine {
     public nonisolated let attachments: AttachmentStore
     private let ownership: WorkspaceRuntimeLock
     private let factory: ProviderFactory
+    private let cloneFactory: CloneFactory
     private let workerID = UUID()
     private let inbox: AsyncStream<Envelope>
     private let incoming: AsyncStream<Envelope>.Continuation
@@ -46,13 +48,16 @@ public actor WorkspaceEngine {
     private var effectRequests: [UUID: WorkspaceEffectRequest] = [:]
     private var runtimes: [UUID: Runtime] = [:]
     private var metadataSessions: [UUID: any ProviderSession] = [:]
+    private var cloneProgressTimes: [UUID: (ContinuousClock.Instant, GitCloneProgress)] = [:]
     private let encoder: JSONEncoder = { let value = JSONEncoder(); value.outputFormatting = [.sortedKeys]; return value }()
 
-    public init(url: URL, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) }) throws {
+    public init(url: URL, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
+                cloneFactory: @escaping CloneFactory = { GitCloneService(plan: $0) }) throws {
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
         factory = providerFactory
+        self.cloneFactory = cloneFactory
         let pair = AsyncStream<Envelope>.makeStream()
         inbox = pair.stream; incoming = pair.continuation
     }
@@ -68,6 +73,7 @@ public actor WorkspaceEngine {
         revision = try await database.revision()
         _ = try await database.cancelEffectsAfterProcessLoss()
         var recovered = revision.snapshot; recovered.recoverInterruptedWork()
+        recovered = await reconcileCompletedClones(in: recovered)
         let receipt = try await database.commit(recovered, event: "workspace.opened", commandID: UUID(), expectedSequence: revision.sequence)
         revision = .init(snapshot: recovered, sequence: receipt.sequence)
         loaded = true
@@ -101,6 +107,21 @@ public actor WorkspaceEngine {
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
         return receipt
     }
+    /// A retry first checks the previous attempt's durable publication evidence. A crash or
+    /// late Cancel must not overwrite or clone over an already completed destination.
+    @discardableResult public func retryProjectClone(_ projectID: UUID) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        guard !stoppingEffects else { throw CancellationError() }
+        guard let clone = revision.snapshot.projects.first(where: { $0.id == projectID })?.clone, clone.canRetry else {
+            throw WorkspaceCommandError("This project has no interrupted clone to retry.")
+        }
+        if try await cloneFactory(clone.plan).isCompleted() {
+            guard !stoppingEffects else { throw CancellationError() }
+            return try await enqueue(.effectResult(.projectClone(projectID: projectID, plan: clone.plan), .succeeded))
+        }
+        let plan = try GitClonePlan.prepare(source: clone.plan.source, destination: URL(fileURLWithPath: clone.plan.destinationPath))
+        return try await dispatch(.retryProjectClone(projectID: projectID, plan: plan))
+    }
     private func enqueue(_ command: EngineCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         guard loaded, !closing, fatalError == nil else { throw CoincideError(fatalError ?? "The workspace is closing.") }
         return try await withCheckedThrowingContinuation { continuation in
@@ -133,6 +154,11 @@ public actor WorkspaceEngine {
                     let receipt = try await database.commit(decision.snapshot, event: "workspace.command", commandID: envelope.id,
                         expectedSequence: base.sequence, effects: decision.effects, deduplicationPayload: payload)
                     revision = .init(snapshot: decision.snapshot, sequence: receipt.sequence)
+                    if let attemptID = decision.cancelCloneAttempt {
+                        for (effectID, request) in effectRequests {
+                            if case .projectClone(_, let plan) = request, plan.id == attemptID { effects[effectID]?.cancel() }
+                        }
+                    }
                     if let id = decision.closeRuntime, let runtime = runtimes.removeValue(forKey: id) {
                         runtime.reader?.cancel(); Task { await runtime.session.close() }
                     }
@@ -177,6 +203,7 @@ public actor WorkspaceEngine {
     private func execute(_ effect: WorkspaceEffect) async {
         defer {
             effects.removeValue(forKey: effect.id); effectRequests.removeValue(forKey: effect.id)
+            if case .projectClone(_, let plan) = effect.request { cloneProgressTimes.removeValue(forKey: plan.id) }
             scheduleEffects()
         }
         let heartbeat = Task { [weak self] in
@@ -189,7 +216,10 @@ public actor WorkspaceEngine {
         let result: EffectResult
         do { result = try await perform(effect.request) }
         catch is CancellationError { result = .cancelled }
-        catch { result = .failed(error.localizedDescription) }
+        catch {
+            let message = effect.request.projectID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
+            result = .failed(message)
+        }
         heartbeat.cancel()
         if !closing, fatalError == nil {
             do {
@@ -215,12 +245,32 @@ public actor WorkspaceEngine {
     private func perform(_ request: WorkspaceEffectRequest) async throws -> EffectResult {
         try Task.checkCancellation()
         guard !stoppingEffects, fatalError == nil else { throw CancellationError() }
-        guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }) else { return .cancelled }
+        if case .projectClone(let projectID, let plan) = request {
+            guard let clone = revision.snapshot.projects.first(where: { $0.id == projectID })?.clone,
+                  clone.id == plan.id, clone.isRunning, !clone.cancelRequested else { return .cancelled }
+            _ = try await enqueue(.cloneStarted(projectID: projectID, attemptID: plan.id))
+            guard let latest = revision.snapshot.projects.first(where: { $0.id == projectID })?.clone,
+                  latest.id == plan.id, latest.isRunning, !latest.cancelRequested else { return .cancelled }
+            try Task.checkCancellation()
+            let session = try cloneFactory(plan)
+            do {
+                try await session.run { [weak self] progress in await self?.receiveCloneProgress(projectID: projectID, attemptID: plan.id, progress: progress) }
+                return .succeeded
+            } catch {
+                // Git may have completed promotion while cancellation was arriving. Inspect
+                // local ownership evidence on an uncancelled task before choosing its outcome.
+                if (try? await Task.detached { try await session.isCompleted() }.value) == true { return .succeeded }
+                throw error
+            }
+        }
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
+        case .projectClone: return .cancelled // Project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
             let input = try await attachments.prepare(text: prompt, attachments: references ?? [])
             guard !closing, !stoppingEffects,
+                  revision.snapshot.workspaceReady(for: thread),
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false else { return .cancelled }
             var configured = thread
@@ -231,6 +281,7 @@ public actor WorkspaceEngine {
             configured.agentConfiguration = configuration.agentConfiguration
             let runtime = try await runtime(for: configured, runID: runID)
             guard !closing, !stoppingEffects, revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
+                  revision.snapshot.workspaceReady(for: thread),
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false,
                   runtimes[thread.id]?.id == runtime.id else { return .cancelled }
             try Task.checkCancellation()
@@ -264,6 +315,28 @@ public actor WorkspaceEngine {
             }
             return .succeeded
         }
+    }
+    private func receiveCloneProgress(projectID: UUID, attemptID: UUID, progress: GitCloneProgress) async {
+        guard !closing, !stoppingEffects, fatalError == nil,
+              effectRequests.values.contains(where: { if case .projectClone(let id, let plan) = $0 { id == projectID && plan.id == attemptID } else { false } }) else { return }
+        let now = ContinuousClock.now
+        if let last = cloneProgressTimes[attemptID] {
+            if last.1 == progress { return }
+            if last.1.stage == progress.stage, last.1.stalled == progress.stalled, progress.percent != 100, now - last.0 < .milliseconds(100) { return }
+        }
+        cloneProgressTimes[attemptID] = (now, progress)
+        _ = try? await enqueue(.cloneProgress(projectID: projectID, attemptID: attemptID, progress: progress))
+    }
+    private func reconcileCompletedClones(in snapshot: WorkspaceSnapshot) async -> WorkspaceSnapshot {
+        var recovered = snapshot
+        for i in recovered.projects.indices {
+            guard var clone = recovered.projects[i].clone, !clone.isReady else { continue }
+            guard (try? await cloneFactory(clone.plan).isCompleted()) == true else { continue }
+            clone.phase = .completed; clone.cancelRequested = false; clone.error = nil
+            clone.progress = .init(stage: .checkout, percent: 100, detail: nil, stalled: false)
+            clone.updatedAt = Date(); clone.endedAt = clone.updatedAt; recovered.projects[i].clone = clone
+        }
+        return recovered
     }
     private func runtime(for thread: CodingThread, runID: UUID) async throws -> Runtime {
         if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent { return existing }
@@ -300,6 +373,9 @@ public actor WorkspaceEngine {
     }
     public func models(thread: CodingThread) async throws -> [ProviderModel] {
         guard !closing else { throw CancellationError() }
+        if revision.snapshot.projects.contains(where: { $0.id == thread.projectID }), !revision.snapshot.workspaceReady(for: thread) {
+            throw CoincideError("Wait for the repository to finish cloning before refreshing this agent's models.")
+        }
         let id = UUID(), session = try factory(thread); metadataSessions[id] = session
         do {
             let result = try await session.models(); await session.close(); metadataSessions.removeValue(forKey: id); return result
@@ -325,6 +401,7 @@ public actor WorkspaceEngine {
             do {
                 _ = try await database.cancelEffectsAfterProcessLoss(reason: "The app closed.")
                 let base = try await database.revision(); var recovered = base.snapshot; recovered.recoverInterruptedWork()
+                recovered = await reconcileCompletedClones(in: recovered)
                 let receipt = try await database.commit(recovered, event: "workspace.closed", commandID: UUID(), expectedSequence: base.sequence)
                 revision = .init(snapshot: recovered, sequence: receipt.sequence); publish()
             } catch { fatalError = error.localizedDescription; publish() }

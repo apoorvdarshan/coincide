@@ -20,6 +20,7 @@ enum CoincideMain {
 struct CoincideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store = WorkspaceStore()
+    @FocusedValue(\.cloneRepositoryPresentation) private var cloneRepositoryPresentation: Binding<Bool>?
     var body: some Scene {
         WindowGroup("Coincide") {
             ContentView(store: store)
@@ -31,6 +32,8 @@ struct CoincideApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Thread") { store.newThread() }.keyboardShortcut("n")
                 Button("Add Project…") { store.addProject() }.keyboardShortcut("o")
+                Button("Clone Repository…") { cloneRepositoryPresentation?.wrappedValue = true }
+                    .keyboardShortcut("o", modifiers: [.command, .shift]).disabled(cloneRepositoryPresentation == nil)
             }
             CommandMenu("Thread") {
                 Button("Stop Turn") { if let id = store.selectedThreadID { Task { await store.interrupt(id) } } }

@@ -35,6 +35,7 @@ final class WorkspaceStore {
     private var attachmentImportCounts: [UUID: Int] = [:]
     private var attachmentImportTasks: [UUID: Task<Void, Never>] = [:]
     private var gitInspectors: [String: GitInspectorStore] = [:]
+    private var retryingProjectClones: Set<UUID> = []
     private var lastSequence: Int64 = -1
     private var terminating = false
 
@@ -46,6 +47,7 @@ final class WorkspaceStore {
             engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"))
         } catch { errorMessage = error.localizedDescription }
     }
+    init(engine: WorkspaceEngine) { self.engine = engine }
     func thread(_ id: UUID) -> CodingThread? {
         guard var value = snapshot.threads.first(where: { $0.id == id }) else { return nil }
         if let draft = draftOverrides[id] { value.draft = draft }
@@ -139,6 +141,26 @@ final class WorkspaceStore {
             catch { errorMessage = error.localizedDescription }
         }
     }
+    func workspaceReady(for thread: CodingThread) -> Bool { snapshot.workspaceReady(for: thread) }
+    func cloneRepository(source: String, destination: URL) async throws {
+        let plan = try GitClonePlan.prepare(source: source, destination: destination)
+        var project = WorkspaceProject(path: plan.destinationPath); project.clone = .init(plan: plan)
+        let thread = CodingThread(project: project)
+        _ = try await enqueue(.startProjectClone(project: project, thread: thread)).value
+        selectedProjectID = project.id; selectedThreadID = thread.id; showArchived = false
+    }
+    func cancelProjectClone(_ projectID: UUID) { sendCommand(.cancelProjectClone(projectID)) }
+    func retryProjectClone(_ projectID: UUID) {
+        guard !terminating, snapshot.projects.first(where: { $0.id == projectID })?.clone?.canRetry == true,
+              retryingProjectClones.insert(projectID).inserted else { return }
+        Task {
+            defer { retryingProjectClones.remove(projectID) }
+            guard let engine else { return }
+            do { _ = try await engine.retryProjectClone(projectID); apply(await engine.current()) }
+            catch { if !terminating { errorMessage = GitService.redactURLs(error.localizedDescription) } }
+        }
+    }
+    func isRetryingProjectClone(_ projectID: UUID) -> Bool { retryingProjectClones.contains(projectID) }
     func newThread(projectID: UUID? = nil) {
         guard let project = snapshot.projects.first(where: { $0.id == (projectID ?? selectedProjectID ?? selectedProject?.id) }) ?? snapshot.projects.first else {
             addProject(); return
@@ -321,6 +343,9 @@ final class WorkspaceStore {
     }
     func resumeQueue(_ threadID: UUID) { sendCommand(.resumeQueue(threadID: threadID)) }
     func openFile(_ url: URL, line: Int?, workspacePath: String) {
+        if let thread = snapshot.threads.first(where: { $0.workspacePath == workspacePath }), !workspaceReady(for: thread) {
+            errorMessage = "Wait for the repository to finish cloning before opening its files."; return
+        }
         let root = URL(fileURLWithPath: workspacePath).standardizedFileURL.resolvingSymlinksInPath()
         guard url.path.hasPrefix(root.path + "/") else { errorMessage = "This file is outside the workspace."; return }
         let relative = String(url.path.dropFirst(root.path.count + 1))
@@ -342,6 +367,7 @@ final class WorkspaceStore {
         guard let thread = thread(id), thread.messages.isEmpty, !thread.isBusy, !preparingWorkspaces.contains(id) else {
             errorMessage = "Create the worktree before sending the first message."; return
         }
+        guard workspaceReady(for: thread) else { errorMessage = "Wait for cloning to finish before creating a worktree."; return }
         preparingWorkspaces.insert(id); defer { preparingWorkspaces.remove(id) }
         do {
             let parent = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
