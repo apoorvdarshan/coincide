@@ -1,5 +1,25 @@
 # Validation record
 
+## 2026-10-22 — small-display window layout and native alert verification
+
+- The third hosted run verified real Git HEAD and draft entry. The rename dialog
+  appeared, but macOS omitted its SwiftUI text-field identifier; the test now
+  scopes the single field to the observed native sheet and its Save control.
+- Actual screenshots and accessibility frames showed a 1280-point default window
+  extending beyond a 1024-point display, plus an oversized chat detail. Default
+  sizing now fits the current display's visible area, and chat/detail containers
+  accept smaller proposed widths. Large displays retain the 1280 by 820 default.
+- Both hosted appearance workflows now require the entire window and each sidebar
+  control to fit the actual display. All rename, draft, collapse, persistence,
+  removal, and preserved-file checks remain enabled. Hosted verification of this
+  layout correction is pending.
+- The full 220-test suite passed (183 core, 4 terminal, 13 Markdown, 20 native
+  UI/store), including small-display sizing and offscreen narrow-detail checks.
+  The Xcode UI runner compiled without launching a local GUI. Configuration tests,
+  app packaging/launch, strict deep signing, and bundled-font verification passed.
+  Canonical comparison confirmed the real workspace and its 3 conversations and
+  25 messages are unchanged.
+
 ## 2026-10-22 — repository identity foundation
 
 - Added native local Git identity resolution without remote access. Tests cover
@@ -67,8 +87,9 @@ preferences, and the grouped sidebar remain pending.
   Git verification child exited unsuccessfully; the harness now resolves the
   actual developer Git executable outside the runner sandbox and retains command
   diagnostics. Recordings confirm readable selected rows and symbols in the live
-  light/dark app, unlike the earlier offscreen captures. Leading-edge clipping
-  remains unresolved pending window-frame diagnostics. The workflows now also
+  light/dark app, unlike the earlier offscreen captures. Later frame diagnostics
+  identified window and content overflow; see the small-display entry above.
+  The workflows now also
   test Cancel/confirmed removal, draft retention, and preserved README/icon/HEAD
   bytes. Local compile/configuration checks pass; the complete hosted workflows
   and screenshot review remain pending.

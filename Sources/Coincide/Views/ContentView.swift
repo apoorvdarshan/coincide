@@ -21,6 +21,7 @@ struct ContentView: View {
                             .id(thread.id).frame(minHeight: 160, idealHeight: 260, maxHeight: 600)
                     }
                 }
+                    .frame(minWidth: 0, maxWidth: .infinity)
                     .inspector(isPresented: $store.inspectorVisible) {
                         Group {
                             if store.workspaceReady(for: thread) { WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath) }

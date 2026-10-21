@@ -50,8 +50,8 @@ struct ChatView: View {
                             }
                             Color.clear.frame(height: 1).id("latest")
                         }
-                        .frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 18)
-                        .frame(maxWidth: .infinity)
+                        .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 18)
+                        .frame(minWidth: 0, maxWidth: .infinity)
                     }
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: thread.messages.count) { proxy.scrollTo("latest", anchor: .bottom) }
@@ -84,8 +84,9 @@ struct ChatView: View {
                                      }
                                  }, stop: { Task { await store.interrupt(threadID) } })
                 }
-                .frame(maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(maxWidth: .infinity)
+                .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(minWidth: 0, maxWidth: .infinity)
             }
+            .frame(minWidth: 0, maxWidth: .infinity)
             .navigationTitle("Coincide")
             .sheet(isPresented: $worktreeSheet) {
                 VStack(alignment: .leading, spacing: 16) {

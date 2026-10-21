@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import XCTest
 
 final class CoincideDesktopUITests: XCTestCase {
@@ -72,8 +73,9 @@ final class CoincideDesktopUITests: XCTestCase {
         }
         let header = app.buttons["Collapse \(projectName)"]
         XCTAssertTrue(header.waitForExistence(timeout: 10))
-        let layout = XCTAttachment(string: "Application frame: \(app.frame)\nWindow frame: \(app.windows.firstMatch.frame)\n\n\(app.debugDescription)")
+        let layout = XCTAttachment(string: "Display frame: \(CGDisplayBounds(CGMainDisplayID()))\nWindow frame: \(app.windows.firstMatch.frame)\n\n\(app.debugDescription)")
         layout.name = "\(appearance)-created-layout-and-accessibility"; layout.lifetime = .keepAlways; add(layout)
+        assertSidebarFitsDisplay(app, projectHeader: header)
         capture(app, name: "\(appearance)-created")
         let projectFolders = try manager.contentsOfDirectory(at: root.appendingPathComponent("Projects"), includingPropertiesForKeys: [.isDirectoryKey])
             .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
@@ -91,18 +93,24 @@ final class CoincideDesktopUITests: XCTestCase {
         header.rightClick()
         let rename = app.menuItems["Rename Project…"]
         XCTAssertTrue(rename.waitForExistence(timeout: 5)); rename.click()
-        let renameField = app.textFields["sidebar-rename-title"]
+        // Native SwiftUI alert text fields preserve their placeholder/value, but
+        // macOS does not bridge this field's SwiftUI accessibility identifier.
+        let renameSheet = app.sheets.containing(.button, identifier: "sidebar-rename-save").element
+        XCTAssertTrue(renameSheet.waitForExistence(timeout: 5))
+        XCTAssertEqual(renameSheet.textFields.count, 1)
+        let renameField = renameSheet.textFields.element
         XCTAssertTrue(renameField.waitForExistence(timeout: 5)); renameField.click()
+        XCTAssertEqual(renameField.value as? String, projectName)
         renameField.typeKey("a", modifierFlags: .command)
         let renamed = projectName + " Renamed"
         renameField.typeText(renamed); app.buttons["sidebar-rename-save"].click()
         let renamedHeader = app.buttons["Collapse \(renamed)"]
         XCTAssertTrue(renamedHeader.waitForExistence(timeout: 5)); renamedHeader.click()
         XCTAssertTrue(app.buttons["Expand \(renamed)"].waitForExistence(timeout: 5))
-        let outlineRow = app.outlineRows.containing(.staticText, identifier: "New thread").firstMatch
-        let selected = outlineRow.exists ? outlineRow : app.tableRows.containing(.staticText, identifier: "New thread").firstMatch
+        let selected = app.outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).element
         XCTAssertTrue(selected.waitForExistence(timeout: 5) && selected.isSelected, "Collapsing must keep the selected conversation visible.")
         XCTAssertEqual(composer.value as? String, draft)
+        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Expand \(renamed)"])
         capture(app, name: "\(appearance)-collapsed-selected")
 
         app.typeKey("q", modifierFlags: .command)
@@ -112,6 +120,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Expand \(renamed)"].waitForExistence(timeout: 10), "The renamed project and collapsed state must persist.")
         XCTAssertTrue(composer.waitForExistence(timeout: 10)); XCTAssertEqual(composer.value as? String, draft)
         XCTAssertTrue(selected.exists && selected.isSelected)
+        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Expand \(renamed)"])
         capture(app, name: "\(appearance)-reopened")
         let tree = XCTAttachment(string: app.debugDescription); tree.name = "\(appearance)-reopened-accessibility-tree"; tree.lifetime = .keepAlways; add(tree)
 
@@ -119,10 +128,11 @@ final class CoincideDesktopUITests: XCTestCase {
         collapsedHeader.rightClick()
         let removeItem = app.menuItems["Remove Project…"]
         XCTAssertTrue(removeItem.waitForExistence(timeout: 5)); removeItem.click()
-        let confirmationTitle = app.staticTexts["Remove “\(renamed)” from Coincide?"]
+        let removalTitle = "Remove “\(renamed)” from Coincide?"
+        let confirmationTitle = app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", removalTitle, removalTitle)).element
         let confirmRemove = app.buttons["Remove Project"]
         XCTAssertTrue(confirmationTitle.waitForExistence(timeout: 5) && confirmRemove.exists)
-        let explanation = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Git may clean up unfinished files", "local recovery history")).firstMatch
+        let explanation = app.staticTexts.matching(NSPredicate(format: "(label CONTAINS %@ OR value CONTAINS %@) AND (label CONTAINS %@ OR value CONTAINS %@)", "Git may clean up unfinished files", "Git may clean up unfinished files", "local recovery history", "local recovery history")).element
         XCTAssertTrue(explanation.waitForExistence(timeout: 5), "Removal must explain active-Git cleanup and retained recovery history.")
         app.buttons["Cancel"].click()
         XCTAssertTrue(waitForAbsence(confirmRemove, timeout: 5))
@@ -139,7 +149,8 @@ final class CoincideDesktopUITests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: projectFolder.appendingPathComponent(path)), preservedFiles[path], "Removing a registered project must preserve its existing \(path) bytes.")
         }
         XCTAssertEqual(try verifyHead(gitPath: gitPath, project: projectFolder, configuration: configuration, name: "\(appearance)-removed-git-head"), initialHead)
-        XCTAssertTrue(app.staticTexts["Your projects and coding agents, in a native Mac workspace."].waitForExistence(timeout: 5))
+        let emptyDescription = "Your projects and coding agents, in a native Mac workspace."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", emptyDescription, emptyDescription)).element.waitForExistence(timeout: 5))
         capture(app, name: "\(appearance)-removed-empty-workspace")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
@@ -171,8 +182,31 @@ final class CoincideDesktopUITests: XCTestCase {
     @MainActor private func capture(_ app: XCUIApplication, name: String) {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.exists && window.isHittable && app.state == .runningForeground)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(window.frame), "The native window must fit entirely on the hosted display: \(window.frame).")
         let screenshot = window.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
         // xcresulttool exports the retained PNG outside the sandbox after testing.
+    }
+
+    @MainActor private func assertSidebarFitsDisplay(_ app: XCUIApplication, projectHeader: XCUIElement) {
+        let display = CGDisplayBounds(CGMainDisplayID())
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(display.contains(window), "The native window must fit the actual display \(display), without clipping: \(window).")
+        let controls: [(String, XCUIElement)] = [
+            ("New conversation", app.buttons["New conversation"]),
+            ("Sort projects", app.menuButtons["project-sort-menu"]),
+            ("Search conversations", app.textFields["Search conversations"]),
+            ("Project header", projectHeader),
+            ("Selected conversation", app.outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).element),
+            ("Add Project", app.menuButtons["folder.badge.plus"]),
+            ("Settings", app.buttons["gearshape"]),
+            ("Archive", app.checkBoxes["Archive"]),
+        ]
+        for (name, control) in controls {
+            XCTAssertTrue(control.exists, "The sidebar must expose its \(name) control.")
+            let frame = control.frame
+            XCTAssertTrue(frame.width > 0 && frame.height > 0 && window.contains(frame) && display.contains(frame),
+                          "The \(name) control must be wholly inside the window and display, without clipping: \(frame).")
+        }
     }
 }

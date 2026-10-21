@@ -22,6 +22,9 @@ struct CoincideApp: App {
     @State private var store: WorkspaceStore
     @FocusedValue(\.cloneRepositoryPresentation) private var cloneRepositoryPresentation: Binding<Bool>?
     @FocusedValue(\.newProjectPresentation) private var newProjectPresentation: Binding<Bool>?
+    private var defaultWindowSize: CGSize {
+        MainWindowSizing.size(fitting: NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 820))
+    }
     init() {
         do {
             let url = try AppLaunchConfiguration.databaseURL(bundleIdentifier: Bundle.main.bundleIdentifier,
@@ -38,7 +41,7 @@ struct CoincideApp: App {
                 .frame(minWidth: 900, minHeight: 600)
                 .task { await store.load(); delegate.attach(store) }
         }
-        .defaultSize(width: 1280, height: 820)
+        .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Thread") { store.newThread() }.keyboardShortcut("n")
@@ -55,6 +58,12 @@ struct CoincideApp: App {
             }
         }
         Settings { SettingsView(store: store) }
+    }
+}
+
+enum MainWindowSizing {
+    static func size(fitting display: CGSize) -> CGSize {
+        CGSize(width: min(1280, max(1, display.width)), height: min(820, max(1, display.height)))
     }
 }
 
