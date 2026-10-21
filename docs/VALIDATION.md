@@ -1,5 +1,22 @@
 # Validation record
 
+## 2026-10-22 — repository identity foundation
+
+- Added native local Git identity resolution without remote access. Tests cover
+  protocol/port and Azure aliases, nested names, IDNA hosts, SCP/IPv6 round trips,
+  upstream/origin fork separation, fetch-only selection, bare repositories,
+  nested and symlink roots, detached worktrees, and current configuration reads.
+- Returned URLs strip authentication, queries, and fragments; encoded host
+  delimiters and inconsistent stored metadata are rejected. Inherited Git context
+  and trace variables cannot redirect discovery or write trace files. Metadata is
+  bounded, errors omit raw Git diagnostics, and cancellation waits for Git exit.
+- All nine focused tests and the full 218-test suite passed (183 core, 4 terminal,
+  13 Markdown, 18 native UI/store). Independent source review found no remaining
+  blocker. Existing workspace models and storage version 8 are unchanged.
+
+This is a tested core foundation. Persisted identity enrichment, grouping
+preferences, and the grouped sidebar remain pending.
+
 ## 2026-10-22 — native project removal and hosted GUI test foundation
 
 - Added confirmed project removal covering active and archived conversations in

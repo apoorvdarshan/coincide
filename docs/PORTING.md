@@ -74,6 +74,11 @@ must each be mapped and verified before declaring parity.
   their selected eligible conversation, and display renames preserve checkout
   paths. New projects have creation/activity dates; legacy unknown dates remain
   unset rather than being assigned synthetic migration timestamps.
+- A native, read-only repository identity resolver provides the foundation for
+  logical checkout grouping. It handles nested folders, detached worktrees,
+  explicit bare repositories, upstream/origin fork identity, and supported URL
+  aliases. Credentials, queries, and fragments are removed before returning
+  metadata. Identity enrichment is not yet attached to saved projects or the UI.
 - Project removal commits all active/archived thread removals, project removal,
   collapsed-preference cleanup, and pending-action cancellation together. Running
   actions retain their leases until their owned executors settle; detached
