@@ -155,7 +155,13 @@ must each be mapped and verified before declaring parity.
   invalidates old idle probes and holds settlement; unknown delivery is not
   retried. `/compact` uses the separate native compact command. Existing
   conversation stdio/Engine and native view/store checks have passed; the new
-  steering fixtures pass the focused serial run. No installed Pi calls were made. History mutation, setup/auth, usage and installed acceptance remain open.
+  steering fixtures pass the focused serial run. Native v3 history primitives
+  now keep append inventory, explicit runtime leaf and file-reload leaf separate,
+  follow active compaction/custom-message context, and read only an exact anchored
+  file with stat/hash proof. Prospective ancestor windows preserve native entry
+  IDs without assigning run ownership or inventing turn IDs. Native history
+  controls, runtime entry capture, setup/auth, usage and installed acceptance
+  remain open. No installed Pi calls were made.
 - Native Muse uses a separate MSP JSON-RPC connection with bounded framing,
   exact command admission, initialized-before-use ordering and an owned process.
   Captured model/effort/permission values govern each input; session identity and
