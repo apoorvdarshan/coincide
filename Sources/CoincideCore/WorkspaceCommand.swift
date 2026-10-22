@@ -156,7 +156,28 @@ struct WorkspaceDecision: Sendable {
     var cancelCloneAttempt: UUID?
     var cancelWorktreeAttempt: UUID?
 
+    @inline(never)
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        if case .conversationHistoryAccepted(let review, let title) = command {
+            return try makeConversationHistoryAcceptance(review, title: title, snapshot: snapshot, now: now)
+        }
+        return try makeGeneral(command, id: id, snapshot: snapshot, now: now)
+    }
+
+    // Acceptance validates and encodes retained checkpoint evidence. Keep that
+    // call chain outside the general switch's unconditional temporary buffers.
+    @inline(never)
+    private static func makeConversationHistoryAcceptance(_ review: ConversationHistoryReview, title: String?,
+                                                          snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        try decision.acceptConversationHistory(review, title: title, now: now)
+        decision.snapshot.reconcileGroupingPreferences()
+        try WorkspaceJournal.validate(decision.snapshot)
+        return decision
+    }
+
+    @inline(never)
+    private static func makeGeneral(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
         if case .provider(let threadID, _, _) = command, snapshot.isCheckpointRestoreLocked(threadID: threadID) || snapshot.isPullRequestCreationLocked(threadID: threadID) || snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return decision }
