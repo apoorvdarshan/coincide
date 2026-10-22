@@ -118,11 +118,21 @@ extension GitHubPullRequestCheckoutService {
             let latest = try await metadata.detail(plan.request.reference).summary
             guard latest.headCommit == plan.requestedHeadCommit, latest.headRepository == plan.pullRequest.headRepository,
                   latest.headBranch == plan.pullRequest.headBranch else { throw GitHubPullRequestCheckoutError(.staleReview) }
-            let sourceStatus = try await status(source), destinationStatus = try await status(checkout)
-            let sourceConfiguration = try await configurationDigest(source), destinationConfiguration = try await configurationDigest(checkout)
+            let independentSource = plan.request.mode == .worktree && plan.proof.repositoryFingerprint != nil
+            let sourceStatus = independentSource ? Data() : try await status(source)
+            let destinationStatus = try await status(checkout)
+            let sourceFingerprint: String, sourceConfiguration: String
+            if independentSource {
+                sourceFingerprint = try await repositoryFingerprint(source, baseRemote: plan.baseRemote, headRemote: plan.headRemote); sourceConfiguration = sourceFingerprint
+            } else if plan.proof.repositoryFingerprint != nil {
+                sourceFingerprint = try await self.destinationFingerprint(source, plan: plan); sourceConfiguration = try await policyConfigurationDigest(source)
+            } else { sourceFingerprint = source.proof; sourceConfiguration = try await configurationDigest(source) }
+            let scopedDestination = plan.proof.repositoryFingerprint != nil
+            let destinationFingerprint = scopedDestination ? try await self.destinationFingerprint(checkout, plan: plan) : checkout.proof
+            let destinationConfiguration = scopedDestination ? try await policyConfigurationDigest(checkout) : try await configurationDigest(checkout)
             let completion = try GitHubPullRequestCheckoutCompletion(ownership: ownership, result: result,
-                sourceFingerprint: source.proof, sourceStatusDigest: GitHubPullRequestService.digest(sourceStatus), sourceIndexDigest: indexDigest(source),
-                destinationFingerprint: checkout.proof, destinationStatusDigest: GitHubPullRequestService.digest(destinationStatus), destinationIndexDigest: indexDigest(checkout),
+                sourceFingerprint: sourceFingerprint, sourceStatusDigest: GitHubPullRequestService.digest(sourceStatus), sourceIndexDigest: independentSource ? nil : indexDigest(source),
+                destinationFingerprint: destinationFingerprint, destinationStatusDigest: GitHubPullRequestService.digest(destinationStatus), destinationIndexDigest: indexDigest(checkout),
                 sourceConfigurationDigest: sourceConfiguration, destinationConfigurationDigest: destinationConfiguration)
             try Task.checkCancellation(); try owned.validate(expected: ownership.identity)
             try owned.writeExclusive(encode(completion), name: "complete.json")
@@ -146,11 +156,23 @@ extension GitHubPullRequestCheckoutService {
               completion.ownership.plan == plan, completion.ownership.identity == directory.identity else { return .unconfirmed }
         try completion.result.validate(plan: plan)
         let checkout = try await local(at: plan.destinationPath)
-        guard source.proof == completion.sourceFingerprint, checkout.proof == completion.destinationFingerprint,
-              try await configurationDigest(source) == completion.sourceConfigurationDigest,
-              try await configurationDigest(checkout) == completion.destinationConfigurationDigest,
-              try indexDigest(source) == completion.sourceIndexDigest, try indexDigest(checkout) == completion.destinationIndexDigest,
-              GitHubPullRequestService.digest(try await status(source)) == completion.sourceStatusDigest,
+        let independentSource = plan.request.mode == .worktree && plan.proof.repositoryFingerprint != nil
+        let sourceFingerprint: String, sourceConfiguration: String
+        if independentSource {
+            sourceFingerprint = try await repositoryFingerprint(source, baseRemote: plan.baseRemote, headRemote: plan.headRemote); sourceConfiguration = sourceFingerprint
+        } else if plan.proof.repositoryFingerprint != nil {
+            sourceFingerprint = try await self.destinationFingerprint(source, plan: plan); sourceConfiguration = try await policyConfigurationDigest(source)
+        } else { sourceFingerprint = source.proof; sourceConfiguration = try await configurationDigest(source) }
+        let sourceIndex = independentSource ? nil : try indexDigest(source)
+        let sourceStatus = independentSource ? Data() : try await status(source)
+        let scopedDestination = plan.proof.repositoryFingerprint != nil
+        let destinationFingerprint = scopedDestination ? try await self.destinationFingerprint(checkout, plan: plan) : checkout.proof
+        let destinationConfiguration = scopedDestination ? try await policyConfigurationDigest(checkout) : try await configurationDigest(checkout)
+        guard sourceFingerprint == completion.sourceFingerprint, destinationFingerprint == completion.destinationFingerprint,
+              sourceConfiguration == completion.sourceConfigurationDigest,
+              destinationConfiguration == completion.destinationConfigurationDigest,
+              sourceIndex == completion.sourceIndexDigest, try indexDigest(checkout) == completion.destinationIndexDigest,
+              GitHubPullRequestService.digest(sourceStatus) == completion.sourceStatusDigest,
               GitHubPullRequestService.digest(try await status(checkout)) == completion.destinationStatusDigest,
               checkout.head == completion.result.headCommit, checkout.branch == completion.result.branch else { return .unconfirmed }
         if let child = completion.result.worktreePlan {

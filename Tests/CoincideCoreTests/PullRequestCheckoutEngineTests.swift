@@ -9,12 +9,16 @@ actor PullRequestCheckoutEnginePeer {
     private var gate: RestoreEngineGate?
     private var probe: (@Sendable () async throws -> Void)?
     private var inspection = GitHubPullRequestCheckoutInspection.unconfirmed
+    private var reuse = false
+    private(set) var preparedPolicies: [GitHubPullRequestCheckoutPolicy] = []
     private(set) var writes: [UUID] = []
     private(set) var inspections = 0
     init(seed: PullRequestCheckoutFixture) { self.seed = seed }
-    func configure(_ mode: Mode, gate: RestoreEngineGate? = nil, probe: (@Sendable () async throws -> Void)? = nil) { self.mode = mode; self.gate = gate; self.probe = probe }
+    func configure(_ mode: Mode, gate: RestoreEngineGate? = nil, reuse: Bool = false, probe: (@Sendable () async throws -> Void)? = nil) { self.mode = mode; self.gate = gate; self.reuse = reuse; self.probe = probe }
     func setInspection(_ value: GitHubPullRequestCheckoutInspection) { inspection = value }
-    func prepare(_ request: GitHubPullRequestCheckoutRequest) throws -> GitHubPullRequestCheckoutPlan { try seed.plan(request) }
+    func prepare(_ request: GitHubPullRequestCheckoutRequest) throws -> GitHubPullRequestCheckoutPlan {
+        preparedPolicies.append(request.policy); return try seed.plan(request, reuse: reuse)
+    }
     func run(_ plan: GitHubPullRequestCheckoutPlan) async throws -> GitHubPullRequestCheckoutResult {
         writes.append(plan.id); try await probe?()
         if let gate { await gate.wait() }; try Task.checkCancellation()

@@ -31,11 +31,11 @@ struct PullRequestsSheet: View {
                 Button("Back to Pull Requests") { mode = .list }.disabled(model.isBusy).padding(.horizontal, 20).padding(.top, 12)
                     .accessibilityIdentifier("pull-requests-back")
             }
-            if (mode != .create && model.operation?.locksSource == true) || (!mode.isCheckout && model.checkoutOperation?.locksSource == true) {
+            if mode != .create && model.operation?.locksSource == true {
                 ScrollView { operationContent.padding(20) }.frame(minHeight: 0, maxHeight: .infinity)
                     .accessibilityIdentifier("pull-request-operation-scroll")
             } else {
-                if !mode.isForm, model.operation != nil || model.checkoutOperation != nil {
+                if !mode.isForm, model.operation != nil || !model.checkoutOperations.isEmpty {
                     ScrollView { operationContent.padding(.horizontal, 20).padding(.vertical, 12) }.frame(minHeight: 0, maxHeight: 180)
                         .accessibilityIdentifier("pull-request-operation-scroll")
                 }
@@ -45,15 +45,15 @@ struct PullRequestsSheet: View {
             HStack {
                 Spacer(minLength: 0)
                 Button(mode.isForm && !model.isMutating ? "Cancel" : "Done") { dismiss() }
-                    .keyboardShortcut(.defaultAction).disabled(model.isMutating)
+                    .keyboardShortcut(.defaultAction).disabled(model.isAccepting)
                     .accessibilityIdentifier("pull-requests-close")
                     .background { geometry("close") }
             }.padding(16)
         }.frame(minWidth: 320, idealWidth: 620, maxWidth: 760, minHeight: 380, idealHeight: 560, maxHeight: 680)
             .background { geometry("bounds") }
             .coordinateSpace(name: "pull-requests-layout")
-            .interactiveDismissDisabled(model.isMutating)
-            .onExitCommand { if !model.isMutating { dismiss() } }
+            .interactiveDismissDisabled(model.isAccepting)
+            .onExitCommand { if !model.isAccepting { dismiss() } }
             .accessibilityIdentifier("pull-requests-sheet")
             .task {
                 await model.refresh()
@@ -78,20 +78,16 @@ struct PullRequestsSheet: View {
             case .list: listContent
             case .detail: detailContent
             case .create: PullRequestCreateView(model: model, back: { mode = .detail }, requestPush: requestPush)
-                case .checkout(let reference): PullRequestCheckoutView(model: model, reference: reference)
+            case .checkout(let reference): PullRequestCheckoutView(model: model, reference: reference).id(reference)
             }
         }
     }
     @ViewBuilder private var operationContent: some View {
-        if model.checkoutOperation?.locksSource == true {
-            PullRequestCheckoutOperationView(model: model)
-        } else if model.operation?.locksSource == true {
-            PullRequestOperationView(model: model, viewResult: { mode = .detail })
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                if model.checkoutOperation != nil { PullRequestCheckoutOperationView(model: model) }
-                if model.operation != nil { PullRequestOperationView(model: model, viewResult: { mode = .detail }) }
+        LazyVStack(alignment: .leading, spacing: 12) {
+            ForEach(model.checkoutOperations.reversed()) { operation in
+                PullRequestCheckoutOperationView(model: model, operationID: operation.id)
             }
+            if model.operation != nil { PullRequestOperationView(model: model, viewResult: { mode = .detail }) }
         }
     }
     private var listContent: some View {
@@ -175,8 +171,10 @@ struct PullRequestBranchCard: View {
                 if model.isLoading { ProgressView().controlSize(.mini) }
                 Button("Pull Requests…") { open(nil) }.controlSize(.small).accessibilityIdentifier("pull-requests-open")
             }
-            if let operation = model.checkoutOperation, operation.locksSource {
-                Text(operation.isWorking ? "Preparing pull request checkout…" : "Checkout unconfirmed; inspect before continuing")
+            if let operation = model.checkoutOperations.last(where: \.retainsProject) {
+                Text(operation.isWorking
+                     ? operation.review.plan.isReadOnly ? "Inspecting existing checkout…" : "Preparing pull request checkout…"
+                     : "Checkout unconfirmed; inspect before continuing")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Button("View Checkout State") { open(nil) }.controlSize(.small).accessibilityIdentifier("pull-request-open-checkout")
             } else if let operation = model.operation, operation.locksSource {

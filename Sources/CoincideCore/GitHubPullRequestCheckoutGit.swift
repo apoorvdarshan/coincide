@@ -100,9 +100,13 @@ extension GitHubPullRequestCheckoutService {
         try local.admin.validate(expected: plan.proof.gitDirectoryIdentity); try local.common.validate(expected: plan.proof.commonDirectoryIdentity)
         guard local.workspace.path == plan.sourcePath, local.repository.path == plan.repositoryPath,
               local.admin.path == plan.proof.gitDirectoryPath, local.common.path == plan.commonDirectoryPath else { throw GitHubPullRequestCheckoutError(.staleReview) }
-        if original {
-            guard local.proof == plan.proof.sourceFingerprint, try indexDigest(local) == plan.proof.indexDigest,
-                  try await configurationDigest(local) == plan.proof.configurationDigest,
+        if original, plan.request.mode != .local, let expected = plan.proof.repositoryFingerprint {
+            guard try await repositoryFingerprint(local, baseRemote: plan.baseRemote, headRemote: plan.headRemote) == expected else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        } else if original {
+            let fingerprint = plan.proof.repositoryFingerprint == nil ? local.proof : try await destinationFingerprint(local, plan: plan)
+            let configuration = plan.proof.repositoryFingerprint == nil ? try await configurationDigest(local) : try await policyConfigurationDigest(local)
+            guard fingerprint == plan.proof.sourceFingerprint, try indexDigest(local) == plan.proof.indexDigest,
+                  configuration == plan.proof.configurationDigest,
                   GitHubPullRequestService.digest(try await status(local)) == plan.proof.statusDigest else { throw GitHubPullRequestCheckoutError(.staleReview) }
         }
     }
@@ -111,9 +115,13 @@ extension GitHubPullRequestCheckoutService {
         guard local.repository.path == plan.destinationPath, local.common.path == plan.commonDirectoryPath,
               local.admin.path == plan.proof.destinationGitDirectoryPath, local.head == plan.proof.destinationHeadCommit,
               local.branch == plan.proof.destinationBranch, try indexDigest(local) == plan.proof.destinationIndexDigest,
-              local.proof == plan.proof.destinationFingerprint,
-              try await configurationDigest(local) == plan.proof.destinationConfigurationDigest,
               GitHubPullRequestService.digest(try await status(local)) == plan.proof.destinationStatusDigest else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        let fingerprint: String, configuration: String
+        if plan.proof.repositoryFingerprint != nil {
+            fingerprint = try await destinationFingerprint(local, plan: plan)
+            configuration = try await policyConfigurationDigest(local)
+        } else { fingerprint = local.proof; configuration = try await configurationDigest(local) }
+        guard fingerprint == plan.proof.destinationFingerprint, configuration == plan.proof.destinationConfigurationDigest else { throw GitHubPullRequestCheckoutError(.staleReview) }
     }
     func protectUntracked(commit: String, local: GitHubPullRequestLocal) async throws {
         let tracked = try paths(await git(["ls-tree", "-r", "--name-only", "-z", commit], local: local).output)

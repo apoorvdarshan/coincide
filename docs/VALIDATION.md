@@ -1,5 +1,59 @@
 # Validation record
 
+## 2026-10-22 — independent PR worktrees and busy read-only reuse
+
+- PR checkout now holds only the affected checkout. Source provider events,
+  FIFO queues, editor buffers and terminals continue during an independent
+  worktree job, including an uncertain outcome. Separate target paths and branch
+  reservations can coexist; shared Git mutations serialize. Every retained
+  native operation has its own Stop/Inspect/Acknowledge/Open controls bound to
+  its durable ID. Closing the sheet leaves accepted jobs with the engine.
+- Independent source proofs bind repository/admin/common ownership, pointers,
+  selected remotes and transport/execution policy, allowing unrelated source
+  edits, staging, commits, branch switches and branch tracking to progress.
+  Local and refreshed target proofs retain their exact working/index/HEAD and
+  configuration checks. Legacy plans retain conservative proof behavior.
+- Busy registered targets, including a completed setup script with a still-live
+  owned helper, receive a separate read-only review. Inspection preserves files,
+  index, refs, tracking, submodules and setup, creates no private ownership data,
+  and reports a consistent actual HEAD through an exact child reuse result.
+  New activity after a refresh review rejects acceptance and requires review
+  again. Read-only errors/cancellation/restart create no target or unknown write
+  hold. Storage version 22 prevents older binaries from losing concurrent holds;
+  older requests decode with the original refresh policy.
+- The full run exercised 693 Swift test declarations. Two assertions/fixture
+  boundaries needed updating: the multiple-job fixture released a review UUID
+  instead of its primitive plan UUID, and the real integration test still
+  expected a worktree checkout to hold the source. The fixture now checks its
+  exact release key; the integration requires the destination hold before and
+  after restart and a source hold only for Local. No deadline, policy or
+  production safety check was weakened. All 102 native UI/Store tests then pass
+  in 46.433 seconds, and the four real Git-to-SQLite normal/lost-completion cases
+  pass in 9.592 seconds. The remaining 571 Core declarations, six terminal and
+  13 Markdown passed in the full run (Core target: 245.660 seconds).
+- Pure reuse now uses the same public child completion inspector without waiting
+  for the shared mutation gate. A real-Git regression holds that gate and proves
+  both observation and inspection finish before release, preserving exact
+  child/base/result HEAD, index and files; it passes in 2.434 seconds. All 30
+  affected GitHub/checkout/integration declarations pass in 110.132 seconds after
+  this final change. Current source has 694 passing Swift declarations across
+  the full and focused runs.
+- Forty-four offscreen review/recovery captures cover 320/680 points in both
+  appearances; readonly review and pending captures were visually inspected.
+  The strict twelve-workflow hosted harness is unchanged. Previous exact commit
+  `e1184d13` [run 39729008478](https://github.com/apoorvdarshan/coincide/actions/runs/39729008478)
+  passes all 676 production tests, packaging, signing and native resources;
+  its actual twelve-workflow desktop GUI job remains pending.
+- The repository-owned app packages and launches with strict/deep app/helper
+  signatures and native math-resource rendering verified. A fresh private SQLite
+  backup after graceful shutdown precedes storage 21 to 22. The whole canonical
+  workspace remains identical: three conversations, 25 messages, integrity `ok`.
+  No system install was changed.
+
+Full T3 parity and broader real-host/network and interactive concurrency
+verification remain unfinished. No live GitHub checkout or public binary release
+has been performed.
+
 ## 2026-10-22 — native pull request checkout and blank conversation import
 
 - PR details now offer explicit reviewed local checkout or a separate worktree,

@@ -91,7 +91,9 @@ func pullRequestCheckoutProductionServiceThroughEngineKeepsSQLiteIntentAndRecove
         #expect(settled.pullRequestCheckout(review.id)?.phase == (lostReply ? .unconfirmed : .completed))
         #expect(settled.threads.first { $0.id == source.id } == original)
         if lostReply {
-            #expect(settled.threads.count == 1 && settled.isPullRequestCheckoutLocked(threadID: source.id))
+            #expect(settled.threads.count == 1)
+            #expect(settled.isPullRequestCheckoutLocked(path: review.plan.destinationPath))
+            #expect(settled.isPullRequestCheckoutLocked(threadID: source.id) == (mode == .local))
         }
         let destination = URL(fileURLWithPath: review.plan.destinationPath)
         #expect(try await f.git(["rev-parse", "HEAD"], at: destination) == f.api.head)
@@ -104,7 +106,12 @@ func pullRequestCheckoutProductionServiceThroughEngineKeepsSQLiteIntentAndRecove
         let callsBeforeInspection = try f.api.calls().count
         await probe.enableInspection()
         let reopened = try makeEngine(); running = reopened; _ = try await reopened.load()
-        if lostReply { _ = try await reopened.inspectPullRequestCheckout(operationID: review.id) }
+        if lostReply {
+            let recovered = await reopened.current().snapshot
+            #expect(recovered.isPullRequestCheckoutLocked(path: review.plan.destinationPath))
+            #expect(recovered.isPullRequestCheckoutLocked(threadID: source.id) == (mode == .local))
+            _ = try await reopened.inspectPullRequestCheckout(operationID: review.id)
+        }
         let final = await reopened.current().snapshot
         let completed = try #require(final.pullRequestCheckout(review.id)), target = try #require(final.threads.first { $0.id == review.targetThreadID })
         #expect(completed.phase == .completed && completed.result?.headCommit == f.api.head)

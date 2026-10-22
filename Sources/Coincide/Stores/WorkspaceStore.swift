@@ -222,14 +222,14 @@ final class WorkspaceStore {
             }, canMutate: { [weak self] in self?.canCreatePullRequest(path: path) == true },
             updateWorkspace: { [weak self] in self?.apply($0) },
             checkoutSupport: .init(configuration: { [weak self] in self?.pullRequestCheckoutConfiguration(path: path) },
-                canPrepare: { [weak self] paths, excluded in self?.canPreparePullRequestCheckout(path: path, scopePaths: paths, excludingOperationID: excluded) == true },
+                canPrepare: { [weak self] mode, plan, excluded in self?.canPreparePullRequestCheckout(path: path, mode: mode, plan: plan, excludingOperationID: excluded) == true },
                 begin: { [weak self] review in
                     guard let self else { throw CancellationError() }
                     return try await self.beginPullRequestCheckout(review)
                 }, open: { [weak self] id in self?.openPullRequestCheckoutConversation(id) },
-                unavailableReason: { [weak self] paths, excluded in
-                    self?.pullRequestCheckoutUnavailableReason(path: path, scopePaths: paths, excludingOperationID: excluded)
-                }))
+                unavailableReason: { [weak self] mode, plan, excluded in
+                    self?.pullRequestCheckoutUnavailableReason(path: path, mode: mode, plan: plan, excludingOperationID: excluded)
+                }, busyWorktreePaths: { [weak self] in self?.busyPullRequestWorktreePaths() ?? [] }))
         model.apply(snapshot)
         if terminating { model.prepareForShutdown() }
         pullRequestStores[path] = model
@@ -244,6 +244,7 @@ final class WorkspaceStore {
         let context = pullRequestStores[path]?.context
         let paths = [path] + (context.map { [$0.repositoryPath, $0.commonDirectoryPath] } ?? [])
         guard paths.allSatisfy({ canEditWorkspace($0) }), pullRequestProjectID(path: path) != nil,
+              !paths.contains(where: { snapshot.isPullRequestCheckoutCoordinating(path: $0) }),
               !gitInspectors.contains(where: { Self.pathsOverlap(path, $0.key) && $0.value.operationName != nil }) else { return false }
         return !snapshot.threads.contains { thread in
             Self.pathsOverlap(path, thread.workspacePath) &&
@@ -259,28 +260,51 @@ final class WorkspaceStore {
         var configuration = ProviderConfiguration(thread: source); configuration.nativeThreadID = nil
         return (configuration, source.checkpointPolicy)
     }
-    private func pullRequestCheckoutScope(projectID: UUID, paths: [String]) -> Set<String> {
-        Set((paths + snapshot.projects.filter { $0.id == projectID }.map(\.path) +
-             snapshot.threads.filter { $0.projectID == projectID }.map(\.workspacePath)).map(Self.canonicalPath))
+    private func pullRequestCheckoutScope(paths: [String]) -> Set<String> {
+        Set(paths.map(Self.canonicalPath))
     }
-    private func canPreparePullRequestCheckout(path: String, scopePaths: [String], excludingOperationID: UUID?) -> Bool {
-        pullRequestCheckoutUnavailableReason(path: path, scopePaths: scopePaths, excludingOperationID: excludingOperationID) == nil
+    private func busyPullRequestWorktreePaths() -> [String] {
+        var paths = Array(dirtyEditors.values)
+        paths += fileBrowsers.filter { $0.value.isDirty || $0.value.isSaving }.map(\.key)
+        paths += gitInspectors.filter { $0.value.operationName != nil }.map(\.key)
+        paths += fileServiceCleanupTasks.keys
+        paths += workspaceTerminalSessions.compactMap { session in
+            switch session.lifecycle { case .running, .closing: return session.directory; case .exited, .failed: return nil }
+        }
+        return Array(Set(paths.map(Self.canonicalPath)))
     }
-    private func pullRequestCheckoutUnavailableReason(path: String, scopePaths: [String], excludingOperationID: UUID?) -> String? {
-        guard !terminating, let projectID = pullRequestProjectID(path: path) else {
+    private func canPreparePullRequestCheckout(path: String, mode: GitHubPullRequestCheckoutMode,
+                                               plan: GitHubPullRequestCheckoutPlan?, excludingOperationID: UUID?) -> Bool {
+        pullRequestCheckoutUnavailableReason(path: path, mode: mode, plan: plan, excludingOperationID: excludingOperationID) == nil
+    }
+    private func pullRequestCheckoutUnavailableReason(path: String, mode: GitHubPullRequestCheckoutMode,
+                                                       plan: GitHubPullRequestCheckoutPlan?, excludingOperationID: UUID?) -> String? {
+        guard !terminating, let projectID = pullRequestProjectID(path: path),
+              let project = snapshot.projects.first(where: { $0.id == projectID }), project.clone?.isReady ?? true else {
             return String(localized: "The registered checkout is unavailable. Reopen its project before reviewing the pull request.")
         }
-        let paths = pullRequestCheckoutScope(projectID: projectID, paths: scopePaths)
+        let context = pullRequestStores[path]?.context
+        let paths = pullRequestCheckoutScope(paths: plan?.affectedWorkspacePaths ?? (mode == .local ? [context?.repositoryPath ?? path] : []))
         func overlaps(_ path: String) -> Bool { paths.contains { Self.pathsOverlap(path, $0) } }
-        guard !removalEditorLocks.values.contains(where: { $0.contains(where: overlaps) }),
-              !workspaceTransitionLocks.values.contains(where: { $0.contains(where: overlaps) }),
-              !checkpointRestoreLocks.values.contains(where: overlaps),
-              !paths.contains(where: { snapshot.isCheckpointRestoreLocked(path: $0) || snapshot.isPullRequestCreationLocked(path: $0) }),
+        let observations = plan.map { [$0.destinationPath] } ?? (mode == .local ? [context?.repositoryPath ?? path] : [])
+        func overlapsObserved(_ path: String) -> Bool { overlaps(path) || observations.contains { Self.pathsOverlap(path, $0) } }
+        let coordination = plan?.coordinationPaths ?? context.map { [$0.commonDirectoryPath] } ?? []
+        guard removalEditorLocks[projectID] == nil,
+              !snapshot.isPullRequestCheckoutLocked(path: path, excludingOperationID: excludingOperationID),
+              !removalEditorLocks.values.contains(where: { $0.contains(where: overlapsObserved) }),
+              !workspaceTransitionLocks.values.contains(where: { $0.contains(where: overlapsObserved) }),
+              !checkpointRestoreLocks.values.contains(where: overlapsObserved),
+              !(observations + coordination).contains(where: { snapshot.isCheckpointRestoreLocked(path: $0) || snapshot.isPullRequestCreationLocked(path: $0) }),
               !(snapshot.pullRequestCheckouts ?? []).contains(where: { operation in
-                  operation.id != excludingOperationID && operation.locksSource &&
-                      (operation.review.projectID == projectID || operation.scopePaths.contains(where: overlaps))
+                  guard operation.id != excludingOperationID, operation.retainsProject else { return false }
+                  if operation.locksSource, operation.scopePaths.contains(where: overlapsObserved) { return true }
+                  if operation.review.plan.isReadOnly, overlaps(operation.review.plan.destinationPath) { return true }
+                  guard let plan, !plan.isReadOnly, !operation.review.plan.isReadOnly else { return false }
+                  return plan.commonDirectoryPath == operation.review.plan.commonDirectoryPath &&
+                      plan.proof.commonDirectoryIdentity == operation.review.plan.proof.commonDirectoryIdentity &&
+                      plan.requestedBranch == operation.review.plan.requestedBranch
               }),
-              !pullRequestCheckoutLocks.contains(where: { $0.key != excludingOperationID && $0.value.contains(where: overlaps) }) else {
+              !pullRequestCheckoutLocks.contains(where: { $0.key != excludingOperationID && $0.value.contains(where: overlapsObserved) }) else {
             return String(localized: "Finish or inspect the pending workspace action before checking out a pull request.")
         }
         guard !dirtyEditors.values.contains(where: overlaps),
@@ -303,20 +327,20 @@ final class WorkspaceStore {
             return String(localized: "Close terminals and running project scripts using this repository in every window before checking out a pull request.")
         }
         if snapshot.threads.contains(where: { thread in
-            (thread.projectID == projectID || overlaps(thread.workspacePath)) &&
+            thread.pullRequestCheckoutWorkspacePaths.contains(where: overlaps) &&
                 (thread.isBusy || !thread.queuedTurns.isEmpty || !thread.runtimeRequests.isEmpty ||
                  snapshot.isConversationHistoryLocked(threadID: thread.id) || !snapshot.workspaceReady(for: thread))
-        }) { return String(localized: "Finish active turns, queues, and pending conversation actions in this repository before checking out a pull request.") }
+        }) { return String(localized: "Finish active turns, queues, and pending actions in the affected checkout before changing its files. Review again to open a busy worktree without refreshing it.") }
         return nil
     }
     private func beginPullRequestCheckout(_ review: PullRequestCheckoutReview) async throws -> WorkspaceCommandReceipt {
         guard let engine, canPreparePullRequestCheckout(path: Self.canonicalPath(review.plan.sourcePath),
-              scopePaths: review.plan.scopePaths, excludingOperationID: review.id),
+              mode: review.plan.request.mode, plan: review.plan, excludingOperationID: review.id),
               acceptingPullRequestCheckouts.insert(review.id).inserted else {
             throw WorkspaceCommandError(pullRequestCheckoutUnavailableReason(path: Self.canonicalPath(review.plan.sourcePath),
-                scopePaths: review.plan.scopePaths, excludingOperationID: review.id) ?? String(localized: "This checkout is already being prepared."))
+                mode: review.plan.request.mode, plan: review.plan, excludingOperationID: review.id) ?? String(localized: "This checkout is already being prepared."))
         }
-        let paths = pullRequestCheckoutScope(projectID: review.projectID, paths: review.plan.scopePaths)
+        let paths = pullRequestCheckoutScope(paths: review.plan.affectedWorkspacePaths)
         pullRequestCheckoutLocks[review.id] = paths
         pullRequestCheckoutNavigation.updateValue(selectedThreadID, forKey: review.id)
         suspendPullRequestCheckoutCaches(paths: paths)
@@ -325,16 +349,16 @@ final class WorkspaceStore {
         let task = Task {
             await previous?.value
             guard self.canPreparePullRequestCheckout(path: Self.canonicalPath(review.plan.sourcePath),
-                    scopePaths: review.plan.scopePaths, excludingOperationID: review.id) else {
+                    mode: review.plan.request.mode, plan: review.plan, excludingOperationID: review.id) else {
                 throw WorkspaceCommandError(self.pullRequestCheckoutUnavailableReason(path: Self.canonicalPath(review.plan.sourcePath),
-                    scopePaths: review.plan.scopePaths, excludingOperationID: review.id) ?? String(localized: "The checkout changed. Review it again."))
+                    mode: review.plan.request.mode, plan: review.plan, excludingOperationID: review.id) ?? String(localized: "The checkout changed. Review it again."))
             }
             let readers = self.pullRequestStores.filter { entry in paths.contains { Self.pathsOverlap(entry.key, $0) } }
             for model in readers.values { await model.waitForReads() }
             guard self.canPreparePullRequestCheckout(path: Self.canonicalPath(review.plan.sourcePath),
-                    scopePaths: review.plan.scopePaths, excludingOperationID: review.id) else {
+                    mode: review.plan.request.mode, plan: review.plan, excludingOperationID: review.id) else {
                 throw WorkspaceCommandError(self.pullRequestCheckoutUnavailableReason(path: Self.canonicalPath(review.plan.sourcePath),
-                    scopePaths: review.plan.scopePaths, excludingOperationID: review.id) ?? String(localized: "The checkout changed. Review it again."))
+                    mode: review.plan.request.mode, plan: review.plan, excludingOperationID: review.id) ?? String(localized: "The checkout changed. Review it again."))
             }
             let receipt = try await engine.beginPullRequestCheckout(review: review)
             self.apply(await engine.current())
@@ -354,7 +378,7 @@ final class WorkspaceStore {
     }
     private func reconcilePullRequestCheckoutLocks() {
         let durable = Dictionary(uniqueKeysWithValues: (snapshot.pullRequestCheckouts ?? []).filter(\.locksSource).map {
-            ($0.id, pullRequestCheckoutScope(projectID: $0.review.projectID, paths: $0.scopePaths))
+            ($0.id, pullRequestCheckoutScope(paths: $0.scopePaths))
         })
         for (id, paths) in durable where pullRequestCheckoutLocks[id] == nil {
             pullRequestCheckoutLocks[id] = paths; suspendPullRequestCheckoutCaches(paths: paths)
@@ -1257,10 +1281,11 @@ final class WorkspaceStore {
     func isPullRequestCheckoutLocked(threadID: UUID) -> Bool {
         if snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return true }
         guard let thread = thread(threadID) else { return false }
-        return pullRequestCheckoutLocks.values.contains { $0.contains { Self.pathsOverlap(thread.workspacePath, $0) } } ||
-            pullRequestStores.contains { path, model in
-                model.acceptingCheckoutID != nil && (pullRequestProjectID(path: path) == thread.projectID ||
-                    model.mutationPaths.contains { Self.pathsOverlap(thread.workspacePath, $0) })
+        let livePaths = thread.pullRequestCheckoutWorkspacePaths
+        func overlaps(_ path: String) -> Bool { livePaths.contains { Self.pathsOverlap($0, path) } }
+        return pullRequestCheckoutLocks.values.contains { $0.contains(where: overlaps) } ||
+            pullRequestStores.values.contains { model in
+                model.acceptingCheckoutID != nil && model.mutationPaths.contains(where: overlaps)
             }
     }
     func checkpointRestoreUnavailableReason(threadID: UUID, runID: UUID, stage: RunCheckpointStage, expectedAttemptID: UUID) -> String? {
@@ -1282,7 +1307,7 @@ final class WorkspaceStore {
         if gitInspectors.contains(where: { Self.pathsOverlap(path, $0.key) && $0.value.operationName != nil }) {
             return String(localized: "Wait for source control operations to finish before restoring files.")
         }
-        if pullRequestStores.contains(where: { Self.pathsOverlap(path, $0.key) && $0.value.isMutating }) {
+        if pullRequestStores.values.contains(where: { $0.isMutating && $0.mutationPaths.contains { Self.pathsOverlap(path, $0) } }) {
             return String(localized: "Wait for the pull request operation to finish before restoring files.")
         }
         if workspaceTerminalSessions.contains(where: { session in

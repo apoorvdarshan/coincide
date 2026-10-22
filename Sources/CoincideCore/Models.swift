@@ -172,8 +172,9 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public mutating func recoverInterruptedWork() {
         for i in (pullRequestCheckouts ?? []).indices {
             guard let phase = pullRequestCheckouts?[i].phase, phase == .accepted || phase == .dispatching else { continue }
-            pullRequestCheckouts?[i].phase = phase == .accepted ? .failed : .unconfirmed
-            pullRequestCheckouts?[i].error = phase == .accepted ? PullRequestCheckoutOperation.failureMessage : PullRequestCheckoutOperation.unconfirmedMessage
+            let failed = phase == .accepted || pullRequestCheckouts?[i].review.plan.isReadOnly == true
+            pullRequestCheckouts?[i].phase = failed ? .failed : .unconfirmed
+            pullRequestCheckouts?[i].error = failed ? PullRequestCheckoutOperation.failureMessage : PullRequestCheckoutOperation.unconfirmedMessage
             pullRequestCheckouts?[i].cancelRequested = false
             pullRequestCheckouts?[i].updatedAt = Date()
         }

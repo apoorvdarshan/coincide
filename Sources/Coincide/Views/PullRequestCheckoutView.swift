@@ -14,32 +14,38 @@ struct PullRequestCheckoutView: View {
     private var summary: GitHubPullRequestSummary? {
         model.detail?.summary.reference == reference ? model.detail?.summary : nil
     }
+    private var matchingOperation: PullRequestCheckoutOperation? {
+        if let review, let operation = model.checkoutOperations.first(where: { $0.id == review.id }) { return operation }
+        return model.checkoutOperations.last { $0.review.plan.pullRequest.reference == reference && $0.retainsProject }
+    }
     private var showingOperation: Bool {
-        guard let operation = model.checkoutOperation else { return false }
-        return operation.locksSource || (operation.phase == .completed && operation.id == review?.id)
+        guard let operation = matchingOperation else { return false }
+        return operation.retainsProject || (operation.phase == .completed && operation.id == review?.id)
     }
     var body: some View {
         Group {
             if showingOperation {
-                ScrollView { PullRequestCheckoutOperationView(model: model).padding(20) }
+                ScrollView { PullRequestCheckoutOperationView(model: model, operationID: matchingOperation?.id).padding(20) }
             } else {
                 PullRequestCheckoutContent(reference: reference, summary: summary, review: review,
                     mode: $mode, submodules: $submodules, reviewSetup: $reviewSetup,
-                    busy: model.isBusy, canPrepare: model.canCheckout, error: model.actionError ?? error,
+                    busy: model.isBusy, canPrepare: model.canPrepareCheckout(mode: review?.plan.request.mode ?? mode),
+                    error: model.actionError ?? error,
+                    admissionMessage: model.checkoutAdmissionMessage(mode: review?.plan.request.mode ?? mode),
                     edit: clearReview, prepare: prepare, checkout: checkout)
             }
         }
         .onChange(of: model.context?.sourceFingerprint) { old, value in
-            guard old != nil, old != value, let review, !model.isMutating,
-                  model.checkoutOperation?.id != review.id else { return }
+            guard old != nil, old != value, let review, review.plan.request.mode == .local, !model.isMutating,
+                  !model.checkoutOperations.contains(where: { $0.id == review.id }) else { return }
             clearReview(); error = String(localized: "The source checkout changed. Review the current checkout again before continuing.")
         }
-        .onChange(of: model.checkoutOperation?.phase) {
-            guard let operation = model.checkoutOperation, operation.id == review?.id, operation.phase == .failed else { return }
+        .onChange(of: matchingOperation?.phase) {
+            guard let operation = matchingOperation, operation.id == review?.id, operation.phase == .failed else { return }
             clearReview(); error = operation.error
         }
-        .onChange(of: model.checkoutOperation?.acknowledgedAt) {
-            guard model.checkoutOperation?.id == review?.id, model.checkoutOperation?.acknowledgedAt != nil else { return }
+        .onChange(of: matchingOperation?.acknowledgedAt) {
+            guard matchingOperation?.id == review?.id, matchingOperation?.acknowledgedAt != nil else { return }
             clearReview()
         }
         .onDisappear {
@@ -52,7 +58,7 @@ struct PullRequestCheckoutView: View {
         review = nil; error = nil
     }
     private func prepare() {
-        guard !model.isBusy, model.canCheckout else { return }
+        guard !model.isBusy, model.canPrepareCheckout(mode: mode) else { return }
         error = nil
         let selectedMode = mode, selectedSubmodules = mode == .local ? .none : submodules
         let selectedSetup = mode == .worktree && reviewSetup
@@ -74,7 +80,7 @@ struct PullRequestCheckoutView: View {
         }
     }
     private func checkout() {
-        guard let review, !model.isBusy, model.canCheckout else { return }
+        guard let review, !model.isBusy, model.canPrepareCheckout(mode: review.plan.request.mode) else { return }
         error = nil
         Task {
             do { try await model.checkout(review) }
@@ -94,6 +100,7 @@ struct PullRequestCheckoutContent: View {
     let busy: Bool
     let canPrepare: Bool
     let error: String?
+    var admissionMessage: String? = nil
     let edit: () -> Void
     let prepare: () -> Void
     let checkout: () -> Void
@@ -119,7 +126,7 @@ struct PullRequestCheckoutContent: View {
                         }.pickerStyle(.radioGroup).disabled(busy)
                             .accessibilityIdentifier("pull-request-checkout-mode")
                         Text(mode == .worktree
-                            ? "Create or reuse a dedicated worktree for this pull request. Existing local commits or edits are preserved; the review identifies the reused checkout."
+                            ? "Create or reuse a dedicated worktree while work in the source checkout continues. The review identifies any existing checkout; a busy reused checkout is opened through read-only inspection."
                             : "Switch the repository's local checkout. This changes the files used by conversations sharing that checkout; commit or stash tracked changes first.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         if mode == .worktree {
@@ -142,7 +149,7 @@ struct PullRequestCheckoutContent: View {
                         Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     }
                     if !canPrepare, !busy {
-                        Text("This workspace is busy or held by another action. Finish or inspect that action before opening the pull request.")
+                        Text(admissionMessage ?? String(localized: "This checkout mode is unavailable while another action holds its workspace. Choose a separate worktree or finish that action first."))
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }.padding(20).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -177,6 +184,12 @@ private struct PullRequestCheckoutReviewContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(PullRequestCheckoutPresentation.disposition(plan.disposition)).font(.headline)
+            if plan.isReadOnly {
+                Label("Read-only checkout inspection", systemImage: "eye")
+                    .font(.headline).accessibilityIdentifier("pull-request-checkout-read-only")
+                Text("Open the existing checkout without fetching, resetting its branch, changing tracking, initializing submodules or running setup. Providers, terminals and unsaved editor buffers already using that checkout keep their work. The result shows the actual observed branch and commit.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             LabeledContent("Requested branch") { value(plan.requestedBranch) }
             LabeledContent("Requested head") { value(plan.requestedHeadCommit) }
             LabeledContent("Source checkout") { value(plan.sourcePath) }
@@ -203,8 +216,8 @@ private struct PullRequestCheckoutReviewContent: View {
             }
             LabeledContent("Run checkpoints", value: review.checkpointPolicy == .disabled ? String(localized: "Disabled") : String(localized: "Automatic"))
             if plan.request.mode == .worktree {
-                LabeledContent("Submodules", value: PullRequestCheckoutPresentation.submodules(plan.request.submodules))
-                LabeledContent("Setup review", value: review.reviewSetup ? String(localized: "Review new or moved checkout") : String(localized: "Skipped"))
+                LabeledContent("Submodules", value: plan.isReadOnly ? String(localized: "Unchanged") : PullRequestCheckoutPresentation.submodules(plan.request.submodules))
+                LabeledContent("Setup review", value: plan.isReadOnly ? String(localized: "Not run during inspection") : review.reviewSetup ? String(localized: "Review new or moved checkout") : String(localized: "Skipped"))
             }
         }.font(.callout).accessibilityIdentifier("pull-request-checkout-captured-review")
     }

@@ -1,6 +1,7 @@
 import Foundation
 
 public enum GitHubPullRequestCheckoutMode: String, Codable, Sendable { case local, worktree }
+public enum GitHubPullRequestCheckoutPolicy: String, Codable, Sendable { case refresh, inspectOnly }
 public enum GitHubPullRequestCheckoutDisposition: String, Codable, Sendable {
     case local, createWorktree, reuseWorktree, reuseUnrelatedWorktree
 }
@@ -12,15 +13,25 @@ public struct GitHubPullRequestCheckoutRequest: Codable, Sendable, Equatable {
     public let reference: GitHubPullRequestReference
     public let mode: GitHubPullRequestCheckoutMode
     public let submodules: ProjectWorktreeSubmoduleMode
+    public let policy: GitHubPullRequestCheckoutPolicy
     public init(id: UUID = UUID(), sourcePath: String, destinationRoot: String,
                 reference: GitHubPullRequestReference, mode: GitHubPullRequestCheckoutMode,
-                submodules: ProjectWorktreeSubmoduleMode = .none) {
+                submodules: ProjectWorktreeSubmoduleMode = .none, policy: GitHubPullRequestCheckoutPolicy = .refresh) {
         self.id = id; self.sourcePath = sourcePath; self.destinationRoot = destinationRoot
-        self.reference = reference; self.mode = mode; self.submodules = submodules
+        self.reference = reference; self.mode = mode; self.submodules = submodules; self.policy = policy
+    }
+    private enum CodingKeys: String, CodingKey { case id, sourcePath, destinationRoot, reference, mode, submodules, policy }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id); sourcePath = try values.decode(String.self, forKey: .sourcePath)
+        destinationRoot = try values.decode(String.self, forKey: .destinationRoot); reference = try values.decode(GitHubPullRequestReference.self, forKey: .reference)
+        mode = try values.decode(GitHubPullRequestCheckoutMode.self, forKey: .mode)
+        submodules = try values.decode(ProjectWorktreeSubmoduleMode.self, forKey: .submodules)
+        policy = try values.decodeIfPresent(GitHubPullRequestCheckoutPolicy.self, forKey: .policy) ?? .refresh
     }
     public func validate() throws {
         try WorktreeValidation.path(sourcePath); try WorktreeValidation.path(destinationRoot); try reference.validate()
-        guard mode == .worktree || submodules == .none else { throw GitHubPullRequestCheckoutError(.invalidRequest) }
+        guard mode == .worktree || (submodules == .none && policy == .refresh) else { throw GitHubPullRequestCheckoutError(.invalidRequest) }
     }
 }
 
@@ -33,6 +44,8 @@ public struct GitHubPullRequestCheckoutProof: Codable, Sendable, Equatable {
     public let commonDirectoryIdentity: GitWorktreeNodeIdentity
     public let sourceFingerprint: String
     public let configurationDigest: String
+    /// Stable source ownership/configuration proof; excludes active checkout HEAD and bytes.
+    public let repositoryFingerprint: String?
     public let indexDigest: String?
     public let statusDigest: String
     public let headCommit: String?
@@ -55,11 +68,13 @@ public struct GitHubPullRequestCheckoutProof: Codable, Sendable, Equatable {
                 destinationGitDirectoryIdentity: GitWorktreeNodeIdentity? = nil, destinationStatusDigest: String? = nil,
                 destinationIndexDigest: String? = nil, destinationHeadCommit: String? = nil,
                 destinationBranch: String? = nil, previousUpstreamCommit: String? = nil,
-                destinationFingerprint: String? = nil, destinationConfigurationDigest: String? = nil) {
+                destinationFingerprint: String? = nil, destinationConfigurationDigest: String? = nil,
+                repositoryFingerprint: String? = nil) {
         self.sourceIdentity = sourceIdentity; self.repositoryIdentity = repositoryIdentity
         self.gitDirectoryPath = gitDirectoryPath; self.gitDirectoryIdentity = gitDirectoryIdentity
         self.commonDirectoryIdentity = commonDirectoryIdentity; self.sourceFingerprint = sourceFingerprint
         self.configurationDigest = configurationDigest ?? sourceFingerprint
+        self.repositoryFingerprint = repositoryFingerprint
         self.indexDigest = indexDigest; self.statusDigest = statusDigest; self.headCommit = headCommit; self.branch = branch
         self.destinationIdentity = destinationIdentity; self.destinationGitDirectoryPath = destinationGitDirectoryPath
         self.destinationGitDirectoryIdentity = destinationGitDirectoryIdentity; self.destinationStatusDigest = destinationStatusDigest
@@ -71,7 +86,7 @@ public struct GitHubPullRequestCheckoutProof: Codable, Sendable, Equatable {
         try WorktreeValidation.path(gitDirectoryPath)
         for path in [destinationGitDirectoryPath].compactMap({ $0 }) { try WorktreeValidation.path(path) }
         guard [sourceFingerprint, statusDigest, configurationDigest].allSatisfy(CheckpointValidation.digest),
-              [indexDigest, destinationStatusDigest, destinationIndexDigest, destinationFingerprint, destinationConfigurationDigest].compactMap({ $0 }).allSatisfy(CheckpointValidation.digest),
+              [indexDigest, destinationStatusDigest, destinationIndexDigest, destinationFingerprint, destinationConfigurationDigest, repositoryFingerprint].compactMap({ $0 }).allSatisfy(CheckpointValidation.digest),
               [headCommit, destinationHeadCommit, previousUpstreamCommit].compactMap({ $0 }).allSatisfy(GitHubValidation.object),
               [branch, destinationBranch].compactMap({ $0 }).allSatisfy(GitHubValidation.branch) else { throw GitHubPullRequestCheckoutError(.invalidRequest) }
     }
@@ -113,6 +128,9 @@ public struct GitHubPullRequestCheckoutPlan: Codable, Sendable, Equatable, Ident
     public let destinationParentIdentity: GitWorktreeNodeIdentity
     public var id: UUID { request.id }
     public var scopePaths: [String] { [repositoryPath, commonDirectoryPath, destinationPath] }
+    public var isReadOnly: Bool { request.policy == .inspectOnly || disposition == .reuseUnrelatedWorktree }
+    public var affectedWorkspacePaths: [String] { isReadOnly ? [] : [destinationPath] }
+    public var coordinationPaths: [String] { isReadOnly ? [] : [commonDirectoryPath] }
     public init(request: GitHubPullRequestCheckoutRequest, sourcePath: String, repositoryPath: String,
                 commonDirectoryPath: String, destinationPath: String, pullRequest: GitHubPullRequestSummary,
                 requestedBranch: String, requestedHeadCommit: String, disposition: GitHubPullRequestCheckoutDisposition,
@@ -144,6 +162,9 @@ public struct GitHubPullRequestCheckoutPlan: Codable, Sendable, Equatable, Ident
                   proof.destinationGitDirectoryPath != nil, proof.destinationHeadCommit != nil,
                   proof.destinationBranch != nil, proof.destinationStatusDigest != nil,
                   proof.destinationFingerprint != nil, proof.destinationConfigurationDigest != nil else { throw GitHubPullRequestCheckoutError(.invalidRequest) }
+        }
+        if request.policy == .inspectOnly {
+            guard request.mode == .worktree, disposition == .reuseWorktree || disposition == .reuseUnrelatedWorktree else { throw GitHubPullRequestCheckoutError(.invalidRequest) }
         }
     }
 }
@@ -189,6 +210,7 @@ public struct GitHubPullRequestCheckoutResult: Codable, Sendable, Equatable {
         guard destinationPath == plan.destinationPath,
               !isOnPullRequestHead || headCommit == plan.requestedHeadCommit,
               plan.disposition != .reuseUnrelatedWorktree || !isOnPullRequestHead,
+              !plan.isReadOnly || (!created && reused && !moved),
               (plan.request.mode == .local ? worktreePlan == nil && !created && !reused : worktreePlan != nil) else {
             throw GitHubPullRequestCheckoutError(.invalidResponse)
         }

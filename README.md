@@ -168,15 +168,26 @@ with a warning in both the result and the new conversation. Only a clean,
 provably lossless update advances an existing checkout; a proven rewritten remote
 head also retains the earlier commit in a private recovery ref.
 
-Finish active turns and queues in the repository, save or discard unsaved editor
-changes, and close running workspace terminals in every window before opening.
-Closed tabs and windows remain held until their owned processes have drained.
+Separate worktrees allow provider turns, queues, unsaved editors and terminals
+in the source checkout to continue. Multiple different PR destinations can prepare
+in the background; their individual progress and recovery controls remain available
+in the PR browser. Git mutations sharing a repository serialize. Local checkout
+requires finishing active work, saving editor changes and closing terminals in
+every window using its files. Closed tabs and windows retain ownership until their
+processes and output have drained.
+
+A busy registered worktree opens through a separately reviewed read-only inspection.
+It does not fetch, reset, alter tracking, initialize submodules or run setup; its
+provider, terminal and unsaved editor work continues. The conversation records the
+actual observed HEAD and shows when it differs from the requested PR commit. If a
+checkout becomes busy after a refresh review, review again before accepting it.
 A confirmed checkout creates an empty conversation, preserves the source history
 and latest draft, and sends no prompt. New or moved worktrees can discover a setup
 script for explicit review. An unchanged reused worktree does not rerun setup.
-Stop and restart never repeat the checkout. An uncertain result holds work for
+Stop and restart never repeat the checkout. An uncertain write holds only the affected checkout for
 **Inspect Checkout State** or **Keep Current Files…**; acknowledging an unknown
-result creates no conversation. Clean editors and source control refresh afterward.
+result creates no conversation. Failed/interrupted read-only inspections leave no
+write hold. Clean editors and source control in the affected checkout refresh afterward.
 
 Other PR hosts, automatic content generation, combined commit/push/create,
 reviews and stacks remain pending.

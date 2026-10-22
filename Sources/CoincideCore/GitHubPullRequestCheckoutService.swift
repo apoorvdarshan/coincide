@@ -41,7 +41,6 @@ public struct GitHubPullRequestCheckoutService: GitHubPullRequestCheckoutSession
         let defaultBranch = try await defaultBranch(local: local)
         let branch = try Self.branch(for: pr, mode: request.mode, defaultBranch: defaultBranch)
         let inventory = try await worktrees(source: local.repository.path).inventory()
-        let status = try await status(local), index = try indexDigest(local)
         let existing = try await optionalCommit("refs/heads/" + branch, local: local)
         let disposition: GitHubPullRequestCheckoutDisposition
         let destination: String
@@ -61,24 +60,39 @@ public struct GitHubPullRequestCheckoutService: GitHubPullRequestCheckoutSession
                 disposition = match.branch == branch ? .reuseWorktree : .reuseUnrelatedWorktree
             } else { disposition = .createWorktree; destination = request.destinationRoot + "/" + request.id.uuidString }
         }
+        let readOnly = request.policy == .inspectOnly || disposition == .reuseUnrelatedWorktree
+        guard request.policy != .inspectOnly || reused != nil else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        let status: Data, index: String?
+        if request.mode == .local { status = try await self.status(local); index = try indexDigest(local) }
+        else { status = Data(); index = nil }
         let parent = try GitWorktreeDirectory(path: URL(fileURLWithPath: destination).deletingLastPathComponent().path)
         if disposition == .createWorktree, try parent.exists(request.id.uuidString) { throw GitHubPullRequestCheckoutError(.staleReview) }
-        let reusedStatus = try await reused.asyncMap { try await self.status($0) }
-        let reusedConfiguration = try await reused.asyncMap { try await configurationDigest($0) }
+        let reusedStatus = try await reused.asyncMap { checkout in
+            if readOnly { return Data() }; return try await self.status(checkout)
+        }
+        let reusedConfiguration = try await reused.asyncMap { try await policyConfigurationDigest($0) }
+        let reusedFingerprint = try await reused.asyncMap { try await destinationFingerprint($0, baseRemote: baseRemote, headRemote: headRemote) }
+        let repositoryProof = try await repositoryFingerprint(local, baseRemote: baseRemote, headRemote: headRemote)
+        let sourceProof = try await destinationFingerprint(local, baseRemote: baseRemote, headRemote: headRemote)
         let upstream: String?
         if let reused { upstream = try await optionalCommit("@{upstream}", local: reused) }
         else if existing != nil { upstream = try await optionalCommit(branch + "@{upstream}", local: local) }
         else { upstream = nil }
         let proof = GitHubPullRequestCheckoutProof(sourceIdentity: local.workspace.identity, repositoryIdentity: local.repository.identity,
             gitDirectoryPath: local.admin.path, gitDirectoryIdentity: local.admin.identity, commonDirectoryIdentity: local.common.identity,
-            sourceFingerprint: local.proof, indexDigest: index, statusDigest: GitHubPullRequestService.digest(status), configurationDigest: try await configurationDigest(local), headCommit: local.head, branch: local.branch,
+            sourceFingerprint: sourceProof, indexDigest: index, statusDigest: GitHubPullRequestService.digest(status), configurationDigest: try await policyConfigurationDigest(local), headCommit: local.head, branch: local.branch,
             destinationIdentity: reused?.repository.identity, destinationGitDirectoryPath: reused?.admin.path, destinationGitDirectoryIdentity: reused?.admin.identity,
-            destinationStatusDigest: reusedStatus.map(GitHubPullRequestService.digest), destinationIndexDigest: try reused.flatMap { try indexDigest($0) },
+            destinationStatusDigest: reusedStatus.map(GitHubPullRequestService.digest), destinationIndexDigest: readOnly ? nil : try reused.flatMap { try indexDigest($0) },
             destinationHeadCommit: reused?.head, destinationBranch: reused?.branch, previousUpstreamCommit: upstream,
-            destinationFingerprint: reused?.proof, destinationConfigurationDigest: reusedConfiguration)
+            destinationFingerprint: reusedFingerprint, destinationConfigurationDigest: reusedConfiguration, repositoryFingerprint: repositoryProof)
         let current = try await metadata.localContext()
-        guard current.proof == local.proof, try indexDigest(current) == index, try await self.status(current) == status,
-              try await configurationDigest(current) == proof.configurationDigest else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        if request.mode == .local {
+            guard try await destinationFingerprint(current, baseRemote: baseRemote, headRemote: headRemote) == proof.sourceFingerprint,
+                  try indexDigest(current) == index, try await self.status(current) == status,
+                  try await policyConfigurationDigest(current) == proof.configurationDigest else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        } else {
+            guard try await repositoryFingerprint(current, baseRemote: baseRemote, headRemote: headRemote) == repositoryProof else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        }
         return try .init(request: request, sourcePath: local.workspace.path, repositoryPath: local.repository.path,
             commonDirectoryPath: local.common.path, destinationPath: destination, pullRequest: pr, requestedBranch: branch,
             requestedHeadCommit: pr.headCommit, disposition: disposition, proof: proof, baseRemote: baseRemote,
@@ -86,10 +100,16 @@ public struct GitHubPullRequestCheckoutService: GitHubPullRequestCheckoutSession
     }
     public func run(_ plan: GitHubPullRequestCheckoutPlan) async throws -> GitHubPullRequestCheckoutResult {
         try validateSession(plan)
+        if plan.isReadOnly { return try await observeReadOnlyReuse(plan) }
         return try await GitOperationGate.shared.perform(key: plan.commonDirectoryPath) { try await execute(plan) }
     }
     public func inspectCompletion(_ plan: GitHubPullRequestCheckoutPlan) async throws -> GitHubPullRequestCheckoutInspection {
         try validateSession(plan)
+        if plan.isReadOnly {
+            do { return .completed(try await observeReadOnlyReuse(plan)) }
+            catch is CancellationError { throw CancellationError() }
+            catch { return .unconfirmed }
+        }
         do { return try await inspect(plan) } catch is CancellationError { throw CancellationError() } catch { return .unconfirmed }
     }
     func validateSession(_ plan: GitHubPullRequestCheckoutPlan) throws {

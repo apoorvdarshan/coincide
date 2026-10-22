@@ -18,6 +18,7 @@ func nativePullRequestCheckoutReviewsAndRecoveryFitSmallWindowsInBothAppearances
         let worktree = try nativePullRequestCheckoutReview(f, summary: summary, disposition: .createWorktree)
         let local = try nativePullRequestCheckoutReview(f, summary: summary, disposition: .local)
         let reused = try nativePullRequestCheckoutReview(f, summary: summary, disposition: .reuseUnrelatedWorktree)
+        let readOnly = try nativePullRequestCheckoutReview(f, summary: summary, disposition: .reuseWorktree, policy: .inspectOnly)
         let childRequest = GitWorktreeRequest(id: reused.plan.id, sourcePath: reused.plan.repositoryPath,
             destinationRoot: reused.plan.request.destinationRoot, selection: .reuse(path: reused.plan.destinationPath))
         let childPlan = try GitWorktreePlan(request: childRequest, sourcePath: reused.plan.repositoryPath,
@@ -37,16 +38,20 @@ func nativePullRequestCheckoutReviewsAndRecoveryFitSmallWindowsInBothAppearances
         let stopping = PullRequestCheckoutOperation(review: worktree, phase: .dispatching, cancelRequested: true)
         let uncertain = PullRequestCheckoutOperation(review: worktree, phase: .unconfirmed, error: PullRequestCheckoutOperation.unconfirmedMessage)
         let completed = PullRequestCheckoutOperation(review: reused, phase: .completed, result: result)
-        try pending.validate(); try stopping.validate(); try uncertain.validate(); try completed.validate()
+        let inspecting = PullRequestCheckoutOperation(review: readOnly, phase: .dispatching)
+        try pending.validate(); try stopping.validate(); try uncertain.validate(); try completed.validate(); try inspecting.validate()
         for scheme in [ColorScheme.light, .dark] {
             for width in [CGFloat(320), 680] {
                 for (name, review, mode) in [("choose-worktree", Optional<PullRequestCheckoutReview>.none, GitHubPullRequestCheckoutMode.worktree),
+                                           ("choose-local-held", nil, .local),
                                            ("review-worktree", worktree, .worktree), ("review-local", local, .local),
-                                           ("review-reused-off-head", reused, .worktree)] {
+                                           ("review-reused-off-head", reused, .worktree), ("review-read-only", readOnly, .worktree)] {
                     let geometry = NativePullRequestCheckoutGeometry()
                     let content = PullRequestCheckoutContent(reference: summary.reference, summary: summary, review: review,
                         mode: .constant(mode), submodules: .constant(.recursive), reviewSetup: .constant(true),
-                        busy: false, canPrepare: true, error: nil, edit: { }, prepare: { }, checkout: { },
+                        busy: false, canPrepare: name != "choose-local-held", error: nil,
+                        admissionMessage: String(localized: "Finish the running command before changing this local checkout. A separate worktree remains available."),
+                        edit: { }, prepare: { }, checkout: { },
                         reportGeometry: { geometry.frames[$0] = $1 }).environment(\.colorScheme, scheme)
                     let hosting = NSHostingController(rootView: content)
                     let size = hosting.sizeThatFits(in: CGSize(width: width, height: 650))
@@ -54,7 +59,7 @@ func nativePullRequestCheckoutReviewsAndRecoveryFitSmallWindowsInBothAppearances
                     try await captureNativePullRequestCheckout(content, name: name, width: width, height: size.height,
                                                               scheme: scheme, geometry: geometry)
                 }
-                for (name, operation) in [("queued", pending), ("stopping", stopping), ("unconfirmed", uncertain), ("completed-off-head", completed)] {
+                for (name, operation) in [("queued", pending), ("stopping", stopping), ("unconfirmed", uncertain), ("completed-off-head", completed), ("read-only-pending", inspecting)] {
                     let content = ScrollView {
                         PullRequestCheckoutOperationContent(operation: operation, acting: false,
                             stop: { }, inspect: { }, acknowledge: { }, openConversation: { }).padding(16)
@@ -73,11 +78,12 @@ func nativePullRequestCheckoutReviewsAndRecoveryFitSmallWindowsInBothAppearances
 }
 
 @MainActor private func nativePullRequestCheckoutReview(_ f: PullRequestNativeFixture, summary: GitHubPullRequestSummary,
-                                                       disposition: GitHubPullRequestCheckoutDisposition) throws -> PullRequestCheckoutReview {
+                                                       disposition: GitHubPullRequestCheckoutDisposition,
+                                                       policy: GitHubPullRequestCheckoutPolicy = .refresh) throws -> PullRequestCheckoutReview {
     let mode: GitHubPullRequestCheckoutMode = disposition == .local ? .local : .worktree
     let destinationRoot = f.root.appendingPathComponent("Worktrees").path
     let request = GitHubPullRequestCheckoutRequest(sourcePath: f.root.path, destinationRoot: destinationRoot,
-        reference: summary.reference, mode: mode, submodules: mode == .local ? .none : .recursive)
+        reference: summary.reference, mode: mode, submodules: mode == .local ? .none : .recursive, policy: policy)
     let reused = disposition == .reuseWorktree || disposition == .reuseUnrelatedWorktree
     let destination = disposition == .local ? f.root.path : destinationRoot + "/" + (reused ? "registered-checkout" : request.id.uuidString)
     let identity = GitWorktreeNodeIdentity(device: 1, inode: 2)

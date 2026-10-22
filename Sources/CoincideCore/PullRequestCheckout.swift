@@ -54,9 +54,14 @@ public struct PullRequestCheckoutOperation: Codable, Sendable, Equatable, Identi
     public var id: UUID { review.id }
     public var projectID: UUID { review.projectID }
     public var targetThreadID: UUID { review.targetThreadID }
-    public var scopePaths: [String] { review.plan.scopePaths }
+    /// Only checkout files this operation can change are held against writers.
+    /// Shared Git metadata is coordinated separately and never pauses sibling checkouts.
+    public var affectedWorkspacePaths: [String] { review.plan.affectedWorkspacePaths }
+    public var scopePaths: [String] { affectedWorkspacePaths }
+    public var coordinationPaths: [String] { review.plan.coordinationPaths }
     public var isWorking: Bool { phase == .accepted || phase == .dispatching }
-    public var locksSource: Bool { isWorking || (phase == .unconfirmed && acknowledgedAt == nil) }
+    public var retainsProject: Bool { isWorking || (phase == .unconfirmed && acknowledgedAt == nil) }
+    public var locksSource: Bool { !review.plan.isReadOnly && retainsProject }
     public static let failureMessage = "The pull request checkout did not complete. No conversation was created and no operation was replayed. Review the current checkout before trying again."
     public static let unconfirmedMessage = "The checkout may have changed. Inspect the retained attempt or explicitly keep the current files before continuing. No conversation was created and the operation was not repeated."
     public init(review: PullRequestCheckoutReview, effectID: UUID = UUID(), phase: PullRequestCheckoutPhase = .accepted,
@@ -91,17 +96,63 @@ public struct PullRequestCheckoutOperation: Codable, Sendable, Equatable, Identi
     }
 }
 
+extension CodingThread {
+    /// Live ownership only: retained history and shared common directories do not
+    /// make an unrelated running checkout a writer of this operation's target.
+    public var pullRequestCheckoutWorkspacePaths: [String] {
+        var paths = [workspacePath] + queuedTurns.map { $0.configuration.workspacePath }
+        if let activeRun { paths.append(activeRun.configuration.workspacePath) }
+        if let preparation = workspacePreparation, preparation.isRunning {
+            paths += [preparation.request.sourcePath, preparation.destinationPath]
+        }
+        for (_, script) in projectScripts where ![.succeeded, .skipped, .failed, .cancelled, .interrupted].contains(script.phase) {
+            paths.append(script.plan?.workspacePath ?? workspacePath)
+        }
+        for record in runHistory ?? [] {
+            guard let checkpoints = record.checkpoints else { continue }
+            for attempt in [checkpoints.baseline] + checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? []) where attempt.phase.isRunning {
+                paths += [attempt.workspacePath] + (attempt.plan.map { [$0.repositoryPath] } ?? [])
+            }
+        }
+        return paths
+    }
+}
+
 extension WorkspaceSnapshot {
     public func pullRequestCheckout(_ id: UUID) -> PullRequestCheckoutOperation? { pullRequestCheckouts?.first { $0.id == id } }
     public func isPullRequestCheckoutLocked(path: String, excludingOperationID: UUID? = nil) -> Bool {
         (pullRequestCheckouts ?? []).contains { $0.id != excludingOperationID && $0.locksSource && $0.scopePaths.contains { Self.checkpointRestorePathsOverlap(path, $0) } }
     }
+    /// Git mutation controls use this separately from file/provider admission.
+    public func isPullRequestCheckoutCoordinating(path: String, excludingOperationID: UUID? = nil) -> Bool {
+        (pullRequestCheckouts ?? []).contains { operation in
+            operation.id != excludingOperationID && operation.locksSource && operation.coordinationPaths.contains { Self.checkpointRestorePathsOverlap(path, $0) }
+        }
+    }
     public func isPullRequestCheckoutLocked(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }) else { return false }
         return (pullRequestCheckouts ?? []).contains { operation in
-            operation.id != excludingOperationID && operation.locksSource && (operation.projectID == thread.projectID ||
-                thread.pullRequestCreationScopePaths.contains { path in operation.scopePaths.contains { Self.checkpointRestorePathsOverlap(path, $0) } })
+            operation.id != excludingOperationID && operation.locksSource && thread.pullRequestCheckoutWorkspacePaths.contains { path in
+                operation.scopePaths.contains { Self.checkpointRestorePathsOverlap(path, $0) }
+            }
         }
+    }
+    func pullRequestCheckoutHasBusyOwners(paths: [String]) -> Bool {
+        threads.contains { thread in
+            thread.hasPullRequestCreationWork && thread.pullRequestCheckoutWorkspacePaths.contains { path in
+                paths.contains { Self.checkpointRestorePathsOverlap(path, $0) }
+            }
+        }
+    }
+    func pullRequestCheckoutConflicts(_ first: PullRequestCheckoutOperation, _ second: PullRequestCheckoutOperation) -> Bool {
+        guard first.id != second.id, first.retainsProject, second.retainsProject else { return false }
+        if first.review.plan.isReadOnly, second.locksSource, second.scopePaths.contains(where: { Self.checkpointRestorePathsOverlap(first.review.plan.destinationPath, $0) }) { return true }
+        if second.review.plan.isReadOnly, first.locksSource, first.scopePaths.contains(where: { Self.checkpointRestorePathsOverlap(second.review.plan.destinationPath, $0) }) { return true }
+        if first.scopePaths.contains(where: { path in second.scopePaths.contains { Self.checkpointRestorePathsOverlap(path, $0) } }) { return true }
+        return !first.review.plan.isReadOnly && !second.review.plan.isReadOnly &&
+            first.review.plan.proof.commonDirectoryIdentity == second.review.plan.proof.commonDirectoryIdentity &&
+            first.review.plan.commonDirectoryPath == second.review.plan.commonDirectoryPath &&
+            first.review.plan.requestedBranch == second.review.plan.requestedBranch
     }
     var pullRequestCheckoutReservedIDs: Set<UUID> {
         Set((pullRequestCheckouts ?? []).flatMap { [$0.id, $0.effectID, $0.targetThreadID, $0.review.plan.request.id] })
@@ -110,6 +161,24 @@ extension WorkspaceSnapshot {
         try operation.validate()
         guard projects.contains(where: { $0.id == operation.projectID && $0.path == operation.review.projectPath && ($0.clone?.isReady ?? true) }),
               ownsPullRequestWorkspace(projectID: operation.projectID, workspacePath: operation.review.registeredWorkspacePath) else { throw WorkspaceCommandError("The checkout's registered project changed. Review it again.") }
+    }
+    func validatePullRequestCheckoutTarget(_ operation: PullRequestCheckoutOperation) throws {
+        let observed = operation.review.plan.destinationPath
+        let protected = operation.scopePaths + operation.coordinationPaths + [observed]
+        guard !protected.contains(where: { isCheckpointRestoreLocked(path: $0) || isPullRequestCreationLocked(path: $0) }),
+              !(pullRequestCheckouts ?? []).contains(where: { pullRequestCheckoutConflicts(operation, $0) }) else {
+            throw WorkspaceCommandError("Finish the pending workspace action before checking out a pull request.")
+        }
+        let owners = threads.filter { thread in thread.pullRequestCheckoutWorkspacePaths.contains { Self.checkpointRestorePathsOverlap(observed, $0) } }
+        if operation.review.plan.isReadOnly {
+            guard !owners.contains(where: { $0.workspacePreparation?.isRunning == true || $0.settlement?.phase == .resuming || isConversationHistoryLocked(threadID: $0.id) }) else {
+                throw WorkspaceCommandError("Finish the target's workspace or history action before observing this checkout.")
+            }
+        } else {
+            guard !owners.contains(where: { $0.hasPullRequestCreationWork || isConversationHistoryLocked(threadID: $0.id) }) else {
+                throw WorkspaceCommandError("Finish turns, queues, questions and workspace actions in the affected checkout before changing its files.")
+            }
+        }
     }
     func validatePullRequestCheckouts() throws {
         let operations = pullRequestCheckouts ?? []
@@ -140,16 +209,13 @@ extension WorkspaceSnapshot {
         guard Set(ids).isDisjoint(with: reserved) else { throw CoincideError("A pull request checkout identity belongs to another operation.") }
         for operation in operations {
             try operation.validate()
-            if operation.locksSource { try validatePullRequestCheckoutSource(operation) }
+            if operation.retainsProject { try validatePullRequestCheckoutSource(operation) }
             if operation.phase != .completed, threads.contains(where: { $0.id == operation.targetThreadID }) { throw CoincideError("An unfinished checkout cannot create a conversation.") }
         }
-        let locked = operations.filter(\.locksSource)
+        let locked = operations.filter(\.retainsProject)
         for (index, operation) in locked.enumerated() {
-            guard !locked.dropFirst(index + 1).contains(where: { other in operation.projectID == other.projectID || operation.scopePaths.contains { path in other.scopePaths.contains { Self.persistedCheckoutPathsOverlap(path, $0) } } }) else { throw CoincideError("Pending pull request checkouts cannot share repository ownership.") }
+            guard !locked.dropFirst(index + 1).contains(where: { pullRequestCheckoutConflicts(operation, $0) }) else { throw CoincideError("Pending pull request checkouts cannot change the same target or branch.") }
         }
-    }
-    private static func persistedCheckoutPathsOverlap(_ first: String, _ second: String) -> Bool {
-        first == second || first == "/" || second == "/" || first.hasPrefix(second + "/") || second.hasPrefix(first + "/")
     }
 }
 
@@ -161,8 +227,7 @@ extension WorkspaceDecision {
         if case .retryProjectClone(_, let plan) = command, reserved.contains(plan.id) { throw WorkspaceCommandError("This clone identity is reserved by a pull request checkout.") }
         if let created {
             guard created.pullRequestCheckoutOperationID == nil, !reserved.contains(created.id),
-                  !(snapshot.pullRequestCheckouts ?? []).contains(where: { $0.projectID == created.projectID && $0.locksSource }),
-                  !created.pullRequestCreationScopePaths.contains(where: { snapshot.isPullRequestCheckoutLocked(path: $0) }) else { throw WorkspaceCommandError("This checkout or conversation identity is held by a pull request checkout.") }
+                  !created.pullRequestCheckoutWorkspacePaths.contains(where: { snapshot.isPullRequestCheckoutLocked(path: $0) }) else { throw WorkspaceCommandError("This checkout or conversation identity is held by a pull request checkout.") }
         }
         switch command {
         case .addProject(let project), .addProjectWithThread(let project, _), .startProjectClone(let project, _):
@@ -173,10 +238,10 @@ extension WorkspaceDecision {
             try requirePullRequestCheckoutUnlocked([id])
         case .removeProject(let id, _), .retryProjectClone(let id, _), .cancelProjectClone(let id):
             guard let project = snapshot.projects.first(where: { $0.id == id }) else { return }
-            guard !snapshot.isPullRequestCheckoutLocked(path: project.path), !(snapshot.pullRequestCheckouts ?? []).contains(where: { $0.projectID == id && $0.locksSource }) else { throw WorkspaceCommandError("Inspect or acknowledge the pending checkout before removing its project.") }
+            guard !snapshot.isPullRequestCheckoutLocked(path: project.path), !(snapshot.pullRequestCheckouts ?? []).contains(where: { $0.projectID == id && $0.retainsProject }) else { throw WorkspaceCommandError("Inspect or acknowledge the pending checkout before removing its project.") }
             try requirePullRequestCheckoutUnlocked(snapshot.threads.filter { $0.projectID == id }.map(\.id))
         case .removeProjectGroup(_, let projects, _):
-            guard !projects.contains(where: { member in snapshot.isPullRequestCheckoutLocked(path: member.path) || (snapshot.pullRequestCheckouts ?? []).contains { $0.projectID == member.id && $0.locksSource } }) else { throw WorkspaceCommandError("This group owns a pending pull request checkout.") }
+            guard !projects.contains(where: { member in snapshot.isPullRequestCheckoutLocked(path: member.path) || (snapshot.pullRequestCheckouts ?? []).contains { $0.projectID == member.id && $0.retainsProject } }) else { throw WorkspaceCommandError("This group owns a pending pull request checkout.") }
             try requirePullRequestCheckoutUnlocked(snapshot.threads.filter { thread in projects.contains { $0.id == thread.projectID } }.map(\.id))
         case .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .resumeQueue(let id), .removeQueued(let id, _), .editQueued(let id, _),
              .settleThread(let id, _, _), .resumeThread(let id, _), .cancelWorktreePreparation(let id), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _),
@@ -192,19 +257,20 @@ extension WorkspaceDecision {
     mutating func acceptPullRequestCheckout(_ operation: PullRequestCheckoutOperation) throws {
         guard operation.phase == .accepted, snapshot.pullRequestCheckout(operation.id) == nil else { throw WorkspaceCommandError("This checkout intent was already used.") }
         try snapshot.validatePullRequestCheckoutSource(operation)
-        guard !operation.scopePaths.contains(where: { snapshot.isCheckpointRestoreLocked(path: $0) || snapshot.isPullRequestCreationLocked(path: $0) || snapshot.isPullRequestCheckoutLocked(path: $0) }) else { throw WorkspaceCommandError("Finish the pending workspace action before checking out a pull request.") }
-        let owners = snapshot.threads.filter { thread in thread.projectID == operation.projectID || thread.pullRequestCreationScopePaths.contains { path in operation.scopePaths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } } }
-        guard !owners.contains(where: { $0.hasPullRequestCreationWork || snapshot.isConversationHistoryLocked(threadID: $0.id) }) else { throw WorkspaceCommandError("Finish turns, queues, questions and workspace actions before checking out a pull request.") }
+        try snapshot.validatePullRequestCheckoutTarget(operation)
         if snapshot.pullRequestCheckouts == nil { snapshot.pullRequestCheckouts = [] }; snapshot.pullRequestCheckouts!.append(operation)
         do { try snapshot.validatePullRequestCheckouts() }
         catch { throw WorkspaceCommandError("The checkout uses an identity already reserved by another workspace action.") }
         effects.append(.init(id: operation.effectID, request: .pullRequestCheckout(projectID: operation.projectID, operationID: operation.id, effectID: operation.effectID)))
-        for thread in snapshot.threads where snapshot.isPullRequestCheckoutLocked(threadID: thread.id) { closeRuntimes.insert(thread.id) }
+        for thread in snapshot.threads where thread.pullRequestCheckoutWorkspacePaths.contains(where: { path in
+            operation.scopePaths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) }
+        }) { closeRuntimes.insert(thread.id) }
     }
     mutating func dispatchPullRequestCheckout(projectID: UUID, operationID: UUID, incarnation: UUID, now: Date) throws {
         guard let index = snapshot.pullRequestCheckouts?.firstIndex(where: { $0.id == operationID }), let operation = snapshot.pullRequestCheckouts?[index],
               operation.phase == .accepted, operation.projectID == projectID, operation.review.sourceIncarnation == incarnation else { return }
         try snapshot.validatePullRequestCheckoutSource(operation)
+        try snapshot.validatePullRequestCheckoutTarget(operation)
         snapshot.pullRequestCheckouts?[index].phase = .dispatching; snapshot.pullRequestCheckouts?[index].updatedAt = now
     }
     mutating func finishPullRequestCheckout(_ request: WorkspaceEffectRequest, result: EffectResult, incarnation: UUID, now: Date) throws {
@@ -215,10 +281,13 @@ extension WorkspaceDecision {
         case .pullRequestCheckoutCompleted(let value):
             guard operation.phase == .dispatching else { return }
             do { try materializePullRequestCheckout(operation, result: value, now: now); operation.phase = .completed; operation.result = value; operation.error = nil }
-            catch { operation.phase = .unconfirmed; operation.error = PullRequestCheckoutOperation.unconfirmedMessage }
+            catch {
+                operation.phase = operation.review.plan.isReadOnly ? .failed : .unconfirmed
+                operation.error = operation.review.plan.isReadOnly ? PullRequestCheckoutOperation.failureMessage : PullRequestCheckoutOperation.unconfirmedMessage
+            }
         case .failed: operation.phase = .failed; operation.error = PullRequestCheckoutOperation.failureMessage
         case .cancelled, .stopped, .pullRequestCheckoutUnconfirmed:
-            operation.phase = operation.phase == .accepted ? .failed : .unconfirmed
+            operation.phase = operation.phase == .accepted || operation.review.plan.isReadOnly ? .failed : .unconfirmed
             operation.error = operation.phase == .failed ? PullRequestCheckoutOperation.failureMessage : PullRequestCheckoutOperation.unconfirmedMessage
         default: return
         }
@@ -226,6 +295,7 @@ extension WorkspaceDecision {
     }
     private mutating func materializePullRequestCheckout(_ operation: PullRequestCheckoutOperation, result: GitHubPullRequestCheckoutResult, now: Date) throws {
         try operation.validateResult(result)
+        try snapshot.validatePullRequestCheckoutTarget(operation)
         guard let project = snapshot.projects.first(where: { $0.id == operation.projectID }), !snapshot.threads.contains(where: { $0.id == operation.targetThreadID }) else { throw CoincideError("The reserved pull request conversation is unavailable.") }
         var target = CodingThread(project: project), configuration = operation.review.targetConfiguration
         configuration.workspacePath = result.destinationPath; configuration.nativeThreadID = nil
@@ -237,7 +307,7 @@ extension WorkspaceDecision {
         if let plan = result.worktreePlan, let child = result.worktreeResult {
             var preparation = ThreadWorkspacePreparation(request: plan.request, now: now)
             preparation.plan = plan; preparation.result = child; preparation.phase = .completed; preparation.endedAt = now
-            if operation.review.reviewSetup, (result.created || result.moved), preparation.permitsProjectSetup {
+            if !operation.review.plan.isReadOnly, operation.review.reviewSetup, (result.created || result.moved), preparation.permitsProjectSetup {
                 var setup = ThreadProjectScriptRun(now: now); setup.phase = .discovering; preparation.setup = setup
                 effects.append(.init(request: .resolveProjectScript(threadID: target.id, attemptID: preparation.id, runID: setup.id)))
             }

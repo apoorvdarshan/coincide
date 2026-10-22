@@ -8,10 +8,11 @@ import Observation
 final class PullRequestStore {
     struct CheckoutSupport {
         let configuration: @MainActor () -> (ProviderConfiguration, RunCheckpointPolicy?)?
-        let canPrepare: @MainActor ([String], UUID?) -> Bool
+        let canPrepare: @MainActor (GitHubPullRequestCheckoutMode, GitHubPullRequestCheckoutPlan?, UUID?) -> Bool
         let begin: @MainActor (PullRequestCheckoutReview) async throws -> WorkspaceCommandReceipt
         let open: @MainActor (UUID) -> Void
-        var unavailableReason: (@MainActor ([String], UUID?) -> String?)? = nil
+        var unavailableReason: (@MainActor (GitHubPullRequestCheckoutMode, GitHubPullRequestCheckoutPlan?, UUID?) -> String?)? = nil
+        var busyWorktreePaths: @MainActor () -> [String] = { [] }
     }
     let path: String
     private(set) var context: GitHubPullRequestContext?
@@ -20,6 +21,7 @@ final class PullRequestStore {
     private(set) var detail: GitHubPullRequestDetail?
     private(set) var operation: PullRequestCreationOperation?
     private(set) var checkoutOperation: PullRequestCheckoutOperation?
+    private(set) var checkoutOperations: [PullRequestCheckoutOperation] = []
     private(set) var contextError: String?
     private(set) var listError: String?
     private(set) var detailError: String?
@@ -30,24 +32,31 @@ final class PullRequestStore {
     private(set) var isPreparing = false
     private(set) var isAccepting = false
     private(set) var isInspecting = false
-    var isBusy: Bool { closed || isAccepting || isPreparing || isInspecting || operation?.isWorking == true || checkoutOperation?.isWorking == true }
+    var isBusy: Bool { closed || isAccepting || isPreparing || isInspecting || operation?.isWorking == true }
     var canCreate: Bool {
         guard !isBusy, operation?.locksSource != true, checkoutOperation?.locksSource != true, let context,
               context.existingPullRequest == nil, canMutate() else { return false }
         return context.readiness == .ready || context.readiness == .defaultBranch
     }
     var canCheckout: Bool {
-        guard !isBusy, operation?.locksSource != true, checkoutOperation?.locksSource != true,
-              let context, let checkoutSupport, checkoutSupport.configuration() != nil else { return false }
-        return checkoutSupport.canPrepare([path, context.repositoryPath, context.commonDirectoryPath], nil)
+        canPrepareCheckout(mode: .worktree) || canPrepareCheckout(mode: .local)
     }
-    var isMutating: Bool { isAccepting || operation?.isWorking == true || checkoutOperation?.isWorking == true }
+    func canPrepareCheckout(mode: GitHubPullRequestCheckoutMode) -> Bool {
+        guard !isBusy, operation?.locksSource != true,
+              context != nil, let checkoutSupport, checkoutSupport.configuration() != nil else { return false }
+        return checkoutSupport.canPrepare(mode, nil, nil)
+    }
+    func checkoutAdmissionMessage(mode: GitHubPullRequestCheckoutMode) -> String? {
+        checkoutSupport?.unavailableReason?(mode, nil, nil)
+    }
+    var isMutating: Bool { isAccepting || operation?.isWorking == true || checkoutOperations.contains(where: \.isWorking) }
     var acceptingCheckoutID: UUID? { acceptingCheckoutReview?.id }
     var mutationPaths: [String] {
-        if let acceptingCheckoutReview { return acceptingCheckoutReview.plan.scopePaths }
-        if let acceptingReview { return [acceptingReview.context.repositoryPath, acceptingReview.context.commonDirectoryPath] }
-        if checkoutOperation?.isWorking == true { return checkoutOperation!.scopePaths }
-        return operation?.isWorking == true ? operation!.scopePaths : []
+        var paths = checkoutOperations.filter(\.isWorking).flatMap(\.scopePaths)
+        if let acceptingCheckoutReview { paths += acceptingCheckoutReview.plan.affectedWorkspacePaths }
+        if let acceptingReview { paths += [acceptingReview.context.repositoryPath, acceptingReview.context.commonDirectoryPath] }
+        if let operation, operation.isWorking { paths += operation.scopePaths }
+        return Array(Set(paths))
     }
 
     private let session: any GitHubPullRequestSession
@@ -98,9 +107,10 @@ final class PullRequestStore {
         operation = snapshot.pullRequestCreations?.last {
             $0.projectID == projectID && Self.canonical($0.review.context.workspacePath) == path
         }
-        checkoutOperation = snapshot.pullRequestCheckouts?.last {
+        checkoutOperations = snapshot.pullRequestCheckouts?.filter {
             $0.review.projectID == projectID && Self.canonical($0.review.plan.sourcePath) == path
-        }
+        } ?? []
+        checkoutOperation = checkoutOperations.last
         guard !closed else { return }
         if let operation, operation.id != previous?.id || operation.phase != previous?.phase {
             switch operation.result {
@@ -273,16 +283,17 @@ final class PullRequestStore {
 
     func prepareCheckout(reference: GitHubPullRequestReference, mode: GitHubPullRequestCheckoutMode,
                          submodules: ProjectWorktreeSubmoduleMode = .none, reviewSetup: Bool = true) async throws -> PullRequestCheckoutReview {
-        guard canCheckout, let engine, let projectID = owner(), let support = checkoutSupport,
+        guard canPrepareCheckout(mode: mode), let engine, let projectID = owner(), let support = checkoutSupport,
               let captured = support.configuration(), context?.repository == reference.repository else {
-            try rejectCheckout(paths: [path], excludingOperationID: nil)
+            try rejectCheckout(mode: mode, plan: nil, excludingOperationID: nil)
         }
         isPreparing = true; actionError = nil
         let generation = UUID(); reviewGeneration = generation
         let path = path
+        let busyWorktreePaths = support.busyWorktreePaths()
         let task = Task { try await engine.reviewPullRequestCheckout(projectID: projectID, workspacePath: path,
             reference: reference, mode: mode, configuration: captured.0, checkpointPolicy: captured.1,
-            submodules: submodules, reviewSetup: reviewSetup) }
+            submodules: submodules, reviewSetup: reviewSetup, busyWorktreePaths: busyWorktreePaths) }
         checkoutReviewTask = task; ownRead(task, id: generation)
         defer {
             ownedReads.removeValue(forKey: generation)
@@ -294,9 +305,9 @@ final class PullRequestStore {
                   owner() == projectID, Self.canonical(review.plan.sourcePath) == path else {
                 await engine.discardPullRequestCheckoutReview(reviewID: review.id); throw CancellationError()
             }
-            guard support.canPrepare(review.plan.scopePaths, nil) else {
+            guard support.canPrepare(mode, review.plan, nil) else {
                 await engine.discardPullRequestCheckoutReview(reviewID: review.id)
-                try rejectCheckout(paths: review.plan.scopePaths, excludingOperationID: nil)
+                try rejectCheckout(mode: mode, plan: review.plan, excludingOperationID: nil)
             }
             return review
         } catch {
@@ -305,10 +316,10 @@ final class PullRequestStore {
         }
     }
     func checkout(_ review: PullRequestCheckoutReview) async throws {
-        guard !closed, !isBusy, operation?.locksSource != true, checkoutOperation?.locksSource != true,
+        guard !closed, !isBusy, operation?.locksSource != true,
               let support = checkoutSupport, owner() == review.projectID,
-              Self.canonical(review.plan.sourcePath) == path, support.canPrepare(review.plan.scopePaths, review.id) else {
-            try rejectCheckout(paths: review.plan.scopePaths, excludingOperationID: review.id)
+              Self.canonical(review.plan.sourcePath) == path, support.canPrepare(review.plan.request.mode, review.plan, review.id) else {
+            try rejectCheckout(mode: review.plan.request.mode, plan: review.plan, excludingOperationID: review.id)
         }
         isAccepting = true; acceptingCheckoutReview = review; actionError = nil
         let task = Task { try await support.begin(review) }; acceptanceTask = task
@@ -322,8 +333,8 @@ final class PullRequestStore {
             if !closed { actionError = Self.message(error) }; throw error
         }
     }
-    func inspectCheckout() async throws {
-        guard !closed, !isInspecting, let engine, let checkoutOperation, checkoutOperation.phase == .unconfirmed,
+    func inspectCheckout(operationID: UUID? = nil) async throws {
+        guard !closed, !isInspecting, let engine, let checkoutOperation = checkoutOperation(id: operationID), checkoutOperation.phase == .unconfirmed,
               checkoutOperation.acknowledgedAt == nil else { throw CancellationError() }
         isInspecting = true; actionError = nil
         let task = Task { try await engine.inspectPullRequestCheckout(operationID: checkoutOperation.id) }; inspectionTask = task
@@ -334,23 +345,27 @@ final class PullRequestStore {
             if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
         } catch { if !closed { actionError = Self.message(error) }; throw error }
     }
-    func cancelCheckout() async throws {
-        guard !closed, let engine, let checkoutOperation, checkoutOperation.isWorking else { throw CancellationError() }
+    func cancelCheckout(operationID: UUID? = nil) async throws {
+        guard !closed, let engine, let checkoutOperation = checkoutOperation(id: operationID), checkoutOperation.isWorking else { throw CancellationError() }
         let receipt = try await engine.cancelPullRequestCheckout(operationID: checkoutOperation.id)
         updateWorkspace(await engine.current())
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
     }
-    func acknowledgeCheckout() async throws {
-        guard !closed, !isInspecting, let engine, let checkoutOperation, checkoutOperation.phase == .unconfirmed,
+    func acknowledgeCheckout(operationID: UUID? = nil) async throws {
+        guard !closed, !isInspecting, let engine, let checkoutOperation = checkoutOperation(id: operationID), checkoutOperation.phase == .unconfirmed,
               checkoutOperation.acknowledgedAt == nil else { throw CancellationError() }
         let receipt = try await engine.dispatch(.acknowledgePullRequestCheckout(operationID: checkoutOperation.id))
         updateWorkspace(await engine.current())
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
     }
     func discardCheckoutReview(_ id: UUID) async { await engine?.discardPullRequestCheckoutReview(reviewID: id) }
-    func openCheckoutConversation() {
-        guard let checkoutOperation, checkoutOperation.phase == .completed else { return }
+    func openCheckoutConversation(operationID: UUID? = nil) {
+        guard let checkoutOperation = checkoutOperation(id: operationID), checkoutOperation.phase == .completed else { return }
         checkoutSupport?.open(checkoutOperation.targetThreadID)
+    }
+    private func checkoutOperation(id: UUID?) -> PullRequestCheckoutOperation? {
+        if let id { return checkoutOperations.first { $0.id == id } }
+        return checkoutOperation
     }
     func suspendForWorkspaceMutation() {
         readsSuspended = true; contextGeneration = UUID(); listGeneration = UUID(); detailGeneration = UUID(); reviewGeneration = UUID()
@@ -359,9 +374,9 @@ final class PullRequestStore {
     func waitForReads() async { for read in Array(ownedReads.values) { await read.drain.value } }
     func refreshAfterWorkspaceMutation() async { guard !closed else { return }; readsSuspended = false; await refresh() }
 
-    private func rejectCheckout(paths: [String], excludingOperationID: UUID?) throws -> Never {
+    private func rejectCheckout(mode: GitHubPullRequestCheckoutMode, plan: GitHubPullRequestCheckoutPlan?, excludingOperationID: UUID?) throws -> Never {
         if closed { throw CancellationError() }
-        let message = checkoutSupport?.unavailableReason?(paths, excludingOperationID) ?? String(localized: "Finish the current workspace action, save editor changes, and close terminals before reviewing the pull request checkout again.")
+        let message = checkoutSupport?.unavailableReason?(mode, plan, excludingOperationID) ?? String(localized: "Finish the current workspace action before reviewing this pull request checkout again.")
         actionError = message
         throw WorkspaceCommandError(message)
     }

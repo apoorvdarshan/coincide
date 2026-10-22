@@ -24,10 +24,11 @@ struct PRCheckoutFixture: Sendable {
             return Self(api: api, managed: managed, baseRemote: base, headRemote: api.git.root.appendingPathComponent("Published.git"))
         } catch { api.cleanup(); throw error }
     }
-    func service(mode: GitHubPullRequestCheckoutMode = .worktree, id: UUID = UUID(), headRepository: GitHubRepository? = nil, gitExecutable: URL? = nil) throws -> GitHubPullRequestCheckoutService {
+    func service(mode: GitHubPullRequestCheckoutMode = .worktree, id: UUID = UUID(), headRepository: GitHubRepository? = nil, gitExecutable: URL? = nil,
+                 policy: GitHubPullRequestCheckoutPolicy = .refresh) throws -> GitHubPullRequestCheckoutService {
         let base = try GitHubRepository(owner: "upstream", name: "project"), head = try headRepository ?? GitHubRepository(owner: "fork", name: "project")
         let request = GitHubPullRequestCheckoutRequest(id: id, sourcePath: source.path, destinationRoot: managed.path,
-            reference: try .init(repository: base, number: 42), mode: mode)
+            reference: try .init(repository: base, number: 42), mode: mode, policy: policy)
         return .init(request: request, environment: environment, gitExecutable: gitExecutable ?? api.git.git, githubExecutable: api.executable,
             transportOverrides: [base: baseRemote, head: headRemote])
     }
@@ -298,13 +299,15 @@ func githubPullRequestUnrelatedForkHeadAliasKeepsItsBytesRefsAndTrackingUntouche
     #expect(try await f.api.git.run(["show-ref", "--verify", "--quiet", GitHubPullRequestCheckoutService.headRef(plan.id)], succeeds: false).status != 0)
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: ["head", "remote", "replacement", "destination", "prHead"])
+@Test(.timeLimit(.minutes(1)), arguments: ["head", "remote", "replacement", "destination", "prHead", "protocol", "hooks"])
 func githubPullRequestCheckoutStaleProofCannotStartGitMutation(kind: String) async throws {
     let f = try await PRCheckoutFixture.make(); defer { f.cleanup() }
-    let service = try f.service(), plan = try await service.prepare()
+    let service = try f.service(mode: kind == "head" ? .local : .worktree), plan = try await service.prepare()
     switch kind {
     case "head": try f.api.git.write("new.txt", "Changed local commit\n"); try await f.api.git.commitAll()
     case "remote": _ = try await f.git(["remote", "set-url", "origin", "https://github.com/other/project.git"])
+    case "protocol": _ = try await f.git(["config", "protocol.file.allow", "never"])
+    case "hooks": _ = try await f.git(["config", "core.hooksPath", f.api.git.root.appendingPathComponent("Other hooks").path])
     case "replacement":
         let old = f.api.git.root.appendingPathComponent("Original retained repository")
         try FileManager.default.moveItem(at: f.source, to: old); try FileManager.default.copyItem(at: old, to: f.source)

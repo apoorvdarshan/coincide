@@ -12,28 +12,48 @@ private actor NativeCheckoutPeer {
     private(set) var writes = 0
     private(set) var inspections = 0
     private(set) var cancellationObserved = false
-    private var waiter: CheckedContinuation<Void, Never>?
+    private(set) var mutationRequests = 0
+    private(set) var preparedPolicies: [GitHubPullRequestCheckoutPolicy] = []
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var uncertain = false
     private var inspectCompleted = false
+    private var reusedDestination: URL?
+    private var draining = false
     init(root: URL, repository: GitHubRepository) { self.root = root; self.repository = repository }
     func configureUncertain() { uncertain = true; inspectCompleted = false }
     func revealCompletion() { inspectCompleted = true }
-    func release() { waiter?.resume(); waiter = nil }
+    func reuse(_ path: URL) { reusedDestination = path }
+    func release(planID: UUID) {
+        let waiter = waiters.removeValue(forKey: planID)
+        #expect(waiter != nil, "The held checkout worker must be released by its primitive plan ID.")
+        waiter?.resume()
+    }
+    func release() { let pending = Array(waiters.values); waiters.removeAll(); for waiter in pending { waiter.resume() } }
+    func drain() { draining = true; release() }
     func prepare(_ request: GitHubPullRequestCheckoutRequest) throws -> GitHubPullRequestCheckoutPlan {
+        preparedPolicies.append(request.policy)
         let identity = GitWorktreeNodeIdentity(device: 1, inode: 2)
         let summary = try GitHubPullRequestSummary(reference: request.reference, title: "Open the reviewed native PR",
-            url: "https://github.com/fixture/native-pr/pull/42", state: .open, isDraft: false,
-            headBranch: "feature/review", baseBranch: "main", headCommit: String(repeating: "a", count: 40),
+            url: "https://github.com/fixture/native-pr/pull/\(request.reference.number)", state: .open, isDraft: false,
+            headBranch: request.reference.number == 42 ? "feature/review" : "feature/pr-\(request.reference.number)", baseBranch: "main", headCommit: String(repeating: "a", count: 40),
             baseCommit: String(repeating: "b", count: 40), headRepository: repository, author: "fixture")
         let proof = GitHubPullRequestCheckoutProof(sourceIdentity: identity, repositoryIdentity: identity,
             gitDirectoryPath: root.path + "/.git", gitDirectoryIdentity: identity, commonDirectoryIdentity: identity,
             sourceFingerprint: String(repeating: "c", count: 64), statusDigest: String(repeating: "d", count: 64),
-            headCommit: String(repeating: "b", count: 40), branch: "main")
-        let destination = request.mode == .local ? root.path : request.destinationRoot + "/" + request.id.uuidString
+            headCommit: String(repeating: "b", count: 40), branch: "main",
+            destinationIdentity: reusedDestination == nil ? nil : identity,
+            destinationGitDirectoryPath: reusedDestination == nil ? nil : root.path + "/.git/worktrees/reused",
+            destinationGitDirectoryIdentity: reusedDestination == nil ? nil : identity,
+            destinationStatusDigest: reusedDestination == nil ? nil : String(repeating: "e", count: 64),
+            destinationHeadCommit: reusedDestination == nil ? nil : summary.headCommit,
+            destinationBranch: reusedDestination == nil ? nil : summary.headBranch,
+            destinationFingerprint: reusedDestination == nil ? nil : String(repeating: "f", count: 64),
+            destinationConfigurationDigest: reusedDestination == nil ? nil : String(repeating: "a", count: 64))
+        let destination = request.mode == .local ? root.path : reusedDestination?.path ?? request.destinationRoot + "/" + request.id.uuidString
         return try .init(request: request, sourcePath: root.path, repositoryPath: root.path,
             commonDirectoryPath: root.path + "/.git", destinationPath: destination, pullRequest: summary,
-            requestedBranch: "feature/review", requestedHeadCommit: summary.headCommit,
-            disposition: request.mode == .local ? .local : .createWorktree, proof: proof,
+            requestedBranch: summary.headBranch, requestedHeadCommit: summary.headCommit,
+            disposition: request.mode == .local ? .local : reusedDestination == nil ? .createWorktree : .reuseWorktree, proof: proof,
             baseRemote: .init(name: "origin", url: "https://github.com/fixture/native-pr.git", repository: repository, needsCreation: false),
             destinationParentIdentity: identity)
     }
@@ -42,20 +62,26 @@ private actor NativeCheckoutPeer {
             return .init(destinationPath: plan.destinationPath, branch: plan.requestedBranch,
                          headCommit: plan.requestedHeadCommit, isOnPullRequestHead: true, created: false, reused: false, moved: true)
         }
+        let reused = plan.disposition != .createWorktree
         let request = GitWorktreeRequest(id: plan.id, sourcePath: plan.repositoryPath, destinationRoot: plan.request.destinationRoot,
-            selection: .createBranch(name: plan.requestedBranch, baseRef: plan.requestedHeadCommit))
+            selection: reused ? .reuse(path: plan.destinationPath) : .createBranch(name: plan.requestedBranch, baseRef: plan.requestedHeadCommit))
         let child = try GitWorktreePlan(request: request, sourcePath: plan.repositoryPath, commonDirectoryPath: plan.commonDirectoryPath,
             sourceIdentity: plan.proof.repositoryIdentity, commonDirectoryIdentity: plan.proof.commonDirectoryIdentity,
-            destinationParentIdentity: plan.destinationParentIdentity, branch: plan.requestedBranch, baseCommit: plan.requestedHeadCommit)
+            destinationParentIdentity: plan.destinationParentIdentity, branch: plan.requestedBranch, baseCommit: plan.requestedHeadCommit,
+            destinationIdentity: plan.proof.destinationIdentity, worktreeGitDirectoryPath: plan.proof.destinationGitDirectoryPath,
+            worktreeGitDirectoryIdentity: plan.proof.destinationGitDirectoryIdentity)
         return .init(destinationPath: plan.destinationPath, branch: plan.requestedBranch, headCommit: plan.requestedHeadCommit,
-            isOnPullRequestHead: true, created: true, reused: false, moved: true,
+            isOnPullRequestHead: true, created: !reused, reused: reused, moved: !reused,
             worktreePlan: child, worktreeResult: .init(destinationPath: plan.destinationPath, headCommit: plan.requestedHeadCommit, branch: plan.requestedBranch))
     }
     func run(_ plan: GitHubPullRequestCheckoutPlan) async throws -> GitHubPullRequestCheckoutResult {
         writes += 1
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { waiter = $0 }
-        } onCancel: { Task { await self.observeCancellation() } }
+        if !plan.isReadOnly { mutationRequests += 1 }
+        if !draining {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { waiters[plan.id] = $0 }
+            } onCancel: { Task { await self.observeCancellation() } }
+        }
         try Task.checkCancellation()
         if plan.request.mode == .local { try Data("Reviewed PR bytes\n".utf8).write(to: root.appendingPathComponent("tracked.txt"), options: .atomic) }
         if uncertain { throw GitHubPullRequestCheckoutError(.commandFailed, mayHaveChanged: true) }
@@ -77,6 +103,7 @@ private struct NativeCheckoutSession: GitHubPullRequestCheckoutSession {
 }
 
 @MainActor private struct NativeCheckoutFixture {
+    let storage: URL
     let root: URL
     let database: URL
     let project: WorkspaceProject
@@ -86,39 +113,54 @@ private struct NativeCheckoutSession: GitHubPullRequestCheckoutSession {
     let reads: PullRequestNativePeer
     let workspace: WorkspaceStore
     let model: PullRequestStore
-    static func make() async throws -> Self {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-native-checkout-" + UUID().uuidString)
+    static func make(provider: NativeSetupProvider? = nil, reuseCheckout: Bool = false) async throws -> Self {
+        let storage = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-native-checkout-" + UUID().uuidString)
             .standardizedFileURL.resolvingSymlinksInPath()
+        let root = storage.appendingPathComponent("Source", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try Data("Original checkout bytes\n".utf8).write(to: root.appendingPathComponent("tracked.txt"))
         let reads = try PullRequestNativePeer(root: root), peer = NativeCheckoutPeer(root: root, repository: reads.repository)
-        let project = WorkspaceProject(path: root.path), database = root.appendingPathComponent("workspace.sqlite")
+        let project = WorkspaceProject(path: root.path), database = storage.appendingPathComponent("workspace.sqlite")
         var source = CodingThread(project: project)
         source.provider = .claude; source.model = "native-checkout-model"; source.permission = .fullAccess
         source.providerThreadID = "Do not inherit this provider session"; source.checkpointPolicy = .disabled
         source.messages = [.init(role: .user, text: "Retain source history")]; source.draft = "Retain source draft"
-        var cold = CodingThread(project: project); cold.workspacePath = root.path + "-cold"; cold.isArchived = true
+        var cold = CodingThread(project: project); cold.workspacePath = storage.appendingPathComponent("Unrelated Cold").path; cold.isArchived = true
+        if reuseCheckout {
+            let reused = storage.appendingPathComponent("Worktrees").appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: reused, withIntermediateDirectories: true)
+            try Data("Original reused checkout bytes\n".utf8).write(to: reused.appendingPathComponent("tracked.txt"))
+            cold.workspacePath = reused.path; cold.draft = "Retain the existing checkout owner's draft"
+            await peer.reuse(reused)
+        }
         var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [source, cold]
+        if provider != nil {
+            let agent = ACPAgentConfiguration(name: "Native independent checkout provider", executable: "/usr/bin/true")
+            source.provider = .acp; source.acpAgent = agent; snapshot.acpAgents = [agent]; snapshot.threads = [source, cold]
+        }
         try await WorkspaceDatabase(url: database).save(snapshot, event: "checkout.native.fixture")
-        let workspace = try makeWorkspace(database: database, peer: peer, reads: reads)
+        let workspace = try makeWorkspace(database: database, peer: peer, reads: reads, provider: provider)
         await workspace.load(); workspace.selectedThreadID = source.id
         let model = workspace.pullRequestStore(path: root.path); await model.refresh()
-        return .init(root: root, database: database, project: project, sourceID: source.id, coldID: cold.id,
+        return .init(storage: storage, root: root, database: database, project: project, sourceID: source.id, coldID: cold.id,
                      peer: peer, reads: reads, workspace: workspace, model: model)
     }
-    static func makeWorkspace(database: URL, peer: NativeCheckoutPeer, reads: PullRequestNativePeer) throws -> WorkspaceStore {
+    static func makeWorkspace(database: URL, peer: NativeCheckoutPeer, reads: PullRequestNativePeer, provider: NativeSetupProvider? = nil) throws -> WorkspaceStore {
         let engine = try WorkspaceEngine(url: database,
-            providerFactory: { _ in throw CoincideError("Checkout must never send a prompt.") }, identityResolver: { _ in nil },
+            providerFactory: { _ in
+                if let provider { return provider }
+                throw CoincideError("Checkout must never send a prompt.")
+            }, identityResolver: { _ in nil },
             pullRequestFactory: { _ in reads }, pullRequestCheckoutFactory: { NativeCheckoutSession(request: $0, peer: peer) })
         let workspace = WorkspaceStore(engine: engine); workspace.pullRequestSessionFactory = { _ in reads }; return workspace
     }
-    func review(mode: GitHubPullRequestCheckoutMode = .local) async throws -> PullRequestCheckoutReview {
-        try await model.prepareCheckout(reference: .init(repository: reads.repository, number: 42), mode: mode, reviewSetup: false)
+    func review(mode: GitHubPullRequestCheckoutMode = .local, number: Int = 42) async throws -> PullRequestCheckoutReview {
+        try await model.prepareCheckout(reference: .init(repository: reads.repository, number: number), mode: mode, reviewSetup: false)
     }
     func finish(reopened: WorkspaceStore? = nil) async {
-        await reads.releaseContext(); await reads.releaseCreate(); await peer.release()
+        await reads.releaseContext(); await reads.releaseCreate(); await peer.drain()
         await reopened?.shutdown(); await workspace.shutdown()
-        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: storage)
     }
 }
 
@@ -136,11 +178,14 @@ func nativePRCheckoutHoldsAllWindowsBeforeSQLiteAndCreatesOnlyTheConfirmedBlankT
         let acceptance = Task { try await f.model.checkout(review) }
         try await waitForNativePullRequest { f.model.isAccepting }
         #expect(f.workspace.snapshot.pullRequestCheckout(review.id) == nil)
-        #expect(f.workspace.isPullRequestCheckoutLocked(threadID: f.sourceID))
-        #expect(f.workspace.isPullRequestCheckoutLocked(threadID: f.coldID))
-        #expect(!f.workspace.canEditWorkspace(f.root.path) && !f.workspace.canOpenTerminal(for: source))
-        #expect(!f.workspace.workspaceReady(for: source) && f.workspace.canPresentWorkspaceInspector(for: source))
-        #expect(await f.workspace.submit("Keep this draft", threadID: f.sourceID).value == false)
+        #expect(f.workspace.isPullRequestCheckoutLocked(threadID: f.sourceID) == (mode == .local))
+        #expect(!f.workspace.isPullRequestCheckoutLocked(threadID: f.coldID))
+        #expect(f.workspace.canEditWorkspace(f.root.path) == (mode == .worktree))
+        #expect(f.workspace.canOpenTerminal(for: source) == (mode == .worktree))
+        #expect(f.workspace.workspaceReady(for: source) == (mode == .worktree))
+        #expect(f.workspace.canPresentWorkspaceInspector(for: source))
+        #expect(!f.workspace.canEditWorkspace(review.plan.destinationPath))
+        if mode == .local { #expect(await f.workspace.submit("Keep this draft", threadID: f.sourceID).value == false) }
         #expect(f.workspace.thread(f.sourceID)?.draft == source.draft)
         unlock(); try await acceptance.value
         try await waitForNativePullRequest { await f.peer.writes == 1 }
@@ -231,7 +276,7 @@ func nativePRCheckoutRejectsNewUnsavedEditsAfterReviewWithAnActionableMessage() 
     do {
         let review = try await f.review(), browser = try f.workspace.fileBrowser(path: f.root.path)
         #expect(await browser.open("tracked.txt")); browser.setContents("Unsaved editor bytes")
-        #expect(!f.model.canCheckout)
+        #expect(!f.model.canPrepareCheckout(mode: .local) && f.model.canPrepareCheckout(mode: .worktree))
         await #expect(throws: WorkspaceCommandError.self) { try await f.model.checkout(review) }
         #expect(f.model.actionError?.contains("Save or discard") == true)
         #expect(browser.contents == "Unsaved editor bytes" && browser.isDirty)
@@ -276,13 +321,13 @@ func nativePRCheckoutWaitsForRemovedTerminalTabsAndWindowsToDrain(windowClosed: 
         if windowClosed { terminals.closeAll(); f.workspace.unregisterTerminals(terminals) }
         else { terminals.close(session, threadID: source.id) }
         #expect(terminals.sessions.values.flatMap { $0 }.isEmpty && kill(pid, 0) == 0)
-        #expect(!f.model.canCheckout)
+        #expect(!f.model.canPrepareCheckout(mode: .local) && f.model.canPrepareCheckout(mode: .worktree))
         await #expect(throws: WorkspaceCommandError.self) { try await f.review() }
         #expect(f.model.actionError?.contains("Close terminals") == true)
         #expect(await f.peer.writes == 0)
         await session.waitForClose()
         #expect(!session.view.process.running && !session.view.process.windingDown)
-        try await waitForNativePullRequest { f.model.canCheckout }
+        try await waitForNativePullRequest { f.model.canPrepareCheckout(mode: .local) }
         #expect(kill(pid, 0) != 0)
         let review = try await f.review(); await f.model.discardCheckoutReview(review.id)
     } catch {
@@ -290,4 +335,128 @@ func nativePRCheckoutWaitsForRemovedTerminalTabsAndWindowsToDrain(windowClosed: 
         await f.finish(); throw error
     }
     f.workspace.unregisterTerminals(terminals); await f.finish()
+}
+
+@MainActor @Test(.timeLimit(.minutes(1)))
+func nativePRCheckoutIndependentWorktreeKeepsSourceProviderEditorAndTerminalWorking() async throws {
+    let provider = NativeSetupProvider(), f = try await NativeCheckoutFixture.make(provider: provider)
+    let terminals = TerminalWorkspaceStore(executable: "/bin/sh", loginShell: false)
+    f.workspace.registerTerminals(terminals)
+    var terminal: LocalTerminalSession?
+    do {
+        let original = try #require(f.workspace.thread(f.sourceID))
+        #expect(await f.workspace.submit("Source provider keeps this turn", threadID: f.sourceID).value)
+        try await waitForNativePullRequest { await provider.calls.count == 1 }
+        let runID = try #require(f.workspace.thread(f.sourceID)?.activeRun?.id)
+        let browser = try f.workspace.fileBrowser(path: f.root.path)
+        #expect(await browser.open("tracked.txt")); browser.setContents("Source editor remains unsaved")
+        let script = try ProjectScript(name: "Independent source terminal", command: "printf ready > source-terminal-ready; while :; do /bin/sleep 0.05; done")
+        let session = try terminals.run(.init(script: script, projectRoot: f.root), for: original); terminal = session
+        try await waitForNativePullRequest { FileManager.default.fileExists(atPath: f.root.appendingPathComponent("source-terminal-ready").path) }
+        #expect(f.model.canCheckout && f.model.canPrepareCheckout(mode: .worktree))
+        #expect(!f.model.canPrepareCheckout(mode: .local))
+        let review = try await f.review(mode: .worktree)
+        try await f.model.checkout(review)
+        try await waitForNativePullRequest { await f.peer.writes == 1 }
+        #expect(f.workspace.thread(f.sourceID)?.activeRun?.id == runID)
+        #expect(f.workspace.workspaceReady(for: try #require(f.workspace.thread(f.sourceID))))
+        #expect(!f.workspace.isPullRequestCheckoutLocked(threadID: f.sourceID))
+        #expect(browser.canWrite && browser.isDirty && browser.contents == "Source editor remains unsaved")
+        #expect(kill(session.processID, 0) == 0 && terminals.sessions[f.sourceID]?.count == 1)
+        browser.setContents("Source editor changed during independent checkout")
+        f.workspace.setDraft("Source draft changed while PR worktree prepares", id: f.sourceID)
+        await f.peer.release()
+        try await waitForNativePullRequest { f.model.checkoutOperation?.phase == .completed }
+        let target = try #require(f.workspace.thread(review.targetThreadID))
+        #expect(target.messages.isEmpty && target.draft.isEmpty && target.providerThreadID == nil)
+        #expect(target.workspacePath != f.root.path && target.workspacePath == review.plan.destinationPath)
+        #expect(f.workspace.thread(f.sourceID)?.activeRun?.id == runID)
+        #expect(f.workspace.thread(f.sourceID)?.messages.first == original.messages.first)
+        #expect(f.workspace.thread(f.sourceID)?.draft == "Source draft changed while PR worktree prepares")
+        #expect(browser.canWrite && browser.isDirty && browser.contents == "Source editor changed during independent checkout")
+        let calls = await provider.calls
+        #expect(kill(session.processID, 0) == 0 && calls.count == 1)
+        #expect(try String(contentsOf: f.root.appendingPathComponent("tracked.txt"), encoding: .utf8) == "Original checkout bytes\n")
+        await provider.finish()
+        try await waitForNativePullRequest { f.workspace.thread(f.sourceID)?.isBusy == false && f.workspace.thread(f.sourceID)?.heldPostRunCheckpoint == nil }
+        try WorkspaceJournal.validate(f.workspace.snapshot)
+    } catch {
+        await provider.finish(); terminals.closeAll(); await terminal?.waitForClose(); f.workspace.unregisterTerminals(terminals)
+        await f.finish(); throw error
+    }
+    terminals.closeAll(); await terminal?.waitForClose(); f.workspace.unregisterTerminals(terminals); await f.finish()
+}
+
+@MainActor @Test(.timeLimit(.minutes(1)))
+func nativePRCheckoutBusyRegisteredReuseInspectsWithoutPausingOrDiscardingItsEditor() async throws {
+    let f = try await NativeCheckoutFixture.make(reuseCheckout: true)
+    do {
+        let owner = try #require(f.workspace.thread(f.coldID)), source = try #require(f.workspace.thread(f.sourceID))
+        let browser = try f.workspace.fileBrowser(path: owner.workspacePath)
+        #expect(await browser.open("tracked.txt")); browser.setContents("Keep the busy registered checkout's unsaved buffer")
+        let review = try await f.review(mode: .worktree)
+        #expect(review.plan.request.policy == .inspectOnly && review.plan.isReadOnly)
+        #expect(await f.peer.preparedPolicies == [.refresh, .inspectOnly])
+        #expect(review.plan.destinationPath == owner.workspacePath)
+        try await f.model.checkout(review)
+        try await waitForNativePullRequest { await f.peer.writes == 1 }
+        #expect(f.model.checkoutOperation?.isWorking == true && f.model.checkoutOperation?.locksSource == false)
+        #expect(f.workspace.canEditWorkspace(owner.workspacePath) && f.workspace.canEditWorkspace(source.workspacePath))
+        #expect(!f.workspace.isPullRequestCheckoutLocked(threadID: owner.id))
+        #expect(browser.canWrite && browser.isDirty)
+        browser.setContents("Edit survives read-only PR checkout inspection")
+        await f.peer.release()
+        try await waitForNativePullRequest { f.model.checkoutOperation?.phase == .completed }
+        #expect(await f.peer.mutationRequests == 0)
+        #expect(browser.canWrite && browser.isDirty && browser.contents == "Edit survives read-only PR checkout inspection")
+        #expect(try String(contentsOf: URL(fileURLWithPath: owner.workspacePath).appendingPathComponent("tracked.txt"), encoding: .utf8) == "Original reused checkout bytes\n")
+        let target = try #require(f.workspace.thread(review.targetThreadID))
+        #expect(target.workspacePath == owner.workspacePath && target.id != owner.id)
+        #expect(target.messages.isEmpty && target.draft.isEmpty && target.providerThreadID == nil)
+        #expect(f.workspace.thread(owner.id)?.draft == owner.draft && f.workspace.thread(source.id)?.draft == source.draft)
+        try WorkspaceJournal.validate(f.workspace.snapshot)
+    } catch { await f.finish(); throw error }
+    await f.finish()
+}
+
+@MainActor @Test(.timeLimit(.minutes(1)))
+func nativePRCheckoutRetainsMultipleDisjointJobsAndTheirExactTargetsWithoutHoldingSource() async throws {
+    let f = try await NativeCheckoutFixture.make()
+    do {
+        let source = try #require(f.workspace.thread(f.sourceID))
+        let first = try await f.review(mode: .worktree)
+        try await f.model.checkout(first)
+        try await waitForNativePullRequest { await f.peer.writes == 1 }
+        #expect(f.model.canPrepareCheckout(mode: .worktree))
+        let second = try await f.review(mode: .worktree, number: 73)
+        #expect(first.plan.destinationPath != second.plan.destinationPath && first.plan.requestedBranch != second.plan.requestedBranch)
+        try await f.model.checkout(second)
+        #expect(f.model.checkoutOperations.count == 2)
+        #expect(f.workspace.snapshot.pullRequestCheckout(first.id)?.isWorking == true)
+        #expect(f.workspace.snapshot.pullRequestCheckout(second.id)?.isWorking == true)
+        #expect(f.workspace.canEditWorkspace(source.workspacePath))
+        #expect(!f.workspace.canEditWorkspace(first.plan.destinationPath) && !f.workspace.canEditWorkspace(second.plan.destinationPath))
+        #expect(!f.workspace.isPullRequestCheckoutLocked(threadID: source.id) && !f.workspace.isPullRequestCheckoutLocked(threadID: f.coldID))
+        f.workspace.selectedThreadID = f.coldID
+        f.workspace.setDraft("Latest source draft survives both background jobs", id: source.id)
+        await f.peer.release(planID: first.plan.id)
+        try await waitForNativePullRequest { f.workspace.snapshot.pullRequestCheckout(first.id)?.phase == .completed }
+        try await waitForNativePullRequest { await f.peer.writes == 2 }
+        await f.peer.release(planID: second.plan.id)
+        try await waitForNativePullRequest { f.workspace.snapshot.pullRequestCheckout(second.id)?.phase == .completed }
+        for review in [first, second] {
+            let target = try #require(f.workspace.thread(review.targetThreadID))
+            #expect(target.workspacePath == review.plan.destinationPath && target.pullRequestCheckoutOperationID == review.id)
+            #expect(target.messages.isEmpty && target.draft.isEmpty && target.providerThreadID == nil)
+        }
+        #expect(f.workspace.selectedThreadID == f.coldID)
+        #expect(f.workspace.thread(source.id)?.draft == "Latest source draft survives both background jobs")
+        #expect(f.workspace.thread(source.id)?.messages == source.messages)
+        #expect(await f.peer.writes == 2)
+        f.model.openCheckoutConversation(operationID: first.id)
+        #expect(f.workspace.selectedThreadID == first.targetThreadID,
+                "Opening the older job must select its own confirmed target rather than the latest checkout.")
+        try WorkspaceJournal.validate(f.workspace.snapshot)
+    } catch { await f.finish(); throw error }
+    await f.finish()
 }

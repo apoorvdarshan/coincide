@@ -187,17 +187,18 @@ private final class SetupEngineHarness: @unchecked Sendable {
     }
     func providerSessions(_ threadID: UUID) -> [SetupProviderPeer] { lock.withLock { providers[threadID] ?? [] } }
     func scriptSessions() -> [SetupExecutionPeer] { lock.withLock { Array(scripts.values) } }
-    func engine(_ database: URL, planner: WorkspaceEngine.ProjectScriptPlanner? = nil) throws -> WorkspaceEngine {
+    func engine(_ database: URL, planner: WorkspaceEngine.ProjectScriptPlanner? = nil,
+                checkoutFactory: @escaping WorkspaceEngine.PullRequestCheckoutFactory = { GitHubPullRequestCheckoutService(request: $0) }) throws -> WorkspaceEngine {
         let factory: WorkspaceEngine.ProjectScriptFactory = {
             if self.throwsScriptFactory { throw ProjectScriptExecutionError(.helperUnavailable) }
             return self.script($0)
         }
         if let planner {
             return try WorkspaceEngine(url: database, providerFactory: { self.provider($0) }, identityResolver: { _ in nil },
-                worktreeFactory: { self.checkout($0) }, projectScriptPlanner: planner, projectScriptFactory: factory)
+                worktreeFactory: { self.checkout($0) }, projectScriptPlanner: planner, projectScriptFactory: factory, pullRequestCheckoutFactory: checkoutFactory)
         }
         return try WorkspaceEngine(url: database, providerFactory: { self.provider($0) }, identityResolver: { _ in nil },
-            worktreeFactory: { self.checkout($0) }, projectScriptFactory: factory)
+            worktreeFactory: { self.checkout($0) }, projectScriptFactory: factory, pullRequestCheckoutFactory: checkoutFactory)
     }
     func releaseAll() async {
         let values = lock.withLock { (Array(checkouts.values), Array(scripts.values)) }
@@ -235,6 +236,7 @@ private struct SetupEngineFixture {
 
 private func withSetupEngine(scripts: [ProjectScript], ignoresScriptWaitCancellation: Bool = false, throwsScriptFactory: Bool = false,
                              planner: WorkspaceEngine.ProjectScriptPlanner? = nil,
+                             checkoutFactory: @escaping WorkspaceEngine.PullRequestCheckoutFactory = { GitHubPullRequestCheckoutService(request: $0) },
                              _ body: (SetupEngineFixture) async throws -> Void) async throws {
     let root = try temporaryWorkspace().resolvingSymlinksInPath(); defer { try? FileManager.default.removeItem(at: root) }
     let source = root.appendingPathComponent("source 工作"); try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
@@ -242,7 +244,7 @@ private func withSetupEngine(scripts: [ProjectScript], ignoresScriptWaitCancella
     let harness = SetupEngineHarness(configuration: configuration, ignoresScriptWaitCancellation: ignoresScriptWaitCancellation,
                                      throwsScriptFactory: throwsScriptFactory)
     try JSONEncoder().encode(configuration).write(to: source.appendingPathComponent("t3.json"))
-    let engine = try harness.engine(root.appendingPathComponent("workspace.sqlite"), planner: planner), project = WorkspaceProject(path: source.path)
+    let engine = try harness.engine(root.appendingPathComponent("workspace.sqlite"), planner: planner, checkoutFactory: checkoutFactory), project = WorkspaceProject(path: source.path)
     let thread = CodingThread(project: project)
     do {
         try await engine.dispatch(.addProjectWithThread(project: project, thread: thread))
@@ -500,6 +502,56 @@ func setupSuccessfulCommandRetainsReadinessAndExitEvidenceWhileBackgroundOwnerSt
         let database = try WorkspaceDatabase(url: f.databaseURL)
         #expect(try await database.load().threads.first?.workspacePreparation?.setup?.commandExit == .exited(0))
         await f.harness.providerSessions(f.thread.id).first?.finish()
+    }
+}
+
+private final class SetupPRCheckoutObservation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var destination: String?
+    private var policies: [GitHubPullRequestCheckoutPolicy] = []
+    func select(_ path: String) { lock.withLock { destination = path } }
+    var preparedPolicies: [GitHubPullRequestCheckoutPolicy] { lock.withLock { policies } }
+    func plan(_ request: GitHubPullRequestCheckoutRequest) throws -> GitHubPullRequestCheckoutPlan {
+        let target = try lock.withLock { () throws -> String in
+            policies.append(request.policy)
+            guard let destination else { throw CoincideError("The owned setup checkout was not selected.") }; return destination
+        }
+        let seed = PullRequestCheckoutFixture(path: request.sourcePath), base = try seed.plan(request, reuse: true)
+        return try .init(request: request, sourcePath: base.sourcePath, repositoryPath: base.repositoryPath,
+            commonDirectoryPath: base.commonDirectoryPath, destinationPath: target, pullRequest: base.pullRequest,
+            requestedBranch: base.requestedBranch, requestedHeadCommit: base.requestedHeadCommit,
+            disposition: .reuseWorktree, proof: base.proof, baseRemote: base.baseRemote,
+            headRemote: base.headRemote, existingBranchCommit: base.existingBranchCommit, destinationParentIdentity: base.destinationParentIdentity)
+    }
+}
+
+private struct SetupPRCheckoutSession: GitHubPullRequestCheckoutSession {
+    let request: GitHubPullRequestCheckoutRequest
+    let peer: SetupPRCheckoutObservation
+    func prepare() async throws -> GitHubPullRequestCheckoutPlan { try peer.plan(request) }
+    func run(_ plan: GitHubPullRequestCheckoutPlan) async throws -> GitHubPullRequestCheckoutResult { throw CoincideError("Review must not start a checkout.") }
+    func inspectCompletion(_ plan: GitHubPullRequestCheckoutPlan) async throws -> GitHubPullRequestCheckoutInspection { .unconfirmed }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func pullRequestCheckoutRetainedSuccessfulSetupHelperAutomaticallyUsesReadOnlyReuseWithoutClosingItsOwner() async throws {
+    let script = try ProjectScript(name: "Retained target helper", command: "printf fixture", runOnWorktreeCreate: true, runsAsynchronously: false)
+    let checkout = SetupPRCheckoutObservation()
+    try await withSetupEngine(scripts: [script], checkoutFactory: { SetupPRCheckoutSession(request: $0, peer: checkout) }) { f in
+        try await f.completeCheckout(); let run = try await f.awaitingApproval()
+        let peer = try await f.approve(run); peer.acknowledgeStart(); peer.complete(.exited(0))
+        try await waitSetup { try await f.currentSetup().phase == .succeeded }
+        let before = try await f.currentThread()
+        #expect(!peer.isClosed && peer.closes == 0)
+        checkout.select(before.workspacePath)
+        let seed = PullRequestCheckoutFixture(path: f.project.path)
+        let review = try await f.engine.reviewPullRequestCheckout(projectID: f.project.id, workspacePath: f.project.path,
+            reference: seed.request().reference, mode: .worktree, configuration: .init(thread: before), checkpointPolicy: .disabled)
+        #expect(review.plan.isReadOnly && review.plan.request.policy == .inspectOnly)
+        #expect(checkout.preparedPolicies == [.refresh, .inspectOnly])
+        #expect(review.plan.affectedWorkspacePaths.isEmpty && !peer.isClosed && peer.closes == 0 && peer.starts == 1)
+        #expect(try await f.currentThread() == before)
+        await f.engine.discardPullRequestCheckoutReview(reviewID: review.id)
     }
 }
 

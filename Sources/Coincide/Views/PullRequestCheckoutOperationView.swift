@@ -3,27 +3,46 @@ import SwiftUI
 
 struct PullRequestCheckoutOperationView: View {
     let model: PullRequestStore
+    var operationID: UUID? = nil
     @State private var confirmingAcknowledgement = false
+    @State private var confirmingOperationID: UUID?
     @State private var performingAction = false
     @State private var error: String?
+    private var operation: PullRequestCheckoutOperation? {
+        if let operationID { return model.checkoutOperations.first { $0.id == operationID } }
+        return model.checkoutOperation
+    }
+    private var confirmation: PullRequestCheckoutOperation? {
+        guard let confirmingOperationID else { return operation }
+        return model.checkoutOperations.first { $0.id == confirmingOperationID }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let operation = model.checkoutOperation {
+            if let operation {
                 PullRequestCheckoutOperationContent(operation: operation,
                     acting: performingAction || model.isInspecting,
-                    stop: { perform { try await model.cancelCheckout() } },
-                    inspect: { perform { try await model.inspectCheckout() } },
-                    acknowledge: { confirmingAcknowledgement = true },
-                    openConversation: model.openCheckoutConversation)
+                    stop: { perform { try await model.cancelCheckout(operationID: operation.id) } },
+                    inspect: { perform { try await model.inspectCheckout(operationID: operation.id) } },
+                    acknowledge: { confirmingOperationID = operation.id; confirmingAcknowledgement = true },
+                    openConversation: { model.openCheckoutConversation(operationID: operation.id) })
                 if let error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
                 if let message = model.actionError { Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
-        }.alert("Keep the current checkout files?", isPresented: $confirmingAcknowledgement) {
+        }.accessibilityIdentifier("pull-request-checkout-operation-\(operationID?.uuidString ?? operation?.id.uuidString ?? "none")")
+        .alert(confirmation?.review.plan.isReadOnly == true
+                ? String(localized: "Close unconfirmed checkout inspection?") : String(localized: "Keep the current checkout files?"), isPresented: $confirmingAcknowledgement) {
             Button("Cancel", role: .cancel) { }.keyboardShortcut(.defaultAction)
-            Button("Keep Current Files") { perform { try await model.acknowledgeCheckout() } }
+            Button(confirmation?.review.plan.isReadOnly == true ? String(localized: "Keep Current Checkout") : String(localized: "Keep Current Files")) {
+                guard let id = confirmingOperationID else { return }
+                perform { try await model.acknowledgeCheckout(operationID: id) }
+            }
                 .accessibilityIdentifier("pull-request-checkout-acknowledge-confirm")
         } message: {
-            Text("Git may already have changed local branches, tracking or files. This releases the checkout hold without repeating the operation or creating a conversation. Inspect the current checkout before starting another action.")
+            if confirmation?.review.plan.isReadOnly == true {
+                Text("No checkout changes were requested. This closes the inspection without creating a conversation or repeating the operation. Existing work continues.")
+            } else {
+                Text("Git may already have changed local branches, tracking or files. This releases the checkout hold without repeating the operation or creating a conversation. Inspect the current checkout before starting another action.")
+            }
         }
     }
     private func perform(_ action: @escaping @MainActor () async throws -> Void) {
@@ -68,8 +87,17 @@ struct PullRequestCheckoutOperationContent: View {
             LabeledContent("Requested branch") { value(plan.requestedBranch) }
             LabeledContent("Requested head") { value(plan.requestedHeadCommit) }
             LabeledContent("Destination") { value(plan.destinationPath) }
-            if operation.locksSource {
-                Text("This checkout is held until its outcome is verified or explicitly acknowledged. Existing conversation drafts remain editable; checkout is never repeated automatically.")
+            if plan.isReadOnly {
+                Text("Read-only inspection leaves files, branches, tracking, submodules and setup unchanged. Existing provider, terminal and editor work can continue.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("pull-request-checkout-read-only")
+            }
+            if operation.retainsProject {
+                Text(plan.isReadOnly
+                    ? "The inspection must be verified before its new conversation is created. It is never repeated automatically."
+                    : plan.request.mode == .worktree
+                        ? "The destination checkout is held until its outcome is verified or explicitly acknowledged. Work in the source checkout can continue; checkout is never repeated automatically."
+                        : "This local checkout is held until its outcome is verified or explicitly acknowledged. Existing conversation drafts remain editable; checkout is never repeated automatically.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if let error = operation.error {
@@ -94,6 +122,10 @@ struct PullRequestCheckoutOperationContent: View {
                     .accessibilityIdentifier("pull-request-checkout-open-conversation")
             }
             if operation.isWorking {
+                Text(plan.request.mode == .worktree
+                     ? "You can close this sheet and continue working while checkout preparation finishes."
+                     : "You can close this sheet while checkout preparation finishes. Changes to this local checkout stay held.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Button("Stop Checkout", action: stop).disabled(acting || operation.cancelRequested)
                     .accessibilityIdentifier("pull-request-checkout-stop")
             } else if operation.phase == .unconfirmed, operation.acknowledgedAt == nil {

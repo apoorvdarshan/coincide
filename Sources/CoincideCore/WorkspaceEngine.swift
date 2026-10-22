@@ -768,7 +768,7 @@ extension WorkspaceEngine {
                 do { try await session.consumeOutput { chunk in await log.append(chunk.data) } } catch { }
                 await session.close(); await log.close()
             }
-            scriptRuntimes[runID] = .init(threadID: threadID, projectID: thread.projectID, owner: owner,
+            scriptRuntimes[runID] = .init(threadID: threadID, projectID: thread.projectID, path: plan.workspacePath, owner: owner,
                 incarnation: incarnation, session: session, output: output, monitor: nil)
             do {
                 try await session.prepare()
@@ -1074,6 +1074,7 @@ public actor WorkspaceEngine {
     private let checkpointInspectionGate = GitOperationGate()
     private struct ScriptRuntime: Sendable {
         let threadID: UUID, projectID: UUID
+        let path: String
         let owner: ProjectScriptOwner
         let incarnation: UUID
         let session: any ProjectScriptExecutionSession
@@ -2138,18 +2139,30 @@ public actor WorkspaceEngine {
 extension WorkspaceEngine {
     public func reviewPullRequestCheckout(projectID: UUID, workspacePath: String, reference: GitHubPullRequestReference,
         mode: GitHubPullRequestCheckoutMode, configuration: ProviderConfiguration, checkpointPolicy: RunCheckpointPolicy? = nil,
-        title: String? = nil, submodules: ProjectWorktreeSubmoduleMode = .none, reviewSetup: Bool = true) async throws -> PullRequestCheckoutReview {
+        title: String? = nil, submodules: ProjectWorktreeSubmoduleMode = .none, reviewSetup: Bool = true,
+        busyWorktreePaths: [String] = []) async throws -> PullRequestCheckoutReview {
         _ = try await load(); try Task.checkCancellation()
+        for path in busyWorktreePaths { try CheckpointValidation.path(path) }
         if await waitForRemovalCommit(projectID: projectID) { throw CancellationError() }
         guard !closing, !stoppingEffects, fatalError == nil, let project = revision.snapshot.projects.first(where: { $0.id == projectID }),
               let incarnation = projectIncarnations[projectID], revision.snapshot.ownsPullRequestWorkspace(projectID: projectID, workspacePath: workspacePath),
               !revision.snapshot.isPullRequestCreationLocked(path: workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: workspacePath),
-              !revision.snapshot.isCheckpointRestoreLocked(path: workspacePath) else { throw WorkspaceCommandError("Choose an idle registered checkout before importing a pull request.") }
-        let request = GitHubPullRequestCheckoutRequest(sourcePath: workspacePath, destinationRoot: worktreesRoot.path, reference: reference, mode: mode, submodules: submodules)
-        let session = try pullRequestCheckoutFactory(request)
-        let plan = try await readPullRequest(projectID: projectID, incarnation: incarnation) { try await session.prepare() }
+              !revision.snapshot.isCheckpointRestoreLocked(path: workspacePath) else { throw WorkspaceCommandError("Choose an available registered checkout before importing a pull request.") }
+        let initialRequest = GitHubPullRequestCheckoutRequest(sourcePath: workspacePath, destinationRoot: worktreesRoot.path, reference: reference, mode: mode, submodules: submodules)
+        let initialSession = try pullRequestCheckoutFactory(initialRequest)
+        var plan = try await readPullRequest(projectID: projectID, incarnation: incarnation) { try await initialSession.prepare() }
         let canonical = URL(fileURLWithPath: workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
-        guard plan.request == request, plan.sourcePath == canonical, projectIncarnations[projectID] == incarnation else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        guard plan.request == initialRequest, plan.sourcePath == canonical, projectIncarnations[projectID] == incarnation else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        let targetBusy = revision.snapshot.pullRequestCheckoutHasBusyOwners(paths: plan.affectedWorkspacePaths) ||
+            pullRequestCheckoutHasRuntimeOwners(paths: plan.affectedWorkspacePaths) ||
+            busyWorktreePaths.contains { path in plan.affectedWorkspacePaths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }
+        if targetBusy, plan.disposition == .reuseWorktree || plan.disposition == .reuseUnrelatedWorktree {
+            let readRequest = GitHubPullRequestCheckoutRequest(id: initialRequest.id, sourcePath: workspacePath,
+                destinationRoot: worktreesRoot.path, reference: reference, mode: mode, submodules: submodules, policy: .inspectOnly)
+            let readSession = try pullRequestCheckoutFactory(readRequest)
+            plan = try await readPullRequest(projectID: projectID, incarnation: incarnation) { try await readSession.prepare() }
+            guard plan.request == readRequest, plan.sourcePath == canonical, projectIncarnations[projectID] == incarnation else { throw GitHubPullRequestCheckoutError(.staleReview) }
+        } else if targetBusy { throw WorkspaceCommandError("Finish work in the affected checkout before changing its files.") }
         var target = configuration; target.nativeThreadID = nil; target.workspacePath = plan.destinationPath
         let review = try PullRequestCheckoutReview(projectID: projectID, projectPath: project.path, registeredWorkspacePath: workspacePath,
             sourceIncarnation: incarnation, targetConfiguration: target, checkpointPolicy: checkpointPolicy,
@@ -2211,20 +2224,36 @@ extension WorkspaceEngine {
         }
     }
     private func pullRequestCheckoutRuntimeScopeAvailable(_ operation: PullRequestCheckoutOperation) -> Bool {
-        !scriptRuntimes.values.contains { runtime in
-            guard let thread = revision.snapshot.threads.first(where: { $0.id == runtime.threadID }) else { return true }
-            return thread.projectID == operation.projectID || thread.pullRequestCreationScopePaths.contains { path in operation.scopePaths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }
+        !pullRequestCheckoutHasRuntimeOwners(paths: operation.scopePaths)
+    }
+    private func pullRequestCheckoutHasRuntimeOwners(paths: [String]) -> Bool {
+        guard !paths.isEmpty else { return false }
+        func overlaps(_ path: String) -> Bool { paths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }
+        if scriptRuntimes.values.contains(where: { overlaps($0.path) }) || metadataSessions.values.contains(where: { overlaps($0.path) }) ||
+            cleanupTasks.values.contains(where: { $0.workspacePaths.contains(where: overlaps) }) { return true }
+        for thread in revision.snapshot.threads {
+            let scripts = thread.projectScripts.map { $0.1 } + (thread.workspacePreparation?.previousAttempts.compactMap(\.setup) ?? [])
+            if scripts.contains(where: { scriptClosures[$0.id] != nil && overlaps($0.plan?.workspacePath ?? thread.workspacePath) }) { return true }
+            for record in thread.runHistory ?? [] {
+                guard let checkpoints = record.checkpoints else { continue }
+                let attempts = [checkpoints.baseline] + checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? [])
+                if attempts.contains(where: { attempt in
+                    checkpointDrains.values.contains { $0.threadID == thread.id && $0.attemptID == attempt.id } &&
+                        (overlaps(attempt.workspacePath) || attempt.plan.map { overlaps($0.repositoryPath) } == true)
+                }) { return true }
+            }
         }
+        return false
     }
     private func drainPullRequestCheckoutOwners(_ operation: PullRequestCheckoutOperation) async {
         let paths = operation.scopePaths
         func overlaps(_ path: String) -> Bool { paths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }
-        for id in runtimes.filter({ $0.value.projectID == operation.projectID || overlaps($0.value.path) }).map(\.key) { await closeRuntime(id) }
-        for id in metadataSessions.filter({ $0.value.projectID == operation.projectID || overlaps($0.value.path) }).map(\.key) {
+        for id in runtimes.filter({ overlaps($0.value.path) }).map(\.key) { await closeRuntime(id) }
+        for id in metadataSessions.filter({ overlaps($0.value.path) }).map(\.key) {
             if let task = beginMetadataClose(id) { await task.value }; metadataSessions.removeValue(forKey: id)
         }
-        for thread in revision.snapshot.threads where thread.projectID == operation.projectID || thread.pullRequestCreationScopePaths.contains(where: overlaps) { await awaitCheckpointDrains(threadID: thread.id) }
-        let jobs = cleanupTasks.values.filter { $0.projectIDs.contains(operation.projectID) || $0.workspacePaths.contains(where: overlaps) }.map(\.task)
+        for thread in revision.snapshot.threads where thread.pullRequestCheckoutWorkspacePaths.contains(where: overlaps) { await awaitCheckpointDrains(threadID: thread.id) }
+        let jobs = cleanupTasks.values.filter { $0.workspacePaths.contains(where: overlaps) }.map(\.task)
         for job in jobs { await job.value }
     }
     private func performPullRequestCheckout(_ request: WorkspaceEffectRequest) async throws -> EffectResult {
@@ -2235,10 +2264,13 @@ extension WorkspaceEngine {
         var returnedResult = false
         do {
             try revision.snapshot.validatePullRequestCheckoutSource(operation)
-            guard pullRequestCheckoutRuntimeScopeAvailable(operation) else { throw GitHubPullRequestCheckoutError(.staleReview) }
+            try revision.snapshot.validatePullRequestCheckoutTarget(operation)
+            guard pullRequestCheckoutRuntimeScopeAvailable(operation), !revision.snapshot.pullRequestCheckoutHasBusyOwners(paths: operation.scopePaths) else { throw GitHubPullRequestCheckoutError(.staleReview) }
             await drainPullRequestCheckoutOwners(operation); try Task.checkCancellation()
             try revision.snapshot.validatePullRequestCheckoutSource(operation)
-            guard projectIncarnations[projectID] == operation.review.sourceIncarnation, pullRequestCheckoutRuntimeScopeAvailable(operation) else { throw GitHubPullRequestCheckoutError(.staleReview) }
+            try revision.snapshot.validatePullRequestCheckoutTarget(operation)
+            guard projectIncarnations[projectID] == operation.review.sourceIncarnation, pullRequestCheckoutRuntimeScopeAvailable(operation),
+                  !revision.snapshot.pullRequestCheckoutHasBusyOwners(paths: operation.scopePaths) else { throw GitHubPullRequestCheckoutError(.staleReview) }
             let session = try pullRequestCheckoutFactory(operation.review.plan.request)
             let receipt = try await enqueue(.pullRequestCheckoutDispatching(projectID: projectID, operationID: operationID, incarnation: operation.review.sourceIncarnation))
             guard receipt.rejection == nil, revision.snapshot.pullRequestCheckout(operationID)?.phase == .dispatching,
@@ -2248,6 +2280,7 @@ extension WorkspaceEngine {
             try operation.validateResult(result)
             return .pullRequestCheckoutCompleted(result)
         } catch {
+            if operation.review.plan.isReadOnly { return .failed(PullRequestCheckoutOperation.failureMessage) }
             if dispatched, let session = try? pullRequestCheckoutFactory(operation.review.plan.request),
                let inspection = try? await Task.detached(operation: { try await session.inspectCompletion(operation.review.plan) }).value,
                case .completed(let result) = inspection, (try? operation.validateResult(result)) != nil { return .pullRequestCheckoutCompleted(result) }
