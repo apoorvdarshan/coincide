@@ -153,8 +153,7 @@ struct WorkspaceDecision: Sendable {
 
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
-        if case .client(let action) = command { decision.preventDelayedPromptSteering(action, now: now) }
-        if case .client(let action) = command { try decision.validatePromptSteeringCommand(action, commandID: id); try decision.validateConversationHistoryLocks(action); try decision.validateCheckpointRestoreLocks(action); try decision.validatePullRequestCreationLocks(action); try decision.validatePullRequestCheckoutLocks(action) }
+        if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
         if case .provider(let threadID, _, _) = command, snapshot.isCheckpointRestoreLocked(threadID: threadID) || snapshot.isPullRequestCreationLocked(threadID: threadID) || snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return decision }
         switch command {
         case .promptSteeringAccepted(let operation): try decision.acceptPromptSteering(operation)
@@ -494,7 +493,10 @@ struct WorkspaceDecision: Sendable {
                 throw WorkspaceCommandError("This project is already open, or its first conversation uses another workspace.")
             }
             decision.snapshot.projects.append(project)
-            decision = try Self.make(.client(.createThread(thread)), id: id, snapshot: decision.snapshot, now: now)
+            try decision.prepareClientCommand(.createThread(thread), commandID: id, now: now)
+            try decision.insertNewThread(thread)
+            decision.snapshot.reconcileGroupingPreferences()
+            try WorkspaceJournal.validate(decision.snapshot)
         case .client(.startProjectClone(var project, let thread)):
             guard let submitted = project.clone else { throw WorkspaceCommandError("Choose a repository to clone.") }
             do { try submitted.plan.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
@@ -503,7 +505,10 @@ struct WorkspaceDecision: Sendable {
                   !decision.snapshot.cloneAttemptIDs.contains(submitted.plan.id) else { throw WorkspaceCommandError("This project or clone destination is already in use.") }
             project.clone = .init(plan: submitted.plan, now: now)
             decision.snapshot.projects.append(project)
-            decision = try Self.make(.client(.createThread(thread)), id: id, snapshot: decision.snapshot, now: now)
+            try decision.prepareClientCommand(.createThread(thread), commandID: id, now: now)
+            try decision.insertNewThread(thread)
+            decision.snapshot.reconcileGroupingPreferences()
+            try WorkspaceJournal.validate(decision.snapshot)
             decision.effects.append(.init(id: submitted.plan.id, request: .projectClone(projectID: project.id, plan: submitted.plan)))
         case .client(.cancelProjectClone(let projectID)):
             guard let i = decision.snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = decision.snapshot.projects[i].clone else { throw WorkspaceCommandError("This project has no clone to cancel.") }
@@ -530,14 +535,7 @@ struct WorkspaceDecision: Sendable {
             guard !decision.snapshot.projects.contains(where: { $0.id == project.id }) else { throw WorkspaceCommandError("This project identity is already in use.") }
             decision.snapshot.projects.append(project)
         case .client(.createThread(let thread)):
-            guard decision.snapshot.projects.contains(where: { $0.id == thread.projectID }), !decision.snapshot.threads.contains(where: { $0.id == thread.id }),
-                  thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, (thread.runHistory ?? []).isEmpty, thread.workspacePreparation == nil else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
-            guard decision.snapshot.workspaceReady(for: thread) || decision.snapshot.projects.first(where: { $0.id == thread.projectID })?.path == thread.workspacePath else { throw WorkspaceCommandError("Wait for the clone before choosing another workspace.") }
-            if thread.provider == .acp {
-                guard let agent = thread.acpAgent, decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
-            }
-            var thread = thread; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil
-            decision.snapshot.threads.insert(thread, at: 0)
+            try decision.insertNewThread(thread)
         case .client(let action):
             guard let threadID = action.threadID, let index = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
             var thread = decision.snapshot.threads[index]
@@ -791,6 +789,26 @@ struct WorkspaceDecision: Sendable {
         decision.snapshot.reconcileGroupingPreferences()
         try WorkspaceJournal.validate(decision.snapshot)
         return decision
+    }
+    private mutating func prepareClientCommand(_ action: WorkspaceCommand, commandID: UUID, now: Date) throws {
+        preventDelayedPromptSteering(action, now: now)
+        try validatePromptSteeringCommand(action, commandID: commandID)
+        try validateConversationHistoryLocks(action)
+        try validateCheckpointRestoreLocks(action)
+        try validatePullRequestCreationLocks(action)
+        try validatePullRequestCheckoutLocks(action)
+    }
+    /// Compound registration shares the same insertion rules without entering
+    /// the complete reducer a second time on the same task stack.
+    private mutating func insertNewThread(_ thread: CodingThread) throws {
+        guard snapshot.projects.contains(where: { $0.id == thread.projectID }), !snapshot.threads.contains(where: { $0.id == thread.id }),
+              thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, (thread.runHistory ?? []).isEmpty, thread.workspacePreparation == nil else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
+        guard snapshot.workspaceReady(for: thread) || snapshot.projects.first(where: { $0.id == thread.projectID })?.path == thread.workspacePath else { throw WorkspaceCommandError("Wait for the clone before choosing another workspace.") }
+        if thread.provider == .acp {
+            guard let agent = thread.acpAgent, snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
+        }
+        var thread = thread; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil
+        snapshot.threads.insert(thread, at: 0)
     }
     private func validatedGroup(_ key: String, expected: [UUID]) throws -> ProjectGroup {
         guard let group = snapshot.projectGroups.first(where: { $0.key == key }), Set(expected).count == expected.count,
