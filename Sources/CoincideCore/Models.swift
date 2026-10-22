@@ -243,6 +243,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
                 files.error = accepted ? ConversationHistoryFilesState.notStartedMessage : ConversationHistoryFilesState.unconfirmedMessage
                 files.updatedAt = Date(); operation.files = files; operation.updatedAt = files.updatedAt
             }
+            operation.recoverMaintenanceAfterProcessRestart()
             conversationHistoryOperations?[i] = operation
         }
         for i in projects.indices {

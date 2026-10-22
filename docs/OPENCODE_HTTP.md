@@ -7,7 +7,10 @@ V1 uses native questions; v2 uses typed forms. Focused offline checks, including
 a real loopback HTTP/SSE-to-Engine FIFO test for v1, pass. Hosted acceptance
 is pending. Installed 2.1.2 metadata observation is distinct from a native
 conversation test; installed 1.x execution has not been verified. Existing ACP
-conversations retain their original transport and captured configuration.
+conversations retain their original transport and captured configuration. Native
+v2 history reads, reviewed fork/rewind and explicit staged-revert recovery are
+implemented and pass local protocol, Engine and native view checks. No
+installed-provider or hosted history acceptance is claimed.
 
 ## Generation and connection boundaries
 
@@ -60,10 +63,10 @@ make OpenCode's global stream durable.
 
 ## Captured native conversation configuration
 
-The native provider choice is separate from ACP. Storage version 27 prevents an
-older binary from reopening unfamiliar native configuration, run or effect
-semantics. Legacy Codex, Claude and ACP payloads still decode without native
-OpenCode settings. The durable value captures instance identity, generation,
+The native provider choice is separate from ACP. Storage version 35 prevents an
+older binary from reopening unfamiliar native configuration, run, effect and
+message-history recovery semantics. Legacy Codex, Claude and ACP payloads still
+decode without native OpenCode settings. The durable value captures instance identity, generation,
 one local executable, exact provider/model/variant IDs and agent ID. Runtime
 credentials, ports, catalogs and inherited environment are not persisted.
 Queued turns and runs retain their own configuration when a future header
@@ -157,14 +160,91 @@ A late Stop cannot target a successor run. V1 does not inherit these v2 routes.
 Offline protocol and production TCP/SSE-to-Engine checks are separate from
 installed-provider acceptance.
 
+## Native OpenCode 2 history
+
+Native v2 history now has a dedicated message-ordered read, reviewed Fork After
+Run and history-only Rewind Before Run path. It does not invent native turn IDs
+from app runs or observed input messages. The actor reads the exact native root,
+captured instance/generation and physical workspace, while durable evidence keeps
+the registered workspace spelling. Ordinary metadata and history inspection do
+not create sessions, apply settings or clear a pending revert.
+
+A read requires two matching ascending message inventories, matching session
+metadata and quiet source/linked-descendant observations. Each inventory is
+bounded to 10,000 records, 100 pages, 4 MiB per page and 16 MiB of payload; the
+read operation has a 30-second deadline. Only the first request sends `order`;
+subsequent requests use the native cursor. A final empty page is valid. Omitted
+cursor fields are native optional fields; accepting null is explicit compatibility
+with older recorded responses. Unknown message shapes fail decoding; unsettled
+records cannot support a reviewed mutation.
+See the official [message query handler](https://github.com/anomalyco/opencode/blob/a517687fde98a7329ada3ae644a01a9fc6c4e99e/packages/server/src/handlers/message.ts#L35).
+
+A review binds terminal, attributed local runs to their observed native opening
+inputs and steers. Fork After Run retains the whole selected run, including
+verified steering inputs and intervening control, assistant and tool records:
+its cut is exclusive of the next run's opening message, or the native head when
+there is no later run. Rewind Before Run cuts exclusively at that run's opening
+message. A retained input with uncertain delivery cannot become a verified
+prefix merely because the last user-message ID matches.
+
+Native fork creates a fresh session and regenerates every copied message ID.
+Coincide compares the complete ordered semantic prefix, normalizing only the
+top-level message ID and compaction `keepID` references to their prior inventory
+positions. Native ancestry must also match the reviewed source and boundary.
+Durable evidence stores bounded identities, message kinds and canonical hashes;
+it does not store raw native message or tool bodies. The official
+[fork projector](https://github.com/anomalyco/opencode/blob/a517687fde98a7329ada3ae644a01a9fc6c4e99e/packages/core/src/session/projector.ts#L192)
+defines the copied-ID and compaction-reference changes.
+
+Rewind requires an exact clean source, stages the exclusive boundary with literal
+`files: false`, checks the unchanged original inventory and exact history-only
+stage, then commits once and verifies the retained prefix with no remaining stage.
+A preexisting stage is refused: native staging can restore a previous stage's
+files even when the new request says `files: false`. File restoration remains a
+separate reviewed Coincide checkpoint action. See the native
+[stage/commit implementation](https://github.com/anomalyco/opencode/blob/a517687fde98a7329ada3ae644a01a9fc6c4e99e/packages/core/src/session/revert.ts#L22).
+
+A possibly dispatched mutation whose result is unproven holds further provider
+work. It is never replayed, and snapshot reads never hide a cleanup write.
+Explicit Clear Pending Revert is a separate durable action, allowed only for the
+exact observed history-only stage belonging to the reviewed operation. A native
+clear wakes execution; Coincide accepts only a proven empty maintenance cycle,
+and its HTTP acknowledgment is insufficient to settle maintenance. Coincide requires the observed start and terminal event IDs, a clean
+stage, and exactly the prior inventory plus one settled idle record whose ID is
+derived from that terminal event. The persisted receipt binds the prior inventory
+hash and both event IDs to that idle record. A lost acknowledgment can be resolved
+by this exact observed execution and read-back; missing, extra or unrelated work
+stays uncertain. Fresh inspection cannot manufacture the receipt or globally
+ignore idle records. These effects follow the official
+[clear lifecycle](https://github.com/anomalyco/opencode/blob/a517687fde98a7329ada3ae644a01a9fc6c4e99e/packages/core/src/session/session.ts#L341)
+and [terminal-to-idle projection](https://github.com/anomalyco/opencode/blob/a517687fde98a7329ada3ae644a01a9fc6c4e99e/packages/core/src/session/message-updater.ts#L63).
+
+Storage 35 retains the review, dispatch/uncertainty state and maintenance receipt.
+After restart, accepted work is not dispatched automatically and a possibly
+sent mutation remains unconfirmed. Inspection compares the full original or
+expected resulting prefix and clean stage; a persisted maintenance receipt is
+required to account for its exact idle append. A confirmed clear supplies
+maintenance evidence only: a separate read-only inspection still settles the
+rewind outcome. Unknown maintenance remains held.
+
+Source/descendant activity, inboxes, permissions and forms are checked before and
+after reads, and the local actor rejects conflicting work. These are process-local
+quiet observations, not a native compare-and-swap or exclusion of external writers
+sharing OpenCode storage. The official routes have no expected-head CAS parameter.
+The direct, reducer, native view and TCP/SSE-to-Engine history checks pass
+locally, including the complete serial suite. These offline peers do not
+establish installed or hosted history acceptance.
+
 ## Remaining integration
 
 Remaining work includes a shared instance lease registry,
 bounded reconnect/backfill reconciliation, complete autonomous/early-child
-recovery, v1 steering and session import/history. V1 and v2 history have distinct
-semantics; files remain under Coincide's reviewed checkpoint service. Native
-setup/authentication, commands, skills, usage and installed-provider verification
-also remain required by [the full parity inventory](PROVIDER_PARITY.md).
+recovery, v1 steering and history, session browsing/import, broader native history
+compatibility and installed/hosted history acceptance. V1 and v2 history have
+distinct semantics; existing ACP history remains unsupported and does not inherit
+the native v2 path. Native setup/authentication, commands, skills, usage and
+installed-provider verification also remain required by
+[the full parity inventory](PROVIDER_PARITY.md).
 
 Sources: [pinned T3 OpenCode implementation](https://github.com/pingdotgg/t3code/tree/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-opencode),
 [official 1.14.19 SDK contract](https://github.com/anomalyco/opencode/tree/v1.14.19/packages/sdk/js/src/v2),

@@ -20,6 +20,7 @@ struct ConversationHistoryOperationView: View {
     let operation: ConversationHistoryOperation
     @State private var error: String?
     @State private var confirmingKeepFiles = false
+    @State private var confirmingMaintenance = false
 
     private var recalling: Bool { store.isRecallingConversationHistoryPrompt(operation.id) }
     private var incompleteFiles: ConversationHistoryFilesState? {
@@ -36,6 +37,7 @@ struct ConversationHistoryOperationView: View {
                     .accessibilityIdentifier("conversation-history-operation-status")
             }
             providerState
+            maintenanceState
             if let message = operation.error { detail(message) }
             if let files = operation.files {
                 if operation.isPending {
@@ -76,6 +78,13 @@ struct ConversationHistoryOperationView: View {
             } message: {
                 Text("The conversation rewind remains applied. Current files and staging may contain a partial restoration. Continuing keeps those bytes, releases the workspace hold and leaves your latest draft unchanged; the original input will not be recalled.")
             }
+            .alert("Clear the pending OpenCode revert?", isPresented: $confirmingMaintenance) {
+                Button("Cancel", role: .cancel) { }.keyboardShortcut(.defaultAction)
+                Button("Clear Pending Revert") { perform { try await store.clearConversationHistoryMaintenance(operation.id) } }
+                    .accessibilityIdentifier("conversation-history-clear-confirm")
+            } message: {
+                Text("Coincide checks the exact staged boundary before clearing it and waits for OpenCode’s empty cleanup execution to finish. This does not repeat the rewind, restore files or send your draft. Conversation work stays paused until its history is verified.")
+            }
     }
 
     @ViewBuilder private var providerState: some View {
@@ -86,8 +95,32 @@ struct ConversationHistoryOperationView: View {
             if operation.files != nil { detail(String(localized: "File restoration has not started. The original input has not been returned to the draft.")) }
             if operation.review.kind == .rewindBeforeRun {
                 Button("Inspect Provider State") { perform { try await store.reconcileConversationHistory(operation.id) } }
-                    .disabled(store.isInspectingConversationHistory(operation.id)).controlSize(.small)
+                    .disabled(store.isInspectingConversationHistory(operation.id) || operation.maintenance?.phase.isWorking == true).controlSize(.small)
                     .accessibilityIdentifier("conversation-history-reconcile")
+                if operation.review.openCodeV2 != nil {
+                    Button("Clear Pending Revert…") { confirmingMaintenance = true }
+                        .disabled(!store.canClearConversationHistoryMaintenance(operation)).controlSize(.small)
+                        .accessibilityIdentifier("conversation-history-clear")
+                }
+            }
+        }
+    }
+    @ViewBuilder private var maintenanceState: some View {
+        if let maintenance = operation.maintenance {
+            if let message = maintenance.error { detail(message) }
+            if maintenance.phase == .applied {
+                detail(String(localized: "The pending revert was cleared without repeating the history action. Its exact cleanup execution is retained as evidence."))
+            }
+            if let prior = operation.previousMaintenanceAttempts, !prior.isEmpty {
+                DisclosureGroup("Earlier cleanup attempts") {
+                    ForEach(prior) { attempt in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(attempt.updatedAt, format: .dateTime.month(.abbreviated).day().hour().minute())
+                            if let message = attempt.error { Text(message).fixedSize(horizontal: false, vertical: true) }
+                            else { Text("Cleanup completed") }
+                        }.font(.caption).textSelection(.enabled)
+                    }
+                }.font(.caption)
             }
         }
     }

@@ -49,7 +49,7 @@ public struct OpenCodeConfiguration: Codable, Sendable, Equatable, Hashable {
     static func invalid() -> CoincideError { CoincideError("The native OpenCode configuration is invalid. Choose the model and agent again.") }
 }
 
-public struct OpenCodeRuntimeIdentity: Sendable, Equatable, Hashable {
+public struct OpenCodeRuntimeIdentity: Codable, Sendable, Equatable, Hashable {
     public let instanceID: UUID
     public let generation: OpenCodeGeneration
     public let executable: String

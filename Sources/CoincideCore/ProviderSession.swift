@@ -52,6 +52,9 @@ public protocol ProviderSession: Actor {
     func choose(_ request: ApprovalRequest, optionID: String) async throws
     func close() async
     func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities
+    func openCodeV2HistorySnapshot(threadID: String) async throws -> OpenCodeV2HistorySnapshot
+    func applyOpenCodeV2History(review: OpenCodeV2HistoryReviewEvidence, kind: ConversationHistoryKind, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
+    func clearOpenCodeV2HistoryStage(expected: OpenCodeV2HistorySnapshot) async throws -> OpenCodeV2HistorySnapshot
     func conversationSnapshot(threadID: String) async throws -> ProviderConversationSnapshot
     func historyPage(threadID: String, cursor: String?, limit: Int) async throws -> ProviderHistoryPage
     func forkConversation(source: ProviderConversationReference, boundary: ProviderHistoryBoundary, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
@@ -91,6 +94,9 @@ extension ProviderSession {
     }
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt { throw ProviderSteeringError(.unsupported) }
     public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities { throw ProviderHistoryError(.unsupported) }
+    public func openCodeV2HistorySnapshot(threadID: String) async throws -> OpenCodeV2HistorySnapshot { throw ProviderHistoryError(.unsupported) }
+    public func applyOpenCodeV2History(review: OpenCodeV2HistoryReviewEvidence, kind: ConversationHistoryKind, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
+    public func clearOpenCodeV2HistoryStage(expected: OpenCodeV2HistorySnapshot) async throws -> OpenCodeV2HistorySnapshot { throw ProviderHistoryError(.unsupported) }
     public func conversationSnapshot(threadID: String) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
     public func historyPage(threadID: String, cursor: String? = nil, limit: Int = 100) async throws -> ProviderHistoryPage { throw ProviderHistoryError(.unsupported) }
     public func forkConversation(source: ProviderConversationReference, boundary: ProviderHistoryBoundary, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }

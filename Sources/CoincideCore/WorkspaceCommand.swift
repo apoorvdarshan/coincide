@@ -121,6 +121,9 @@ enum EngineCommand: Codable, Sendable {
     case conversationHistoryDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case conversationHistoryEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryReconciled(operationID: UUID, incarnation: UUID, result: ConversationHistoryReconciliation)
+    case conversationHistoryMaintenanceAccepted(operationID: UUID, attempt: ConversationHistoryMaintenanceAttempt, incarnation: UUID)
+    case conversationHistoryMaintenanceDispatching(threadID: UUID, operationID: UUID, attemptID: UUID, incarnation: UUID)
+    case conversationHistoryMaintenanceEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryFilesDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case conversationHistoryFilesEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryFilesInspected(operationID: UUID, incarnation: UUID, result: GitCheckpointRestoreInspection)
@@ -145,6 +148,7 @@ enum EffectResult: Codable, Sendable {
     case succeeded, failed(String), cancelled, stopped, worktreeResolved(GitWorktreePlan), worktreePrepared(GitWorktreeResult), projectScriptResolved(ProjectScriptExecutionPlan?)
     case checkpointResolved(GitCheckpointPlan), checkpointCaptured(GitCheckpointReceipt, cleanupWarning: Bool), checkpointUnavailable
     case conversationHistoryConfirmed(ProviderConversationSnapshot), conversationHistoryUnconfirmed
+    case conversationHistoryMaintenanceConfirmed(OpenCodeV2HistorySnapshot)
     case checkpointRestoreConfirmed(GitCheckpointRestoreReceipt), checkpointRestoreUnconfirmed
     case pullRequestCreationConfirmed(GitHubPullRequestCreateOutcome), pullRequestCreationUnconfirmed
     case pullRequestCheckoutCompleted(GitHubPullRequestCheckoutResult), pullRequestCheckoutUnconfirmed
@@ -172,7 +176,8 @@ struct WorkspaceDecision: Sendable {
         let reduced: GeneralReduction
         switch command {
         case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult,
-             .conversationHistoryReconciled, .client(.recallConversationHistoryPrompt):
+             .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
+             .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt):
             reduced = .init(decision: try reduceConversationHistory(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
              .client(.acknowledgeConversationHistoryFiles), .client(.dismissConversationHistoryRecall):
@@ -218,6 +223,13 @@ struct WorkspaceDecision: Sendable {
             decision.finishConversationHistory(request, result: result, incarnation: incarnation, now: now)
         case .conversationHistoryReconciled(let operationID, _, let result):
             try decision.reconcileConversationHistory(operationID: operationID, result: result, now: now)
+        case .conversationHistoryMaintenanceAccepted(let operationID, let attempt, let incarnation):
+            guard attempt.sourceIncarnation == incarnation else { throw WorkspaceCommandError("This provider maintenance owner changed. Inspect the current conversation again.") }
+            try decision.acceptConversationHistoryMaintenance(operationID: operationID, attempt: attempt, now: now)
+        case .conversationHistoryMaintenanceDispatching(let threadID, let operationID, let attemptID, let incarnation):
+            try decision.dispatchConversationHistoryMaintenance(threadID: threadID, operationID: operationID, attemptID: attemptID, incarnation: incarnation, now: now)
+        case .conversationHistoryMaintenanceEffectResult(let request, let result, let incarnation):
+            decision.finishConversationHistoryMaintenance(request, result: result, incarnation: incarnation, now: now)
         case .client(.recallConversationHistoryPrompt(let operationID)):
             try decision.recallConversationHistoryPrompt(operationID: operationID, now: now)
         default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
@@ -305,7 +317,8 @@ struct WorkspaceDecision: Sendable {
         if case .provider(let threadID, _, _) = command, snapshot.isCheckpointRestoreLocked(threadID: threadID) || snapshot.isPullRequestCreationLocked(threadID: threadID) || snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return .init(decision: decision, requiresFinalization: false) }
         switch command {
         case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult,
-             .conversationHistoryReconciled, .client(.recallConversationHistoryPrompt),
+             .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
+             .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt),
              .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
              .client(.acknowledgeConversationHistoryFiles), .client(.dismissConversationHistoryRecall),
              .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
@@ -1043,6 +1056,7 @@ struct WorkspaceDecision: Sendable {
         return .init(decision: decision, requiresFinalization: true)
     }
     private mutating func prepareClientCommand(_ action: WorkspaceCommand, commandID: UUID, now: Date) throws {
+        guard !snapshot.conversationHistoryMaintenanceReservedIDs.contains(commandID) else { throw WorkspaceCommandError("This identity is reserved by provider history maintenance.") }
         preventDelayedPromptSteering(action, now: now)
         try validatePromptSteeringCommand(action, commandID: commandID)
         try validateConversationHistoryLocks(action)
@@ -1120,6 +1134,15 @@ struct WorkspaceDecision: Sendable {
         while case .context(let runID, let inner) = event {
             guard snapshot.threads[index].activeRun?.id == runID else { return }
             event = inner
+        }
+        if case .thread(let nativeID) = event {
+            let owner = snapshot.threads[index]
+            let configuration = owner.activeRun?.configuration ?? ProviderConfiguration(thread: owner)
+            if (snapshot.conversationHistoryOperations ?? []).contains(where: {
+                $0.locksSource && $0.review.sourceThreadID != owner.id &&
+                    $0.review.openCodeV2?.source.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity &&
+                    $0.review.openCodeV2 != nil && $0.review.sourceReference.nativeThreadID == nativeID
+            }) { event = .connectionClosed("This provider conversation is held by another conversation's pending history action.") }
         }
         var thread = snapshot.threads[index]
         if let run = thread.activeRun, thread.runHistory?.first(where: { $0.id == run.id })?.checkpoints?.providerReleased == false {
@@ -1278,7 +1301,7 @@ struct WorkspaceDecision: Sendable {
         snapshot.threads[index] = thread
     }
     private mutating func finished(_ request: WorkspaceEffectRequest, result: EffectResult, now: Date) {
-        if request.promptSteeringOperationID != nil || request.conversationHistoryOperationID != nil || request.checkpointRestoreOperationID != nil || request.conversationHistoryFilesOperationID != nil || request.pullRequestCreationOperationID != nil || request.pullRequestCheckoutOperationID != nil { return }
+        if request.promptSteeringOperationID != nil || request.conversationHistoryOperationID != nil || request.conversationHistoryMaintenanceOperationID != nil || request.checkpointRestoreOperationID != nil || request.conversationHistoryFilesOperationID != nil || request.pullRequestCreationOperationID != nil || request.pullRequestCheckoutOperationID != nil { return }
         if request.checkpointOwner != nil { finishCheckpoint(request, result: result, now: now); return }
         if case .projectClone(let projectID, let plan) = request {
             guard let i = snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = snapshot.projects[i].clone,
@@ -1287,7 +1310,7 @@ struct WorkspaceDecision: Sendable {
             case .succeeded:
                 clone.phase = .completed; clone.error = nil; clone.progress = .init(stage: .checkout, percent: 100, detail: nil, stalled: false)
             case .failed(let message): clone.phase = .failed; clone.error = String(GitService.redactURLs(message).prefix(4_000))
-            case .promptSteeringDelivered, .promptSteeringUnconfirmed, .promptSteeringUnsentCompleted, .pullRequestCheckoutCompleted, .pullRequestCheckoutUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: return
+            case .promptSteeringDelivered, .promptSteeringUnconfirmed, .promptSteeringUnsentCompleted, .pullRequestCheckoutCompleted, .pullRequestCheckoutUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .conversationHistoryMaintenanceConfirmed, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: return
             case .cancelled, .stopped:
                 clone.phase = clone.cancelRequested ? .cancelled : .interrupted; clone.error = nil
             }
@@ -1350,7 +1373,7 @@ struct WorkspaceDecision: Sendable {
             snapshot.threads[index] = thread; return
         }
         switch request {
-        case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
+        case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
             if case .succeeded = result {

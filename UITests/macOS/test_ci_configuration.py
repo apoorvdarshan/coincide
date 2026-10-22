@@ -24,6 +24,11 @@ class NativeUIConfigurationTests(unittest.TestCase):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
         isolation = workflow.split("      - name: Isolate the Codex executable inspection crash", 1)[1].split("      - name: Build and test", 1)[0]
         complete = workflow.split("      - name: Build and test", 1)[1].split("      - name: Collect sanitized", 1)[0]
+        direct = workflow.split("      - name: Inspect the Codex executable directly", 1)[1].split("      - name: Isolate", 1)[0]
+        self.assertIn("continue-on-error: true", direct)
+        self.assertIn("shell: bash", direct)
+        self.assertIn("--filter codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstallationClosure", direct)
+        self.assertIn("Test run with 1 tests? in ", direct)
         self.assertIn("continue-on-error: true", isolation)
         self.assertIn("shell: bash", isolation)
         self.assertIn("--filter codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp", isolation)
@@ -32,7 +37,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
         self.assertNotIn("--filter", complete)
         self.assertNotIn("continue-on-error", complete)
         enforced = workflow.split("      - name: Enforce the isolated Codex inspection result", 1)[1].split("      - name: Package", 1)[0]
-        self.assertIn("if: always() && steps.codex_inspection.outcome == 'failure'", enforced)
+        self.assertIn("if: always() && (steps.codex_inspection.outcome == 'failure' || steps.codex_direct_inspection.outcome == 'failure')", enforced)
         self.assertIn("exit 1", enforced)
 
     def test_offline_tools_are_built_signed_and_immutable_inside_the_test_bundle(self):

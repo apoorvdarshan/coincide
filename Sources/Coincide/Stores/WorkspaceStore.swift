@@ -2238,9 +2238,28 @@ final class WorkspaceStore {
         }
     }
     func isInspectingConversationHistory(_ id: UUID) -> Bool { historyInspections[id] != nil }
+    func canClearConversationHistoryMaintenance(_ operation: ConversationHistoryOperation) -> Bool {
+        !terminating && operation.phase == .unconfirmed && operation.review.kind == .rewindBeforeRun &&
+            operation.review.openCodeV2 != nil && operation.maintenance?.phase.isWorking != true &&
+            operation.maintenance?.phase != .applied &&
+            historyInspections[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
+    }
+    func clearConversationHistoryMaintenance(_ id: UUID) async throws {
+        guard let engine, let operation = conversationHistoryOperation(id), canClearConversationHistoryMaintenance(operation),
+              let source = thread(operation.review.sourceThreadID),
+              operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
+        let task = Task { try await engine.clearConversationHistoryMaintenance(operationID: id) }
+        historyInspections[id] = .init(threadID: source.id, task: task)
+        defer { historyInspections.removeValue(forKey: id) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
     func reconcileConversationHistory(_ id: UUID) async throws {
         guard !terminating, let engine, let operation = conversationHistoryOperation(id), operation.phase == .unconfirmed,
               operation.review.kind == .rewindBeforeRun, historyInspections[id] == nil,
+              operation.maintenance?.phase.isWorking != true,
               let source = thread(operation.review.sourceThreadID),
               operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
         let task = Task { try await engine.reconcileConversationHistory(operationID: id) }

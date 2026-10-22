@@ -1,5 +1,60 @@
 # Validation record
 
+## 2026-10-22 — native OpenCode v2 history and staged-revert recovery
+
+- OpenCode v2 history uses ordered native messages and exact deterministic local
+  opening/steering ownership. Reviewed cuts retain entire runs, including their
+  steers and synthetic tail. Forks regenerate message IDs; confirmation compares
+  the complete semantic prefix and the native ancestry, normalizing only the
+  compaction keep-reference that the provider rewrites. Codex turn boundaries and
+  their legacy serialized bytes remain separate.
+- Rewind requires an initially clean, quiet native session, stages literal
+  `files: false` and commits only that reviewed cut. Native read-back must prove
+  the exact prefix. A possible write with a lost response remains held across
+  restart; inspection does not replay the mutation or clear a stage implicitly.
+  The lock covers other local conversations and captured inputs targeting the
+  same native session. It does not exclude independent external writers.
+- Review found and fixed two additional proof/ownership gaps: an archived then
+  unarchived source must wait for its exact old session to finish closing, and
+  every copied fork message ID must be disjoint from the entire source inventory.
+  New regressions cover the retained close, successful operation after drain and
+  wholly/partly reused IDs, including an ID from the removed source suffix.
+- Explicit staged-revert cleanup has its own durable acceptance/dispatch/result
+  record and current-process incarnation. It accepts only the exact reviewed
+  history-only stage, waits for its owned empty execution and records the exact
+  start event, terminal event and corresponding single idle message. A separate
+  read-only reconciliation decides whether the original history or reviewed cut
+  is present. Cleanup never invents a local turn, restores files, recalls a draft
+  or automatically resumes a queue. Storage 35 protects this evidence.
+- Hosted run `39824687279` at `09eb51d` fails in both the fresh isolated managed
+  installation test and the unchanged full serial suite. The isolated step's
+  displayed conclusion is masked by `continue-on-error`; the raw log and final
+  gate correctly retain failure. Earlier test execution is therefore unnecessary
+  for this reproduction. The sanitized report again shows a read-only SIGBUS at
+  least 1 MiB from the stack pointer through `memset_s`, the Swift task allocator
+  and `CodexInstallationVerifier.inspect`; the source cause remains unproven.
+  A new direct public-verifier comparison removes the installation service and
+  its default async closure. It runs separately before the existing isolation and
+  unchanged full suite; all failure outcomes remain enforced. This experiment is
+  not a hosted crash fix or a successful GUI acceptance claim.
+- The focused serial run passes 110 Core declarations and both new native
+  view/store declarations, without failures or skips. Real offline HTTP/SSE peers
+  exercise the production factory and Engine, three runs with two steers, whole
+  history cuts, persisted dispatch before writes, lost stage/commit/clear replies,
+  restart/reconciliation, exact empty-execution receipts and session aliases.
+  Tests verify Git files/index/HEAD and the latest draft/settings remain intact,
+  and exact owned HTTP/SSE processes finish. Narrow/normal sheet layout covers
+  both appearances and LTR/RTL; no actual GUI interaction or installed OpenCode
+  history call is claimed by those tests.
+- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` succeeds with
+  1428 declarations: 1418 pass and ten optional installed-provider checks skip.
+  Core reports 1221 declarations in eight suites in 290.466 seconds; all 188
+  native view/store declarations pass in 64.326 seconds, terminal six in 1.383
+  seconds and Markdown 13 in 0.128 seconds. All 49 Python harness checks pass.
+  No deadline, assertion or complete-suite gate was weakened. The staged patch
+  passes the secret scan. Hosted diagnostics and native GUI acceptance remain
+  separate pending evidence; this batch does not establish complete T3 parity.
+
 ## 2026-10-22 — typed Pi and native Muse steering
 
 - Steering now distinguishes a native turn from an adapter-owned run. Pi uses

@@ -145,10 +145,22 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 LabeledContent("Run", value: review.runID.uuidString)
                                 LabeledContent("Provider conversation", value: review.sourceReference.nativeThreadID)
-                                LabeledContent("Reviewed head", value: review.reviewedHeadTurnID)
+                                if let head = review.reviewedHeadTurnID {
+                                    LabeledContent("Reviewed head", value: head)
+                                }
+                                if let evidence = review.openCodeV2 {
+                                    if let head = evidence.source.headMessageID { LabeledContent("Reviewed message head", value: head) }
+                                    LabeledContent("Selected opening message", value: evidence.selectedOpeningMessageID)
+                                    Text("OpenCode message references identify the exact reviewed inputs; they are not native provider turn IDs.")
+                                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                }
                                 switch review.boundary {
                                 case .throughTurn(let id), .beforeTurn(let id):
                                     LabeledContent("Selected provider turn", value: id)
+                                case .beforeMessage(let id):
+                                    LabeledContent("First excluded message", value: id)
+                                case .throughMessage(let id):
+                                    LabeledContent("Last retained message", value: id)
                                 case .head:
                                     Text("Current provider head")
                                 }
@@ -231,6 +243,14 @@ enum ConversationHistoryPresentation {
         operation.isWorking
     }
     static func status(_ operation: ConversationHistoryOperation) -> String {
+        if operation.phase == .unconfirmed, let maintenance = operation.maintenance {
+            switch maintenance.phase {
+            case .accepted, .dispatching: return String(localized: "Clearing pending provider revert…")
+            case .applied: return String(localized: "Pending revert cleared; inspect provider state")
+            case .unconfirmed: return String(localized: "Provider revert cleanup unconfirmed")
+            case .failed: break
+            }
+        }
         if operation.phase == .applied, let files = operation.files {
             switch files.phase {
             case .waitingForProvider: return String(localized: "Conversation rewound; files not restored")
