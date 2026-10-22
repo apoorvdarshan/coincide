@@ -92,15 +92,15 @@ public actor AntigravityConnection {
         (events, output) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(eventBufferLimit))
         output.onTermination = { [weak self] reason in if case .cancelled = reason { Task { await self?.close() } } }
     }
-    public func initialize(clientCapabilities: JSONValue = .object([:])) async throws -> JSONValue {
-        guard !initializeStarted, !closing, !ended, clientCapabilities.object != nil else { throw AntigravityWireError(.invalidRequest) }
+    public func initialize(clientCapabilities: JSONValue = .object([:]), timeout: Duration = .seconds(30)) async throws -> JSONValue {
+        guard !initializeStarted, !closing, !ended, clientCapabilities.object != nil, timeout > .zero else { throw AntigravityWireError(.invalidRequest) }
         initializeStarted = true
         do {
             let result = try await perform("initialize", params: .object([
                 "protocolVersion": .number(2), "clientInfo": .object(["name": .string("coincide"), "title": .string("Coincide"), "version": .string("0.1.0")]),
                 "clientCapabilities": clientCapabilities
-            ]), timeout: .seconds(30), onResponse: nil)
-            guard result["protocolVersion"] == .number(2), result["agentCapabilities"].object != nil,
+            ]), timeout: timeout, onResponse: nil)
+            guard [JSONValue.number(1), .number(2)].contains(result["protocolVersion"]), result["agentCapabilities"].object != nil,
                   result["agentInfo"].object != nil, result["authMethods"].array != nil, !closing, !ended else { throw AntigravityWireError(.protocolViolation) }
             initialized = true; return result
         } catch { let safe = Self.safe(error); terminate(safe); throw safe }

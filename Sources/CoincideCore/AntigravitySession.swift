@@ -6,6 +6,7 @@ public actor AntigravitySession: ProviderSession {
     public nonisolated let events: AsyncStream<ProviderEvent>
     private let output: AsyncStream<ProviderEvent>.Continuation
     private let executable: URL, cwd: URL, stateRoot: URL
+    private let installation: AntigravityInstallation
     private let configuration: AntigravityConfiguration
     private let permission: PermissionMode
     private let credentialProvider: @Sendable () async throws -> AntigravityRuntimeCredential?
@@ -43,10 +44,11 @@ public actor AntigravitySession: ProviderSession {
                 fileAccessGuard: @escaping AntigravityFileAccessGuard = { _, _ in throw CoincideError("This Antigravity file request is not authorized for the workspace.") },
                 credentialProvider: @escaping @Sendable () async throws -> AntigravityRuntimeCredential? = { nil },
                 authorizationURLHandler: (@Sendable (AntigravityAuthorizationURL) async throws -> Void)? = nil,
-                stateRoot: URL? = nil) {
+                stateRoot: URL? = nil, installation: AntigravityInstallation = .shared) {
         self.executable = executable; self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath(); self.configuration = configuration
         self.permission = permission; self.fileAccessGuard = fileAccessGuard; self.credentialProvider = credentialProvider
         self.authorizationURLHandler = authorizationURLHandler; self.stateRoot = stateRoot ?? AntigravityRuntime.defaultStateRoot
+        self.installation = installation
         (events, output) = AsyncStream.makeStream()
     }
     public func setFileAccessGuard(_ guardClosure: @escaping AntigravityFileAccessGuard) throws {
@@ -60,7 +62,7 @@ public actor AntigravitySession: ProviderSession {
         guard !closing, !broken else { throw AntigravityWireError(.closed) }
         let ownedFiles = try AntigravityClientFiles(root: cwd, accessGuard: fileAccessGuard)
         let runtime: AntigravityRuntime
-        do { runtime = try .init(executable: executable, configuration: configuration, cwd: cwd, stateRoot: stateRoot, credential: credential) }
+        do { runtime = try .init(executable: executable, configuration: configuration, cwd: cwd, stateRoot: stateRoot, credential: credential, installation: installation) }
         catch { await ownedFiles.close(); throw error }
         let host = try AntigravityConnection(runtime: runtime)
         self.runtime = runtime; connection = host; files = ownedFiles
@@ -88,7 +90,7 @@ public actor AntigravitySession: ProviderSession {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let runtime: AntigravityRuntime, host: AntigravityConnection
         do {
-            runtime = try .init(executable: executable, configuration: configuration, cwd: directory, stateRoot: stateRoot, credential: credential)
+            runtime = try .init(executable: executable, configuration: configuration, cwd: directory, stateRoot: stateRoot, credential: credential, installation: installation)
             host = try .init(runtime: runtime, allowAuthorizationURLs: kind == .authenticate)
         } catch { try? FileManager.default.removeItem(at: directory); throw safe(error) }
         let consumer = Task { [weak self] in

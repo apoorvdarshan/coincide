@@ -88,7 +88,7 @@ func antigravityRejectsNonliteralExecutablesWithoutEchoingInput(_ executable: St
     #expect(try input.response(optionID: nil)["outcome"]["outcome"] == .string("cancelled"))
 }
 
-@Test func antigravityStorage30PreservesCapturedAccountQueueAndLegacyThreads() async throws {
+@Test func antigravityStorage31PreservesCapturedAccountQueueAndLegacyThreads() async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let url = root.appendingPathComponent("native.sqlite")
     var raw: OpaquePointer?; #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
@@ -105,7 +105,7 @@ func antigravityRejectsNonliteralExecutablesWithoutEchoingInput(_ executable: St
     #expect(try JSONDecoder().decode(CodingThread.self, from: JSONEncoder().encode(legacy)).antigravityConfiguration == nil)
     #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
     var statement: OpaquePointer?; #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 30)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 31)
     sqlite3_finalize(statement); sqlite3_close(raw)
 }
 

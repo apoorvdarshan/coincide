@@ -80,13 +80,17 @@ Engine checks cover queueing and exact-turn Stop; installed Muse execution,
 steering, broader recovery, setup/auth and usage remain unfinished.
 
 Antigravity uses its paired `agy_acp_server.par` and `localharness_external`
-runtime. In **Settings → Providers → Antigravity**, choose the pair and explicitly
-check account access with Google account, Gemini Enterprise, Gemini API key or
-Agent Platform. Google sign-in opens only when you choose its button. API keys
+runtime. In **Settings → Providers → Antigravity**, explicitly install the pinned
+managed runtime or choose a custom pair. Managed downloads check the archive's
+size and SHA-256, extract only the paired executables and initialize them before
+activation. Updates preserve a running session's old pair; removal refuses an
+active lease or a custom path into the managed installation. Installation and
+runtime checks do not sign in. Explicitly check account access with Google
+account, Gemini Enterprise, Gemini API key or Agent Platform. Google sign-in opens only when you choose its button. API keys
 stay in Keychain; account changes pause affected conversations and keep queued
 inputs for review. Models and native permission choices apply to future inputs.
-The initial integration uses offline peers for verification; managed installation,
-usage, broader recovery and installed account/model execution remain unfinished.
+Offline peers cover native conversations and account flows. Usage, broader
+recovery and installed account/model execution remain unfinished.
 
 **Settings → Providers → Codex Account** reads the existing CLI sign-in, plan,
 and available allowance windows. Email stays hidden until revealed. Refresh
@@ -405,6 +409,14 @@ Worktree folders are preserved when conversations are archived.
 
 ```sh
 swift test --no-parallel
+```
+
+The optional Antigravity artifact check downloads the pinned public runtime into
+private temporary storage, verifies and initializes it, then removes that owned
+installation. It does not authenticate or send a model request:
+
+```sh
+COINCIDE_VERIFY_ANTIGRAVITY_INSTALLATION=1 swift test --no-parallel --filter installedManagedAntigravityArchiveVerifiesAndInitializesWithoutAuthentication
 ```
 
 Tests cover process streaming/failure/cancellation, protocol framing and request

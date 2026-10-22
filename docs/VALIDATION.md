@@ -1,5 +1,58 @@
 # Validation record
 
+## 2026-10-22 — managed Antigravity runtime and history acceptance stack
+
+- Explicit native install/verify/update/cancel/remove actions keep account setup
+  separate. Downloads stream into owned private staging, enforce the pinned size
+  and SHA-256, and validate a bounded two-member ZIP before activation. Runtime
+  leases pin old immutable versions across updates and guard removal, including
+  custom aliases. Ownership-record replacement prevents publication. Storage 31
+  captures managed versus external selection; legacy captures remain external.
+- The first focused check passes 35 Core declarations plus four native view/store
+  declarations; the optional real-artifact check skips. Both arguments of the
+  existing history recall acceptance regression pass. The complete canonical
+  `swift test --no-parallel` run passes 1170 declarations: 1161 pass and nine
+  optional checks skip. Core reports 993 declarations (274.484 seconds), native
+  view/store 158 (54.255 seconds), terminal six (1.357 seconds), and Markdown
+  13 (0.142 seconds). After the small view/profile-root corrections, all 158
+  native view/store declarations pass again (55.204 seconds).
+- Hosted run `39790525202` at `cebae216` crashes with signal 10 in history
+  acceptance while encoding a checkpoint fingerprint. Sanitized frames show one
+  reducer invocation. Compiled local arm64 evidence finds 54,224 fixed bytes and
+  383 metadata-sized stack slots in the original outer reducer. A separate
+  acceptance entry path uses 560 fixed bytes and six slots before entering the
+  unchanged acceptance logic. This is a measured reduction in that call chain;
+  it does not establish the crash's cause or hosted resolution. Assertions and
+  deadlines remain unchanged.
+- The explicit real-artifact check downloads the exact 111456962-byte macOS
+  arm64 release and passes its pinned SHA-256, but initially fails during
+  extraction before launching the native server. Offline fixture success is not
+  claimed as real installation success. The compatibility fault is investigated
+  against that verified archive. libz produced additional output without
+  consuming new input at a valid chunk boundary. The reader now accepts either
+  input or output progress and advances on an empty-input/no-output buffer
+  boundary; exact compressed/decoded lengths, CRC and stream-end checks remain.
+  The production real-artifact check then passes in 14.052 seconds: download,
+  extraction, native initialize-only verification, activation, lease acquisition
+  and owned removal all complete. No authentication or model request is sent.
+  The final focus passes 35 Core declarations (15.347 seconds, including this
+  actual check) and four native view/store declarations (3.426 seconds).
+- The offscreen harness emits 24 narrow/wide, light/dark and LTR/RTL captures.
+  An opaque native window background avoids transparent exported PNGs;
+  representative narrow captures are inspected for wrapping and action placement.
+  Vibrant text and composited Liquid Glass contrast still require actual window
+  captures; offscreen dark-mode pixels are not claimed as contrast acceptance.
+- The two synthetic decompression-boundary regressions and all ten existing
+  extractor declarations pass (12 declarations, 0.099 seconds); truncated input
+  remains rejected and owned partial output is removed. These were added after
+  the full-suite run above, so that earlier count does not include them.
+- Packaging completes in 0.67 seconds. Strict/deep signature verification and
+  native math-resource rendering pass. The development app reopens and its real
+  window is captured. A consistent private backup precedes storage 30-to-31;
+  integrity remains `ok`, with the same four conversations, 25 messages and
+  canonical workspace payload hash. No installed provider sign-in is performed.
+  Hosted verification of the pushed changes remains pending.
+
 ## 2026-10-22 — native Antigravity ACP and explicit account setup
 
 - Added a dedicated native adapter for the pinned flat ACP dialect and paired

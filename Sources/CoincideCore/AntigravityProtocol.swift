@@ -16,7 +16,7 @@ public enum AntigravityProtocol {
         switch permission { case .supervised, .auto: "default"; case .autoAcceptEdits: "auto_edit"; case .fullAccess: "yolo" }
     }
     static func validateInitialization(_ value: JSONValue, authMethod: String) throws {
-        guard value["protocolVersion"] == .number(2), let auth = value["authMethods"].array, auth.count <= 64,
+        guard [JSONValue.number(1), .number(2)].contains(value["protocolVersion"]), let auth = value["authMethods"].array, auth.count <= 64,
               auth.contains(where: { $0["id"] == .string(authMethod) }) else { throw failure() }
     }
     static func selectOption(_ setup: JSONValue, category: String) -> JSONValue? {

@@ -16,6 +16,7 @@ import Observation
     private var isStarting = false
     var executable: String
     var harnessPath: String
+    var runtimeSelection: AntigravityRuntimeSelection
     var authMethod: AntigravityAuthMethod
     var gcpProject: String
     var gcpLocation: String
@@ -40,8 +41,9 @@ import Observation
         let record: AntigravityAccountRegistry.Record?
         do { record = try AntigravityAccountRegistry.load(rootURL: root) }
         catch { record = nil; errorMessage = String(localized: "The saved Antigravity account could not be loaded. Check its configuration before signing in.") }
-        let config = record?.configuration ?? AntigravityConfiguration()
+        let config = record?.configuration ?? AntigravityConfiguration(runtimeSelection: .managed)
         configuration = config; accessState = record?.accessState
+        runtimeSelection = config.runtimeSelection
         executable = config.executable; harnessPath = config.harnessPath ?? ""; authMethod = config.authMethod
         gcpProject = config.gcpProject ?? ""; gcpLocation = config.gcpLocation ?? ""
         if config.authMethod == .agentPlatform, config.gcpProject == nil { agentPlatformCredentialMode = .apiKey }
@@ -50,13 +52,14 @@ import Observation
     var isWorking: Bool { isStarting || isCheckingRuntime || state.phase.isWorking }
     var runtimeConfiguration: AntigravityConfiguration? {
         let trim: (String) -> String = { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        let candidate = AntigravityConfiguration(instanceID: configuration.instanceID, executable: trim(executable),
-            harnessPath: trim(harnessPath).isEmpty ? nil : trim(harnessPath), authGeneration: UUID())
+        let candidate = AntigravityConfiguration(instanceID: configuration.instanceID, runtimeSelection: runtimeSelection,
+            executable: runtimeSelection == .managed ? "agy_acp_server.par" : trim(executable),
+            harnessPath: runtimeSelection == .managed || trim(harnessPath).isEmpty ? nil : trim(harnessPath), authGeneration: UUID())
         do { try candidate.validate(); return candidate } catch { return nil }
     }
     var runtimeChecked: Bool {
         guard let observed = runtimeObservation, let current = runtimeConfiguration else { return false }
-        return observed.executable == current.executable && observed.harnessPath == current.harnessPath
+        return observed.runtimeSelection == current.runtimeSelection && observed.executable == current.executable && observed.harnessPath == current.harnessPath
     }
     var canReuseStoredCredential: Bool {
         !authMethod.usesBrowser && accessState == .verified &&
@@ -66,8 +69,9 @@ import Observation
     var selectedConfiguration: AntigravityConfiguration? {
         let needsProject = authMethod == .oauthBusiness || (authMethod == .agentPlatform && agentPlatformCredentialMode == .project)
         let trim: (String) -> String = { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        let candidate = AntigravityConfiguration(instanceID: configuration.instanceID, executable: trim(executable),
-            harnessPath: trim(harnessPath).isEmpty ? nil : trim(harnessPath), authMethod: authMethod,
+        let candidate = AntigravityConfiguration(instanceID: configuration.instanceID, runtimeSelection: runtimeSelection,
+            executable: runtimeSelection == .managed ? "agy_acp_server.par" : trim(executable),
+            harnessPath: runtimeSelection == .managed || trim(harnessPath).isEmpty ? nil : trim(harnessPath), authMethod: authMethod,
             gcpProject: needsProject && !trim(gcpProject).isEmpty ? trim(gcpProject) : nil,
             gcpLocation: needsProject && !trim(gcpLocation).isEmpty ? trim(gcpLocation) : nil,
             authGeneration: configuration.authGeneration, model: configuration.model)

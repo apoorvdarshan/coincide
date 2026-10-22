@@ -87,6 +87,7 @@ private final class NativeAntigravityKeyRecorder: @unchecked Sendable {
     #expect(account.runtimeChecked && account.accessState == nil && !account.canStart)
     let healthChecks = await peer.healthChecks, authentications = await peer.authentications
     #expect(healthChecks == 1 && authentications == 0)
+    account.runtimeSelection = .external
     account.executable = "/task-owned/other-server"
     #expect(!account.runtimeChecked)
     account.authMethod = .agentPlatform; account.agentPlatformCredentialMode = .project

@@ -69,7 +69,7 @@ private struct MuseConfigurationFixture {
     } catch { await engine.shutdown(); throw error }
 }
 
-@Test func nativeMuseStorage30MigratesPiWorkspaceAndPreservesCapturedQueueAndLegacyProviders() async throws {
+@Test func nativeMuseStorage31MigratesPiWorkspaceAndPreservesCapturedQueueAndLegacyProviders() async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let url = root.appendingPathComponent("muse.sqlite")
     var f = try MuseConfigurationFixture(path: root.path)
@@ -90,7 +90,7 @@ private struct MuseConfigurationFixture {
     #expect(try await migrated.rebuildProjection().snapshot == f.snapshot)
     #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
     var statement: OpaquePointer?; #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 30)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 31)
     sqlite3_finalize(statement); sqlite3_close(raw)
 }
 

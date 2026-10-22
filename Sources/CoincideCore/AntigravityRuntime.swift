@@ -14,7 +14,7 @@ public final class AntigravityRuntimeCredential: Sendable, CustomStringConvertib
     public var debugDescription: String { description }
 }
 
-public struct AntigravityExecutablePair: Sendable {
+public struct AntigravityExecutablePair: Sendable, Equatable {
     public let executable: URL
     public let harness: URL
 }
@@ -52,6 +52,7 @@ public final class AntigravityRuntime: @unchecked Sendable {
     var outputOverflowed: Bool { process.overflowed }
     var pendingWriteCount: Int { process.pendingWriteCount }
     private let process: AntigravityOwnedProcess
+    private let installationLease: AntigravityInstallationLease?
     private let lock = NSLock()
     private var closeTask: Task<Void, Never>?
 
@@ -71,30 +72,42 @@ public final class AntigravityRuntime: @unchecked Sendable {
             .appendingPathComponent(instanceKey, isDirectory: true).appendingPathComponent("sessions", isDirectory: true)
     }
 
-    public static func resolvePair(configuration: AntigravityConfiguration) throws -> AntigravityExecutablePair {
-        do { try configuration.validate() } catch { throw AntigravityWireError(.invalidConfiguration) }
-        guard let selected = ProcessChannel.findExecutable(configuration.executable) else { throw AntigravityWireError(.unavailable) }
-        let executable = selected.standardizedFileURL.resolvingSymlinksInPath()
-        let harnessSelection: URL
-        if let configured = configuration.harnessPath {
-            harnessSelection = configured.hasPrefix("/") ? URL(fileURLWithPath: configured) : selected.deletingLastPathComponent().appendingPathComponent(configured)
-        } else { harnessSelection = selected.deletingLastPathComponent().appendingPathComponent("localharness_external") }
-        let harness = harnessSelection.standardizedFileURL.resolvingSymlinksInPath()
-        for path in [executable, harness] {
-            guard path.isFileURL, path.path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path.path),
-                  let attributes = try? FileManager.default.attributesOfItem(atPath: path.path),
-                  attributes[.type] as? FileAttributeType == .typeRegular else { throw AntigravityWireError(.unavailable) }
+    public static func resolvePair(configuration: AntigravityConfiguration,
+                                   installation: AntigravityInstallation = .shared) throws -> AntigravityExecutablePair {
+        do { return try installation.resolve(configuration: configuration) }
+        catch { throw selectionError(error, configuration: configuration) }
+    }
+    private static func selectionError(_ error: any Error, configuration: AntigravityConfiguration) -> any Error {
+        guard configuration.runtimeSelection == .external else { return error }
+        if let native = error as? AntigravityInstallationError,
+           [.invalidConfiguration, .invalidRecord, .ownershipLost].contains(native.kind) {
+            return AntigravityWireError(.invalidConfiguration)
         }
-        guard executable != harness else { throw AntigravityWireError(.invalidConfiguration) }
-        return .init(executable: executable, harness: harness)
+        return AntigravityWireError(.unavailable)
     }
 
-    public init(executable: URL, configuration: AntigravityConfiguration, cwd: URL, stateRoot: URL,
-                credential: AntigravityRuntimeCredential? = nil, environment: [String: String]? = nil,
-                shutdownGrace: Duration = .seconds(2)) throws {
+    public convenience init(executable: URL, configuration: AntigravityConfiguration, cwd: URL, stateRoot: URL,
+                            credential: AntigravityRuntimeCredential? = nil, environment: [String: String]? = nil,
+                            shutdownGrace: Duration = .seconds(2), installation: AntigravityInstallation = .shared) throws {
+        let lease: AntigravityInstallationLease
+        do { lease = try installation.acquire(configuration: configuration) }
+        catch { throw Self.selectionError(error, configuration: configuration) }
+        guard configuration.runtimeSelection == .managed || lease.pair.executable == executable.standardizedFileURL.resolvingSymlinksInPath() else {
+            lease.release(); throw AntigravityWireError(.invalidConfiguration)
+        }
+        try self.init(validatedPair: lease.pair, lease: lease, configuration: configuration, cwd: cwd, stateRoot: stateRoot,
+                      credential: credential, environment: environment, shutdownGrace: shutdownGrace)
+    }
+
+    /// Only the managed install verifier may use an unpublished owned pair.
+    /// All ordinary launches acquire and retain the installation's immutable lease.
+    init(validatedPair pair: AntigravityExecutablePair, lease: AntigravityInstallationLease?,
+         configuration: AntigravityConfiguration, cwd: URL, stateRoot: URL,
+         credential: AntigravityRuntimeCredential? = nil, environment: [String: String]? = nil,
+         shutdownGrace: Duration = .seconds(2)) throws {
         guard shutdownGrace > .zero, shutdownGrace <= .seconds(10), cwd.isFileURL, stateRoot.isFileURL else { throw AntigravityWireError(.invalidConfiguration) }
-        let pair = try Self.resolvePair(configuration: configuration)
-        guard pair.executable == executable.standardizedFileURL.resolvingSymlinksInPath() else { throw AntigravityWireError(.invalidConfiguration) }
+        try configuration.validate()
+        installationLease = lease
         let manager = FileManager.default
         let stateRoot = stateRoot.standardizedFileURL.resolvingSymlinksInPath()
         profileDirectory = try Self.profileDirectory(configuration: configuration, stateRoot: stateRoot)
@@ -191,13 +204,20 @@ public final class AntigravityRuntime: @unchecked Sendable {
     public func close() async {
         let task = lock.withLock { () -> Task<Void, Never> in
             if let closeTask { return closeTask }
-            let process = process, temporary = temporaryDirectory
-            let task = Task { process.stop(); await process.wait(); try? FileManager.default.removeItem(at: temporary) }
+            let process = process, temporary = temporaryDirectory, lease = installationLease
+            let task = Task {
+                process.stop(); await process.wait(); lease?.release()
+                try? FileManager.default.removeItem(at: temporary)
+            }
             closeTask = task; return task
         }
         await task.value
     }
-    deinit { process.stop() }
+    deinit {
+        process.stop()
+        let process = process, lease = installationLease
+        Task { await process.wait(); lease?.release() }
+    }
 }
 
 private final class AntigravityOwnedProcess: @unchecked Sendable {

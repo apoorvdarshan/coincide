@@ -1,5 +1,11 @@
 import Foundation
 
+public enum AntigravityRuntimeSelection: String, Codable, CaseIterable, Sendable, Identifiable {
+    case managed, external
+    public var id: Self { self }
+    public var name: String { self == .managed ? "Managed by Coincide" : "Custom installation" }
+}
+
 public enum AntigravityAuthMethod: String, Codable, CaseIterable, Sendable, Identifiable {
     case oauthPersonal = "oauth-personal", oauthBusiness = "oauth-business"
     case geminiAPIKey = "gemini-api-key", agentPlatform = "agent-platform"
@@ -21,6 +27,7 @@ public struct AntigravityConfiguration: Codable, Sendable, Equatable, Hashable {
     public static let defaultInstanceID = UUID(uuidString: "7E1D4B73-FF1A-46C6-9CF8-2FD183DBBE3D")!
     public static let initialAuthGeneration = UUID(uuidString: "D4069014-BAAE-4989-8D1C-152F29596C6C")!
     public let instanceID: UUID
+    public let runtimeSelection: AntigravityRuntimeSelection
     public let executable: String
     public let harnessPath: String?
     public let authMethod: AntigravityAuthMethod
@@ -29,23 +36,26 @@ public struct AntigravityConfiguration: Codable, Sendable, Equatable, Hashable {
     public let authGeneration: UUID
     public let model: String?
 
-    public init(instanceID: UUID = Self.defaultInstanceID, executable: String = "agy_acp_server.par",
+    public init(instanceID: UUID = Self.defaultInstanceID, runtimeSelection: AntigravityRuntimeSelection = .external, executable: String = "agy_acp_server.par",
                 harnessPath: String? = nil, authMethod: AntigravityAuthMethod = .oauthPersonal,
                 gcpProject: String? = nil, gcpLocation: String? = nil,
                 authGeneration: UUID = Self.initialAuthGeneration, model: String? = nil) {
-        self.instanceID = instanceID; self.executable = executable; self.harnessPath = harnessPath
+        self.instanceID = instanceID; self.runtimeSelection = runtimeSelection; self.executable = executable; self.harnessPath = harnessPath
         self.authMethod = authMethod; self.gcpProject = gcpProject; self.gcpLocation = gcpLocation
         self.authGeneration = authGeneration; self.model = model
     }
     public var runtimeIdentity: AntigravityRuntimeIdentity {
-        .init(instanceID: instanceID, executable: executable, harnessPath: harnessPath, authMethod: authMethod,
+        .init(instanceID: instanceID, runtimeSelection: runtimeSelection, executable: executable, harnessPath: harnessPath, authMethod: authMethod,
               gcpProject: gcpProject, gcpLocation: gcpLocation, authGeneration: authGeneration)
     }
     public func selecting(model: String?) -> Self {
-        .init(instanceID: instanceID, executable: executable, harnessPath: harnessPath, authMethod: authMethod,
+        .init(instanceID: instanceID, runtimeSelection: runtimeSelection, executable: executable, harnessPath: harnessPath, authMethod: authMethod,
               gcpProject: gcpProject, gcpLocation: gcpLocation, authGeneration: authGeneration, model: model)
     }
     public func validate() throws {
+        if runtimeSelection == .managed {
+            guard executable == "agy_acp_server.par", harnessPath == nil else { throw Self.invalid() }
+        }
         try Self.invocation(executable)
         if let harnessPath { try Self.invocation(harnessPath) }
         if let model { try Self.identifier(model, maximum: 4_096) }
@@ -70,10 +80,11 @@ public struct AntigravityConfiguration: Codable, Sendable, Equatable, Hashable {
     public static func invalid() -> CoincideError {
         .init("The Antigravity configuration is invalid. Check its runtime, account method and selected model.")
     }
-    private enum CodingKeys: String, CodingKey { case instanceID, executable, harnessPath, authMethod, gcpProject, gcpLocation, authGeneration, model }
+    private enum CodingKeys: String, CodingKey { case instanceID, runtimeSelection, executable, harnessPath, authMethod, gcpProject, gcpLocation, authGeneration, model }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(instanceID: try values.decode(UUID.self, forKey: .instanceID), executable: try values.decode(String.self, forKey: .executable),
+        self.init(instanceID: try values.decode(UUID.self, forKey: .instanceID), runtimeSelection: try values.decodeIfPresent(AntigravityRuntimeSelection.self, forKey: .runtimeSelection) ?? .external,
+                  executable: try values.decode(String.self, forKey: .executable),
                   harnessPath: try values.decodeIfPresent(String.self, forKey: .harnessPath), authMethod: try values.decode(AntigravityAuthMethod.self, forKey: .authMethod),
                   gcpProject: try values.decodeIfPresent(String.self, forKey: .gcpProject), gcpLocation: try values.decodeIfPresent(String.self, forKey: .gcpLocation),
                   authGeneration: try values.decode(UUID.self, forKey: .authGeneration), model: try values.decodeIfPresent(String.self, forKey: .model))
@@ -83,6 +94,7 @@ public struct AntigravityConfiguration: Codable, Sendable, Equatable, Hashable {
 
 public struct AntigravityRuntimeIdentity: Sendable, Equatable, Hashable {
     public let instanceID: UUID
+    public let runtimeSelection: AntigravityRuntimeSelection
     public let executable: String
     public let harnessPath: String?
     public let authMethod: AntigravityAuthMethod

@@ -95,20 +95,23 @@ extension ProviderSession {
 }
 
 public enum ProviderSessions {
-    public static func make(for thread: CodingThread, antigravityStateRoot: URL? = nil) throws -> any ProviderSession {
+    public static func make(for thread: CodingThread, antigravityStateRoot: URL? = nil,
+                            antigravityInstallation: AntigravityInstallation = .shared,
+                            antigravityAccountRoot: URL? = nil) throws -> any ProviderSession {
         if thread.provider == .antigravity {
             try AntigravityConfigurationValidation.configuration(.init(thread: thread))
-            guard let configuration = thread.antigravityConfiguration,
-                  let executable = ProcessChannel.findExecutable(configuration.executable) else {
+            guard let configuration = thread.antigravityConfiguration else {
                 throw CoincideError("Choose the Antigravity runtime and its paired harness in Settings before sending a message.")
             }
-            let registryRoot = (antigravityStateRoot?.deletingLastPathComponent() ??
+            let pair = try antigravityInstallation.resolve(configuration: configuration)
+            let registryRoot = antigravityAccountRoot ?? (antigravityStateRoot?.deletingLastPathComponent() ??
                 FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Coincide", isDirectory: true))
                 .appendingPathComponent("AntigravitySettings", isDirectory: true)
             try AntigravityAccountRegistry.validateKnownGeneration(configuration, rootURL: registryRoot)
-            return AntigravitySession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath),
+            return AntigravitySession(executable: pair.executable, cwd: URL(fileURLWithPath: thread.workspacePath),
                 configuration: configuration, permission: thread.permission,
-                credentialProvider: { try AntigravityCredentialStore.read(configuration: configuration) }, stateRoot: antigravityStateRoot)
+                credentialProvider: { try AntigravityCredentialStore.read(configuration: configuration) }, stateRoot: antigravityStateRoot,
+                installation: antigravityInstallation)
         }
         if thread.provider == .muse {
             try MuseConfigurationValidation.configuration(.init(thread: thread))

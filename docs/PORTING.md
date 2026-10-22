@@ -111,9 +111,13 @@ must each be mapped and verified before declaring parity.
   verified account/model access; browser URLs stay transient and keys stay in
   Keychain. Exact native options and persistent-grant warnings remain visible.
   Delegated file access is anchored to the captured workspace and drained before
-  account or workspace changes. Offline peers exercise the initial integration;
-  installed execution, managed installation, usage, skills/MCP, portable handoff
-  and broader recovery remain unfinished.
+  account or workspace changes. Explicit managed installation pins the archive
+  and pair, verifies native initialization before atomic activation, retains
+  leased old versions across updates and refuses removal of a leased or custom
+  referenced runtime. Legacy captures remain external; storage 31 fences the new
+  runtime-selection field. Offline peers exercise conversations, installation
+  failures, cancellation and account isolation. Installed account/model execution,
+  usage, skills/MCP, portable handoff and broader recovery remain unfinished.
 - Transcript entities retain their session, type, opaque ID, structured fields,
   and chunk annotations. The native reducer applies replacements, null clearing,
   metadata patches, independently decoded terminal bytes, and typed user-message

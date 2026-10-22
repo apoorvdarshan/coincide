@@ -75,7 +75,7 @@ func nativePiRejectsInvalidExecutableAndKeepsFailureTextFixed(_ executable: Stri
     catch { #expect(error.localizedDescription == PiConfiguration.invalid().localizedDescription) }
 }
 
-@Test func nativePiStorage30PreservesQueueSettingsOnReopenAndLegacyProvidersStayUnchanged() async throws {
+@Test func nativePiStorage31PreservesQueueSettingsOnReopenAndLegacyProvidersStayUnchanged() async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let url = root.appendingPathComponent("pi.sqlite")
     var raw: OpaquePointer?; #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
@@ -91,7 +91,7 @@ func nativePiRejectsInvalidExecutableAndKeepsFailureTextFixed(_ executable: Stri
     #expect(try JSONDecoder().decode(ProviderConfiguration.self, from: JSONEncoder().encode(ProviderConfiguration(thread: legacy))).piConfiguration == nil)
     #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
     var statement: OpaquePointer?; #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 30)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 31)
     sqlite3_finalize(statement); sqlite3_close(raw)
 }
 

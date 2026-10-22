@@ -138,7 +138,7 @@ public actor AntigravityAuthentication {
     /// key, reconfigures a working account, or opens a browser.
     public func checkRuntime(configuration: AntigravityConfiguration) async throws -> JSONValue {
         guard !closed, active == nil else { throw busy() }
-        let probe = AntigravityConfiguration(instanceID: configuration.instanceID, executable: configuration.executable,
+        let probe = AntigravityConfiguration(instanceID: configuration.instanceID, runtimeSelection: configuration.runtimeSelection, executable: configuration.executable,
             harnessPath: configuration.harnessPath, authGeneration: UUID())
         try probe.validate()
         let id = UUID(), factory = sessionFactory
@@ -172,7 +172,7 @@ public actor AntigravityAuthentication {
 
     private func begin(_ source: AntigravityConfiguration, credential: AntigravityRuntimeCredential?, signingOut: Bool) -> UUID {
         let id = UUID(), seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
-        let staged = AntigravityConfiguration(instanceID: source.instanceID, executable: source.executable,
+        let staged = AntigravityConfiguration(instanceID: source.instanceID, runtimeSelection: source.runtimeSelection, executable: source.executable,
             harnessPath: source.harnessPath, authMethod: source.authMethod, gcpProject: source.gcpProject,
             gcpLocation: source.gcpLocation, authGeneration: UUID(), model: source.model)
         let flow = Flow(id: id, source: source, staged: staged, signingOut: signingOut,
@@ -285,9 +285,10 @@ public actor AntigravityAuthentication {
     private func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }
     private func busy() -> CoincideError { .init("Antigravity account setup is already running or stopping. Wait for it to finish.") }
 
-    public static func nativeSessionFactory(stateRoot: URL = AntigravityRuntime.defaultStateRoot) -> SessionFactory {
+    public static func nativeSessionFactory(stateRoot: URL = AntigravityRuntime.defaultStateRoot,
+                                           installation: AntigravityInstallation = .shared) -> SessionFactory {
         { configuration, credential, handler in
-            try AntigravityOwnedAuthenticationSession(configuration: configuration, credential: credential, handler: handler, stateRoot: stateRoot)
+            try AntigravityOwnedAuthenticationSession(configuration: configuration, credential: credential, handler: handler, stateRoot: stateRoot, installation: installation)
         }
     }
 }
@@ -298,8 +299,8 @@ private actor AntigravityOwnedAuthenticationSession: AntigravityAuthenticationSe
     private var closeTask: Task<Void, Never>?
     private let ownedProfile: AntigravityOwnedProfile?
     init(configuration: AntigravityConfiguration, credential: AntigravityRuntimeCredential?,
-         handler: AntigravityAuthentication.AuthorizationHandler?, stateRoot: URL) throws {
-        let pair = try AntigravityRuntime.resolvePair(configuration: configuration)
+         handler: AntigravityAuthentication.AuthorizationHandler?, stateRoot: URL, installation: AntigravityInstallation) throws {
+        let pair = try AntigravityRuntime.resolvePair(configuration: configuration, installation: installation)
         let profile = try AntigravityRuntime.profileDirectory(configuration: configuration, stateRoot: stateRoot)
         ownedProfile = try AntigravityOwnedProfile.reserve(profile)
         let root = stateRoot.appendingPathComponent("AuthenticationWorkspaces", isDirectory: true)
@@ -308,7 +309,7 @@ private actor AntigravityOwnedAuthenticationSession: AntigravityAuthenticationSe
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         self.workspace = workspace
         session = AntigravitySession(executable: pair.executable, cwd: workspace, configuration: configuration,
-            credentialProvider: { credential }, authorizationURLHandler: handler, stateRoot: stateRoot)
+            credentialProvider: { credential }, authorizationURLHandler: handler, stateRoot: stateRoot, installation: installation)
     }
     func authenticate() async throws -> [ProviderModel] { try await session.authenticate() }
     func logout() async throws { try await session.logout() }

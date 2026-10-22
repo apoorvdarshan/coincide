@@ -12,7 +12,7 @@ struct SettingsView: View {
             Form {
                 Picker("Provider", selection: $provider) { ForEach(ProviderKind.builtIn) { Text($0.name).tag($0) } }
                 if provider == .antigravity {
-                    AntigravitySettingsSection(account: store.antigravityAccount)
+                    AntigravitySettingsSection(account: store.antigravityAccount, installation: store.antigravityInstallation)
                 } else {
                 LabeledContent("CLI", value: ProcessChannel.findExecutable(provider.executable)?.path ?? "Not installed")
                 Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)

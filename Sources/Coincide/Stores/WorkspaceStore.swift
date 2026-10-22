@@ -108,6 +108,8 @@ final class WorkspaceStore {
     var museModels: [UUID: [ProviderModel]] = [:]
     var antigravityModels: [UUID: [ProviderModel]] = [:]
     let antigravityAccount: AntigravityAccountStore
+    let antigravityInstallation: AntigravityInstallationStore
+    @ObservationIgnored private let antigravityRuntimeInstallation: AntigravityInstallation
     var isLoading = true
     var isRefreshingModels = false
     let codexAccount = CodexAccountStore()
@@ -171,30 +173,58 @@ final class WorkspaceStore {
     private var lastSequence: Int64 = -1
     private var terminating = false
 
-    init(databaseURL: URL? = nil) {
-        antigravityAccount = .init(stateRoot: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AntigravitySettings", isDirectory: true))
-        defer { if let engine { antigravityAccount.bind(engine: engine) } }
+    init(databaseURL: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared) {
+        let runtimeRoot = databaseURL.map { $0.deletingLastPathComponent().appendingPathComponent("Providers/Antigravity", isDirectory: true) } ?? AntigravityRuntime.defaultStateRoot
+        antigravityRuntimeInstallation = runtimeInstallation
+        antigravityInstallation = .init(installation: runtimeInstallation)
+        antigravityAccount = .init(stateRoot: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AntigravitySettings", isDirectory: true),
+                                  sessionFactory: AntigravityAuthentication.nativeSessionFactory(stateRoot: runtimeRoot, installation: runtimeInstallation))
+        defer {
+            if let engine { antigravityAccount.bind(engine: engine) }
+            bindAntigravityInstallation()
+        }
         projectScriptReader = { try await ProjectConfigurationService.load(using: $0) }
         managedProjectsRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Projects", isDirectory: true)
         worktreesRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Worktrees", isDirectory: true)
         projectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }
+        let accountRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AntigravitySettings", isDirectory: true)
+        let providers: WorkspaceEngine.ProviderFactory = {
+            try ProviderSessions.make(for: $0, antigravityStateRoot: runtimeRoot,
+                antigravityInstallation: runtimeInstallation, antigravityAccountRoot: accountRoot)
+        }
         do {
-            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, projectScriptFactory: Self.managedScriptFactory); return }
+            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory); return }
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Coincide", isDirectory: true)
-            engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), projectScriptFactory: Self.managedScriptFactory)
+            engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), providerFactory: providers, projectScriptFactory: Self.managedScriptFactory)
         } catch { errorMessage = error.localizedDescription }
     }
-    init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil,
+    init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared,
          projectScriptReader: @escaping NativeProjectScriptService.Reader = { try await ProjectConfigurationService.load(using: $0) },
          projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
-        antigravityAccount = .init(stateRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AntigravitySettings", isDirectory: true))
+        antigravityRuntimeInstallation = runtimeInstallation
+        antigravityInstallation = .init(installation: runtimeInstallation)
+        antigravityAccount = .init(stateRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AntigravitySettings", isDirectory: true),
+                                  sessionFactory: AntigravityAuthentication.nativeSessionFactory(installation: runtimeInstallation))
         self.engine = engine
         self.managedProjectsRoot = managedProjectsRoot ?? Self.applicationDataRoot.appendingPathComponent("Projects", isDirectory: true)
         self.worktreesRoot = engine.worktreesRoot
         self.projectCreator = projectCreator
         self.projectScriptReader = projectScriptReader
         antigravityAccount.bind(engine: engine)
+        bindAntigravityInstallation()
+    }
+    private func bindAntigravityInstallation() {
+        antigravityInstallation.bind { [weak self] in
+            guard let self else { return [] }
+            var configurations = [self.antigravityAccount.configuration]
+            for thread in self.snapshot.threads {
+                if let value = thread.antigravityConfiguration { configurations.append(value) }
+                if let value = thread.activeRun?.configuration.antigravityConfiguration { configurations.append(value) }
+                configurations += thread.queuedTurns.compactMap { $0.configuration.antigravityConfiguration }
+            }
+            return configurations.filter { $0.runtimeSelection == .external }.flatMap { [$0.executable] + ($0.harnessPath.map { [$0] } ?? []) }
+        }
     }
     private static var applicationDataRoot: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -1362,7 +1392,10 @@ final class WorkspaceStore {
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
         let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.antigravityConfiguration?.executable ?? thread.museConfiguration?.executable ?? thread.piConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable
-        guard !executable.isEmpty, ProcessChannel.findExecutable(executable) != nil else {
+        if let native = thread.antigravityConfiguration {
+            do { _ = try antigravityRuntimeInstallation.resolve(configuration: native) }
+            catch { errorMessage = error.localizedDescription; return Task { false } }
+        } else if executable.isEmpty || ProcessChannel.findExecutable(executable) == nil {
             errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
             return Task { false }
         }
@@ -2189,6 +2222,7 @@ final class WorkspaceStore {
     func shutdown() async {
         terminating = true
         await antigravityAccount.shutdown()
+        await antigravityInstallation.shutdown()
         await codexAccount.cancel()
         await acpConnections.cancel()
         let modelReads = codexModelDefaultsReads.values.map(\.task); codexModelDefaultsReads.removeAll()
