@@ -146,13 +146,35 @@ private struct NativeCheckoutSession: GitHubPullRequestCheckoutSession {
                      peer: peer, reads: reads, workspace: workspace, model: model)
     }
     static func makeWorkspace(database: URL, peer: NativeCheckoutPeer, reads: PullRequestNativePeer, provider: NativeSetupProvider? = nil) throws -> WorkspaceStore {
+        // PR targets capture the legacy source's future Claude runtime. Keep
+        // that read independent of any CLI or account installed on the host.
+        let pointer = try #require(realpath(database.deletingLastPathComponent().path, nil))
+        let fixtureRoot = URL(fileURLWithPath: String(cString: pointer)); free(pointer)
+        let home = fixtureRoot.appendingPathComponent("PrivateClaudeHome", isDirectory: true)
+        let configuration = home.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: configuration, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let launcher = fixtureRoot.appendingPathComponent("claude-never-executed")
+        if !FileManager.default.fileExists(atPath: launcher.path) {
+            try Data("#!/bin/sh\nexit 99\n".utf8).write(to: launcher, options: .withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: launcher.path)
+        }
+        let homePath = home.path, configurationPath = configuration.path, launcherPath = launcher.path
         let engine = try WorkspaceEngine(url: database,
             providerFactory: { _ in
                 if let provider { return provider }
                 throw CoincideError("Checkout must never send a prompt.")
             }, identityResolver: { _ in nil },
             pullRequestFactory: { _ in reads }, pullRequestCheckoutFactory: { NativeCheckoutSession(request: $0, peer: peer) })
-        let workspace = WorkspaceStore(engine: engine); workspace.pullRequestSessionFactory = { _ in reads }; return workspace
+        let workspace = WorkspaceStore(engine: engine, claudeRuntimeCapture: { registeredPath in
+            let pointer = try #require(realpath(registeredPath, nil))
+            let physicalPath = String(cString: pointer); free(pointer)
+            let captured = ClaudeRuntimeConfiguration(executable: launcherPath, configurationDirectory: configurationPath,
+                workspacePath: physicalPath, registeredWorkspacePath: registeredPath,
+                configurationDirectorySelection: .defaultHome(homeDirectory: homePath))
+            try captured.validate()
+            return captured
+        })
+        workspace.pullRequestSessionFactory = { _ in reads }; return workspace
     }
     func review(mode: GitHubPullRequestCheckoutMode = .local, number: Int = 42) async throws -> PullRequestCheckoutReview {
         try await model.prepareCheckout(reference: .init(repository: reads.repository, number: number), mode: mode, reviewSetup: false)
