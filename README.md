@@ -157,8 +157,29 @@ request's repository, published head, exact base, title, body and draft state.
 Push the branch through the existing Git controls first. An existing open request
 is reused. Creation is saved before its single dispatch; reopening the app never
 resends it. An uncertain result holds the checkout for **Inspect Creation State**
-or explicit acknowledgment. Other PR hosts, automatic content generation,
-combined commit/push/create, PR checkout, reviews and stacks remain pending.
+or explicit acknowledgment.
+
+Choose **Open in Conversation…** in a PR's detail to review a local checkout or
+separate worktree, the exact requested commit and destination, and the new
+conversation's captured agent settings. Separate worktrees are the default.
+Local checkout requires no tracked edits. Existing registered worktrees retain
+local commits and changes; an off-head result shows the actual branch and commit
+with a warning in both the result and the new conversation. Only a clean,
+provably lossless update advances an existing checkout; a proven rewritten remote
+head also retains the earlier commit in a private recovery ref.
+
+Finish active turns and queues in the repository, save or discard unsaved editor
+changes, and close running workspace terminals in every window before opening.
+Closed tabs and windows remain held until their owned processes have drained.
+A confirmed checkout creates an empty conversation, preserves the source history
+and latest draft, and sends no prompt. New or moved worktrees can discover a setup
+script for explicit review. An unchanged reused worktree does not rerun setup.
+Stop and restart never repeat the checkout. An uncertain result holds work for
+**Inspect Checkout State** or **Keep Current Files…**; acknowledging an unknown
+result creates no conversation. Clean editors and source control refresh afterward.
+
+Other PR hosts, automatic content generation, combined commit/push/create,
+reviews and stacks remain pending.
 
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a

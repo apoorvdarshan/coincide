@@ -146,7 +146,7 @@ extension WorkspaceSnapshot {
     public func canReviewConversationHistory(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty, thread.heldPostRunCheckpoint == nil,
-              thread.settlement == nil, workspaceReady(for: thread), !isPullRequestCreationLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
+              thread.settlement == nil, workspaceReady(for: thread), !isPullRequestCheckoutLocked(threadID: threadID), !isPullRequestCreationLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !(conversationHistoryOperations ?? []).contains(where: { $0.id != excludingOperationID && $0.review.sourceThreadID == threadID && $0.locksSource }) else { return false }
         return thread.workspacePreparation?.setup.map { [.succeeded, .skipped].contains($0.phase) } ?? true
     }
@@ -291,6 +291,8 @@ extension WorkspaceDecision {
     }
 
     mutating func acceptConversationHistory(_ review: ConversationHistoryReview, title: String?, now: Date) throws {
+        let checkoutIDs = snapshot.pullRequestCheckoutReservedIDs
+        guard !([review.id] + (review.targetThreadID.map { [$0] } ?? []) + (review.files.map { [$0.id] } ?? [])).contains(where: { checkoutIDs.contains($0) }) else { throw WorkspaceCommandError("This history identity is reserved by a pull request checkout.") }
         guard snapshot.conversationHistoryOperation(review.id) == nil,
               !snapshot.threads.contains(where: { $0.id == review.id }),
               !(snapshot.checkpointRestoreOperations ?? []).contains(where: { $0.id == review.id || $0.id == review.targetThreadID }),

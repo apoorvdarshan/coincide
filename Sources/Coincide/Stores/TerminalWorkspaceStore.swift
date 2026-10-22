@@ -10,6 +10,7 @@ final class TerminalWorkspaceStore {
     private let loginShell: Bool
     var sessions: [UUID: [LocalTerminalSession]] = [:]
     var selection: [UUID: UUID] = [:]
+    var sessionWillClose: (@MainActor (LocalTerminalSession) -> Void)?
     init(executable: String? = nil, loginShell: Bool = true) {
         self.executable = executable; self.loginShell = loginShell
     }
@@ -28,7 +29,7 @@ final class TerminalWorkspaceStore {
         return session
     }
     func close(_ session: LocalTerminalSession, threadID: UUID) {
-        session.close()
+        closeOwned(session)
         sessions[threadID]?.removeAll { $0.id == session.id }
         if selection[threadID] == session.id { selection[threadID] = sessions[threadID]?.last?.id }
     }
@@ -38,13 +39,17 @@ final class TerminalWorkspaceStore {
     @discardableResult func remove(threadIDs: Set<UUID>) -> [LocalTerminalSession] {
         let closing = threadIDs.flatMap { sessions.removeValue(forKey: $0) ?? [] }
         for id in threadIDs { selection.removeValue(forKey: id) }
-        for session in closing { session.close() }
+        for session in closing { closeOwned(session) }
         return closing
     }
     @discardableResult func removeAll() -> [LocalTerminalSession] {
         let closing = sessions.values.flatMap { $0 }
-        for session in closing { session.close() }
+        for session in closing { closeOwned(session) }
         sessions.removeAll(); selection.removeAll()
         return closing
+    }
+    private func closeOwned(_ session: LocalTerminalSession) {
+        session.close()
+        sessionWillClose?(session)
     }
 }

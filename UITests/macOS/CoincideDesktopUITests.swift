@@ -1251,6 +1251,163 @@ final class CoincideDesktopUITests: XCTestCase {
         app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
+    @MainActor func testNativePullRequestCheckoutCreatesBlankWorktreeConversationAndPreservesSourceAcrossRestart() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "pr-checkout")
+        let app = fixture.app, root = fixture.root, manager = FileManager.default
+        let project = root.appendingPathComponent("Native PR Checkout", isDirectory: true)
+        let bare = root.appendingPathComponent("Private PR remote.git", isDirectory: true)
+        try manager.createDirectory(at: project, withIntermediateDirectories: false)
+        let readme = project.appendingPathComponent("README.md")
+        let sourceBytes = Data("Source checkout stays on main\n".utf8), topicBytes = Data("Reviewed private PR topic contents\n".utf8)
+        try sourceBytes.write(to: readme)
+        _ = try runGit(["init", "--bare", "--initial-branch", "main", bare.path], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-private-bare")
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Private checkout base"],
+                          ["remote", "add", "origin", bare.path], ["push", "--set-upstream", "origin", "main"], ["checkout", "-b", "topic"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-base-\(arguments[0])")
+        }
+        let base = try runGit(["-C", project.path, "rev-parse", "main"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-base-head")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        try topicBytes.write(to: readme)
+        for arguments in [["add", "README.md"], ["commit", "--message", "Reviewed private PR head"], ["push", "--set-upstream", "origin", "topic"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-topic-\(arguments[0])")
+        }
+        let head = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-checkout-reviewed-head")
+        _ = try runGit(["--git-dir=" + bare.path, "update-ref", "refs/pull/42/head", head], gitPath: fixture.gitPath,
+                       configuration: fixture.configuration, name: "pr-checkout-private-pull-ref")
+        _ = try runGit(["-C", project.path, "checkout", "main"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-source-main")
+        let sourceHeadFile = project.appendingPathComponent(".git/HEAD"), sourceHeadBytes = try Data(contentsOf: sourceHeadFile)
+        _ = try runGit(["-C", project.path, "remote", "set-url", "origin", "https://github.com/fixture/native-pr.git"],
+                       gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-canonical-remote")
+        // Only this fixture's canonical URL is rewritten to the owned bare Git
+        // repository. All other transports are denied; the peer performs no I/O.
+        let bareURL = bare.absoluteString.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let originalConfiguration = try String(contentsOf: fixture.configuration, encoding: .utf8)
+        try (originalConfiguration + "\n[url \"" + bareURL + "\"]\n insteadOf = https://github.com/fixture/native-pr.git\n[protocol]\n allow = never\n[protocol \"file\"]\n allow = always\n")
+            .write(to: fixture.configuration, atomically: true, encoding: .utf8)
+        let state = root.appendingPathComponent("github-checkout-peer.json"), wire = root.appendingPathComponent("github-checkout-wire.jsonl")
+        let pullRequest: [String: Any] = ["number": 42, "title": "Open the exact published PR in an empty conversation", "body": "Seeded read-only pull request for native checkout.",
+            "url": "https://github.com/fixture/native-pr/pull/42", "state": "OPEN", "isDraft": false,
+            "headRefName": "topic", "baseRefName": "main", "headRefOid": head, "baseRefOid": base,
+            "headRepository": ["name": "native-pr", "nameWithOwner": "fixture/native-pr"], "headRepositoryOwner": ["login": "fixture"],
+            "isCrossRepository": false, "author": ["login": "fixture"], "updatedAt": "2026-10-22T00:00:00Z", "createdAt": "2026-10-22T00:00:00Z",
+            "reviewDecision": "REVIEW_REQUIRED", "statusCheckRollup": [], "additions": 1, "deletions": 1, "changedFiles": 1, "reviewRequests": [], "labels": []]
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "repository": "fixture/native-pr", "published": ["main": base, "topic": head],
+            "creates": 0, "checkoutFixture": true, "pullRequest": pullRequest]).write(to: state)
+        let providerState = root.appendingPathComponent("checkout-provider.json"), providerWire = root.appendingPathComponent("checkout-provider-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "threads": [:], "nextTurn": 0]).write(to: providerState)
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && manager.isExecutableFile(atPath: python))
+        let bin = root.appendingPathComponent("private-checkout-bin", isDirectory: true)
+        let codexHome = root.appendingPathComponent("private-checkout-codex-home", isDirectory: true)
+        let ghHome = root.appendingPathComponent("private-checkout-gh-home", isDirectory: true)
+        for directory in [bin, codexHome, ghHome] { try manager.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        for (name, resource, peerState, peerWire) in [("gh", "github_pr_ui", state, wire), ("codex", "codex_history_ui", providerState, providerWire)] {
+            let bundled = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: resource, withExtension: "py"))
+            let peer = root.appendingPathComponent(resource + ".py")
+            try Data(contentsOf: bundled).write(to: peer)
+            let executable = bin.appendingPathComponent(name)
+            let command = [python, peer.path, peerState.path, peerWire.path].map(shellQuoted).joined(separator: " ")
+            try ("#!/bin/sh\nexec " + command + " \"$@\"\n").write(to: executable, atomically: true, encoding: .utf8)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        }
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["CODEX_HOME"] = codexHome.path; app.launchEnvironment["GH_CONFIG_DIR"] = ghHome.path
+        app.launchEnvironment["GIT_ALLOW_PROTOCOL"] = "file"
+        addTeardownBlock { @MainActor [weak self] in
+            for (name, path) in [("pr-checkout-offline-gh-wire", wire), ("pr-checkout-offline-provider-wire", providerWire)] {
+                if let data = try? Data(contentsOf: path), let text = String(data: data, encoding: .utf8) {
+                    let attachment = XCTAttachment(string: text); attachment.name = name; attachment.lifetime = .keepAlways; self?.add(attachment)
+                }
+            }
+        }
+        try preflightOfflineHistoryProvider(bin.appendingPathComponent("codex"), cwd: project, environment: app.launchEnvironment, name: "pr-checkout")
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let sourceIdentifier = try selectedThreadIdentifier(in: app), prompt = "Keep this source history before opening a separate pull request checkout"
+        composer.click(); composer.typeText(prompt)
+        XCTAssertTrue(waitForValue(composer, value: prompt, timeout: 5)); app.typeKey(.return, modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["Offline history reply 1"].waitForExistence(timeout: 20))
+        let draft = "Retain this source draft across PR checkout and restart"
+        composer.click(); composer.typeText(draft); XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        try openNativePullRequests(in: app)
+        var sheet = try nativeHistorySheet(owning: "pull-requests-close", in: app)
+        let row = sheet.buttons["pull-request-select-42"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); XCTAssertTrue(row.isHittable); row.click()
+        let open = sheet.buttons["pull-request-checkout"]
+        let canOpen = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: open)
+        XCTAssertEqual(XCTWaiter.wait(for: [canOpen], timeout: 15), .completed); XCTAssertTrue(open.isHittable); open.click()
+        let worktree = sheet.radioButtons["Separate worktree"]
+        XCTAssertTrue(worktree.waitForExistence(timeout: 10))
+        XCTAssertEqual((worktree.value as? NSNumber)?.intValue ?? Int((worktree.value as? String) ?? ""), 1)
+        let submodules = sheet.descendants(matching: .any).matching(identifier: "pull-request-checkout-submodules").element
+        XCTAssertTrue(submodules.exists); XCTAssertTrue((submodules.value as? String)?.contains("None") == true)
+        let reviewSetup = sheet.checkBoxes["pull-request-checkout-review-setup"]
+        revealNativePullRequestControl(reviewSetup, in: sheet)
+        XCTAssertEqual((reviewSetup.value as? NSNumber)?.intValue ?? Int((reviewSetup.value as? String) ?? ""), 1)
+        let confirm = sheet.buttons["pull-request-checkout-confirm"]
+        XCTAssertEqual(confirm.label, "Review Checkout…"); XCTAssertTrue(confirm.isEnabled && confirm.isHittable); confirm.click()
+        XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "pull-request-checkout-captured-review").firstMatch.waitForExistence(timeout: 20))
+        XCTAssertEqual(confirm.label, "Open New Conversation")
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", head, head)).firstMatch.exists)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(sheet.frame))
+        capture(app, name: "pr-checkout-exact-worktree-review-before-opening")
+        XCTAssertTrue(confirm.isEnabled && confirm.isHittable); confirm.click()
+        XCTAssertTrue(waitForAbsence(sheet.buttons["pull-requests-close"], timeout: 20), "Confirmed completion should open the new worktree conversation.")
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
+        let targetIdentifier = try selectedThreadIdentifier(in: app)
+        XCTAssertNotEqual(targetIdentifier, sourceIdentifier)
+        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
+        let managedRoot = root.appendingPathComponent("Worktrees", isDirectory: true)
+        let destination = URL(fileURLWithPath: try XCTUnwrap(workspace.value as? String))
+        XCTAssertEqual(destination.deletingLastPathComponent().path, managedRoot.path)
+        assertWorkspaceReady(in: app)
+        XCTAssertTrue(app.staticTexts["What are we building?"].exists)
+        XCTAssertFalse(app.staticTexts["Offline history reply 1"].exists)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: destination, configuration: fixture.configuration, name: "pr-checkout-actual-target-head"), head)
+        let actualBranch = try runGit(["-C", destination.path, "branch", "--show-current"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-actual-target-branch")
+        XCTAssertEqual(actualBranch.trimmingCharacters(in: .whitespacesAndNewlines), "topic")
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("README.md")), topicBytes)
+        capture(app, name: "pr-checkout-new-blank-conversation-at-reviewed-head")
+        selectThread(sourceIdentifier, in: app)
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10)); assertConversationWorkspace(app, path: project.path)
+        let transcript = app.scrollViews.containing(.staticText, identifier: "Offline history reply 1").firstMatch
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        XCTAssertTrue(transcript.staticTexts.matching(NSPredicate(format: "label == %@", prompt)).firstMatch.exists)
+        try openNativePullRequests(in: app)
+        sheet = try nativeHistorySheet(owning: "pull-requests-close", in: app)
+        let status = sheet.staticTexts["pull-request-checkout-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertEqual((status.value as? String) ?? status.label, "Pull request conversation ready")
+        let openTarget = sheet.buttons["pull-request-checkout-open-conversation"]
+        revealNativePullRequestControl(openTarget, in: sheet)
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", head, head)).firstMatch.exists)
+        capture(app, name: "pr-checkout-durable-result-shows-actual-head")
+        sheet.buttons["pull-requests-close"].click()
+        selectThread(targetIdentifier, in: app)
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), targetIdentifier)
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10)); assertConversationWorkspace(app, path: destination.path)
+        assertWorkspaceReady(in: app); XCTAssertTrue(app.staticTexts["What are we building?"].exists)
+        selectThread(sourceIdentifier, in: app)
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10)); assertConversationWorkspace(app, path: project.path)
+        XCTAssertTrue(app.staticTexts["Offline history reply 1"].exists)
+        let frames = try historyWire(providerWire)
+        XCTAssertEqual(frames.filter { $0["method"] as? String == "turn/start" }.count, 1, "Opening or reopening the PR conversation must not send another prompt.")
+        XCTAssertEqual(frames.filter { $0["method"] as? String == "thread/start" }.count, 1)
+        XCTAssertEqual(try githubCreateReceipts(wire).count, 0)
+        XCTAssertEqual(try Data(contentsOf: readme), sourceBytes); XCTAssertEqual(try Data(contentsOf: sourceHeadFile), sourceHeadBytes)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-checkout-source-main-preserved"), base)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: destination, configuration: fixture.configuration, name: "pr-checkout-reopened-target-head"), head)
+        let inventory = try runGit(["-C", project.path, "worktree", "list", "--porcelain"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-reopened-inventory")
+        let paths = inventory.split(separator: "\n").filter { $0.hasPrefix("worktree ") }.map { String($0.dropFirst("worktree ".count)) }
+        XCTAssertEqual(Set(paths), [project.path, destination.path], "Restart must retain the same two worktrees without creating another.")
+        capture(app, name: "pr-checkout-reopened-source-history-and-draft-preserved")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
     @MainActor private func githubCreateReceipts(_ wire: URL) throws -> [[String: Any]] {
         guard FileManager.default.fileExists(atPath: wire.path) else { return [] }
         return try historyWire(wire).filter { ($0["arguments"] as? [String]).map { Array($0.prefix(2)) == ["pr", "create"] } == true }

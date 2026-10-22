@@ -84,6 +84,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var runHistory: [ThreadRunRecord]?
     public var checkpointPolicy: RunCheckpointPolicy?
     public var forkedFromHistoryOperationID: UUID?
+    public var pullRequestCheckoutOperationID: UUID?
     public var runtimeID: UUID?
     public var runtimeRequests: [RuntimeRequest]
     public var isPinned: Bool
@@ -98,7 +99,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, runtimeID, runtimeRequests, workspacePreparation, settlement
+        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, pullRequestCheckoutOperationID, runtimeID, runtimeRequests, workspacePreparation, settlement
         case draftAttachments
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
@@ -131,6 +132,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         runHistory = try values.decodeIfPresent([ThreadRunRecord].self, forKey: .runHistory)
         checkpointPolicy = try values.decodeIfPresent(RunCheckpointPolicy.self, forKey: .checkpointPolicy)
         forkedFromHistoryOperationID = try values.decodeIfPresent(UUID.self, forKey: .forkedFromHistoryOperationID)
+        pullRequestCheckoutOperationID = try values.decodeIfPresent(UUID.self, forKey: .pullRequestCheckoutOperationID)
         runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
         runtimeRequests = try values.decodeIfPresent([RuntimeRequest].self, forKey: .runtimeRequests) ?? []
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
@@ -150,9 +152,10 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var sidebarPreferences: SidebarPreferences?
     public var conversationHistoryOperations: [ConversationHistoryOperation]?
     public var pullRequestCreations: [PullRequestCreationOperation]?
+    public var pullRequestCheckouts: [PullRequestCheckoutOperation]?
     public var checkpointRestoreOperations: [RunCheckpointRestoreOperation]?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -162,10 +165,18 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         sidebarPreferences = try values.decodeIfPresent(SidebarPreferences.self, forKey: .sidebarPreferences)
         conversationHistoryOperations = try values.decodeIfPresent([ConversationHistoryOperation].self, forKey: .conversationHistoryOperations)
         pullRequestCreations = try values.decodeIfPresent([PullRequestCreationOperation].self, forKey: .pullRequestCreations)
+        pullRequestCheckouts = try values.decodeIfPresent([PullRequestCheckoutOperation].self, forKey: .pullRequestCheckouts)
         checkpointRestoreOperations = try values.decodeIfPresent([RunCheckpointRestoreOperation].self, forKey: .checkpointRestoreOperations)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        for i in (pullRequestCheckouts ?? []).indices {
+            guard let phase = pullRequestCheckouts?[i].phase, phase == .accepted || phase == .dispatching else { continue }
+            pullRequestCheckouts?[i].phase = phase == .accepted ? .failed : .unconfirmed
+            pullRequestCheckouts?[i].error = phase == .accepted ? PullRequestCheckoutOperation.failureMessage : PullRequestCheckoutOperation.unconfirmedMessage
+            pullRequestCheckouts?[i].cancelRequested = false
+            pullRequestCheckouts?[i].updatedAt = Date()
+        }
         for i in (pullRequestCreations ?? []).indices {
             guard let phase = pullRequestCreations?[i].phase, phase == .accepted || phase == .dispatching else { continue }
             pullRequestCreations?[i].phase = phase == .accepted ? .failed : .unconfirmed

@@ -23,6 +23,8 @@ struct PullRequestSummaryRow: View {
 
 struct PullRequestDetailContent: View {
     let detail: GitHubPullRequestDetail
+    var canCheckout = false
+    var checkout: (() -> Void)? = nil
     private var summary: GitHubPullRequestSummary { detail.summary }
     private let bodyPreviewLimit = 100_000
     var body: some View {
@@ -34,6 +36,10 @@ struct PullRequestDetailContent: View {
                     Text(summary.reference.repository.nameWithOwner).font(.caption.monospaced()).textSelection(.enabled)
                     if let url = PullRequestPresentation.url(summary) {
                         Link("Open on GitHub", destination: url).accessibilityIdentifier("pull-request-open")
+                    }
+                    if let checkout {
+                        Button("Open in Conversation…", action: checkout).disabled(!canCheckout)
+                            .accessibilityIdentifier("pull-request-checkout")
                     }
                 }
                 VStack(alignment: .leading, spacing: 7) {

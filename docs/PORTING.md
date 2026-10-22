@@ -52,7 +52,7 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 20 protects these fields
+  hold it for explicit resumption. Database storage version 21 protects these fields
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
 - Each newly started run retains its captured settings, user-message reference
   or explicit agent/legacy origin, observed adapter turn references, stop intent,
@@ -317,7 +317,34 @@ must each be mapped and verified before declaring parity.
   Explicit acknowledgment releases an unresolved hold without repeating creation.
   The native browser supports state/search filters, URL/number lookup, descriptions,
   checks and reviewer metadata. AI content generation, compound commit/push/create,
-  PR checkout/import, review/merge actions, stacks and other hosts remain pending.
+  review/merge actions, stacks and other hosts remain pending.
+- Native PR checkout captures exact host/base/head identity, requested commit,
+  source/admin/common ownership, index/status/configuration and destination proof
+  before durable dispatch. It fetches into an attempt-owned ref, verifies the
+  reviewed SHA, switches a clean local checkout or creates/reuses a registered
+  worktree, and records the actual branch/HEAD. Fork worktree branches include
+  the full base repository identity; fork default branches use an owner prefix
+  locally. A missing fork head falls back to the exact base pull ref. Tracking
+  setup failures retain a usable checkout with a warning. Clean reused checkouts
+  fast-forward; a proven old upstream can advance to its rewritten remote head
+  after retaining the old commit. Local commits, dirty checkouts and unrelated
+  fork aliases stay unchanged and explicitly off-head. Expected-old ref updates
+  preserve a racing external branch advance. Git configuration and pointer changes
+  invalidate a review, including destination-only per-worktree settings.
+- A distinct checkout ledger reserves the target identity/settings without creating
+  a conversation. Confirmed completion or read-only inspection atomically creates
+  one blank target with PR lineage, captured agent options and checkpoint policy;
+  source history and current draft remain. No prompt or provider session is
+  inherited. New/moved managed worktrees may discover setup for explicit review;
+  unchanged reuse skips it. Pending/unknown operations hold overlapping writes and
+  all registered conversations in the same project, including cold archived
+  siblings. Closed terminal tabs/windows retain directory ownership until actual
+  process/output drain. PR reads are canceled and drained before dispatch; stale
+  cached editor/Git results cannot publish across the mutation. Restart never
+  repeats Git or setup; unknown acknowledgment creates no target. The current
+  whole-project idle admission is more restrictive than T3's separate-worktree
+  concurrency and busy read-only reuse. Those paths and broader real-host/network
+  verification remain parity gaps.
 - Explicit Settle/Resume persists a settlement generation independently of provider
   idle. Settle rejects running work, queued messages, unresolved setup and pending
   questions. It drains retained setup jobs before discovering the first settle
@@ -340,7 +367,7 @@ must each be mapped and verified before declaring parity.
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind, standalone restoration and combined provider-then-files intents with retained audit, explicit partial outcomes, inspect-only recovery and one-time latest-draft recall, legacy migration | Complete provider recovery, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
-| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates, reviewed settle roles with drain-before-resume, automatic workspace observations in private refs with isolated staging and verified scratch cleanup, reviewed standalone and combined rewind checkpoint restoration with owned recovery data, bounded native GitHub PR list/detail/checks and exact reviewed creation with durable uncertain-outcome recovery | AI PR content generation, compound commit/push/create, PR checkout/import, reviews/merge/stacks/other hosts, large-workspace restoration and recovery-storage management, worktree removal, automatic pull policies, broader credential and network failure coverage |
+| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates, reviewed settle roles with drain-before-resume, automatic workspace observations in private refs with isolated staging and verified scratch cleanup, reviewed standalone and combined rewind checkpoint restoration with owned recovery data, bounded native GitHub PR list/detail/checks and exact reviewed creation, local PR checkout and managed/reused PR worktrees with captured blank conversations, actual-head warnings and durable inspect-only recovery | Concurrent PR checkout while unrelated project work continues and busy read-only reuse, AI PR content generation, compound commit/push/create, reviews/merge/stacks/other hosts, large-workspace restoration and recovery-storage management, worktree removal, automatic pull policies, broader credential and network failure coverage |
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup, bounded t3.json script discovery with explicit native selection and dedicated command tabs/cwd/environment/exit status, app-owned setup and settle jobs with shared output and separate command/background lifetime | Preview behavior, project-script settings/editing, durable terminal restart restoration, remote attachment/replay, search/settings, activity/idle detection and idle-tab closure, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |

@@ -31,16 +31,12 @@ struct PullRequestsSheet: View {
                 Button("Back to Pull Requests") { mode = .list }.disabled(model.isBusy).padding(.horizontal, 20).padding(.top, 12)
                     .accessibilityIdentifier("pull-requests-back")
             }
-            if mode != .create, model.operation?.locksSource == true {
-                ScrollView {
-                    PullRequestOperationView(model: model, viewResult: { mode = .detail }).padding(20)
-                }.frame(minHeight: 0, maxHeight: .infinity)
+            if (mode != .create && model.operation?.locksSource == true) || (!mode.isCheckout && model.checkoutOperation?.locksSource == true) {
+                ScrollView { operationContent.padding(20) }.frame(minHeight: 0, maxHeight: .infinity)
                     .accessibilityIdentifier("pull-request-operation-scroll")
             } else {
-                if mode != .create, model.operation != nil {
-                    ScrollView {
-                        PullRequestOperationView(model: model, viewResult: { mode = .detail }).padding(.horizontal, 20).padding(.vertical, 12)
-                    }.frame(minHeight: 0, maxHeight: 180)
+                if !mode.isForm, model.operation != nil || model.checkoutOperation != nil {
+                    ScrollView { operationContent.padding(.horizontal, 20).padding(.vertical, 12) }.frame(minHeight: 0, maxHeight: 180)
                         .accessibilityIdentifier("pull-request-operation-scroll")
                 }
                 browserContent.frame(minHeight: 0, maxHeight: .infinity)
@@ -48,7 +44,7 @@ struct PullRequestsSheet: View {
             Divider()
             HStack {
                 Spacer(minLength: 0)
-                Button(mode == .create && !model.isMutating ? "Cancel" : "Done") { dismiss() }
+                Button(mode.isForm && !model.isMutating ? "Cancel" : "Done") { dismiss() }
                     .keyboardShortcut(.defaultAction).disabled(model.isMutating)
                     .accessibilityIdentifier("pull-requests-close")
                     .background { geometry("close") }
@@ -82,6 +78,19 @@ struct PullRequestsSheet: View {
             case .list: listContent
             case .detail: detailContent
             case .create: PullRequestCreateView(model: model, back: { mode = .detail }, requestPush: requestPush)
+                case .checkout(let reference): PullRequestCheckoutView(model: model, reference: reference)
+            }
+        }
+    }
+    @ViewBuilder private var operationContent: some View {
+        if model.checkoutOperation?.locksSource == true {
+            PullRequestCheckoutOperationView(model: model)
+        } else if model.operation?.locksSource == true {
+            PullRequestOperationView(model: model, viewResult: { mode = .detail })
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                if model.checkoutOperation != nil { PullRequestCheckoutOperationView(model: model) }
+                if model.operation != nil { PullRequestOperationView(model: model, viewResult: { mode = .detail }) }
             }
         }
     }
@@ -134,7 +143,10 @@ struct PullRequestsSheet: View {
     }
     @ViewBuilder private var detailContent: some View {
         if model.isLoadingDetail { VStack { Spacer(); ProgressView("Reading pull request…"); Spacer() }.frame(maxWidth: .infinity) }
-        else if let detail = model.detail { PullRequestDetailContent(detail: detail) }
+        else if let detail = model.detail {
+            PullRequestDetailContent(detail: detail, canCheckout: model.canCheckout && !model.isBusy,
+                                     checkout: { mode = .checkout(detail.summary.reference) })
+        }
         else if let error = model.detailError { ScrollView { Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled).padding(20) }.frame(maxWidth: .infinity, alignment: .leading) }
         else { ContentUnavailableView("Choose a Pull Request", systemImage: "arrow.triangle.branch", description: Text("Return to the list or enter an exact URL or number.")) }
     }
@@ -146,7 +158,11 @@ struct PullRequestsSheet: View {
     }
 }
 
-private enum PullRequestSheetMode { case list, detail, create }
+private enum PullRequestSheetMode: Equatable {
+    case list, detail, create, checkout(GitHubPullRequestReference)
+    var isCheckout: Bool { if case .checkout = self { true } else { false } }
+    var isForm: Bool { self == .create || isCheckout }
+}
 
 struct PullRequestBranchCard: View {
     let model: PullRequestStore
@@ -159,7 +175,11 @@ struct PullRequestBranchCard: View {
                 if model.isLoading { ProgressView().controlSize(.mini) }
                 Button("Pull Requests…") { open(nil) }.controlSize(.small).accessibilityIdentifier("pull-requests-open")
             }
-            if let operation = model.operation, operation.locksSource {
+            if let operation = model.checkoutOperation, operation.locksSource {
+                Text(operation.isWorking ? "Preparing pull request checkout…" : "Checkout unconfirmed; inspect before continuing")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button("View Checkout State") { open(nil) }.controlSize(.small).accessibilityIdentifier("pull-request-open-checkout")
+            } else if let operation = model.operation, operation.locksSource {
                 Text(operation.isWorking ? "Creating pull request…" : "Creation unconfirmed; inspect before continuing")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Button("View Creation State") { open(nil) }.controlSize(.small).accessibilityIdentifier("pull-request-open-creation")

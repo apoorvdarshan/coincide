@@ -119,7 +119,7 @@ extension WorkspaceSnapshot {
     public func canReviewCheckpointRestore(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty,
-              thread.settlement == nil, workspaceReady(for: thread), !isPullRequestCreationLocked(threadID: threadID), !isConversationHistoryLocked(threadID: threadID, excludingOperationID: excludingOperationID),
+              thread.settlement == nil, workspaceReady(for: thread), !isPullRequestCheckoutLocked(threadID: threadID), !isPullRequestCreationLocked(threadID: threadID), !isConversationHistoryLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !(checkpointRestoreOperations ?? []).contains(where: { $0.id != excludingOperationID && $0.locksSource &&
                   (Self.checkpointRestorePathsOverlap(thread.workspacePath, $0.review.gitReview.currentPlan.repositoryPath) || $0.review.threadID == threadID) }),
@@ -247,6 +247,7 @@ extension WorkspaceDecision {
         guard !threadIDs.contains(where: { snapshot.isCheckpointRestoreLocked(threadID: $0) }) else { throw WorkspaceCommandError("Inspect the pending restoration or explicitly keep the current files before changing this workspace.") }
     }
     mutating func acceptCheckpointRestore(_ review: RunCheckpointRestoreReview, now: Date) throws {
+        guard !snapshot.pullRequestCheckoutReservedIDs.contains(review.id) else { throw WorkspaceCommandError("This restoration identity is reserved by a pull request checkout.") }
         guard snapshot.checkpointRestoreOperation(review.id) == nil else { throw WorkspaceCommandError("This restoration identity was already used. Review again.") }
         try snapshot.validateCheckpointRestoreSource(review)
         let operation = RunCheckpointRestoreOperation(review: review, updatedAt: now); try operation.validate()

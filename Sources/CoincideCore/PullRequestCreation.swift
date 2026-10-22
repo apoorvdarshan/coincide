@@ -88,8 +88,8 @@ extension WorkspaceSnapshot {
     func validatePullRequestCreations() throws {
         let operations = pullRequestCreations ?? []
         let identities = operations.flatMap { [$0.id, $0.effectID] }
-        var reserved = Set(projects.map(\.id) + threads.map(\.id) + (checkpointRestoreOperations ?? []).map(\.id) +
-            (conversationHistoryOperations ?? []).flatMap { [$0.id] + ($0.review.targetThreadID.map { [$0] } ?? []) + ($0.review.files.map { [$0.id] } ?? []) })
+        var reserved = pullRequestCheckoutReservedIDs.union(Set(projects.map(\.id) + threads.map(\.id) + (checkpointRestoreOperations ?? []).map(\.id) +
+            (conversationHistoryOperations ?? []).flatMap { [$0.id] + ($0.review.targetThreadID.map { [$0] } ?? []) + ($0.review.files.map { [$0.id] } ?? []) }))
         for project in projects { if let clone = project.clone { reserved.formUnion((clone.previousPlans + [clone.plan]).map(\.id)) } }
         for thread in threads {
             reserved.formUnion(thread.queuedTurns.map(\.id)); if let active = thread.activeRun { reserved.insert(active.id) }
@@ -176,18 +176,19 @@ extension WorkspaceDecision {
     mutating func acceptPullRequestCreation(_ operation: PullRequestCreationOperation) throws {
         guard operation.phase == .accepted, snapshot.pullRequestCreation(operation.id) == nil else { throw WorkspaceCommandError("This pull request intent was already used.") }
         try snapshot.validatePullRequestCreationSource(operation)
-        guard !operation.scopePaths.contains(where: { snapshot.isCheckpointRestoreLocked(path: $0) || snapshot.isPullRequestCreationLocked(path: $0) }) else {
+        guard !operation.scopePaths.contains(where: { snapshot.isCheckpointRestoreLocked(path: $0) || snapshot.isPullRequestCreationLocked(path: $0) || snapshot.isPullRequestCheckoutLocked(path: $0) }) else {
             throw WorkspaceCommandError("Finish the pending file or pull request action before creating another pull request.")
         }
         let owners = snapshot.threads.filter { thread in
             thread.projectID == operation.projectID || thread.pullRequestCreationScopePaths.contains { path in operation.scopePaths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }
         }
-        guard !owners.contains(where: { $0.hasPullRequestCreationWork || snapshot.isConversationHistoryLocked(threadID: $0.id) }) else {
+        guard !owners.contains(where: { $0.hasPullRequestCreationWork || snapshot.isConversationHistoryLocked(threadID: $0.id) || snapshot.isPullRequestCheckoutLocked(threadID: $0.id) }) else {
             throw WorkspaceCommandError("Finish work, queues and workspace actions before creating a pull request.")
         }
         if snapshot.pullRequestCreations == nil { snapshot.pullRequestCreations = [] }
         snapshot.pullRequestCreations!.append(operation)
-        try snapshot.validatePullRequestCreations()
+        do { try snapshot.validatePullRequestCreations() }
+        catch { throw WorkspaceCommandError("This pull request identity is reserved by another workspace action.") }
         effects.append(.init(id: operation.effectID, request: .pullRequestCreation(projectID: operation.projectID, operationID: operation.id, effectID: operation.effectID)))
         for thread in snapshot.threads where snapshot.isPullRequestCreationLocked(threadID: thread.id) { closeRuntimes.insert(thread.id) }
     }

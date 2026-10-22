@@ -52,6 +52,9 @@ struct GitInspectorView: View {
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .help("Refresh source control").accessibilityLabel("Refresh source control").disabled(model.isBusy)
             }.padding(.horizontal)
+            PullRequestBranchCard(model: pullRequests) { reference in
+                sheet = .pullRequests(reference)
+            }.padding(.horizontal)
             if let snapshot = model.snapshot {
                 if let upstream = snapshot.upstream {
                     HStack(spacing: 8) {
@@ -70,9 +73,6 @@ struct GitInspectorView: View {
                         .disabled(mutationsDisabled || !snapshot.isClean || snapshot.isDetached || snapshot.isUnborn || model.upstream == nil)
                     Button("Push…") { sheet = .push }.disabled(mutationsDisabled || snapshot.isDetached || snapshot.isUnborn || snapshot.hasConflicts || model.remotes.isEmpty)
                 }.controlSize(.small).padding(.horizontal)
-                PullRequestBranchCard(model: pullRequests) { reference in
-                    sheet = .pullRequests(reference)
-                }.padding(.horizontal)
                 if workspaceBusy { Text("A coding agent is using this workspace.").font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
                 if snapshot.hasConflicts { Label("Resolve conflicts before committing.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).padding(.horizontal) }
                 List(model.files, selection: $model.selected) { file in
@@ -104,6 +104,8 @@ struct GitInspectorView: View {
             } else if let error = model.statusError {
                 ContentUnavailableView("Git Unavailable", systemImage: "folder.badge.questionmark", description: Text(error))
                 Button("Initialize Repository…") { sheet = .initialize }.disabled(mutationsDisabled)
+            } else if pullRequests.operation?.locksSource == true || pullRequests.checkoutOperation?.locksSource == true {
+                ContentUnavailableView("Workspace Held", systemImage: "pause.circle", description: Text("Inspect the pull request operation above before changing this checkout."))
             } else { Spacer(); ProgressView("Reading repository…"); Spacer() }
             if let name = model.operationName {
                 HStack { ProgressView().controlSize(.small); Text(name).font(.caption).lineLimit(1); Spacer(); Button("Cancel") { model.cancel() }.controlSize(.small) }.padding(.horizontal)

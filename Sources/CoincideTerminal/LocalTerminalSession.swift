@@ -91,6 +91,13 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
             if pid > 0, processID == pid, view.process.running {
                 if getpgid(pid) == pid { kill(-pid, SIGKILL) } else { kill(pid, SIGKILL) }
             }
+            // Keep directory ownership until SwiftTerm has observed child exit.
+            // Sending SIGKILL alone does not establish that the process drained.
+            // SwiftTerm clears shellPid when reaping starts, before its final
+            // output drain and lifecycle callback. This session never relaunches.
+            while view.process.running || view.process.windingDown {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
             closeTask = nil
         }
     }

@@ -40,7 +40,7 @@ struct ContentView: View {
                 }
             } inspector: {
                 if let thread = store.selectedThread {
-                    if store.workspaceReady(for: thread) {
+                    if store.canPresentWorkspaceInspector(for: thread) {
                         WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath)
                     } else {
                         ContentUnavailableView("Workspace Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when checkout preparation finishes."))

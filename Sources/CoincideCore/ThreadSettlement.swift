@@ -71,7 +71,7 @@ extension CodingThread {
 
 extension WorkspaceSnapshot {
     public func canSettle(threadID: UUID) -> Bool {
-        guard !isPullRequestCreationLocked(threadID: threadID), !isConversationHistoryLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID), let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, thread.settlement == nil,
+        guard !isPullRequestCheckoutLocked(threadID: threadID), !isPullRequestCreationLocked(threadID: threadID), !isConversationHistoryLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID), let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, thread.settlement == nil,
               !thread.isBusy, thread.heldPostRunCheckpoint == nil, thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty, workspaceReady(for: thread) else { return false }
         return thread.workspacePreparation?.setup.map { [.succeeded, .skipped].contains($0.phase) } ?? true
     }
@@ -81,7 +81,7 @@ extension WorkspaceSnapshot {
         return URL(fileURLWithPath: thread.workspacePath).standardizedFileURL.path != URL(fileURLWithPath: project.path).standardizedFileURL.path
     }
     func permitsScriptAction(owner: ProjectScriptOwner, thread: CodingThread) -> Bool {
-        guard !thread.isArchived, !isPullRequestCreationLocked(threadID: thread.id), !isCheckpointRestoreLocked(threadID: thread.id), workspaceReady(for: thread) else { return false }
+        guard !thread.isArchived, !isPullRequestCheckoutLocked(threadID: thread.id), !isPullRequestCreationLocked(threadID: thread.id), !isCheckpointRestoreLocked(threadID: thread.id), workspaceReady(for: thread) else { return false }
         switch owner {
         case .setup: return thread.settlement == nil && thread.workspacePreparation?.permitsProjectSetup == true
         case .settlement: return thread.settlement?.phase == .settled && permitsSettleScript(for: thread)

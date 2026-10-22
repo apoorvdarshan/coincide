@@ -1,5 +1,6 @@
 import AppKit
 import CoincideCore
+import CoincideTerminal
 import Observation
 import UniformTypeIdentifiers
 
@@ -84,6 +85,7 @@ final class WorkspaceStore {
         didSet {
             if selectedThreadID != oldValue {
                 historyNavigationRequests = historyNavigationRequests.filter { $0.value == selectedThreadID }
+                pullRequestCheckoutNavigation = pullRequestCheckoutNavigation.filter { $0.value == selectedThreadID }
             }
             guard !isLoading, !terminating, selectedThreadID != oldValue,
                   selectedThreadID.map({ id in snapshot.threads.contains { $0.id == id } }) ?? true else { return }
@@ -116,6 +118,8 @@ final class WorkspaceStore {
     private var projectCloneRetryTasks: [UUID: Task<Void, Never>] = [:]
     private var removalCleanupTasks: [UUID: ProjectRemovalCleanup] = [:]
     private var terminalStores: [ObjectIdentifier: WeakTerminalStore] = [:]
+    private var closingTerminalSessions: [UUID: LocalTerminalSession] = [:]
+    private var closingTerminalTasks: [UUID: Task<Void, Never>] = [:]
     private var dirtyEditors: [UUID: String] = [:]
     private var removalEditorLocks: [UUID: Set<String>] = [:]
     private var workspaceTransitionLocks: [UUID: Set<String>] = [:]
@@ -135,6 +139,10 @@ final class WorkspaceStore {
     private var checkpointRestoreLocks: [UUID: String] = [:]
     private var acceptingCheckpointRestores: Set<UUID> = []
     private var checkpointRefreshTasks: [UUID: Task<Void, Never>] = [:]
+    private var pullRequestCheckoutLocks: [UUID: Set<String>] = [:]
+    private var acceptingPullRequestCheckouts: Set<UUID> = []
+    private var pullRequestCheckoutRefreshTasks: [UUID: Task<Void, Never>] = [:]
+    private var pullRequestCheckoutNavigation: [UUID: UUID?] = [:]
     private var historyReviewReads: [UUID: ConversationHistoryRead] = [:]
     private var acceptingHistoryThreads: Set<UUID> = []
     private var historyNavigationRequests: [UUID: UUID] = [:]
@@ -208,9 +216,20 @@ final class WorkspaceStore {
             owner: { [weak self] in self?.pullRequestProjectID(path: path) },
             canRead: { [weak self] in
                 guard let self, !self.terminating, self.pullRequestProjectID(path: path) != nil else { return false }
-                return !self.removalEditorLocks.values.contains { $0.contains(where: { Self.pathsOverlap($0, path) }) }
+                return !self.removalEditorLocks.values.contains { $0.contains(where: { Self.pathsOverlap($0, path) }) } &&
+                    !self.snapshot.isPullRequestCheckoutLocked(path: path) &&
+                    !self.pullRequestCheckoutLocks.values.contains { $0.contains { Self.pathsOverlap($0, path) } }
             }, canMutate: { [weak self] in self?.canCreatePullRequest(path: path) == true },
-            updateWorkspace: { [weak self] in self?.apply($0) })
+            updateWorkspace: { [weak self] in self?.apply($0) },
+            checkoutSupport: .init(configuration: { [weak self] in self?.pullRequestCheckoutConfiguration(path: path) },
+                canPrepare: { [weak self] paths, excluded in self?.canPreparePullRequestCheckout(path: path, scopePaths: paths, excludingOperationID: excluded) == true },
+                begin: { [weak self] review in
+                    guard let self else { throw CancellationError() }
+                    return try await self.beginPullRequestCheckout(review)
+                }, open: { [weak self] id in self?.openPullRequestCheckoutConversation(id) },
+                unavailableReason: { [weak self] paths, excluded in
+                    self?.pullRequestCheckoutUnavailableReason(path: path, scopePaths: paths, excludingOperationID: excluded)
+                }))
         model.apply(snapshot)
         if terminating { model.prepareForShutdown() }
         pullRequestStores[path] = model
@@ -231,6 +250,143 @@ final class WorkspaceStore {
                 (thread.isBusy || !thread.queuedTurns.isEmpty || !thread.runtimeRequests.isEmpty ||
                  snapshot.isConversationHistoryLocked(threadID: thread.id) || !snapshot.workspaceReady(for: thread))
         }
+    }
+    private func pullRequestCheckoutConfiguration(path: String) -> (ProviderConfiguration, RunCheckpointPolicy?)? {
+        guard let projectID = pullRequestProjectID(path: path), let project = snapshot.projects.first(where: { $0.id == projectID }) else { return nil }
+        let source = selectedThread.flatMap { $0.projectID == projectID && Self.canonicalPath($0.workspacePath) == path ? $0 : nil }
+            ?? snapshot.threads.first { $0.projectID == projectID && Self.canonicalPath($0.workspacePath) == path }
+            ?? CodingThread(project: project)
+        var configuration = ProviderConfiguration(thread: source); configuration.nativeThreadID = nil
+        return (configuration, source.checkpointPolicy)
+    }
+    private func pullRequestCheckoutScope(projectID: UUID, paths: [String]) -> Set<String> {
+        Set((paths + snapshot.projects.filter { $0.id == projectID }.map(\.path) +
+             snapshot.threads.filter { $0.projectID == projectID }.map(\.workspacePath)).map(Self.canonicalPath))
+    }
+    private func canPreparePullRequestCheckout(path: String, scopePaths: [String], excludingOperationID: UUID?) -> Bool {
+        pullRequestCheckoutUnavailableReason(path: path, scopePaths: scopePaths, excludingOperationID: excludingOperationID) == nil
+    }
+    private func pullRequestCheckoutUnavailableReason(path: String, scopePaths: [String], excludingOperationID: UUID?) -> String? {
+        guard !terminating, let projectID = pullRequestProjectID(path: path) else {
+            return String(localized: "The registered checkout is unavailable. Reopen its project before reviewing the pull request.")
+        }
+        let paths = pullRequestCheckoutScope(projectID: projectID, paths: scopePaths)
+        func overlaps(_ path: String) -> Bool { paths.contains { Self.pathsOverlap(path, $0) } }
+        guard !removalEditorLocks.values.contains(where: { $0.contains(where: overlaps) }),
+              !workspaceTransitionLocks.values.contains(where: { $0.contains(where: overlaps) }),
+              !checkpointRestoreLocks.values.contains(where: overlaps),
+              !paths.contains(where: { snapshot.isCheckpointRestoreLocked(path: $0) || snapshot.isPullRequestCreationLocked(path: $0) }),
+              !(snapshot.pullRequestCheckouts ?? []).contains(where: { operation in
+                  operation.id != excludingOperationID && operation.locksSource &&
+                      (operation.review.projectID == projectID || operation.scopePaths.contains(where: overlaps))
+              }),
+              !pullRequestCheckoutLocks.contains(where: { $0.key != excludingOperationID && $0.value.contains(where: overlaps) }) else {
+            return String(localized: "Finish or inspect the pending workspace action before checking out a pull request.")
+        }
+        guard !dirtyEditors.values.contains(where: overlaps),
+              !fileBrowsers.contains(where: { overlaps($0.key) && $0.value.isDirty }) else {
+            return String(localized: "Save or discard unsaved editor changes in every window before checking out a pull request.")
+        }
+        guard !fileBrowsers.contains(where: { overlaps($0.key) && $0.value.isSaving }),
+              !gitInspectors.contains(where: { overlaps($0.key) && $0.value.operationName != nil }),
+              !fileServiceCleanupTasks.keys.contains(where: overlaps),
+              !pullRequestStores.values.contains(where: { model in
+                  let ownsAcceptance = excludingOperationID.map { model.acceptingCheckoutID == $0 } ?? false
+                  return model.isMutating && !ownsAcceptance && model.mutationPaths.contains(where: overlaps)
+              }) else {
+            return String(localized: "Wait for file saves and source control operations to finish before checking out a pull request.")
+        }
+        if workspaceTerminalSessions.contains(where: { session in
+            guard overlaps(session.directory) else { return false }
+            switch session.lifecycle { case .running, .closing: return true; case .exited, .failed: return false }
+        }) {
+            return String(localized: "Close terminals and running project scripts using this repository in every window before checking out a pull request.")
+        }
+        if snapshot.threads.contains(where: { thread in
+            (thread.projectID == projectID || overlaps(thread.workspacePath)) &&
+                (thread.isBusy || !thread.queuedTurns.isEmpty || !thread.runtimeRequests.isEmpty ||
+                 snapshot.isConversationHistoryLocked(threadID: thread.id) || !snapshot.workspaceReady(for: thread))
+        }) { return String(localized: "Finish active turns, queues, and pending conversation actions in this repository before checking out a pull request.") }
+        return nil
+    }
+    private func beginPullRequestCheckout(_ review: PullRequestCheckoutReview) async throws -> WorkspaceCommandReceipt {
+        guard let engine, canPreparePullRequestCheckout(path: Self.canonicalPath(review.plan.sourcePath),
+              scopePaths: review.plan.scopePaths, excludingOperationID: review.id),
+              acceptingPullRequestCheckouts.insert(review.id).inserted else {
+            throw WorkspaceCommandError(pullRequestCheckoutUnavailableReason(path: Self.canonicalPath(review.plan.sourcePath),
+                scopePaths: review.plan.scopePaths, excludingOperationID: review.id) ?? String(localized: "This checkout is already being prepared."))
+        }
+        let paths = pullRequestCheckoutScope(projectID: review.projectID, paths: review.plan.scopePaths)
+        pullRequestCheckoutLocks[review.id] = paths
+        pullRequestCheckoutNavigation.updateValue(selectedThreadID, forKey: review.id)
+        suspendPullRequestCheckoutCaches(paths: paths)
+        flushDrafts()
+        let previous = commandTail
+        let task = Task {
+            await previous?.value
+            guard self.canPreparePullRequestCheckout(path: Self.canonicalPath(review.plan.sourcePath),
+                    scopePaths: review.plan.scopePaths, excludingOperationID: review.id) else {
+                throw WorkspaceCommandError(self.pullRequestCheckoutUnavailableReason(path: Self.canonicalPath(review.plan.sourcePath),
+                    scopePaths: review.plan.scopePaths, excludingOperationID: review.id) ?? String(localized: "The checkout changed. Review it again."))
+            }
+            let readers = self.pullRequestStores.filter { entry in paths.contains { Self.pathsOverlap(entry.key, $0) } }
+            for model in readers.values { await model.waitForReads() }
+            guard self.canPreparePullRequestCheckout(path: Self.canonicalPath(review.plan.sourcePath),
+                    scopePaths: review.plan.scopePaths, excludingOperationID: review.id) else {
+                throw WorkspaceCommandError(self.pullRequestCheckoutUnavailableReason(path: Self.canonicalPath(review.plan.sourcePath),
+                    scopePaths: review.plan.scopePaths, excludingOperationID: review.id) ?? String(localized: "The checkout changed. Review it again."))
+            }
+            let receipt = try await engine.beginPullRequestCheckout(review: review)
+            self.apply(await engine.current())
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+            return receipt
+        }
+        commandTail = Task { _ = await task.result }
+        defer { acceptingPullRequestCheckouts.remove(review.id); reconcilePullRequestCheckoutLocks() }
+        do { return try await task.value }
+        catch { apply(await engine.current()); pullRequestCheckoutNavigation.removeValue(forKey: review.id); throw error }
+    }
+    private func suspendPullRequestCheckoutCaches(paths: Set<String>) {
+        func overlaps(_ path: String) -> Bool { paths.contains { Self.pathsOverlap(path, $0) } }
+        for (path, model) in fileBrowsers where overlaps(path) { model.suspendForWorkspaceMutation() }
+        for (path, model) in gitInspectors where overlaps(path) { model.suspendForWorkspaceMutation() }
+        for (path, model) in pullRequestStores where overlaps(path) { model.suspendForWorkspaceMutation() }
+    }
+    private func reconcilePullRequestCheckoutLocks() {
+        let durable = Dictionary(uniqueKeysWithValues: (snapshot.pullRequestCheckouts ?? []).filter(\.locksSource).map {
+            ($0.id, pullRequestCheckoutScope(projectID: $0.review.projectID, paths: $0.scopePaths))
+        })
+        for (id, paths) in durable where pullRequestCheckoutLocks[id] == nil {
+            pullRequestCheckoutLocks[id] = paths; suspendPullRequestCheckoutCaches(paths: paths)
+        }
+        for (id, paths) in Array(pullRequestCheckoutLocks) where !acceptingPullRequestCheckouts.contains(id) && durable[id] == nil {
+            pullRequestCheckoutLocks.removeValue(forKey: id)
+            guard !terminating else { continue }
+            func overlaps(_ path: String) -> Bool { paths.contains { Self.pathsOverlap(path, $0) } }
+            let browsers = fileBrowsers.filter { overlaps($0.key) }.map(\.value)
+            let inspectors = gitInspectors.filter { overlaps($0.key) }.map(\.value)
+            let requests = pullRequestStores.filter { overlaps($0.key) }.map(\.value)
+            pullRequestCheckoutRefreshTasks[id] = Task { [weak self] in
+                for browser in browsers { await browser.refreshAfterWorkspaceMutation() }
+                for inspector in inspectors { await inspector.refreshAfterWorkspaceMutation() }
+                for model in requests { await model.refreshAfterWorkspaceMutation() }
+                self?.pullRequestCheckoutRefreshTasks.removeValue(forKey: id)
+            }
+        }
+        for (id, selection) in Array(pullRequestCheckoutNavigation) {
+            guard let operation = snapshot.pullRequestCheckout(id) else {
+                if !acceptingPullRequestCheckouts.contains(id) { pullRequestCheckoutNavigation.removeValue(forKey: id) }
+                continue
+            }
+            if operation.phase == .completed {
+                pullRequestCheckoutNavigation.removeValue(forKey: id)
+                if selectedThreadID == selection { openPullRequestCheckoutConversation(operation.targetThreadID) }
+            } else if operation.phase == .failed || operation.acknowledgedAt != nil { pullRequestCheckoutNavigation.removeValue(forKey: id) }
+        }
+    }
+    private func openPullRequestCheckoutConversation(_ id: UUID) {
+        guard !terminating, let target = thread(id) else { return }
+        selectedProjectID = target.projectID; showArchived = target.isArchived; selectedThreadID = id
     }
     func canAccessWorkspaceFiles(_ path: String) -> Bool {
         let path = Self.canonicalPath(path)
@@ -383,8 +539,29 @@ final class WorkspaceStore {
     func renameProjectGroup(_ group: ProjectGroup, title: String) {
         sendCommand(.renameProjectGroup(groupKey: group.key, expectedProjects: group.memberProjectReferences, title: title))
     }
-    func registerTerminals(_ terminals: TerminalWorkspaceStore) { terminalStores[ObjectIdentifier(terminals)] = WeakTerminalStore(terminals) }
-    func unregisterTerminals(_ terminals: TerminalWorkspaceStore) { terminalStores.removeValue(forKey: ObjectIdentifier(terminals)) }
+    private var workspaceTerminalSessions: [LocalTerminalSession] {
+        var ids = Set<UUID>()
+        return (terminalStores.values.compactMap(\.value).flatMap { $0.sessions.values.flatMap { $0 } } + Array(closingTerminalSessions.values))
+            .filter { ids.insert($0.id).inserted }
+    }
+    func registerTerminals(_ terminals: TerminalWorkspaceStore) {
+        terminalStores[ObjectIdentifier(terminals)] = WeakTerminalStore(terminals)
+        terminals.sessionWillClose = { [weak self] in self?.retainClosingTerminal($0) }
+    }
+    func unregisterTerminals(_ terminals: TerminalWorkspaceStore) {
+        terminals.closeAll()
+        terminalStores.removeValue(forKey: ObjectIdentifier(terminals))
+        terminals.sessionWillClose = nil
+    }
+    private func retainClosingTerminal(_ session: LocalTerminalSession) {
+        guard closingTerminalSessions[session.id] == nil else { return }
+        closingTerminalSessions[session.id] = session
+        closingTerminalTasks[session.id] = Task { [weak self] in
+            await session.waitForClose()
+            self?.closingTerminalSessions.removeValue(forKey: session.id)
+            self?.closingTerminalTasks.removeValue(forKey: session.id)
+        }
+    }
     func setEditorDirty(_ id: UUID, workspacePath: String, dirty: Bool) {
         if dirty { dirtyEditors[id] = Self.canonicalPath(workspacePath) } else { dirtyEditors.removeValue(forKey: id) }
     }
@@ -399,7 +576,9 @@ final class WorkspaceStore {
               !workspaceTransitionLocks.values.contains(where: { $0.contains(path) }),
               !snapshot.isCheckpointRestoreLocked(path: path),
               !snapshot.isPullRequestCreationLocked(path: path),
+              !snapshot.isPullRequestCheckoutLocked(path: path),
               !pullRequestStores.values.contains(where: { model in model.isAccepting && model.mutationPaths.contains { Self.pathsOverlap(path, $0) } }),
+              !pullRequestCheckoutLocks.values.contains(where: { $0.contains { Self.pathsOverlap(path, $0) } }),
               !checkpointRestoreLocks.values.contains(where: { Self.pathsOverlap(path, $0) }) else { return false }
         return !snapshot.threads.contains { removalEditorLocks[$0.projectID] != nil && Self.canonicalPath($0.workspacePath) == path }
     }
@@ -541,6 +720,7 @@ final class WorkspaceStore {
         if !removedThreads.isEmpty || !removedProjects.isEmpty { reconcileRemovedResources(threadIDs: removedThreads, projectIDs: removedProjects) }
         if let error = update.error, !terminating { errorMessage = error }
         reconcileCheckpointRestoreLocks()
+        reconcilePullRequestCheckoutLocks()
         openAppliedHistoryForks()
         processAutomaticHistoryRecalls()
     }
@@ -643,7 +823,17 @@ final class WorkspaceStore {
     }
     func workspaceReady(for thread: CodingThread) -> Bool {
         snapshot.workspaceReady(for: thread) && !isCheckpointRestoreLocked(threadID: thread.id) &&
-            !isPullRequestCreationLocked(threadID: thread.id) && !workspaceTransitionLocks.values.contains { $0.contains(Self.canonicalPath(thread.workspacePath)) }
+            !isPullRequestCreationLocked(threadID: thread.id) && !isPullRequestCheckoutLocked(threadID: thread.id) &&
+            !workspaceTransitionLocks.values.contains { $0.contains(Self.canonicalPath(thread.workspacePath)) }
+    }
+    func canPresentWorkspaceInspector(for thread: CodingThread) -> Bool {
+        if workspaceReady(for: thread) { return true }
+        // Keep read-only PR recovery mounted while its write hold is active.
+        // File access and source-control mutations retain their separate gates.
+        return !terminating && snapshot.workspaceReady(for: thread) &&
+            (isPullRequestCreationLocked(threadID: thread.id) || isPullRequestCheckoutLocked(threadID: thread.id)) &&
+            !isCheckpointRestoreLocked(threadID: thread.id) && removalEditorLocks[thread.projectID] == nil &&
+            !workspaceTransitionLocks.values.contains { $0.contains(Self.canonicalPath(thread.workspacePath)) }
     }
     func canOpenTerminal(for captured: CodingThread) -> Bool {
         guard let current = thread(captured.id), current.projectID == captured.projectID,
@@ -868,7 +1058,7 @@ final class WorkspaceStore {
         guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
-              !isPullRequestCreationLocked(threadID: id) else { return Task { false } }
+              !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
         let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.provider.executable
         guard !executable.isEmpty, ProcessChannel.findExecutable(executable) != nil else {
             errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
@@ -1060,9 +1250,18 @@ final class WorkspaceStore {
         if snapshot.isPullRequestCreationLocked(threadID: threadID) { return true }
         guard let thread = thread(threadID) else { return false }
         return pullRequestStores.contains { path, model in
-            model.isAccepting && (pullRequestProjectID(path: path) == thread.projectID ||
+            model.isAccepting && model.acceptingCheckoutID == nil && (pullRequestProjectID(path: path) == thread.projectID ||
                 model.mutationPaths.contains { Self.pathsOverlap(thread.workspacePath, $0) })
         }
+    }
+    func isPullRequestCheckoutLocked(threadID: UUID) -> Bool {
+        if snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return true }
+        guard let thread = thread(threadID) else { return false }
+        return pullRequestCheckoutLocks.values.contains { $0.contains { Self.pathsOverlap(thread.workspacePath, $0) } } ||
+            pullRequestStores.contains { path, model in
+                model.acceptingCheckoutID != nil && (pullRequestProjectID(path: path) == thread.projectID ||
+                    model.mutationPaths.contains { Self.pathsOverlap(thread.workspacePath, $0) })
+            }
     }
     func checkpointRestoreUnavailableReason(threadID: UUID, runID: UUID, stage: RunCheckpointStage, expectedAttemptID: UUID) -> String? {
         if let reason = snapshot.checkpointRestoreUnavailableReason(threadID: threadID, runID: runID, stage: stage, expectedAttemptID: expectedAttemptID) { return reason }
@@ -1084,9 +1283,9 @@ final class WorkspaceStore {
             return String(localized: "Wait for source control operations to finish before restoring files.")
         }
         if pullRequestStores.contains(where: { Self.pathsOverlap(path, $0.key) && $0.value.isMutating }) {
-            return String(localized: "Wait for pull request creation to finish before restoring files.")
+            return String(localized: "Wait for the pull request operation to finish before restoring files.")
         }
-        if terminalStores.values.compactMap(\.value).flatMap({ $0.sessions.values.flatMap { $0 } }).contains(where: { session in
+        if workspaceTerminalSessions.contains(where: { session in
             guard Self.pathsOverlap(path, session.directory) else { return false }
             switch session.lifecycle { case .running, .closing: return true; case .exited, .failed: return false }
         }) {
@@ -1475,7 +1674,8 @@ final class WorkspaceStore {
                 guard !self.dirtyEditors.values.contains(path) else {
                     throw CoincideError("Save or discard unsaved file edits before changing this conversation's checkout.")
                 }
-                guard !self.terminalStores.values.compactMap(\.value).contains(where: { !($0.sessions[id] ?? []).isEmpty }) else {
+                guard !self.terminalStores.values.compactMap(\.value).contains(where: { !($0.sessions[id] ?? []).isEmpty }),
+                      !self.closingTerminalSessions.values.contains(where: { Self.pathsOverlap($0.directory, current.workspacePath) }) else {
                     throw CoincideError("Close this conversation's terminal tabs in every window before changing its checkout. Running commands are kept open until you close them.")
                 }
                 self.workspaceTransitionLocks[id] = [path]
@@ -1541,7 +1741,7 @@ final class WorkspaceStore {
         let restoreChecks = checkpointRestoreInspections.values.map(\.task)
         for task in restoreReads { task.cancel() }; for task in restoreChecks { task.cancel() }
         for task in restoreReads { _ = await task.result }; for task in restoreChecks { _ = await task.result }
-        let refreshes = Array(checkpointRefreshTasks.values)
+        let refreshes = Array(checkpointRefreshTasks.values) + Array(pullRequestCheckoutRefreshTasks.values)
         for task in refreshes { task.cancel() }; for task in refreshes { await task.value }
         let historyReads = historyReviewReads.values.map(\.task)
         let historyChecks = historyInspections.values.map(\.task)
@@ -1573,6 +1773,7 @@ final class WorkspaceStore {
         await commandTail?.value
         for cleanup in Array(removalCleanupTasks.values) { await cleanup.task.value }
         for terminals in terminalStores.values.compactMap(\.value) { for session in terminals.removeAll() { await session.waitForClose() } }
+        for task in Array(closingTerminalTasks.values) { await task.value }
         await engine?.shutdown()
         updatesTask?.cancel(); updatesTask = nil
     }

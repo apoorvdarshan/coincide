@@ -22,8 +22,8 @@ explicit environment opt-in; invalid configuration must never fall back to
 normal app data. Git identity and hooks are configured through a private
 test-only Git config, without changing the runner's global settings. Composer
 text remains unsent in the first eight workflows. The ninth sends three synthetic
-prompts only to a bundled offline Codex protocol peer; no real coding agent or
-network provider is invoked.
+prompts, and the tenth and twelfth send one each, only to a bundled offline Codex
+protocol peer; no real coding agent or network provider is invoked.
 The shell resolves the selected Xcode's real Git executable before entering the
 sandbox; commit verification avoids `/usr/bin/git`'s developer-tool shim and
 retains both output streams in the test result for diagnosis.
@@ -119,7 +119,7 @@ The peer runs only from a private PATH entry with a private CODEX_HOME. Its
 bounded state and wire log live under the test-owned workspace; flock plus
 atomic state replacement preserve boundaries across fresh metadata/fork
 processes. The CI shell resolves Python before entering the sandbox so the test
-does not invoke Apple's developer-tool shim. Ten GUI-free configuration and
+does not invoke Apple's developer-tool shim. Eleven GUI-free configuration and
 peer tests validate isolation, persistence and the strict result gate.
 
 The tenth workflow uses an actual local Git repository and a natively prepared,
@@ -141,7 +141,7 @@ exact-head hosted job runs; compilation and fixture tests alone are not GUI proo
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all eleven tests to pass with zero
+gate requires all twelve tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 
@@ -165,3 +165,18 @@ Git bytes, then recover only after explicit read-only Inspect Creation State.
 List/detail and native Markdown must expose that exact result; the recorded body,
 head/base SHAs and one creation attempt remain unchanged. No browser is opened.
 This is production CLI integration against a fake GitHub peer, not a live PR.
+
+The twelfth workflow seeds a private local bare repository with the exact main,
+topic, and pull-request refs. A private Git URL rewrite maps its synthetic GitHub
+remote to that owned file URL; only file transport is allowed. The same
+closed-world GitHub peer supplies the seeded PR metadata and permits read-only
+metadata in this fixture's managed worktrees. The source conversation contains
+one completed offline turn and a separate unsent draft. Native Open in
+Conversation must review the separate-worktree choice, requested SHA, None
+submodules and default setup review before confirmation. The production checkout
+worker must create the actual reviewed topic worktree and a new blank conversation
+without another provider prompt. The durable result exposes the actual SHA, and
+graceful restart must preserve both conversations, the original source transcript
+and draft, and the same worktree. Source README/HEAD and the remote creation log
+remain unchanged. This workflow performs no live GitHub writes or network fetch;
+its runtime outcome remains pending until the exact-head hosted run executes it.

@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import uuid
 
 
 def main():
@@ -30,8 +31,16 @@ def main():
         state = json.loads(state_path.read_text())
         checkout = Path(state["cwd"])
         if (not checkout.is_absolute() or checkout.is_symlink()
-                or checkout.resolve(strict=True).parent != root or Path.cwd().resolve() != checkout.resolve()):
+                or checkout.resolve(strict=True).parent != root):
             raise ValueError("The command must run in its exact private fixture checkout.")
+        current = Path.cwd().resolve(strict=True)
+        if current != checkout.resolve(strict=True):
+            managed = root / "Worktrees"
+            pointer = current / ".git"
+            if (state.get("checkoutFixture") is not True or managed.is_symlink()
+                    or current.parent != managed or str(uuid.UUID(current.name)).upper() != current.name.upper()
+                    or pointer.is_symlink() or not pointer.is_file()):
+                raise ValueError("Only this fixture's explicitly enabled managed checkout may read GitHub metadata.")
         if state.get("repository") != "fixture/native-pr":
             raise ValueError("The offline GitHub repository identity is fixed.")
         try:

@@ -1,5 +1,93 @@
 # Validation record
 
+## 2026-10-22 — native pull request checkout and blank conversation import
+
+- PR details now offer explicit reviewed local checkout or a separate worktree,
+  capturing the exact GitHub repository/head, requested SHA, source/destination
+  ownership and new-conversation agent settings. Fork branches use collision-safe
+  base identity; deleted head repositories can use the exact base pull ref.
+  Existing registered worktrees retain local commits and dirty files. A bare-name
+  alias remains unverified even when its SHA coincides. Results and retained
+  conversation lineage show actual branch/HEAD and off-head warnings.
+- Git runs under the common-directory operation gate. Plans bind index/status,
+  configuration and source/destination node and pointer proofs, including
+  destination-only `config.worktree` changes. Expected-old ref updates preserve
+  racing external branch advances. A rewritten reused head requires a clean
+  checkout at its captured previous upstream AND the exact PR head repository
+  and branch; unproven tracking never permits reset. The earlier commit is
+  retained in an owned recovery ref before a proven rewrite. This upstream
+  identity requirement is stricter than the pinned T3 implementation.
+- The engine saves a distinct intent/outbox/dispatch before Git. It reserves an
+  immutable target identity without creating a thread. Confirmed completion or
+  read-only inspection atomically creates one blank conversation with captured
+  settings, checkpoint policy and lineage; source history and latest draft stay.
+  No prompt, queue or provider session is inherited. New/moved worktrees can
+  discover setup for explicit review; unchanged reuse skips it. Accepted intents
+  fail after process loss, dispatched unknowns remain held, and neither Git nor
+  setup automatically repeats. Explicit unknown acknowledgment creates no target.
+  Storage version 21 prevents older binaries from dropping these holds.
+- Native Store tests cover shared windows, pre-SQLite acceptance, cold archived
+  sibling holds, blocked Send preserving its current draft, selection changes,
+  unknown reopen/inspection/acknowledgment, shutdown draining, specific admission
+  errors and clean editor/PR metadata refresh after canceled stale reads.
+  Physical inspector presentation stays available during PR holds independently
+  of file/write readiness, and the PR recovery entry does not require a fresh
+  Git snapshot after restart. Removed terminal tabs/windows now retain their directory ownership until their
+  actual process and output drain. Real PTY tests use HUP/TERM-resistant commands,
+  prove immediate checkout stays blocked after a tab/window closes, then verify
+  the child PID is gone before review becomes available.
+- Thirty-two offscreen review/recovery captures pass at 320/680 points in light
+  and dark appearances; representative images were visually inspected. Geometry
+  checks keep the explicit action reachable below scrolling metadata. The
+  strict desktop runner compiles with all twelve workflows required and zero
+  skips. The added offline workflow uses real private bare Git refs and exact
+  GitHub-to-file URL rewriting, creates one source provider turn, opens the PR in
+  a worktree, and checks its blank target, source history/draft/Git preservation
+  and restart. All original eleven workflows remain. Eleven GUI-free Python
+  harness/configuration tests pass. Actual hosted execution remains pending;
+  no interactive GUI workflow ran locally.
+- Prior exact commit `8f1568af` [run 39725843972](https://github.com/apoorvdarshan/coincide/actions/runs/39725843972)
+  executed all 644 production tests and failed one managed-project fixture's
+  replay equality comparison; the GUI job was skipped. That fixture observed
+  provider idle before the automatic post-run checkpoint settled. Its wait now
+  observes both completed runs and their final checkpoint state under the same
+  existing deadline, retaining the replay assertion and checkpoint policy.
+  The provider-wrapper execution-boundary issue in the earlier hosted history
+  and restoration workflows is still awaiting hosted evidence.
+
+- The full regression run passes 675 Swift test declarations: 557 Core in
+  223.873 seconds, 99 native UI/Store in 41.331 seconds, six terminal and 13
+  Markdown. The production checkout service also runs through the real SQLite
+  engine in four local/worktree and normal/lost-completion combinations. The
+  wrapper requires a saved dispatch marker and running outbox before real Git
+  writes. A lost acknowledgment retains no target until reopen/receipt inspection;
+  inspection performs no extra GitHub calls, checkout attempt or provider start.
+  Target bytes/HEAD, captured blank settings, unchanged source history/draft and
+  full journal reconstruction are verified.
+
+- After the final terminal drain correction, the complete native UI/Store target
+  passes all 99 tests again in 40.967 seconds and all six terminal tests pass in
+  1.357 seconds. SwiftTerm clears its child PID before output drain, so shutdown
+  now waits through both running and callback-drain phases without relying on
+  that cleared PID. The two-case real PTY regression verifies both phases ended.
+  A new local/worktree regression retouches tracked-file timestamps while keeping
+  their bytes, forces inherited `GIT_OPTIONAL_LOCKS=1`, and proves prepare and
+  completion inspection preserve exact index bytes through the runner's existing
+  `--no-optional-locks` policy. Both cases pass in 4.571 seconds. Current source
+  therefore has 676 passing Swift test declarations across these runs, plus the
+  eleven Python checks; the final twelve-workflow runner compiles.
+
+- The repository-owned app packages and launches with verified deep/strict app
+  and helper signatures and bundled native math-resource rendering. A fresh
+  private SQLite backup after graceful shutdown precedes storage 20 to 21.
+  Whole canonical workspace comparison is identical: three conversations and
+  25 messages, with SQLite integrity `ok`. The backup is retained in the app's
+  private Backups directory. No system install was changed.
+
+No live GitHub checkout or public binary release has been performed.
+Whole-project idle admission remains more restrictive than T3's independent-worktree concurrency and busy read-only reuse; full T3 parity
+is not claimed.
+
 ## 2026-10-22 — native GitHub PR browser and durable reviewed creation
 
 - Changes opens a native GitHub PR browser with state/search filters, exact

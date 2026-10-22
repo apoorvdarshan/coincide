@@ -293,7 +293,18 @@ private enum InvalidManagedStarter: String, CaseIterable {
         #expect(invocation.readme.contains("New managed project") && invocation.readme.contains("new-managed-folder"))
         #expect(await existingProvider.closed == false && f.harness.providers(openThread.id).count == 1)
         await provider.finish(); await existingProvider.finish()
-        try await waitManagedCommand { await f.engine.current().snapshot.threads.allSatisfy { $0.state == .idle } }
+        // Provider idle is published before the automatic post-run observation.
+        // Compare replay only after both turns and their checkpoint effects settle.
+        try await waitManagedCommand {
+            await f.engine.current().snapshot.threads.allSatisfy { thread in
+                let records = thread.runHistory ?? []
+                return thread.state == .idle && thread.activeRun == nil && thread.queuedTurns.isEmpty && records.count == 1 && records.allSatisfy { record in
+                    guard record.status == .completed, let checkpoints = record.checkpoints,
+                          checkpoints.providerReleased, checkpoints.pendingStart == nil, let post = checkpoints.postRun else { return false }
+                    return !checkpoints.baseline.phase.isRunning && !post.phase.isRunning
+                }
+            }
+        }
         let finished = await f.engine.current().snapshot, database = try WorkspaceDatabase(url: f.databaseURL)
         #expect(finished.threads.first { $0.id == starter.id }?.messages.first?.text == "First managed turn")
         #expect(try await database.rebuildProjection().snapshot == finished)

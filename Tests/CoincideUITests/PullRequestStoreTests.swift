@@ -133,6 +133,7 @@ func nativePullRequestStoreOwnsAcceptanceAcrossWindowsAndRetainsDraftUntilTheExa
         let accepted = Task { try await f.model.create(review) }
         try await waitForNativePullRequest { f.model.isAccepting }
         #expect(!f.workspace.canEditWorkspace(f.root.path))
+        #expect(f.workspace.canPresentWorkspaceInspector(for: try #require(f.workspace.thread(f.threadID))))
         #expect(f.workspace.snapshot.pullRequestCreation(review.id) == nil)
         unlock(); try await accepted.value
         try await waitForNativePullRequest {
@@ -168,6 +169,7 @@ func nativePullRequestStoreUncertainCreationSurvivesRestartAndInspectionNeverCre
         await next.load()
         let model = next.pullRequestStore(path: f.root.path); await model.refresh()
         #expect(model.operation?.phase == .unconfirmed && !model.canCreate)
+        #expect(next.canPresentWorkspaceInspector(for: try #require(next.thread(f.threadID))))
         #expect(await f.peer.creates == 1)
         try await model.reconcileCreation()
         if notFound {

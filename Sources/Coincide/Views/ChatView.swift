@@ -13,7 +13,8 @@ struct ChatView: View {
     private var thread: CodingThread? { store.thread(threadID) }
     private var actionsLocked: Bool {
         store.snapshot.isConversationHistoryLocked(threadID: threadID) ||
-            store.isCheckpointRestoreLocked(threadID: threadID) || store.isPullRequestCreationLocked(threadID: threadID)
+            store.isCheckpointRestoreLocked(threadID: threadID) || store.isPullRequestCreationLocked(threadID: threadID) ||
+            store.isPullRequestCheckoutLocked(threadID: threadID)
     }
     private var draft: Binding<String> {
         Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
@@ -129,6 +130,7 @@ struct ChatView: View {
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("conversation-pull-request-hold")
                     }
+                    PullRequestCheckoutBanner(store: store, thread: thread)
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },

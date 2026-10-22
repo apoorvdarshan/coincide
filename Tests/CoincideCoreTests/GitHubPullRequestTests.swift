@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-private struct GitHubPRFixture: Sendable {
+struct GitHubPRFixture: Sendable {
     let git: CheckpointFixture
     let stateURL: URL
     let executable: URL

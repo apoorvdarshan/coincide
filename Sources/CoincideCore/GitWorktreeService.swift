@@ -63,6 +63,14 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
             try await execute(plan, context: context)
         }
     }
+    /// Internal coordinator seam. The caller must hold GitOperationGate for this
+    /// exact common-directory path; all normal plan and ownership checks remain.
+    func runHoldingOperationGate(_ plan: GitWorktreePlan) async throws -> GitWorktreeResult {
+        try validateSession(plan)
+        let context = try await context(plan.sourcePath)
+        try validate(context, plan: plan)
+        return try await execute(plan, context: context)
+    }
     public func inspectCompletion(_ plan: GitWorktreePlan) async throws -> GitWorktreeResult? {
         try validateSession(plan)
         let context = try await context(plan.sourcePath)

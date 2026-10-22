@@ -157,7 +157,7 @@ struct SidebarView: View {
                 Button("Settle Conversation…") { onSettle(thread) }.disabled(!store.canSettle(thread))
             }
             Button(thread.isArchived ? "Unarchive" : "Archive") { store.toggleArchive(thread.id) }
-                .disabled(store.isBusy(thread.id) || store.snapshot.isConversationHistoryLocked(threadID: thread.id) || store.isCheckpointRestoreLocked(threadID: thread.id) || store.isPullRequestCreationLocked(threadID: thread.id))
+                .disabled(store.isBusy(thread.id) || store.snapshot.isConversationHistoryLocked(threadID: thread.id) || store.isCheckpointRestoreLocked(threadID: thread.id) || store.isPullRequestCreationLocked(threadID: thread.id) || store.isPullRequestCheckoutLocked(threadID: thread.id))
             Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
                 .disabled(project?.clone.map { !$0.isReady } ?? false)
         }

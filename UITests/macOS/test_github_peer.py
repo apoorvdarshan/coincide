@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 
 
 class NativeGitHubPeerTests(unittest.TestCase):
@@ -70,6 +71,33 @@ class NativeGitHubPeerTests(unittest.TestCase):
             linked.symlink_to(state)
             self.assertEqual(self.call(checkout, linked, wire, ["--version"]).returncode, 2)
             self.assertEqual(json.loads(state.read_text())["creates"], 0)
+
+    def test_seeded_checkout_metadata_is_read_only_and_confined_to_owned_managed_worktrees(self):
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-testing-github-") as scratch:
+            root = Path(scratch).resolve()
+            checkout, state, wire = self.fixture(root)
+            value = json.loads(state.read_text())
+            value["pullRequest"] = dict(number=42, title="Seeded native checkout", body="Preserve this published review")
+            value["checkoutFixture"] = True
+            state.write_text(json.dumps(value))
+            managed = root / "Worktrees" / str(uuid.uuid4()).upper()
+            managed.mkdir(parents=True)
+            (managed / ".git").write_text("gitdir: owned fixture proof\n")
+            listed = self.call(managed, state, wire, ["pr", "list", "--repo=github.com/fixture/native-pr", "--state=open", "--limit=50", "--json=number"])
+            self.assertEqual(listed.returncode, 0)
+            self.assertEqual(json.loads(listed.stdout)[0]["number"], 42)
+            detail = self.call(managed, state, wire, ["pr", "view", "42", "--repo=github.com/fixture/native-pr", "--json=body"])
+            self.assertEqual(json.loads(detail.stdout)["body"], value["pullRequest"]["body"])
+            self.assertEqual(json.loads(state.read_text())["creates"], 0)
+            self.assertTrue(all(row["arguments"][:2] != ["pr", "create"] for row in map(json.loads, wire.read_text().splitlines())))
+            value["checkoutFixture"] = False
+            state.write_text(json.dumps(value))
+            self.assertEqual(self.call(managed, state, wire, ["--version"]).returncode, 2)
+            value["checkoutFixture"] = True
+            state.write_text(json.dumps(value))
+            (managed / ".git").unlink()
+            (managed / ".git").symlink_to(state)
+            self.assertEqual(self.call(managed, state, wire, ["--version"]).returncode, 2)
 
 
 if __name__ == "__main__":
