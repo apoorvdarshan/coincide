@@ -3,7 +3,7 @@ import Foundation
 import MachO
 
 /// Test-only executable. Its immutable signed bytes stay in the test bundle;
-/// private codex/gh paths are symlinks, and per-test configuration is data.
+/// private codex/gh/claude paths are symlinks, and per-test configuration is data.
 @main struct OfflineCLILauncher {
     struct Descriptor: Decodable {
         let version: Int
@@ -17,7 +17,8 @@ import MachO
     struct InvalidFixture: Error {}
     static let peers: [String: Set<String>] = [
         "codex": ["codex_history_ui.py", "codex_steering_ui.py", "codex_models_ui.py"],
-        "gh": ["github_pr_ui.py"]
+        "gh": ["github_pr_ui.py"],
+        "claude": ["claude_history_ui.py"]
     ]
     static func main() {
         do { try execute() }
@@ -32,6 +33,7 @@ import MachO
         let arguments = Array(CommandLine.arguments.dropFirst())
         let tool: String
         if arguments == ["app-server", "--stdio"] { tool = "codex" }
+        else if validClaudeArguments(arguments) { tool = "claude" }
         else if let first = arguments.first, ["api", "pr", "--version"].contains(first) { tool = "gh" }
         else { throw InvalidFixture() }
         guard environment["COINCIDE_UI_TESTING"] == "1",
@@ -73,6 +75,16 @@ import MachO
         guard executable.lastPathComponent == "CoincideOfflineCLI", resources.lastPathComponent == "Resources",
               resources.deletingLastPathComponent().lastPathComponent == "Contents",
               resources.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "CoincideDesktopUITests.xctest" else { throw InvalidFixture() }
+        if tool == "claude" {
+            // The native peer can observe only two exact task-owned namespaces.
+            for (key, child) in [("CLAUDE_CONFIG_DIR", "private-claude-config"), ("HOME", "private-claude-home")] {
+                guard environment[key] == rootPath + "/" + child else { throw InvalidFixture() }
+                var info = stat()
+                guard lstat(rootPath + "/" + child, &info) == 0,
+                      info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR), info.st_uid == getuid(),
+                      info.st_mode & 0o077 == 0 else { throw InvalidFixture() }
+            }
+        }
         let peer = resources.appendingPathComponent(descriptor.peer)
         _ = try regularData(peer.path, maximum: 1_048_576, privateFile: false)
         // No shell, search path, fork, or persistent launcher parent. Python
@@ -84,6 +96,20 @@ import MachO
         defer { pointers.forEach { free($0) } }
         _ = pointers.withUnsafeMutableBufferPointer { execv(expectedPython, $0.baseAddress!) }
         throw InvalidFixture()
+    }
+    static let claudeArguments = ["--print", "--input-format", "stream-json", "--output-format", "stream-json",
+        "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio",
+        "--allow-dangerously-skip-permissions"]
+    static func validClaudeArguments(_ arguments: [String]) -> Bool {
+        guard Array(arguments.prefix(claudeArguments.count)) == claudeArguments else { return false }
+        let suffix = Array(arguments.dropFirst(claudeArguments.count))
+        func uuid(_ value: String) -> Bool { value.utf8.count == 36 && UUID(uuidString: value) != nil }
+        if suffix.isEmpty { return true }
+        if suffix.count == 2, suffix[0] == "--session-id" { return uuid(suffix[1]) }
+        guard (suffix.count == 2 || suffix.count == 3), suffix[0] == "--resume", uuid(suffix[1]) else { return false }
+        if suffix.count == 2 { return true }
+        let flag = "--resume-session-at="
+        return suffix[2].hasPrefix(flag) && uuid(String(suffix[2].dropFirst(flag.count)))
     }
     static func validAbsolutePath(_ path: String) -> Bool {
         path.hasPrefix("/") && path.utf8.count <= 32_768 && !path.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }

@@ -1,5 +1,19 @@
 # Validation record
 
+## 2026-10-23 — hosted native Claude history scenarios
+
+- `bash script/test_macos_ui.sh --build-for-testing` compiles and signs the
+  native runner and immutable launcher successfully. Its embedded launcher
+  verifier passes Codex/GitHub/Claude envelopes, selected native parent chains,
+  private profile bindings and descriptor/argument rejection. No GUI or installed
+  provider is launched. The six Python CI-configuration tests also pass.
+- Three additive native scenarios exercise source-preserving fork and deferred
+  selection/restart without sending, one selected-context consumer followed by
+  an ordinary queued successor, and read-only consumed/unwritten inspection
+  without replay. Independent source review confirms all eighteen previous test
+  bodies remain unchanged. The hosted result gate requires all 21 with zero
+  skips; actual hosted accessibility/sandbox execution remains unverified.
+
 ## 2026-10-23 — byte-bounded events, Pi history reads and client command storage
 
 - Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with

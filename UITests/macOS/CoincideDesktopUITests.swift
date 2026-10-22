@@ -1333,6 +1333,446 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
+    @MainActor func testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart() throws {
+        let f = try prepareClaudeHistoryGUI(appearance: "light", name: "claude-history")
+        let sourceID = try seedClaudeHistoryGUI(f)
+        let source = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
+        let nativeID = try XCTUnwrap(source["providerThreadID"] as? String)
+        let sourceURL = try claudeGUITranscript(f, nativeID: nativeID)
+        let originalDraft = "Keep my unsent Claude source draft"
+        replaceClaudeGUIDraft(originalDraft, in: f.app)
+        try openNativeRunHistory(in: f.app)
+        let firstRun = try revealNativeHistoryRun(prompt: Self.claudeAlphaPrompt, in: f.app)
+        var sheet = try openNativeHistoryAction(runID: firstRun, kind: "fork", in: f.app)
+        XCTAssertTrue(sheet.buttons["conversation-history-confirm"].waitForExistence(timeout: 10))
+        // A review drains its owned peer before capturing this exact baseline.
+        let sourceBytes = try Data(contentsOf: sourceURL)
+        let inputCount = try claudeGUIWire(f, method: "user").count
+        sheet.buttons["conversation-history-close"].click()
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        XCTAssertEqual(try claudeGUIWire(f, method: "user").count, inputCount)
+        sheet = try openNativeHistoryAction(runID: firstRun, kind: "fork", in: f.app)
+        let title = sheet.textFields["conversation-history-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10)); title.click(); title.typeKey("a", modifierFlags: .command)
+        title.typeText("Claude native ALPHA fork")
+        let confirm = sheet.buttons["conversation-history-confirm"]
+        try waitForClaudeGUIEnabled(confirm, timeout: 10)
+        capture(f.app, name: "claude-history-native-fork-glass-review")
+        confirm.click()
+        XCTAssertTrue(waitForAbsence(sheet.buttons["conversation-history-close"], timeout: 20))
+        let forkID = try selectedThreadIdentifier(in: f.app)
+        XCTAssertNotEqual(forkID, sourceID)
+        let forkSnapshot = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+            guard let target = self.findClaudeGUIThread(snapshot, id: forkID) else { return false }
+            return target["claudeInheritedHead"] as? [String: Any] != nil && target["forkedFromHistoryOperationID"] as? String != nil
+        }
+        let target = try claudeGUIThread(forkSnapshot, id: forkID)
+        let operationID = try XCTUnwrap(target["forkedFromHistoryOperationID"] as? String)
+        let operation = try XCTUnwrap((forkSnapshot["conversationHistoryOperations"] as? [[String: Any]])?.first {
+            $0["id"] as? String == operationID
+        })
+        XCTAssertEqual(operation["phase"] as? String, "applied")
+        let publication = try XCTUnwrap(operation["claudeForkPublication"] as? [String: Any])
+        let mapping = try XCTUnwrap(publication["sourceToForkMessageIDs"] as? [String: String])
+        let forkNativeID = try XCTUnwrap(target["providerThreadID"] as? String)
+        XCTAssertNotEqual(forkNativeID, nativeID)
+        let originalRecords = try claudeGUIRecords(sourceURL)
+        let copied = try claudeGUIRecords(claudeGUITranscript(f, nativeID: forkNativeID))
+        XCTAssertEqual(copied.count, 2, "Fork after ALPHA copies exactly its actual native root user and assistant.")
+        for (original, copy) in zip(originalRecords.prefix(2), copied) {
+            let originalID = try XCTUnwrap(original["uuid"] as? String)
+            XCTAssertEqual(copy["uuid"] as? String, mapping[originalID])
+            XCTAssertNotEqual(copy["uuid"] as? String, originalID)
+            XCTAssertEqual(copy["sessionId"] as? String, forkNativeID)
+            XCTAssertEqual(try claudeGUIJSON(copy["message"]), try claudeGUIJSON(original["message"]))
+        }
+        XCTAssertEqual((target["claudeInheritedHead"] as? [String: Any])?["cursor"] as? String, copied.last?["uuid"] as? String)
+        XCTAssertTrue(f.app.staticTexts["Claude GUI saved ALPHA"].exists)
+        XCTAssertFalse(f.app.staticTexts["Claude GUI saved BETA"].exists)
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        XCTAssertEqual(try claudeGUIWire(f, method: "user").count, 2, "Opening a fork must not send a model input.")
+        selectThread(sourceID, in: f.app)
+        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: originalDraft, timeout: 10))
+        let selection = try saveClaudeGUIResume(f, threadID: sourceID)
+        XCTAssertEqual(selection["nativeSessionID"] as? String, nativeID)
+        XCTAssertEqual(selection["kind"] as? String, "resumeAt")
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        let expectedDraft = originalDraft + "\n\n" + Self.claudeBetaPrompt
+        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: expectedDraft, timeout: 10))
+        let selectionBytes = try claudeGUIJSON(selection)
+        let launches = try claudeGUIWire(f, method: "launch").count
+        capture(f.app, name: "claude-history-deferred-native-context-no-send")
+        f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
+        f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertEqual(try selectedThreadIdentifier(in: f.app), sourceID)
+        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: expectedDraft, timeout: 10))
+        try assertClaudeGUIPendingBanner(f.app)
+        let reopened = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
+        XCTAssertEqual(try claudeGUIJSON(reopened["claudeResumeSelection"]), selectionBytes)
+        XCTAssertNil(reopened["claudeResumeConsumerRunID"])
+        XCTAssertEqual(try claudeGUIWire(f, method: "user").count, 2)
+        XCTAssertEqual(try claudeGUIWire(f, method: "launch").count, launches)
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        selectThread(forkID, in: f.app)
+        XCTAssertTrue(f.app.staticTexts["Claude GUI saved ALPHA"].waitForExistence(timeout: 5))
+        XCTAssertFalse(f.app.staticTexts["Claude GUI saved BETA"].exists)
+        XCTAssertNil(try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: forkID)["claudeResumeSelection"])
+        try assertClaudeGUIWorkspaceUnchanged(f)
+    }
+
+    @MainActor func testNativeClaudeSelectedContextIsConsumedOnceBeforeQueuedSuccessor() throws {
+        let f = try prepareClaudeHistoryGUI(appearance: "dark", name: "claude-selected-fifo")
+        let sourceID = try seedClaudeHistoryGUI(f)
+        let selection = try saveClaudeGUIResume(f, threadID: sourceID)
+        let selectionID = try XCTUnwrap(selection["id"] as? String), cursor = try XCTUnwrap(selection["cursor"] as? String)
+        try submitClaudeGUI(Self.claudeProbePrompt, in: f.app)
+        let held = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID),
+                  let active = thread["activeRun"] as? [String: Any],
+                  let config = active["configuration"] as? [String: Any] else { return false }
+            return (config["claudeLaunchSelection"] as? [String: Any])?["id"] as? String == selectionID &&
+                thread["claudeResumeConsumerRunID"] as? String == active["id"] as? String
+        }
+        let heldThread = try claudeGUIThread(held, id: sourceID)
+        let firstRunID = try XCTUnwrap((heldThread["activeRun"] as? [String: Any])?["id"] as? String)
+        XCTAssertTrue(f.app.staticTexts["Claude GUI probe context ALPHA"].waitForExistence(timeout: 20))
+        XCTAssertFalse(f.app.staticTexts["Claude GUI probe context ALPHA BETA"].exists)
+        XCTAssertTrue(f.app.staticTexts["This Claude turn is using the saved context. Its selection remains recorded until the matching turn is confirmed."].exists)
+        replaceClaudeGUIDraft(Self.claudeQueuedPrompt, in: f.app)
+        let delivery = f.app.descendants(matching: .any).matching(identifier: "composer-delivery").firstMatch
+        XCTAssertTrue(delivery.waitForExistence(timeout: 5)); XCTAssertTrue(delivery.isHittable); delivery.click()
+        let queue = f.app.menuItems["Queue Message"]
+        XCTAssertTrue(queue.waitForExistence(timeout: 5)); XCTAssertTrue(queue.isEnabled && queue.isHittable); queue.click()
+        let queued = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID),
+                  let rows = thread["queuedTurns"] as? [[String: Any]], rows.count == 1 else { return false }
+            return rows[0]["text"] as? String == Self.claudeQueuedPrompt
+        }
+        let queuedThread = try claudeGUIThread(queued, id: sourceID)
+        let accepted = try XCTUnwrap((queuedThread["queuedTurns"] as? [[String: Any]])?.first)
+        let queuedConfiguration = try XCTUnwrap(accepted["configuration"] as? [String: Any])
+        XCTAssertNil(queuedConfiguration["claudeLaunchSelection"])
+        XCTAssertEqual(queuedConfiguration["provider"] as? String, "claude")
+        XCTAssertEqual(queuedConfiguration["permission"] as? String, "supervised")
+        XCTAssertEqual(queuedConfiguration["workspacePath"] as? String, f.project.path)
+        XCTAssertEqual(accepted["checkpointPolicy"] as? String, "disabled")
+        XCTAssertEqual((queuedThread["activeRun"] as? [String: Any])?["id"] as? String, firstRunID)
+        XCTAssertTrue(f.app.staticTexts["1 queued"].exists)
+        XCTAssertEqual(try claudeGUIWire(f, method: "user").filter { $0["action"] as? String == "queued" }.count, 0)
+        let probe = try XCTUnwrap(claudeGUIWire(f, method: "user").first { $0["action"] as? String == "probe" })
+        XCTAssertEqual(probe["parentID"] as? String, cursor)
+        XCTAssertEqual(probe["inputID"] as? String, firstRunID.lowercased())
+        XCTAssertEqual(probe["contextAlpha"] as? Bool, true); XCTAssertEqual(probe["contextBeta"] as? Bool, false)
+        let selectedLaunches = try claudeGUIWire(f, method: "launch").filter { $0["selection"] as? String == "resumeAt" }
+        XCTAssertEqual(selectedLaunches.count, 1); XCTAssertEqual(selectedLaunches.first?["cursor"] as? String, cursor)
+        capture(f.app, name: "claude-selected-fifo-held-exact-native-terminal")
+        let releaseTemporary = f.root.appendingPathComponent("selected-release-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: releaseTemporary) }
+        try Data("release\n".utf8).write(to: releaseTemporary, options: .withoutOverwriting)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: releaseTemporary.path)
+        try FileManager.default.moveItem(at: releaseTemporary, to: f.root.appendingPathComponent("release-selected"))
+        let finished = try completedClaudeGUI(f, threadID: sourceID, prompt: Self.claudeQueuedPrompt)
+        XCTAssertNil(finished["claudeResumeSelection"]); XCTAssertNil(finished["claudeResumeConsumerRunID"])
+        XCTAssertTrue((finished["queuedTurns"] as? [[String: Any]])?.isEmpty == true)
+        let first = try claudeGUIRun(finished, prompt: Self.claudeProbePrompt)
+        XCTAssertEqual(first["status"] as? String, "completed")
+        XCTAssertEqual((first["claude"] as? [String: Any])?["terminalStatus"] as? String, "completed")
+        XCTAssertEqual(try claudeGUIJSON((first["configuration"] as? [String: Any])?["claudeLaunchSelection"]), try claudeGUIJSON(selection))
+        let second = try claudeGUIRun(finished, prompt: Self.claudeQueuedPrompt)
+        XCTAssertNil((second["configuration"] as? [String: Any])?["claudeLaunchSelection"])
+        let consumedQueueConfiguration = try XCTUnwrap(second["configuration"] as? [String: Any])
+        XCTAssertEqual(try claudeGUIJSON(consumedQueueConfiguration["claudeRuntimeConfiguration"]),
+                       try claudeGUIJSON(queuedConfiguration["claudeRuntimeConfiguration"]))
+        for key in ["model", "permission", "workspacePath"] {
+            XCTAssertEqual(try claudeGUIJSON(consumedQueueConfiguration[key]), try claudeGUIJSON(queuedConfiguration[key]))
+        }
+        let frames = try historyWire(f.wire), users = frames.filter { $0["method"] as? String == "user" }
+        XCTAssertEqual(users.count, 4)
+        XCTAssertEqual(users.map { $0["action"] as? String }, ["alpha", "beta", "probe", "queued"])
+        let terminalIndex = try XCTUnwrap(frames.firstIndex { $0["method"] as? String == "result" && $0["inputID"] as? String == firstRunID.lowercased() })
+        let queuedIndex = try XCTUnwrap(frames.firstIndex { $0["method"] as? String == "user" && $0["action"] as? String == "queued" })
+        XCTAssertLessThan(terminalIndex, queuedIndex)
+        let secondUser = try XCTUnwrap(users.last)
+        let secondLaunch = try XCTUnwrap(frames.first { $0["method"] as? String == "launch" && $0["launchID"] as? String == secondUser["launchID"] as? String })
+        XCTAssertEqual(secondLaunch["selection"] as? String, "resume"); XCTAssertNil(secondLaunch["cursor"] as? String)
+        let firstAssistant = try XCTUnwrap((first["claude"] as? [String: Any])?["rootAssistantMessageIDs"] as? [String]).last
+        XCTAssertEqual(secondUser["parentID"] as? String, firstAssistant)
+        XCTAssertEqual(try claudeGUIWire(f, method: "launch").filter { $0["selection"] as? String == "resumeAt" }.count, 1)
+        XCTAssertTrue(f.app.staticTexts["Claude GUI queued context ALPHA"].waitForExistence(timeout: 10))
+        try assertClaudeGUIWorkspaceUnchanged(f)
+    }
+
+    @MainActor func testNativeClaudeContextInspectionIsReadOnlyAndNeverReplaysConsumedOrUnwrittenInput() throws {
+        let f = try prepareClaudeHistoryGUI(appearance: "light", name: "claude-context-inspection")
+        for consumed in [true, false] {
+            let threadID = try seedClaudeHistoryGUI(f, newThread: !consumed)
+            let selection = try saveClaudeGUIResume(f, threadID: threadID)
+            let prompt = consumed ? Self.claudeConsumedPrompt : Self.claudeUnwrittenPrompt
+            try submitClaudeGUI(prompt, in: f.app)
+            let failed = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+                guard let thread = self.findClaudeGUIThread(snapshot, id: threadID), thread["activeRun"] == nil,
+                      let run = self.findClaudeGUIRun(thread, prompt: prompt) else { return false }
+                return run["status"] as? String == "failed" && thread["claudeResumeConsumerRunID"] as? String == run["id"] as? String
+            }
+            let failedThread = try claudeGUIThread(failed, id: threadID)
+            XCTAssertEqual(try claudeGUIJSON(failedThread["claudeResumeSelection"]), try claudeGUIJSON(selection))
+            let nativeID = try XCTUnwrap(failedThread["providerThreadID"] as? String)
+            let transcript = try claudeGUITranscript(f, nativeID: nativeID), bytes = try Data(contentsOf: transcript)
+            let records = try claudeGUIRecords(transcript), run = try claudeGUIRun(failedThread, prompt: prompt)
+            let opening = try XCTUnwrap((run["claude"] as? [String: Any])?["openingInputID"] as? String)
+            XCTAssertEqual(records.contains { $0["type"] as? String == "user" && $0["uuid"] as? String == opening }, consumed)
+            if consumed {
+                // A fresh app must reconstruct the same persisted consumer hold.
+                f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
+                f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
+            }
+            let inspect = f.app.buttons["conversation-history-inspect-claude-context"]
+            XCTAssertTrue(inspect.waitForExistence(timeout: 10)); XCTAssertTrue(inspect.isEnabled && inspect.isHittable)
+            XCTAssertTrue(f.app.staticTexts["Claude’s use of the selected context could not be confirmed. Inspect it before starting another turn. No input will be replayed."].exists)
+            let inputs = try claudeGUIWire(f, method: "user").count, launches = try claudeGUIWire(f, method: "launch").count
+            let unsent = "Keep this nonempty draft until read-only Claude inspection"
+            replaceClaudeGUIDraft(unsent, in: f.app)
+            XCTAssertFalse(f.app.buttons["composer-send"].isEnabled, "A nonempty explicit draft remains held until the exact consumer is inspected.")
+            capture(f.app, name: consumed ? "claude-context-consumed-inspection-hold" : "claude-context-unwritten-inspection-hold")
+            inspect.click()
+            let inspected = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+                guard let thread = self.findClaudeGUIThread(snapshot, id: threadID) else { return false }
+                return thread["claudeResumeConsumerRunID"] == nil &&
+                    (consumed ? thread["claudeResumeSelection"] == nil : thread["claudeResumeSelection"] as? [String: Any] != nil)
+            }
+            XCTAssertTrue(waitForAbsence(inspect, timeout: 10))
+            let current = try claudeGUIThread(inspected, id: threadID)
+            XCTAssertEqual(try Data(contentsOf: transcript), bytes)
+            XCTAssertEqual(try claudeGUIWire(f, method: "user").count, inputs)
+            XCTAssertEqual(try claudeGUIWire(f, method: "launch").count, launches, "Inspect reads native files and must not construct another provider.")
+            XCTAssertEqual((current["runHistory"] as? [[String: Any]])?.count, 3)
+            XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: unsent, timeout: 5))
+            if consumed {
+                XCTAssertNil(current["claudeResumeSelection"])
+            } else {
+                XCTAssertEqual(try claudeGUIJSON(current["claudeResumeSelection"]), try claudeGUIJSON(selection))
+                try assertClaudeGUIPendingBanner(f.app)
+                try submitClaudeGUI(Self.claudeRetryPrompt, in: f.app)
+                let retried = try completedClaudeGUI(f, threadID: threadID, prompt: Self.claudeRetryPrompt)
+                XCTAssertNil(retried["claudeResumeSelection"]); XCTAssertNil(retried["claudeResumeConsumerRunID"])
+                let retry = try XCTUnwrap(claudeGUIWire(f, method: "user").last)
+                XCTAssertEqual(retry["action"] as? String, "retry")
+                XCTAssertNotEqual(retry["inputID"] as? String, opening)
+                XCTAssertEqual(retry["parentID"] as? String, selection["cursor"] as? String)
+                XCTAssertEqual(try claudeGUIWire(f, method: "user").count, inputs + 1)
+                XCTAssertEqual(try claudeGUIRecords(transcript).filter { $0["uuid"] as? String == opening }.count, 0)
+            }
+        }
+        XCTAssertEqual(try claudeGUIWire(f, method: "user").filter { $0["action"] as? String == "consumed" }.count, 1)
+        XCTAssertEqual(try claudeGUIWire(f, method: "user").filter { $0["action"] as? String == "unwritten" }.count, 1)
+        try assertClaudeGUIWorkspaceUnchanged(f)
+    }
+
+    private static let claudeAlphaPrompt = "Remember the native marker ALPHA."
+    private static let claudeBetaPrompt = "Remember the native marker BETA."
+    private static let claudeProbePrompt = "Probe the selected native context."
+    private static let claudeQueuedPrompt = "Continue the queued native context."
+    private static let claudeConsumedPrompt = "Inspect consumed native context."
+    private static let claudeUnwrittenPrompt = "Inspect unconsumed native context."
+    private static let claudeRetryPrompt = "Retry selected native context explicitly."
+    private struct ClaudeHistoryGUIFixture {
+        let app: XCUIApplication
+        let root: URL
+        let project: URL
+        let configuration: URL
+        let wire: URL
+        let document: URL
+        let original: Data
+        let head: String
+        let gitPath: String
+        let gitConfiguration: URL
+    }
+    @MainActor private func prepareClaudeHistoryGUI(appearance: String, name: String) throws -> ClaudeHistoryGUIFixture {
+        let base = try prepareApplication(appearance: appearance, diagnosticPrefix: name)
+        let app = base.app, root = base.root, manager = FileManager.default
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        let project = root.appendingPathComponent("Claude Native History", isDirectory: true)
+        let bin = root.appendingPathComponent("private-bin", isDirectory: true)
+        let config = root.appendingPathComponent("private-claude-config", isDirectory: true)
+        let home = root.appendingPathComponent("private-claude-home", isDirectory: true)
+        for directory in [project, bin, config, home] {
+            try manager.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        let document = project.appendingPathComponent("README.md"), original = Data("Synthetic Claude GUI history must preserve this checkout.\n".utf8)
+        try original.write(to: document)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Claude native GUI fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: base.gitPath, configuration: base.configuration, name: name + "-git-" + arguments[0])
+        }
+        let head = try verifyHead(gitPath: base.gitPath, project: project, configuration: base.configuration, name: name + "-head")
+        let state = root.appendingPathComponent("claude-peer.json"), wire = root.appendingPathComponent("claude-wire.jsonl")
+        let actions: [String: [String: String]] = [
+            Self.claudeAlphaPrompt: ["mode": "normal", "label": "alpha"], Self.claudeBetaPrompt: ["mode": "normal", "label": "beta"],
+            Self.claudeProbePrompt: ["mode": "hold-result", "label": "probe", "gate": "release-selected"],
+            Self.claudeQueuedPrompt: ["mode": "normal", "label": "queued"],
+            Self.claudeConsumedPrompt: ["mode": "consume-then-disconnect", "label": "consumed"],
+            Self.claudeUnwrittenPrompt: ["mode": "before-write-disconnect", "label": "unwritten"],
+            Self.claudeRetryPrompt: ["mode": "normal", "label": "retry"]]
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "configurationDirectory": config.path, "actions": actions], options: .sortedKeys)
+            .write(to: state, options: .atomic)
+        let peer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "claude_history_ui", withExtension: "py"))
+        _ = try installOfflineCLI(tool: "claude", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["HOME"] = home.path; app.launchEnvironment["CLAUDE_CONFIG_DIR"] = config.path
+        app.launchEnvironment["CLAUDE_CODE_PROJECT_DIR_NAME"] = "coincide-claude-ui"
+        app.launchEnvironment["CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP"] = ""
+        addTeardownBlock { @MainActor [weak self] in
+            if let data = try? Data(contentsOf: wire), data.count <= 131_072 {
+                let receipt = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                receipt.name = name + "-bounded-synthetic-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
+            }
+        }
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(app.textViews["composer-input"].waitForExistence(timeout: 10))
+        return .init(app: app, root: root, project: project, configuration: config, wire: wire,
+                     document: document, original: original, head: head, gitPath: base.gitPath, gitConfiguration: base.configuration)
+    }
+    @MainActor private func seedClaudeHistoryGUI(_ f: ClaudeHistoryGUIFixture, newThread: Bool = false) throws -> String {
+        let app = f.app
+        if newThread {
+            let previous = try selectedThreadIdentifier(in: app)
+            app.typeKey("n", modifierFlags: .command)
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let rows = self.threadRows(in: app).allElementsBoundByIndex.filter { $0.isSelected }
+                guard rows.count == 1 else { return false }
+                let ids = rows[0].descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).allElementsBoundByIndex.map(\.identifier)
+                return !ids.isEmpty && !ids.contains(previous)
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed)
+        }
+        let provider = app.descendants(matching: .any).matching(identifier: "provider-model-menu").firstMatch
+        XCTAssertTrue(provider.waitForExistence(timeout: 10)); provider.click()
+        let claude = app.menuItems["Claude"]
+        XCTAssertTrue(claude.waitForExistence(timeout: 5)); XCTAssertTrue(claude.isEnabled); claude.click()
+        let threadID = try selectedThreadIdentifier(in: app)
+        _ = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID) else { return false }
+            return thread["provider"] as? String == "claude" && thread["claudeRuntimeConfiguration"] as? [String: Any] != nil
+        }
+        app.descendants(matching: .any).matching(identifier: "conversation-workspace").firstMatch.click()
+        let checkpoints = app.menuItems["conversation-run-checkpoints"]
+        XCTAssertTrue(checkpoints.waitForExistence(timeout: 5)); XCTAssertTrue(checkpoints.isEnabled); checkpoints.click()
+        _ = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID) else { return false }
+            return thread["checkpointPolicy"] as? String == "disabled" && thread["permission"] as? String == "supervised"
+        }
+        for prompt in [Self.claudeAlphaPrompt, Self.claudeBetaPrompt] {
+            try submitClaudeGUI(prompt, in: app)
+            _ = try completedClaudeGUI(f, threadID: threadID, prompt: prompt)
+        }
+        XCTAssertTrue(app.staticTexts["Claude GUI saved BETA"].waitForExistence(timeout: 10))
+        return threadID
+    }
+    @MainActor private func saveClaudeGUIResume(_ f: ClaudeHistoryGUIFixture, threadID: String) throws -> [String: Any] {
+        try openNativeRunHistory(in: f.app)
+        let runID = try revealNativeHistoryRun(prompt: Self.claudeBetaPrompt, in: f.app)
+        let sheet = try openNativeHistoryAction(runID: runID, kind: "rewind", in: f.app)
+        let confirm = sheet.buttons["conversation-history-confirm"]
+        try waitForClaudeGUIEnabled(confirm, timeout: 10); XCTAssertEqual(confirm.label, "Save Resume Point")
+        XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "conversation-history-claude-context-selection").firstMatch.exists)
+        let native = try XCTUnwrap(claudeGUIThread(privateWorkspaceSnapshot(f.root), id: threadID)["providerThreadID"] as? String)
+        let source = try claudeGUITranscript(f, nativeID: native), bytes = try Data(contentsOf: source)
+        let inputs = try claudeGUIWire(f, method: "user").count
+        confirm.click()
+        let applied = sheet.staticTexts.matching(identifier: "conversation-history-operation-status")
+            .matching(NSPredicate(format: "label == %@ OR value == %@", "Claude resume point saved", "Claude resume point saved")).firstMatch
+        XCTAssertTrue(applied.waitForExistence(timeout: 20))
+        sheet.buttons["conversation-history-close"].click(); try nativeHistoryDone(in: f.app).click()
+        let snapshot = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID) else { return false }
+            return thread["claudeResumeSelection"] as? [String: Any] != nil && thread["claudeResumeConsumerRunID"] == nil
+        }
+        let thread = try claudeGUIThread(snapshot, id: threadID)
+        let selection = try XCTUnwrap(thread["claudeResumeSelection"] as? [String: Any])
+        let operation = try XCTUnwrap((snapshot["conversationHistoryOperations"] as? [[String: Any]])?.first {
+            $0["id"] as? String == selection["id"] as? String
+        })
+        XCTAssertEqual(operation["phase"] as? String, "applied")
+        XCTAssertEqual((operation["review"] as? [String: Any])?["sourceThreadID"] as? String, String(threadID.dropFirst("thread-".count)))
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
+        XCTAssertEqual(try claudeGUIWire(f, method: "user").count, inputs)
+        XCTAssertEqual(try claudeGUIRun(thread, prompt: Self.claudeBetaPrompt)["removedByHistoryOperationID"] as? String, selection["id"] as? String)
+        try assertClaudeGUIPendingBanner(f.app)
+        return selection
+    }
+    @MainActor private func assertClaudeGUIPendingBanner(_ app: XCUIApplication) throws {
+        XCTAssertTrue(app.staticTexts["Your next explicit message will use the saved Claude context. Existing native transcripts are retained; this selection did not send a message."].waitForExistence(timeout: 10))
+    }
+    @MainActor private func replaceClaudeGUIDraft(_ text: String, in app: XCUIApplication) {
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10)); composer.click(); composer.typeKey("a", modifierFlags: .command); composer.typeText(text)
+        XCTAssertTrue(waitForValue(composer, value: text, timeout: 5))
+    }
+    @MainActor private func submitClaudeGUI(_ text: String, in app: XCUIApplication) throws {
+        replaceClaudeGUIDraft(text, in: app)
+        let send = app.buttons["composer-send"]
+        try waitForClaudeGUIEnabled(send, timeout: 10); XCTAssertTrue(send.isHittable); send.click()
+    }
+    @MainActor private func waitForClaudeGUIEnabled(_ element: XCUIElement, timeout: TimeInterval) throws {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: timeout), .completed)
+    }
+    @MainActor private func completedClaudeGUI(_ f: ClaudeHistoryGUIFixture, threadID: String, prompt: String) throws -> [String: Any] {
+        let snapshot = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID), thread["activeRun"] == nil,
+                  let run = self.findClaudeGUIRun(thread, prompt: prompt) else { return false }
+            return run["status"] as? String == "completed" && (run["claude"] as? [String: Any])?["terminalStatus"] as? String == "completed"
+        }
+        let thread = try claudeGUIThread(snapshot, id: threadID), run = try claudeGUIRun(thread, prompt: prompt)
+        XCTAssertEqual((run["claude"] as? [String: Any])?["openingInputID"] as? String, (run["id"] as? String)?.lowercased())
+        XCTAssertEqual((thread["runtimeRequests"] as? [[String: Any]])?.count, 0)
+        XCTAssertFalse((thread["messages"] as? [[String: Any]])?.contains { $0["role"] as? String == "tool" } == true)
+        return thread
+    }
+    private func findClaudeGUIThread(_ snapshot: [String: Any], id: String) -> [String: Any]? {
+        let native = id.hasPrefix("thread-") ? String(id.dropFirst("thread-".count)) : id
+        return (snapshot["threads"] as? [[String: Any]])?.first { ($0["id"] as? String)?.lowercased() == native.lowercased() }
+    }
+    private func claudeGUIThread(_ snapshot: [String: Any], id: String) throws -> [String: Any] {
+        try XCTUnwrap(findClaudeGUIThread(snapshot, id: id))
+    }
+    private func findClaudeGUIRun(_ thread: [String: Any], prompt: String) -> [String: Any]? {
+        guard let message = (thread["messages"] as? [[String: Any]])?.first(where: { $0["role"] as? String == "user" && $0["text"] as? String == prompt }),
+              let messageID = message["id"] as? String else { return nil }
+        return (thread["runHistory"] as? [[String: Any]])?.first { $0["userMessageID"] as? String == messageID }
+    }
+    private func claudeGUIRun(_ thread: [String: Any], prompt: String) throws -> [String: Any] {
+        try XCTUnwrap(findClaudeGUIRun(thread, prompt: prompt))
+    }
+    private func claudeGUIJSON(_ value: Any?) throws -> Data {
+        try JSONSerialization.data(withJSONObject: value ?? NSNull(), options: [.sortedKeys, .fragmentsAllowed])
+    }
+    private func claudeGUIWire(_ f: ClaudeHistoryGUIFixture, method: String) throws -> [[String: Any]] {
+        try historyWire(f.wire).filter { $0["method"] as? String == method }
+    }
+    private func claudeGUITranscript(_ f: ClaudeHistoryGUIFixture, nativeID: String) throws -> URL {
+        XCTAssertNotNil(UUID(uuidString: nativeID)); XCTAssertEqual(nativeID.utf8.count, 36)
+        let file = f.configuration.appendingPathComponent("projects/coincide-claude-ui").appendingPathComponent(nativeID + ".jsonl")
+        let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        XCTAssertEqual(values.isRegularFile, true); XCTAssertNotEqual(values.isSymbolicLink, true)
+        XCTAssertLessThanOrEqual(values.fileSize ?? Int.max, 4_194_304)
+        return file
+    }
+    private func claudeGUIRecords(_ file: URL) throws -> [[String: Any]] {
+        let data = try Data(contentsOf: file)
+        XCTAssertLessThanOrEqual(data.count, 4_194_304)
+        return try data.split(separator: 10).map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]) }
+            .filter { ["user", "assistant"].contains($0["type"] as? String ?? "") }
+    }
+    @MainActor private func assertClaudeGUIWorkspaceUnchanged(_ f: ClaudeHistoryGUIFixture) throws {
+        XCTAssertEqual(try Data(contentsOf: f.document), f.original)
+        XCTAssertEqual(try verifyHead(gitPath: f.gitPath, project: f.project, configuration: f.gitConfiguration, name: "claude-history-preserved-head"), f.head)
+        let status = try runGit(["-C", f.project.path, "status", "--porcelain=v1"], gitPath: f.gitPath, configuration: f.gitConfiguration, name: "claude-history-preserved-index")
+        XCTAssertTrue(status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        let files = try FileManager.default.contentsOfDirectory(atPath: f.configuration.path)
+        XCTAssertEqual(files, ["projects"], "Synthetic history must not create or read auth/settings files.")
+    }
+
     @MainActor func testNativeRunHistoryForkRewindAndRecallPreserveSourceDraftAndFiles() throws {
         let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "history")
         let app = fixture.app, root = fixture.root
@@ -2285,7 +2725,7 @@ final class CoincideDesktopUITests: XCTestCase {
     @MainActor private func installOfflineCLI(tool: String, python: String, peer: URL, state: URL, wire: URL,
                                               root: URL, bin: URL, in app: XCUIApplication) throws -> URL {
         let manager = FileManager.default
-        let allowed = ["codex": ["codex_history_ui.py", "codex_steering_ui.py", "codex_models_ui.py"], "gh": ["github_pr_ui.py"]]
+        let allowed = ["codex": ["codex_history_ui.py", "codex_steering_ui.py", "codex_models_ui.py"], "gh": ["github_pr_ui.py"], "claude": ["claude_history_ui.py"]]
         XCTAssertTrue(allowed[tool]?.contains(peer.lastPathComponent) == true)
         let bundle = Bundle(for: CoincideDesktopUITests.self)
         let helper = try XCTUnwrap(bundle.url(forResource: "CoincideOfflineCLI", withExtension: nil))

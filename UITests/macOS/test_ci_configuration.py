@@ -3,7 +3,8 @@
 The native job has a 45-minute whole-suite budget after the fourteen-workflow
 run used 29m59s with five paths still failing early. Individual test/command
 deadlines and all fourteen scenarios stay unchanged. Two explicit authentication
-settings scenarios and two skills workflows bring the zero-skip result gate to eighteen.
+settings scenarios and two skills workflows bring the zero-skip result gate to eighteen. Three additional synthetic Claude
+history/selection/inspection flows bring it to twenty-one without replacing them.
 After a failed production suite, diagnostic-only report arrival polling is
 capped at thirty seconds; it never reruns tests or changes their result.
 """
@@ -61,14 +62,44 @@ class NativeUIConfigurationTests(unittest.TestCase):
         for forbidden in ('Process(', 'fork(', 'system(', 'posix_spawn('):
             self.assertNotIn(forbidden, launcher)
 
+    def test_claude_native_history_cases_are_additive_and_use_the_isolated_signed_peer(self):
+        directory = Path(__file__).resolve().parent
+        harness = (directory / "CoincideDesktopUITests.swift").read_text()
+        project = (directory / "CoincideDesktopUITests.xcodeproj/project.pbxproj").read_text()
+        launcher = (directory / "OfflineCLILauncher.swift").read_text()
+        verifier = (directory / "verify_offline_launcher.py").read_text()
+        peer = (directory / "claude_history_ui.py").read_text()
+        self.assertEqual(harness.count("@MainActor func test"), 21)
+        for name in ("testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart",
+                     "testNativeClaudeSelectedContextIsConsumedOnceBeforeQueuedSuccessor",
+                     "testNativeClaudeContextInspectionIsReadOnlyAndNeverReplaysConsumedOrUnwrittenInput"):
+            self.assertIn("func " + name + "() throws", harness)
+        self.assertIn('path = claude_history_ui.py;', project)
+        self.assertIn('"claude": ["claude_history_ui.py"]', launcher)
+        self.assertIn('validClaudeArguments(arguments)', launcher)
+        self.assertIn('("CLAUDE_CONFIG_DIR", "private-claude-config")', launcher)
+        self.assertIn('("HOME", "private-claude-home")', launcher)
+        self.assertIn('Initialize-only metadata cannot invent a native transcript.', verifier)
+        self.assertIn('Rejected Claude argv/namespaces must not reach the peer.', verifier)
+        self.assertIn('consume-then-disconnect', peer)
+        self.assertIn('before-write-disconnect', peer)
+        self.assertIn('os.O_NOFOLLOW', peer)
+        self.assertNotIn('import urllib', peer)
+        self.assertNotIn('import socket', peer)
+        self.assertNotIn('subprocess', peer)
+
     def test_change_filter_keeps_product_and_harness_paths_and_skips_unrelated_unit_docs(self):
         for path in ["Sources/Coincide/Views/ChatView.swift", "Sources/CoincideCore/WorkspaceEngine.swift", "UITests/macOS/Example.swift", "script/test_macos_ui.sh", "script/prepare_macos_signing.py", "Package.resolved"]:
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_eighteen_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=18, passedTests=18, failedTests=0, skippedTests=0)), 18)
-        for summary in [dict(totalTestCount=18, passedTests=17, failedTests=0, skippedTests=1),
+    def test_results_require_twenty_one_real_tests_without_silent_skips(self):
+        self.assertEqual(ci.verify_results(dict(totalTestCount=21, passedTests=21, failedTests=0, skippedTests=0)), 21)
+        for summary in [dict(totalTestCount=21, passedTests=20, failedTests=0, skippedTests=1),
+                        dict(totalTestCount=21, passedTests=20, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=20, passedTests=20, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=18, passedTests=18, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=18, passedTests=17, failedTests=0, skippedTests=1),
                         dict(totalTestCount=18, passedTests=17, failedTests=1, skippedTests=0),
                         dict(totalTestCount=17, passedTests=17, failedTests=0, skippedTests=0),
                         dict(totalTestCount=16, passedTests=16, failedTests=0, skippedTests=0),

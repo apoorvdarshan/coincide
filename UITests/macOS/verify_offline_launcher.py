@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import uuid
 
 
 def verify(executable, python):
@@ -39,8 +40,8 @@ def verify(executable, python):
             descriptor.write_text(json.dumps(value))
             descriptor.chmod(0o600)
 
-        def call(expected, arguments=("app-server", "--stdio"), env=None):
-            result = subprocess.run([str(command), *arguments], input=payload, text=True, cwd=checkout,
+        def call(expected, arguments=("app-server", "--stdio"), env=None, payload_override=None):
+            result = subprocess.run([str(command), *arguments], input=payload if payload_override is None else payload_override, text=True, cwd=checkout,
                 env=environment if env is None else env, capture_output=True, timeout=5)
             if result.returncode != expected:
                 raise AssertionError(f"Offline helper exit {result.returncode}, expected {expected}: {result.stderr[:512]}")
@@ -129,7 +130,82 @@ def verify(executable, python):
         assert output.stdout.strip() == "gh version 2.0.0 (offline Coincide UI fixture)"
         assert json.loads(state.read_text())["creates"] == 0
         assert state.stat().st_mode & 0o777 == 0o600
-    print("Offline CLI launcher: initialize, GitHub metadata and descriptor rejection checks passed without GUI.")
+
+        # The same signed image recognizes only the literal native Claude
+        # stream-json argv. It never invokes auth, a vendor CLI, or a user home.
+        base = ["--print", "--input-format", "stream-json", "--output-format", "stream-json",
+                "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio",
+                "--allow-dangerously-skip-permissions"]
+        config, home = root / "private-claude-config", root / "private-claude-home"
+        config.mkdir(mode=0o700); home.mkdir(mode=0o700)
+        alpha, beta, probe = "Remember the native marker ALPHA.", "Remember the native marker BETA.", "Probe selected native context."
+        state.write_text(json.dumps(dict(cwd=str(checkout), configurationDirectory=str(config), actions={
+            alpha: dict(mode="normal", label="alpha"), beta: dict(mode="normal", label="beta"),
+            probe: dict(mode="normal", label="probe")})))
+        state.chmod(0o600)
+        claude_wire = root / "claude-wire.jsonl"
+        claude = dict(original, tool="claude", peer="claude_history_ui.py", wire=str(claude_wire))
+        claude_descriptor = root / "claude.offline.json"
+        claude_descriptor.write_text(json.dumps(claude)); claude_descriptor.chmod(0o600)
+        command = private_bin / "claude"; command.symlink_to(executable)
+        claude_env = dict(environment, HOME=str(home), CLAUDE_CONFIG_DIR=str(config),
+                          CLAUDE_CODE_PROJECT_DIR_NAME="coincide-claude-ui")
+        def control(method, **params):
+            return dict(type="control_request", request_id="launcher-claude-" + method,
+                        request=dict(subtype=method, **params))
+        def encoded(frames):
+            return "".join(json.dumps(frame) + "\n" for frame in frames)
+        initialized = control("initialize", hooks=None)
+        initialization = call(0, arguments=base, env=claude_env, payload_override=encoded([initialized]))
+        first = json.loads(initialization.stdout.splitlines()[0])["response"]
+        assert first["subtype"] == "success" and first["request_id"] == initialized["request_id"]
+        assert first["response"]["models"][0]["value"] == "claude-ui-model"
+        assert not list(config.rglob("*.jsonl")), "Initialize-only metadata cannot invent a native transcript."
+        prefix = [initialized, control("set_permission_mode", mode="default"), control("set_model", model=None)]
+        opening_alpha, opening_beta = str(uuid.uuid4()), str(uuid.uuid4())
+        def user(ident, text):
+            return dict(type="user", uuid=ident, parent_tool_use_id=None, message=dict(role="user", content=text))
+        accepted = call(0, arguments=base, env=claude_env,
+                        payload_override=encoded(prefix + [user(opening_alpha, alpha), user(opening_beta, beta)]))
+        responses = [json.loads(line) for line in accepted.stdout.splitlines()]
+        assistants = [frame for frame in responses if frame.get("type") == "assistant"]
+        assert len(assistants) == 2 and all(frame["uuid"] != frame["message"]["id"] for frame in assistants)
+        session = assistants[0]["session_id"]; cursor = assistants[0]["uuid"]
+        transcript = config / "projects/coincide-claude-ui" / (session + ".jsonl")
+        original_rows = [json.loads(line) for line in transcript.read_text().splitlines()]
+        assert [row["uuid"] for row in original_rows if row["type"] == "user"] == [opening_alpha, opening_beta]
+        assert original_rows[0]["parentUuid"] is None and original_rows[1]["parentUuid"] == opening_alpha
+        opening_probe = str(uuid.uuid4())
+        selected = call(0, arguments=base + ["--resume", session, "--resume-session-at=" + cursor], env=claude_env,
+                        payload_override=encoded(prefix + [user(opening_probe, probe)]))
+        selected_assistant = next(frame for frame in map(json.loads, selected.stdout.splitlines()) if frame.get("type") == "assistant")
+        assert selected_assistant["message"]["content"][0]["text"] == "Claude GUI probe context ALPHA"
+        selected_rows = [json.loads(line) for line in transcript.read_text().splitlines()]
+        assert selected_rows[:4] == original_rows and selected_rows[4]["parentUuid"] == cursor
+        assert selected_rows[4]["uuid"] == opening_probe and selected_rows[5]["parentUuid"] == opening_probe
+        continued = call(0, arguments=base + ["--resume", session], env=claude_env,
+                         payload_override=encoded(prefix + [user(str(uuid.uuid4()), probe)]))
+        assert "Claude GUI probe context ALPHA BETA" not in continued.stdout
+        assert "Claude GUI probe context ALPHA" in continued.stdout
+        fresh_id = str(uuid.uuid4())
+        call(0, arguments=base + ["--session-id", fresh_id], env=claude_env, payload_override=encoded([initialized]))
+        assert not (transcript.parent / (fresh_id + ".jsonl")).exists()
+        before_claude = claude_wire.read_bytes()
+        for suffix in (["--resume", "not-a-native-uuid"], ["--session-id", fresh_id, "--resume", session],
+                       ["--resume", session, "--resume-session-at=invalid"], ["--resume-session-at=" + cursor],
+                       ["--resume", session, "--resume", session], ["--session-id", "../foreign"],
+                       ["--resume", session, "--dangerously-skip-permissions"]):
+            call(78, arguments=base + suffix, env=claude_env, payload_override=encoded([initialized]))
+        call(78, arguments=base + ["--resume", session], env=dict(claude_env, CLAUDE_CONFIG_DIR=str(checkout)), payload_override=encoded([initialized]))
+        call(78, arguments=base, env=dict(claude_env, HOME=str(checkout)), payload_override=encoded([initialized]))
+        config.rename(root / "configuration-target")
+        config.symlink_to(root / "configuration-target", target_is_directory=True)
+        call(78, arguments=base, env=claude_env, payload_override=encoded([initialized]))
+        config.unlink(); (root / "configuration-target").rename(config)
+        assert claude_wire.read_bytes() == before_claude, "Rejected Claude argv/namespaces must not reach the peer."
+        assert sorted(path.name for path in config.iterdir()) == ["projects"]
+        assert not list(home.iterdir())
+    print("Offline CLI launcher: Codex/GitHub/Claude envelopes, native selected chains and isolated descriptor/argv rejection checks passed without GUI.")
 
 
 if __name__ == "__main__":

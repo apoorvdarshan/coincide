@@ -37,6 +37,24 @@ and run `node script/generate_claude_history_oracle.mjs /path/to/extracted/packa
 The generator checks its source hash, verifies unchanged source files and removes
 its private scratch directory. Its fixture is synthetic, not captured user data.
 
+## Hosted native UI acceptance
+
+Three additional hosted scenarios use the normal native app and accessibility
+controls with an immutable synthetic stream-json peer. They cover unchanged-source
+fork and deferred selection without sending across restart; one exact selected
+consumer before a held-terminal FIFO successor; and read-only inspection of both
+consumed and unwritten interrupted selections without replay. Context responses
+come from actual native JSONL parent chains, including files published by the
+Swift fork service. Outer assistant UUIDs deliberately differ from API message IDs.
+
+The signed test launcher accepts only the literal native argument grammar and
+exact private HOME/configuration paths. Its offline verifier exercises those
+controls, native branch selection and descriptor/argument refusal without an
+installed provider, account or GUI. Runner compilation and that verifier pass
+locally; interactive acceptance remains a hosted gate. All eighteen existing
+scenarios remain intact, and the result gate now requires all 21 with zero skips.
+These synthetic UI checks remain separate from installed CLI compatibility.
+
 ## Pure transcript behavior
 
 `ClaudeTranscript` keeps the raw JSONL inventory separately from the SDK's selected
