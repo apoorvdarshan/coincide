@@ -15,6 +15,81 @@ private func fixtureThread() -> CodingThread {
 }
 
 @Test(.timeLimit(.minutes(1)))
+func claudeKeepsRootIdentityAcrossChildEventsAndRepeatedTurns() async throws {
+    let session = try claudeFixture("identity")
+    let observer = Task {
+        var identities: [String] = [], replies: [String] = [], completed = 0
+        for await event in session.events {
+            switch event {
+            case .thread(let id): identities.append(id)
+            case .message(let message) where message.role == .assistant: replies.append(message.text)
+            case .completed:
+                completed += 1
+                if completed == 1 { try await session.send(text: "Second explicit input", thread: fixtureThread()) }
+                else { return (identities, replies) }
+            case .failure(let error): throw CoincideError(error)
+            default: break
+            }
+        }
+        throw CoincideError("The root identity peer ended without two root completions.")
+    }
+    do {
+        try await session.send(text: "First explicit input", thread: fixtureThread())
+        let (identities, replies) = try await observer.value
+        #expect(!identities.isEmpty)
+        #expect(Set(identities) == ["claude-session"])
+        #expect(replies == ["Hello Claude", "Hello Claude"])
+        var retargeted = fixtureThread(); retargeted.providerThreadID = "different-session"
+        await #expect(throws: CoincideError.self) { try await session.send(text: "Must not be sent", thread: retargeted) }
+        async let firstClose: Void = session.close()
+        async let secondClose: Void = session.close()
+        _ = await (firstClose, secondClose)
+        await #expect(throws: CoincideError.self) { _ = try await session.models() }
+        await #expect(throws: CoincideError.self) { try await session.send(text: "Must not restart", thread: fixtureThread()) }
+    } catch {
+        await session.close(); observer.cancel(); _ = try? await observer.value; throw error
+    }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func claudeConcurrentStartupHasOneOrderedReaderAndCloseJoinsInitialization(closeDuringInitialization: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-claude-startup-\(UUID())")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fixture = try #require(Bundle.module.url(forResource: "claude_server", withExtension: "py", subdirectory: "Fixtures"))
+    let session = try ClaudeSession(executable: URL(fileURLWithPath: "/usr/bin/python3"), cwd: root,
+        arguments: [fixture.path, "held-initialize", root.path])
+    let first = Task { try await session.models() }
+    let second = Task { try await session.models() }
+    let deadline = ContinuousClock.now + .seconds(8)
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("ready").path) {
+        if ContinuousClock.now >= deadline {
+            await session.close(); Issue.record("The owned startup peer did not reach initialization."); return
+        }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    if closeDuringInitialization {
+        async let firstClose: Void = session.close()
+        async let secondClose: Void = session.close()
+        _ = await (firstClose, secondClose)
+        await #expect(throws: (any Error).self) { _ = try await first.value }
+        await #expect(throws: (any Error).self) { _ = try await second.value }
+    } else {
+        try Data().write(to: root.appendingPathComponent("release"))
+        do {
+            #expect(try await first.value == [ProviderModel(id: "fixture-model", name: "Fixture Model")])
+            #expect(try await second.value == [ProviderModel(id: "fixture-model", name: "Fixture Model")])
+        } catch { await session.close(); throw error }
+        await session.close()
+    }
+    let frames = try Data(contentsOf: root.appendingPathComponent("wire.jsonl")).split(separator: 10).map {
+        try JSONDecoder().decode(JSONValue.self, from: Data($0))
+    }
+    #expect(frames.filter { $0["request"]["subtype"] == .string("initialize") }.count == 1)
+    await #expect(throws: CoincideError.self) { _ = try await session.models() }
+}
+
+@Test(.timeLimit(.minutes(1)))
 func claudeApprovalsStreamingAndRepeatedTurns() async throws {
     let session = try claudeFixture("approve")
     #expect(try await session.models() == [ProviderModel(id: "fixture-model", name: "Fixture Model")])

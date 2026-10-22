@@ -1,6 +1,8 @@
 """Offline peer for the public Claude stream-json control envelopes."""
 import json
+import os
 import sys
+import time
 
 scenario = sys.argv[1]
 permission = None
@@ -25,11 +27,19 @@ def finish(text='Hello Claude', is_error=False):
 
 for line in sys.stdin:
     frame = json.loads(line)
+    if scenario == 'held-initialize':
+        with open(os.path.join(sys.argv[2], 'wire.jsonl'), 'a', encoding='utf-8') as log:
+            log.write(json.dumps(frame) + '\n')
     if frame['type'] == 'control_request':
         request = frame['request']
         subtype = request['subtype']
         ident = frame['request_id']
         if subtype == 'initialize':
+            if scenario == 'held-initialize':
+                with open(os.path.join(sys.argv[2], 'ready'), 'w') as marker:
+                    marker.write('ready')
+                while not os.path.exists(os.path.join(sys.argv[2], 'release')):
+                    time.sleep(.005)
             control_response(ident, {'models': [{'value': 'fixture-model', 'displayName': 'Fixture Model'}]})
         elif subtype == 'set_permission_mode':
             permission = request['mode']
@@ -46,10 +56,22 @@ for line in sys.stdin:
         turn += 1
         assert permission == 'default'
         assert frame['message']['role'] == 'user'
+        if scenario == 'identity':
+            # A child can report its native identity before the root does.
+            emit({'type': 'system', 'subtype': 'init', 'session_id': 'child-session',
+                  'parent_tool_use_id': 'root-agent-tool'})
         emit({'type': 'system', 'subtype': 'init', 'session_id': 'claude-session'})
-        if scenario == 'interrupt':
+        if scenario == 'identity':
+            emit({'type': 'result', 'session_id': 'child-session',
+                  'parent_tool_use_id': 'root-agent-tool', 'result': 'Child result'})
+            emit({'type': 'system', 'subtype': 'init', 'session_id': 'foreign-root'})
+            emit({'type': 'assistant', 'session_id': 'foreign-root',
+                  'message': {'id': 'foreign-message', 'content': [{'type': 'text', 'text': 'Foreign reply'}]}})
+            emit({'type': 'result', 'session_id': 'foreign-root', 'result': 'Foreign result'})
+            finish()
+        elif scenario == 'interrupt':
             continue
-        if scenario == 'error':
+        elif scenario == 'error':
             emit({'type': 'result', 'is_error': True, 'errors': ['Fixture provider failed'], 'session_id': 'claude-session'})
         elif scenario == 'question':
             emit({'type': 'control_request', 'request_id': 'question-1', 'request': {'subtype': 'can_use_tool', 'tool_name': 'AskUserQuestion', 'input': {'questions': [{'question': 'Which option?', 'header': 'Choice', 'multiSelect': False, 'options': [{'label': 'A', 'description': 'First'}]}]}}})

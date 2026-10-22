@@ -267,6 +267,62 @@ func nativeComposerSkillSelectionBridgeUsesItsOwnEditorAndRetainsTheNativeDelega
     var frames: [String: CGRect] = [:]
 }
 
+@Test(arguments: [3, 30], [false, true]) @MainActor
+func nativeSkillsPickerKeepsThreeRowsVisibleBesideCompetingTranscriptScrollView(count: Int, dark: Bool) async throws {
+    _ = NSApplication.shared
+    let thread = CodingThread(project: WorkspaceProject(path: "/fixture/workspace"))
+    let rows = (0..<count).map { index in
+        ProviderSkill(name: index == 2 ? "fresh-check" : "review-\(index)",
+            path: "/fixture/skills/\(index)/SKILL.md", description: "Review the current workspace", scope: "repo")
+    }
+    let model = ProviderSkillsStore(scope: .init(thread), read: { _ in
+        .init(cwd: thread.workspacePath, skills: rows,
+              problems: [.init(message: "A skill could not be loaded.")])
+    })
+    await model.refresh()
+    defer { model.cancel() }
+    let geometry = NativeSkillsGeometry()
+    let picker = SkillPicker(model: model, query: .constant(""), searchField: true, selectedID: rows[0].id,
+        choose: { _ in }, move: { _ in }, confirm: {}, dismiss: {}, reportGeometry: { geometry.frames[$0] = $1 })
+    // Match the native conversation's two competing vertical scroll areas at
+    // its minimum window height. The results previously collapsed to 41 points.
+    let content = VStack(spacing: 0) {
+        Text("Conversation").frame(height: 44)
+        ScrollView { Text("What are we building?").padding(.top, 100).padding(.bottom, 60) }
+        VStack(spacing: 10) {
+            picker
+            TextEditor(text: .constant("Keep a second draft: $ship-check ")).frame(height: 40)
+            Button("Send") {}.frame(height: 24)
+        }.padding(14)
+    }
+    let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+    let previous = NSApp.appearance
+    NSApp.appearance = appearance
+    defer { NSApp.appearance = previous }
+    let root = content.environment(\.colorScheme, dark ? .dark : .light)
+        .environment(\.controlActiveState, .active).frame(width: 680, height: 600)
+    let host = NSHostingView(rootView: root); host.appearance = appearance
+    host.frame = .init(x: 0, y: 0, width: 680, height: 600)
+    let window = NSWindow(contentRect: .init(x: -10_000, y: -10_000, width: 680, height: 600),
+        styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.appearance = appearance; window.contentView = host
+    defer { window.close() }
+    host.layoutSubtreeIfNeeded()
+    try await waitNativeSkills { geometry.frames["skill-" + rows[2].id] != nil && geometry.frames["viewport"] != nil }
+    host.layoutSubtreeIfNeeded()
+    let viewport = try #require(geometry.frames["viewport"])
+    let instructions = try #require(geometry.frames["instructions"])
+    let bounds = try #require(geometry.frames["bounds"])
+    #expect(viewport.height <= 211 && viewport.height > 0)
+    #expect(viewport.maxY <= instructions.minY && bounds.insetBy(dx: -1, dy: -1).contains(viewport))
+    for row in rows.prefix(3) {
+        let frame = try #require(geometry.frames["skill-" + row.id])
+        #expect(viewport.insetBy(dx: -1, dy: -1).contains(frame))
+    }
+    #expect(host.fittingSize.height <= 601)
+    await model.shutdown()
+}
+
 @Test(.timeLimit(.minutes(1))) @MainActor
 func nativeSkillsPickerAndComposerFitNarrowLongLocalizedRowsInBothAppearancesAndDirections() async throws {
     _ = NSApplication.shared

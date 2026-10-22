@@ -1,0 +1,1407 @@
+{
+  "sdkVersion": "0.3.276",
+  "sdkSHA256": "b1607967e0dfb39a0db45f143d3b57c7a85f2f6eaa77d6bee7d8184a9830a9f3",
+  "blockedCalls": 0,
+  "cases": [
+    {
+      "name": "parallel_tool_branches",
+      "sessionID": "00000000-0000-0000-0000-000000002711",
+      "rows": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-000000000065",
+          "sessionId": "00000000-0000-0000-0000-000000002711",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:00.000Z",
+          "message": {
+            "role": "user",
+            "content": "same input"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000066",
+          "sessionId": "00000000-0000-0000-0000-000000002711",
+          "parentUuid": "00000000-0000-0000-0000-000000000065",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:01.000Z",
+          "message": {
+            "id": "api-a",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "first"
+              }
+            ]
+          }
+        },
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-000000000067",
+          "sessionId": "00000000-0000-0000-0000-000000002711",
+          "parentUuid": "00000000-0000-0000-0000-000000000066",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:02.000Z",
+          "message": {
+            "role": "user",
+            "content": "same input"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000068",
+          "sessionId": "00000000-0000-0000-0000-000000002711",
+          "parentUuid": "00000000-0000-0000-0000-000000000067",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:03.000Z",
+          "message": {
+            "id": "api-b",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "parallel A"
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000069",
+          "sessionId": "00000000-0000-0000-0000-000000002711",
+          "parentUuid": "00000000-0000-0000-0000-000000000067",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:04.000Z",
+          "message": {
+            "id": "api-b",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "parallel B"
+              }
+            ]
+          }
+        },
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-00000000006a",
+          "sessionId": "00000000-0000-0000-0000-000000002711",
+          "parentUuid": "00000000-0000-0000-0000-000000000068",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:05.000Z",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "read-1",
+                "content": "parallel result"
+              }
+            ]
+          }
+        }
+      ],
+      "cutoff": "00000000-0000-0000-0000-000000000066",
+      "expectedMessages": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-000000000065",
+          "session_id": "00000000-0000-0000-0000-000000002711",
+          "message": {
+            "role": "user",
+            "content": "same input"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:00.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000066",
+          "session_id": "00000000-0000-0000-0000-000000002711",
+          "message": {
+            "id": "api-a",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "first"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:01.000Z"
+        },
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-000000000067",
+          "session_id": "00000000-0000-0000-0000-000000002711",
+          "message": {
+            "role": "user",
+            "content": "same input"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:02.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000068",
+          "session_id": "00000000-0000-0000-0000-000000002711",
+          "message": {
+            "id": "api-b",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "parallel A"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:03.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000069",
+          "session_id": "00000000-0000-0000-0000-000000002711",
+          "message": {
+            "id": "api-b",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "parallel B"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:04.000Z"
+        },
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-00000000006a",
+          "session_id": "00000000-0000-0000-0000-000000002711",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "read-1",
+                "content": "parallel result"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:05.000Z"
+        }
+      ],
+      "expectedForkRecords": [
+        {
+          "type": "user",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "role": "user",
+            "content": "same input"
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002711",
+            "messageUuid": "00000000-0000-0000-0000-000000000065"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-000000000065",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-a",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "first"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002711",
+            "messageUuid": "00000000-0000-0000-0000-000000000066"
+          }
+        },
+        {
+          "type": "custom-title",
+          "sessionId": "$target",
+          "customTitle": "same input (fork)"
+        }
+      ]
+    },
+    {
+      "name": "preserved_messages_compaction",
+      "sessionID": "00000000-0000-0000-0000-000000002712",
+      "rows": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000000c9",
+          "sessionId": "00000000-0000-0000-0000-000000002712",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:00.000Z",
+          "message": {
+            "role": "user",
+            "content": "old question"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000000ca",
+          "sessionId": "00000000-0000-0000-0000-000000002712",
+          "parentUuid": "00000000-0000-0000-0000-0000000000c9",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:01.000Z",
+          "message": {
+            "id": "api-old",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old answer"
+              }
+            ]
+          }
+        },
+        {
+          "type": "system",
+          "uuid": "00000000-0000-0000-0000-0000000000cb",
+          "sessionId": "00000000-0000-0000-0000-000000002712",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:02.000Z",
+          "subtype": "compact_boundary",
+          "logicalParentUuid": "00000000-0000-0000-0000-0000000000ca",
+          "compactMetadata": {
+            "preservedMessages": {
+              "anchorUuid": "00000000-0000-0000-0000-0000000000cb",
+              "uuids": [
+                "00000000-0000-0000-0000-0000000000c9",
+                "00000000-0000-0000-0000-0000000000ca"
+              ]
+            }
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000000cc",
+          "sessionId": "00000000-0000-0000-0000-000000002712",
+          "parentUuid": "00000000-0000-0000-0000-0000000000cb",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:03.000Z",
+          "message": {
+            "id": "api-new",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "after compact"
+              }
+            ]
+          }
+        }
+      ],
+      "cutoff": "00000000-0000-0000-0000-0000000000cc",
+      "expectedMessages": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000000c9",
+          "session_id": "00000000-0000-0000-0000-000000002712",
+          "message": {
+            "role": "user",
+            "content": "old question"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:00.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000000ca",
+          "session_id": "00000000-0000-0000-0000-000000002712",
+          "message": {
+            "id": "api-old",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old answer"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:01.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000000cc",
+          "session_id": "00000000-0000-0000-0000-000000002712",
+          "message": {
+            "id": "api-new",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "after compact"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:03.000Z"
+        }
+      ],
+      "expectedForkRecords": [
+        {
+          "type": "user",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "role": "user",
+            "content": "old question"
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002712",
+            "messageUuid": "00000000-0000-0000-0000-0000000000c9"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-0000000000c9",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-old",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old answer"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002712",
+            "messageUuid": "00000000-0000-0000-0000-0000000000ca"
+          }
+        },
+        {
+          "type": "system",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "subtype": "compact_boundary",
+          "logicalParentUuid": "00000000-0000-0000-0000-0000000000ca",
+          "compactMetadata": {
+            "preservedMessages": {
+              "anchorUuid": "00000000-0000-0000-0000-0000000000cb",
+              "uuids": [
+                "00000000-0000-0000-0000-0000000000c9",
+                "00000000-0000-0000-0000-0000000000ca"
+              ]
+            }
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002712",
+            "messageUuid": "00000000-0000-0000-0000-0000000000cb"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-0000000000cb",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-new",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "after compact"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002712",
+            "messageUuid": "00000000-0000-0000-0000-0000000000cc"
+          }
+        },
+        {
+          "type": "custom-title",
+          "sessionId": "$target",
+          "customTitle": "old question (fork)"
+        }
+      ]
+    },
+    {
+      "name": "preserved_segment_compaction",
+      "sessionID": "00000000-0000-0000-0000-000000002713",
+      "rows": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-00000000012d",
+          "sessionId": "00000000-0000-0000-0000-000000002713",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:00.000Z",
+          "message": {
+            "role": "user",
+            "content": "old question"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-00000000012e",
+          "sessionId": "00000000-0000-0000-0000-000000002713",
+          "parentUuid": "00000000-0000-0000-0000-00000000012d",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:01.000Z",
+          "message": {
+            "id": "api-old",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old answer"
+              }
+            ]
+          }
+        },
+        {
+          "type": "system",
+          "uuid": "00000000-0000-0000-0000-00000000012f",
+          "sessionId": "00000000-0000-0000-0000-000000002713",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:02.000Z",
+          "subtype": "compact_boundary",
+          "logicalParentUuid": "00000000-0000-0000-0000-00000000012e",
+          "compactMetadata": {
+            "preservedSegment": {
+              "anchorUuid": "00000000-0000-0000-0000-00000000012f",
+              "headUuid": "00000000-0000-0000-0000-00000000012d",
+              "tailUuid": "00000000-0000-0000-0000-00000000012e"
+            }
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000130",
+          "sessionId": "00000000-0000-0000-0000-000000002713",
+          "parentUuid": "00000000-0000-0000-0000-00000000012f",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:03.000Z",
+          "message": {
+            "id": "api-new",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "after compact"
+              }
+            ]
+          }
+        }
+      ],
+      "cutoff": "00000000-0000-0000-0000-000000000130",
+      "expectedMessages": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-00000000012d",
+          "session_id": "00000000-0000-0000-0000-000000002713",
+          "message": {
+            "role": "user",
+            "content": "old question"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:00.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-00000000012e",
+          "session_id": "00000000-0000-0000-0000-000000002713",
+          "message": {
+            "id": "api-old",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old answer"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:01.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000130",
+          "session_id": "00000000-0000-0000-0000-000000002713",
+          "message": {
+            "id": "api-new",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "after compact"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:03.000Z"
+        }
+      ],
+      "expectedForkRecords": [
+        {
+          "type": "user",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "role": "user",
+            "content": "old question"
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002713",
+            "messageUuid": "00000000-0000-0000-0000-00000000012d"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-00000000012d",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-old",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old answer"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002713",
+            "messageUuid": "00000000-0000-0000-0000-00000000012e"
+          }
+        },
+        {
+          "type": "system",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "subtype": "compact_boundary",
+          "logicalParentUuid": "00000000-0000-0000-0000-00000000012e",
+          "compactMetadata": {
+            "preservedSegment": {
+              "anchorUuid": "00000000-0000-0000-0000-00000000012f",
+              "headUuid": "00000000-0000-0000-0000-00000000012d",
+              "tailUuid": "00000000-0000-0000-0000-00000000012e"
+            }
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002713",
+            "messageUuid": "00000000-0000-0000-0000-00000000012f"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-00000000012f",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-new",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "after compact"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002713",
+            "messageUuid": "00000000-0000-0000-0000-000000000130"
+          }
+        },
+        {
+          "type": "custom-title",
+          "sessionId": "$target",
+          "customTitle": "old question (fork)"
+        }
+      ]
+    },
+    {
+      "name": "queued_input_alias",
+      "sessionID": "00000000-0000-0000-0000-000000002714",
+      "rows": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-000000000191",
+          "sessionId": "00000000-0000-0000-0000-000000002714",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:00.000Z",
+          "message": {
+            "role": "user",
+            "content": "first"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000192",
+          "sessionId": "00000000-0000-0000-0000-000000002714",
+          "parentUuid": "00000000-0000-0000-0000-000000000191",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:01.000Z",
+          "message": {
+            "id": "api-first",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "type": "attachment",
+          "uuid": "00000000-0000-0000-0000-000000000193",
+          "sessionId": "00000000-0000-0000-0000-000000002714",
+          "parentUuid": "00000000-0000-0000-0000-000000000192",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:02.000Z",
+          "attachment": {
+            "type": "queued_command",
+            "prompt": "queued duplicate",
+            "source_uuid": "00000000-0000-0000-0000-0000000001f3",
+            "origin": {
+              "kind": "task-notification",
+              "subkind": "complete",
+              "fireReason": "done"
+            }
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000194",
+          "sessionId": "00000000-0000-0000-0000-000000002714",
+          "parentUuid": "00000000-0000-0000-0000-000000000193",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:03.000Z",
+          "message": {
+            "id": "api-after-queue",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "queued reply"
+              }
+            ]
+          }
+        }
+      ],
+      "cutoff": "00000000-0000-0000-0000-0000000001f3",
+      "expectedMessages": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-000000000191",
+          "session_id": "00000000-0000-0000-0000-000000002714",
+          "message": {
+            "role": "user",
+            "content": "first"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:00.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000192",
+          "session_id": "00000000-0000-0000-0000-000000002714",
+          "message": {
+            "id": "api-first",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:01.000Z"
+        },
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000001f3",
+          "session_id": "00000000-0000-0000-0000-000000002714",
+          "message": {
+            "role": "user",
+            "content": "queued duplicate"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "isQueuedCommand": true,
+          "timestamp": "2026-10-22T01:00:02.000Z",
+          "origin": {
+            "kind": "task-notification",
+            "subkind": "complete",
+            "fireReason": "done"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-000000000194",
+          "session_id": "00000000-0000-0000-0000-000000002714",
+          "message": {
+            "id": "api-after-queue",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "queued reply"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:03.000Z"
+        }
+      ],
+      "expectedForkRecords": [
+        {
+          "type": "user",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "role": "user",
+            "content": "first"
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002714",
+            "messageUuid": "00000000-0000-0000-0000-000000000191"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-000000000191",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-first",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002714",
+            "messageUuid": "00000000-0000-0000-0000-000000000192"
+          }
+        },
+        {
+          "type": "attachment",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-000000000192",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "attachment": {
+            "type": "queued_command",
+            "prompt": "queued duplicate",
+            "source_uuid": "00000000-0000-0000-0000-0000000001f3",
+            "origin": {
+              "kind": "task-notification",
+              "subkind": "complete",
+              "fireReason": "done"
+            }
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002714",
+            "messageUuid": "00000000-0000-0000-0000-000000000193"
+          }
+        },
+        {
+          "type": "custom-title",
+          "sessionId": "$target",
+          "customTitle": "first (fork)"
+        }
+      ]
+    },
+    {
+      "name": "post_assistant_structured_tail",
+      "sessionID": "00000000-0000-0000-0000-000000002715",
+      "rows": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000001f5",
+          "sessionId": "00000000-0000-0000-0000-000000002715",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:00.000Z",
+          "message": {
+            "role": "user",
+            "content": "structured output"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000001f6",
+          "sessionId": "00000000-0000-0000-0000-000000002715",
+          "parentUuid": "00000000-0000-0000-0000-0000000001f5",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:01.000Z",
+          "message": {
+            "id": "api-structured",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "answer"
+              }
+            ]
+          }
+        },
+        {
+          "type": "attachment",
+          "uuid": "00000000-0000-0000-0000-0000000001f7",
+          "sessionId": "00000000-0000-0000-0000-000000002715",
+          "parentUuid": "00000000-0000-0000-0000-0000000001f6",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:02.000Z",
+          "attachment": {
+            "type": "structured_output",
+            "content": {
+              "result": {
+                "ok": true
+              }
+            }
+          }
+        }
+      ],
+      "cutoff": "00000000-0000-0000-0000-0000000001f7",
+      "expectedMessages": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000001f5",
+          "session_id": "00000000-0000-0000-0000-000000002715",
+          "message": {
+            "role": "user",
+            "content": "structured output"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:00.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000001f6",
+          "session_id": "00000000-0000-0000-0000-000000002715",
+          "message": {
+            "id": "api-structured",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "answer"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:01.000Z"
+        }
+      ],
+      "expectedForkRecords": [
+        {
+          "type": "user",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "role": "user",
+            "content": "structured output"
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002715",
+            "messageUuid": "00000000-0000-0000-0000-0000000001f5"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-0000000001f5",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-structured",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "answer"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002715",
+            "messageUuid": "00000000-0000-0000-0000-0000000001f6"
+          }
+        },
+        {
+          "type": "attachment",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-0000000001f6",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "attachment": {
+            "type": "structured_output",
+            "content": {
+              "result": {
+                "ok": true
+              }
+            }
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002715",
+            "messageUuid": "00000000-0000-0000-0000-0000000001f7"
+          }
+        },
+        {
+          "type": "custom-title",
+          "sessionId": "$target",
+          "customTitle": "structured output (fork)"
+        }
+      ]
+    },
+    {
+      "name": "progress_and_inherited_metadata",
+      "sessionID": "00000000-0000-0000-0000-000000002716",
+      "rows": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-000000000259",
+          "sessionId": "00000000-0000-0000-0000-000000002716",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:00.000Z",
+          "message": {
+            "role": "user",
+            "content": "fork preserves native payload"
+          }
+        },
+        {
+          "type": "progress",
+          "uuid": "00000000-0000-0000-0000-00000000025a",
+          "sessionId": "00000000-0000-0000-0000-000000002716",
+          "parentUuid": "00000000-0000-0000-0000-000000000259",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:01.000Z",
+          "data": {
+            "type": "hook_progress"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-00000000025b",
+          "sessionId": "00000000-0000-0000-0000-000000002716",
+          "parentUuid": "00000000-0000-0000-0000-00000000025a",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:02.000Z",
+          "message": {
+            "id": "api-progress",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "native reply"
+              }
+            ]
+          }
+        },
+        {
+          "type": "attachment",
+          "uuid": "00000000-0000-0000-0000-00000000025c",
+          "sessionId": "00000000-0000-0000-0000-000000002716",
+          "parentUuid": "00000000-0000-0000-0000-00000000025b",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:03.000Z",
+          "attachment": {
+            "type": "deferred_tools_record",
+            "nameOnlyAnnouncements": [
+              "00000000-0000-0000-0000-000000000259",
+              "00000000-0000-0000-0000-00000000025b",
+              "00000000-0000-0000-0000-0000000002bb"
+            ]
+          }
+        },
+        {
+          "type": "history-suppression",
+          "sessionId": "00000000-0000-0000-0000-000000002716",
+          "cause": "user",
+          "ts": "2026-10-22T01:00:00Z"
+        },
+        {
+          "type": "content-replacement",
+          "sessionId": "00000000-0000-0000-0000-000000002716",
+          "replacements": [
+            {
+              "messageId": "00000000-0000-0000-0000-00000000025b",
+              "content": "native replacement"
+            }
+          ]
+        },
+        {
+          "type": "atis-latch",
+          "sessionId": "00000000-0000-0000-0000-000000002716",
+          "atis": "VALID"
+        },
+        {
+          "type": "custom-title",
+          "sessionId": "00000000-0000-0000-0000-000000002716",
+          "customTitle": "Native Test"
+        }
+      ],
+      "cutoff": "00000000-0000-0000-0000-00000000025c",
+      "expectedMessages": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-000000000259",
+          "session_id": "00000000-0000-0000-0000-000000002716",
+          "message": {
+            "role": "user",
+            "content": "fork preserves native payload"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:00.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-00000000025b",
+          "session_id": "00000000-0000-0000-0000-000000002716",
+          "message": {
+            "id": "api-progress",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "native reply"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:02.000Z"
+        }
+      ],
+      "expectedForkRecords": [
+        {
+          "type": "history-suppression",
+          "sessionId": "$target",
+          "cause": "fork_inherit"
+        },
+        {
+          "type": "user",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "role": "user",
+            "content": "fork preserves native payload"
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002716",
+            "messageUuid": "00000000-0000-0000-0000-000000000259"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-000000000259",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-progress",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "native reply"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002716",
+            "messageUuid": "00000000-0000-0000-0000-00000000025b"
+          }
+        },
+        {
+          "type": "attachment",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-00000000025b",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "attachment": {
+            "type": "deferred_tools_record",
+            "nameOnlyAnnouncements": [
+              "00000000-0000-0000-0000-000000000259",
+              "00000000-0000-0000-0000-00000000025b"
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002716",
+            "messageUuid": "00000000-0000-0000-0000-00000000025c"
+          }
+        },
+        {
+          "type": "content-replacement",
+          "sessionId": "$target",
+          "replacements": [
+            {
+              "messageId": "00000000-0000-0000-0000-00000000025b",
+              "content": "native replacement"
+            }
+          ]
+        },
+        {
+          "type": "atis-latch",
+          "sessionId": "$target",
+          "atis": "VALID"
+        },
+        {
+          "type": "custom-title",
+          "sessionId": "$target",
+          "customTitle": "Native Test (fork)"
+        }
+      ]
+    },
+    {
+      "name": "child_and_meta_exclusion",
+      "sessionID": "00000000-0000-0000-0000-000000002717",
+      "rows": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000002bd",
+          "sessionId": "00000000-0000-0000-0000-000000002717",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:00.000Z",
+          "message": {
+            "role": "user",
+            "content": "main"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000002be",
+          "sessionId": "00000000-0000-0000-0000-000000002717",
+          "parentUuid": "00000000-0000-0000-0000-0000000002bd",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:01.000Z",
+          "message": {
+            "id": "api-main",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "main reply"
+              }
+            ]
+          }
+        },
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000002bf",
+          "sessionId": "00000000-0000-0000-0000-000000002717",
+          "parentUuid": null,
+          "isSidechain": true,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:02.000Z",
+          "message": {
+            "role": "user",
+            "content": "child"
+          }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000002c0",
+          "sessionId": "00000000-0000-0000-0000-000000002717",
+          "parentUuid": "00000000-0000-0000-0000-0000000002bf",
+          "isSidechain": true,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:03.000Z",
+          "message": {
+            "id": "api-child",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "child reply"
+              }
+            ]
+          }
+        },
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000002c1",
+          "sessionId": "00000000-0000-0000-0000-000000002717",
+          "parentUuid": "00000000-0000-0000-0000-0000000002be",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "timestamp": "2026-10-22T01:00:04.000Z",
+          "message": {
+            "role": "user",
+            "content": "meta"
+          },
+          "isMeta": true
+        }
+      ],
+      "cutoff": "00000000-0000-0000-0000-0000000002be",
+      "expectedMessages": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-0000-0000-0000000002bd",
+          "session_id": "00000000-0000-0000-0000-000000002717",
+          "message": {
+            "role": "user",
+            "content": "main"
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:00.000Z"
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-0000-0000-0000000002be",
+          "session_id": "00000000-0000-0000-0000-000000002717",
+          "message": {
+            "id": "api-main",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "main reply"
+              }
+            ]
+          },
+          "parent_tool_use_id": null,
+          "parent_agent_id": null,
+          "timestamp": "2026-10-22T01:00:01.000Z"
+        }
+      ],
+      "expectedForkRecords": [
+        {
+          "type": "user",
+          "sessionId": "$target",
+          "parentUuid": null,
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "role": "user",
+            "content": "main"
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002717",
+            "messageUuid": "00000000-0000-0000-0000-0000000002bd"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "$target",
+          "parentUuid": "00000000-0000-0000-0000-0000000002bd",
+          "isSidechain": false,
+          "cwd": "/private/tmp/coincide-claude-history-oracle/workspace",
+          "message": {
+            "id": "api-main",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "main reply"
+              }
+            ]
+          },
+          "forkedFrom": {
+            "sessionId": "00000000-0000-0000-0000-000000002717",
+            "messageUuid": "00000000-0000-0000-0000-0000000002be"
+          }
+        },
+        {
+          "type": "custom-title",
+          "sessionId": "$target",
+          "customTitle": "main (fork)"
+        }
+      ]
+    }
+  ]
+}

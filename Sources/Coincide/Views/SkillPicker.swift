@@ -12,6 +12,7 @@ struct SkillPicker: View {
     let dismiss: () -> Void
     var showSkillsInSlashMenu: Binding<Bool> = .constant(true)
     var reportGeometry: ((String, CGRect) -> Void)? = nil
+    @ScaledMetric(relativeTo: .callout) private var suggestedRowHeight: CGFloat = 72
     static func matching(_ skills: [ProviderSkill], query: String) -> [ProviderSkill] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return skills }
@@ -60,6 +61,10 @@ struct SkillPicker: View {
                     .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("composer-skills-partial")
             }
             let matches = Self.matching(model.skills, query: query)
+            // A maximum alone lets the transcript's ScrollView compress this
+            // viewport below one row. Reserve room for up to three suggestions;
+            // wrapped rows and larger catalogs remain vertically scrollable.
+            let viewportHeight = min(210, suggestedRowHeight * CGFloat(min(matches.count, 3)))
             if matches.isEmpty && !model.isLoading && model.errorMessage == nil {
                 Text(model.inventory == nil ? "Choose Refresh to load this workspace's skills." : query.isEmpty ? "No user-invocable skills are available in this workspace." : "No matching skills.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -90,11 +95,13 @@ struct SkillPicker: View {
                                 .background { geometry("skill-" + skill.id) }
                         }
                     }
-                }.frame(maxHeight: 210)
+                }.frame(minHeight: viewportHeight, idealHeight: viewportHeight, maxHeight: 210)
+                    .background { geometry("viewport") }
                     .onChange(of: selectedID) { _, value in if let value { proxy.scrollTo(value) } }
             }
             Text("Inserts a skill mention into your draft. Return selects; Escape closes.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .background { geometry("instructions") }
         }.padding(12).coincideSurface(cornerRadius: 14)
             .background { geometry("bounds") }
             .coordinateSpace(name: "skill-picker-layout")

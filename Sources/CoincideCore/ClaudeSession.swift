@@ -9,6 +9,9 @@ public actor ClaudeSession: ProviderSession {
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
     private var reader: Task<Void, Never>?
+    private var closeTask: Task<Void, Never>?
+    private var connecting: Task<JSONValue, any Error>?
+    private var connectingID: UUID?
     private var initialized = false
     private var shuttingDown = false
     private var eventRunID: UUID?
@@ -20,6 +23,8 @@ public actor ClaudeSession: ProviderSession {
     private var emittedAssistant = false
     private var activeTurnID: String?
     private var activeNativeThreadID: String?
+    /// This process stays bound to one root conversation, including between runs.
+    private var nativeThreadID: String?
     private var activeConfiguration: ProviderConfiguration?
     private var turnGeneration = 0
     private var steeringTask: ProviderSteeringTask?
@@ -35,23 +40,40 @@ public actor ClaudeSession: ProviderSession {
             "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio",
             "--allow-dangerously-skip-permissions"]
         if arguments == nil, let resumeID { args += ["--resume", resumeID] }
-        rpc = try JSONRPCConnection(executable: executable, arguments: args, cwd: cwd, dialect: .claudeControl, maximumFrameSize: 128 * 1_024 * 1_024)
+        nativeThreadID = resumeID
+        rpc = try JSONRPCConnection(executable: executable, arguments: args, cwd: cwd, dialect: .claudeControl,
+            maximumFrameSize: 128 * 1_024 * 1_024, drainProcessOnClose: true)
     }
     public func connect() async throws {
+        guard !shuttingDown else { throw CoincideError("The Claude connection is closed.") }
         guard !initialized else { return }
-        logger.info("Claude connection starting")
-        let stream = rpc.events
-        reader = Task { [weak self] in for await event in stream { await self?.consume(event) } }
+        if connecting == nil {
+            logger.info("Claude connection starting")
+            if reader == nil {
+                let stream = rpc.events
+                reader = Task { [weak self] in for await event in stream { await self?.consume(event) } }
+            }
+            let rpc = rpc
+            connectingID = UUID()
+            connecting = Task { try await rpc.request("initialize", params: .object(["hooks": .null]), timeout: .seconds(60)) }
+        }
+        guard let connecting else { throw CoincideError("The Claude connection is closed.") }
+        let attemptID = connectingID
+        defer { if connectingID == attemptID { self.connecting = nil; connectingID = nil } }
         do {
-            initialization = try await rpc.request("initialize", params: .object(["hooks": .null]), timeout: .seconds(60))
+            let result = try await connecting.value
+            guard !shuttingDown else { throw CoincideError("The Claude connection is closed.") }
+            try Task.checkCancellation()
+            if !initialized {
+                initialization = result; initialized = true
+                logger.info("Claude connection ready")
+            }
         } catch {
             if error.localizedDescription == "initialize timed out." {
                 throw CoincideError("Claude startup timed out. Check for a macOS file-access dialog, then try again. This attempt did not submit a model turn.")
             }
             throw error
         }
-        initialized = true
-        logger.info("Claude connection ready")
     }
     public func models() async throws -> [ProviderModel] {
         try await connect()
@@ -73,12 +95,17 @@ public actor ClaudeSession: ProviderSession {
     }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         let submittedRunID = thread.activeRun?.id
+        guard !shuttingDown else { throw CoincideError("The Claude connection is closed.") }
         guard !working else { throw CoincideError("A turn is already running in this thread.") }
+        if let expected = thread.providerThreadID, let nativeThreadID, expected != nativeThreadID {
+            throw CoincideError("The Claude conversation changed. Open a connection for the selected conversation before sending.")
+        }
+        if nativeThreadID == nil { nativeThreadID = thread.providerThreadID }
         eventRunID = submittedRunID
         working = true; requestedInterrupt = false; emittedAssistant = false
         turnGeneration += 1
         let generation = turnGeneration
-        activeConfiguration = .init(thread: thread); activeNativeThreadID = thread.providerThreadID
+        activeConfiguration = .init(thread: thread); activeNativeThreadID = thread.providerThreadID ?? nativeThreadID
         activeTurnID = nil; steeringSubmitted = false; clearRootSubagents(); activeSubagentTasks = [:]
         do {
             try await connect()
@@ -177,8 +204,20 @@ public actor ClaudeSession: ProviderSession {
         pendingApprovals.removeValue(forKey: request.id)
     }
     public func close() async {
-        shuttingDown = true; await rpc.close(); _ = try? await steeringTask?.task.value; steeringTask = nil
-        reader?.cancel(); reader = nil; continuation.finish()
+        if let closeTask { await closeTask.value; return }
+        shuttingDown = true; working = false
+        connecting?.cancel()
+        let rpc = rpc, reading = reader, steering = steeringTask?.task, initializing = connecting, continuation = continuation
+        let task = Task {
+            await rpc.close()
+            _ = try? await initializing?.value
+            _ = try? await steering?.value
+            reading?.cancel(); await reading?.value
+            continuation.finish()
+        }
+        closeTask = task
+        await task.value
+        reader = nil; steeringTask = nil
     }
     private func consume(_ event: RPCEvent) async {
         switch event {
@@ -188,6 +227,7 @@ public actor ClaudeSession: ProviderSession {
             if !shuttingDown { continuation.yield(.connectionClosed(reason)) }
             working = false; continuation.finish()
         case .request(let id, let method, let params):
+            guard !shuttingDown else { return }
             if method == "can_use_tool" {
                 let request = ApprovalRequest(id: id, method: method, params: params)
                 pendingApprovals[id] = request; emit(.approval(request))
@@ -196,9 +236,14 @@ public actor ClaudeSession: ProviderSession {
                 emit(.message(.init(role: .system, text: "Unsupported Claude control request: \(method).")))
             }
         case .notification(let method, let frame):
+            guard !shuttingDown else { return }
             let isRoot = frame["parent_tool_use_id"] == .null
-            if let id = frame["session_id"].string {
-                if isRoot, working, activeNativeThreadID == nil { activeNativeThreadID = id }
+            if isRoot, let id = frame["session_id"].string {
+                // Child IDs and stale root frames must never retarget this
+                // process or finish another root conversation's active run.
+                guard nativeThreadID == nil || nativeThreadID == id else { return }
+                nativeThreadID = id
+                if working, activeNativeThreadID == nil { activeNativeThreadID = id }
                 emit(.thread(id))
             }
             switch method {
