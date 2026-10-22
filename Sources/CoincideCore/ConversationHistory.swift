@@ -146,7 +146,7 @@ extension WorkspaceSnapshot {
     public func canReviewConversationHistory(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty, thread.heldPostRunCheckpoint == nil,
-              thread.settlement == nil, workspaceReady(for: thread), !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
+              thread.settlement == nil, workspaceReady(for: thread), !isPullRequestCreationLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !(conversationHistoryOperations ?? []).contains(where: { $0.id != excludingOperationID && $0.review.sourceThreadID == threadID && $0.locksSource }) else { return false }
         return thread.workspacePreparation?.setup.map { [.succeeded, .skipped].contains($0.phase) } ?? true
     }

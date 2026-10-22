@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import Darwin
 import Vision
 import XCTest
 
@@ -781,6 +782,7 @@ final class CoincideDesktopUITests: XCTestCase {
                 let receipt = XCTAttachment(string: text); receipt.name = "history-offline-provider-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
             }
         }
+        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: "history")
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         try openProject(project, in: app)
@@ -792,6 +794,7 @@ final class CoincideDesktopUITests: XCTestCase {
         for (index, prompt) in prompts.enumerated() {
             XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
             composer.click(); composer.typeText(prompt)
+            XCTAssertTrue(waitForValue(composer, value: prompt, timeout: 5))
             app.typeKey(.return, modifierFlags: .command)
             XCTAssertTrue(app.staticTexts["Offline history reply \(index + 1)"].waitForExistence(timeout: 20))
         }
@@ -940,6 +943,7 @@ final class CoincideDesktopUITests: XCTestCase {
                 let receipt = XCTAttachment(string: text); receipt.name = "restore-offline-provider-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
             }
         }
+        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: "restore")
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         try openProject(project, in: app)
@@ -984,6 +988,7 @@ final class CoincideDesktopUITests: XCTestCase {
         assertConversationWorkspace(app, path: checkout.path); assertWorkspaceReady(in: app)
         let prompt = "Make the synthetic local checkpoint change"
         composer.click(); composer.typeKey("a", modifierFlags: .command); composer.typeText(prompt)
+        XCTAssertTrue(waitForValue(composer, value: prompt, timeout: 5))
         app.typeKey(.return, modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["Offline history reply 1"].waitForExistence(timeout: 20))
         let readme = checkout.appendingPathComponent("README.md")
@@ -1114,6 +1119,182 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(transcript.staticTexts["Offline history reply 1"].exists)
     }
 
+    @MainActor func testNativePullRequestReviewLostReplyAndReadOnlyInspectionPreserveDraftAndPublishedGit() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "pull-request")
+        let app = fixture.app, root = fixture.root
+        let project = root.appendingPathComponent("Native Pull Requests", isDirectory: true)
+        let bare = root.appendingPathComponent("Published fixture.git", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let readme = project.appendingPathComponent("README.md")
+        try "Main branch contents\n".write(to: readme, atomically: true, encoding: .utf8)
+        _ = try runGit(["init", "--bare", "--initial-branch", "main", bare.path], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-private-bare")
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Private PR base"],
+                          ["remote", "add", "origin", bare.path], ["push", "--set-upstream", "origin", "main"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-base-\(arguments[0])")
+        }
+        let base = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-base-head")
+        _ = try runGit(["-C", project.path, "checkout", "-b", "topic"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-topic-branch")
+        let contents = Data("Published private topic contents\n".utf8)
+        try contents.write(to: readme)
+        for arguments in [["add", "README.md"], ["commit", "--message", "Private PR feature"], ["push", "--set-upstream", "origin", "topic"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-topic-\(arguments[0])")
+        }
+        let head = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-published-head")
+        let headFile = project.appendingPathComponent(".git/HEAD"), headBytes = try Data(contentsOf: headFile)
+        // Publication happened to the real private bare repository above. From
+        // here onward all remote metadata comes from the closed-world fake gh;
+        // no fetch, push or public request is allowed or needed.
+        _ = try runGit(["-C", project.path, "remote", "set-url", "origin", "https://github.com/fixture/native-pr.git"],
+            gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-fixture-repository-identity")
+        let state = root.appendingPathComponent("github-peer.json"), wire = root.appendingPathComponent("github-peer-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "repository": "fixture/native-pr",
+            "published": ["main": base, "topic": head], "creates": 0, "loseCreateReply": true]).write(to: state)
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
+        let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "github_pr_ui", withExtension: "py"))
+        let peer = root.appendingPathComponent("github_pr_ui.py")
+        try Data(contentsOf: bundledPeer).write(to: peer)
+        let bin = root.appendingPathComponent("private-github-bin", isDirectory: true)
+        let config = root.appendingPathComponent("private-gh-config", isDirectory: true)
+        for directory in [bin, config] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        let executable = bin.appendingPathComponent("gh")
+        let command = [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ")
+        try ("#!/bin/sh\nexec " + command + " \"$@\"\n").write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["GH_CONFIG_DIR"] = config.path
+        app.launchEnvironment["GH_REPO"] = "github.com/unrelated/ignored"
+        addTeardownBlock { @MainActor [weak self] in
+            if let data = try? Data(contentsOf: wire), let text = String(data: data, encoding: .utf8) {
+                let receipt = XCTAttachment(string: text); receipt.name = "pull-request-offline-gh-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
+            }
+        }
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let draft = "Keep this unsent discussion while reviewing a pull request"
+        composer.click(); composer.typeText(draft)
+        let identifier = try selectedThreadIdentifier(in: app)
+        try openNativePullRequests(in: app)
+        let title = "Offline native PR review", body = "Keep this exact description.\n\n- Native reviewed request\n"
+        var sheet = try enterNativePullRequest(title: title, body: body, in: app)
+        XCTAssertTrue(sheet.staticTexts["pull-request-reviewed-title"].waitForExistence(timeout: 20))
+        let titleValue = sheet.staticTexts["pull-request-reviewed-title"]
+        XCTAssertEqual((titleValue.value as? String) ?? titleValue.label, title)
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", head, head)).firstMatch.exists)
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", base, base)).firstMatch.exists)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(sheet.frame))
+        capture(app, name: "pull-request-exact-create-review")
+        sheet.buttons["pull-requests-close"].click()
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        XCTAssertEqual(try githubCreateReceipts(wire).count, 0, "Review and Cancel must never create a remote request.")
+        try openNativePullRequests(in: app)
+        sheet = try enterNativePullRequest(title: title, body: body, in: app)
+        XCTAssertTrue(sheet.staticTexts["pull-request-reviewed-title"].waitForExistence(timeout: 20))
+        let edit = sheet.buttons["pull-request-edit-review"]
+        XCTAssertTrue(edit.isEnabled && edit.isHittable); edit.click()
+        XCTAssertTrue(waitForValue(sheet.textViews["pull-request-body"], value: body, timeout: 5))
+        sheet.buttons["pull-request-create"].click()
+        XCTAssertTrue(sheet.staticTexts["pull-request-reviewed-title"].waitForExistence(timeout: 20))
+        let create = sheet.buttons["pull-request-create"]
+        XCTAssertEqual(create.label, "Create Pull Request"); XCTAssertTrue(create.isEnabled && create.isHittable); create.click()
+        let status = sheet.staticTexts["pull-request-creation-status"]
+        let unconfirmed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Pull request creation unconfirmed", "Pull request creation unconfirmed"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [unconfirmed], timeout: 20), .completed)
+        XCTAssertTrue(sheet.buttons["pull-request-inspect-creation"].exists)
+        XCTAssertEqual(try githubCreateReceipts(wire).count, 1)
+        capture(app, name: "pull-request-lost-reply-held-without-retry")
+        sheet.buttons["pull-requests-close"].click()
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        XCTAssertFalse(app.buttons["Push…"].isEnabled, "An uncertain PR holds its checkout across windows and native Git controls.")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), identifier)
+        try openNativePullRequests(in: app)
+        sheet = try nativeHistorySheet(owning: "pull-requests-close", in: app)
+        XCTAssertTrue(sheet.staticTexts["pull-request-creation-status"].waitForExistence(timeout: 10))
+        XCTAssertEqual(try githubCreateReceipts(wire).count, 1, "Restart and refresh inspect only; they cannot replay creation.")
+        let inspect = sheet.buttons["pull-request-inspect-creation"]
+        XCTAssertTrue(inspect.isEnabled && inspect.isHittable); inspect.click()
+        let view = sheet.buttons["pull-request-view-result"]
+        XCTAssertTrue(view.waitForExistence(timeout: 20)); XCTAssertTrue(view.isEnabled && view.isHittable); view.click()
+        XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "pull-request-description").firstMatch.waitForExistence(timeout: 10))
+        let renderedDescription = sheet.descendants(matching: .any).matching(identifier: "pull-request-description").firstMatch
+        for paragraph in ["Keep this exact description.", "Native reviewed request"] {
+            XCTAssertTrue(renderedDescription.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", paragraph, paragraph)).firstMatch.waitForExistence(timeout: 5))
+        }
+        capture(app, name: "pull-request-read-only-inspection-finds-exact-result")
+        sheet.buttons["pull-requests-back"].click()
+        let row = sheet.buttons["pull-request-select-42"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10)); XCTAssertTrue(row.isHittable); row.click()
+        XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "pull-request-description").firstMatch.waitForExistence(timeout: 10))
+        sheet.buttons["pull-requests-close"].click()
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        XCTAssertEqual(try githubCreateReceipts(wire).count, 1)
+        let receipt = try XCTUnwrap(try githubCreateReceipts(wire).first)
+        XCTAssertEqual(receipt["body"] as? String, body)
+        let arguments = try XCTUnwrap(receipt["arguments"] as? [String])
+        for expected in ["--repo=github.com/fixture/native-pr", "--head=topic", "--base=main", "--title=" + title, "--draft", "--body-file=-"] { XCTAssertTrue(arguments.contains(expected)) }
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: state)) as? [String: Any])
+        XCTAssertEqual(saved["creates"] as? Int, 1)
+        let remote = try XCTUnwrap(saved["pullRequest"] as? [String: Any])
+        XCTAssertEqual(remote["url"] as? String, "https://github.com/fixture/native-pr/pull/42")
+        XCTAssertEqual(remote["headRefOid"] as? String, head); XCTAssertEqual(remote["baseRefOid"] as? String, base)
+        XCTAssertEqual(try Data(contentsOf: readme), contents); XCTAssertEqual(try Data(contentsOf: headFile), headBytes)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-preserved-head"), head)
+        let published = try runGit(["--git-dir=" + bare.path, "rev-parse", "refs/heads/topic"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-private-published-head")
+        XCTAssertEqual(published.trimmingCharacters(in: .whitespacesAndNewlines), head)
+        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Collapse Native Pull Requests"], selectedConversation: threadRow(identifier, in: app))
+        capture(app, name: "pull-request-recovered-draft-and-published-checkout")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
+    @MainActor private func githubCreateReceipts(_ wire: URL) throws -> [[String: Any]] {
+        guard FileManager.default.fileExists(atPath: wire.path) else { return [] }
+        return try historyWire(wire).filter { ($0["arguments"] as? [String]).map { Array($0.prefix(2)) == ["pr", "create"] } == true }
+    }
+
+    @MainActor private func openNativePullRequests(in app: XCUIApplication) throws {
+        let changes = app.descendants(matching: .any).matching(NSPredicate(
+            format: "(elementType == %d OR elementType == %d) AND (label == %@ OR title == %@)",
+            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.radioButton.rawValue, "Changes", "Changes")).firstMatch
+        if !changes.exists { toggleInspector(in: app) }
+        selectSegment("Changes", in: app)
+        let open = app.buttons["pull-requests-open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10)); XCTAssertTrue(open.isEnabled && open.isHittable); open.click()
+        XCTAssertTrue(app.sheets.containing(.button, identifier: "pull-requests-close").firstMatch.waitForExistence(timeout: 10))
+    }
+
+    @MainActor private func enterNativePullRequest(title: String, body: String, in app: XCUIApplication) throws -> XCUIElement {
+        let sheet = try nativeHistorySheet(owning: "pull-requests-close", in: app)
+        let new = sheet.buttons["pull-request-new"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: new)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+        XCTAssertTrue(new.isEnabled && new.isHittable); new.click()
+        XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "pull-request-title").firstMatch.waitForExistence(timeout: 10))
+        let titleField = sheet.textFields["pull-request-title"].exists ? sheet.textFields["pull-request-title"] : sheet.textViews["pull-request-title"]
+        revealNativePullRequestControl(titleField, in: sheet); titleField.click(); titleField.typeText(title)
+        let description = sheet.textViews["pull-request-body"]
+        revealNativePullRequestControl(description, in: sheet); description.click(); description.typeText(body)
+        let draft = sheet.checkBoxes["pull-request-draft"]
+        revealNativePullRequestControl(draft, in: sheet); draft.click()
+        XCTAssertEqual((draft.value as? NSNumber)?.intValue ?? Int((draft.value as? String) ?? ""), 1)
+        let review = sheet.buttons["pull-request-create"]
+        XCTAssertTrue(review.isEnabled && review.isHittable); review.click()
+        return sheet
+    }
+
+    @MainActor private func revealNativePullRequestControl(_ control: XCUIElement, in sheet: XCUIElement) {
+        let scroll = sheet.scrollViews.firstMatch
+        for _ in 0..<5 {
+            if control.exists && control.isHittable && scroll.frame.contains(control.frame) { return }
+            XCTAssertTrue(scroll.exists); scroll.scroll(byDeltaX: 0, deltaY: -150)
+        }
+        XCTAssertTrue(control.exists && control.isHittable && scroll.frame.contains(control.frame), "The native PR input must be visible inside its scrollable form.")
+    }
+
     @MainActor private func openNativeRunHistory(in app: XCUIApplication) throws {
         app.descendants(matching: .any).matching(identifier: "conversation-workspace").element.click()
         let history = app.menuItems["Run History…"]
@@ -1171,6 +1352,77 @@ final class CoincideDesktopUITests: XCTestCase {
         return try Data(contentsOf: path).split(separator: 10).map { line in
             try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
         }
+    }
+
+    @MainActor private func preflightOfflineHistoryProvider(_ executable: URL, cwd: URL,
+                                                           environment: [String: String], name: String) throws {
+        let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
+        process.executableURL = executable; process.arguments = ["app-server", "--stdio"]
+        process.currentDirectoryURL = cwd
+        process.environment = environment
+        process.standardInput = input; process.standardOutput = output; process.standardError = errors
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        func stopOwnedProcess() -> Bool {
+            guard process.isRunning else { return true }
+            process.terminate()
+            if exited.wait(timeout: .now() + 1) == .success { return true }
+            Darwin.kill(process.processIdentifier, SIGKILL)
+            return exited.wait(timeout: .now() + 1) == .success
+        }
+        defer {
+            try? input.fileHandleForWriting.close()
+            if process.isRunning { _ = stopOwnedProcess() }
+        }
+        let request: [String: Any] = ["id": "native-ui-launch-preflight", "method": "initialize",
+            "params": ["clientInfo": ["name": "coincide-ui-launch-preflight", "version": "1"]]]
+        var payload = try JSONSerialization.data(withJSONObject: request); payload.append(10)
+        do {
+            guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+            try process.run()
+        }
+        catch {
+            try? output.fileHandleForWriting.close(); try? errors.fileHandleForWriting.close()
+            let failure = error as NSError
+            let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile().prefix(16_384), as: UTF8.self)
+            let diagnostic = XCTAttachment(string: "Exact offline wrapper launch failed with the fixture environment.\nNSError domain=\(failure.domain) code=\(failure.code)\nstderr:\n\(stderr)")
+            diagnostic.name = name + "-offline-provider-launch-preflight"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+            throw error
+        }
+        do {
+            try input.fileHandleForWriting.write(contentsOf: payload)
+            try input.fileHandleForWriting.close()
+        } catch {
+            let stopped = stopOwnedProcess()
+            try? output.fileHandleForWriting.close(); try? errors.fileHandleForWriting.close()
+            let stderr = stopped ? String(decoding: errors.fileHandleForReading.readDataToEndOfFile().prefix(16_384), as: UTF8.self) : "Owned process did not drain after TERM/KILL."
+            let failure = error as NSError
+            let diagnostic = XCTAttachment(string: "Exact offline wrapper initialize input failed with the fixture environment.\nNSError domain=\(failure.domain) code=\(failure.code)\nstderr:\n\(stderr)")
+            diagnostic.name = name + "-offline-provider-launch-preflight"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+            throw error
+        }
+        let completed = exited.wait(timeout: .now() + 5) == .success
+        if !completed {
+            guard stopOwnedProcess() else {
+                let diagnostic = XCTAttachment(string: "Exact offline wrapper did not exit after initialize and EOF; its owned process was sent SIGKILL.")
+                diagnostic.name = name + "-offline-provider-launch-preflight"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+                throw NSError(domain: "CoincideDesktopUITests.ProviderPreflight", code: 2)
+            }
+        }
+        try? output.fileHandleForWriting.close(); try? errors.fileHandleForWriting.close()
+        let stdout = output.fileHandleForReading.readDataToEndOfFile()
+        let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile().prefix(16_384), as: UTF8.self)
+        let diagnostic = XCTAttachment(string: "Exact offline wrapper initialize-only launch with the fixture environment.\nexit=\(process.terminationStatus), completed=\(completed)\nstdout:\n\(String(decoding: stdout.prefix(16_384), as: UTF8.self))\nstderr:\n\(stderr)")
+        diagnostic.name = name + "-offline-provider-launch-preflight"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+        XCTAssertTrue(completed, "The offline peer must finish its initialize-only preflight after stdin EOF.")
+        XCTAssertEqual(process.terminationStatus, 0, "The exact offline wrapper must launch before testing native provider actions.")
+        let frame = try XCTUnwrap(stdout.split(separator: 10).first)
+        let reply = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(frame)) as? [String: Any])
+        XCTAssertEqual(reply["id"] as? String, "native-ui-launch-preflight")
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertEqual(result["userAgent"] as? String, "coincide/0.163.0 (macos; fixture)")
     }
 
     private func shellQuoted(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }

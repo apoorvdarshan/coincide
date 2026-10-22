@@ -119,7 +119,7 @@ extension WorkspaceSnapshot {
     public func canReviewCheckpointRestore(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty,
-              thread.settlement == nil, workspaceReady(for: thread), !isConversationHistoryLocked(threadID: threadID, excludingOperationID: excludingOperationID),
+              thread.settlement == nil, workspaceReady(for: thread), !isPullRequestCreationLocked(threadID: threadID), !isConversationHistoryLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !(checkpointRestoreOperations ?? []).contains(where: { $0.id != excludingOperationID && $0.locksSource &&
                   (Self.checkpointRestorePathsOverlap(thread.workspacePath, $0.review.gitReview.currentPlan.repositoryPath) || $0.review.threadID == threadID) }),

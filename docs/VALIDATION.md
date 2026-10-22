@@ -1,5 +1,84 @@
 # Validation record
 
+## 2026-10-22 — native GitHub PR browser and durable reviewed creation
+
+- Changes opens a native GitHub PR browser with state/search filters, exact
+  URL/number lookup, bounded native Markdown descriptions, checks, reviewers and
+  labels. Creation reviews the repository, published head branch and commit,
+  server base branch and commit, exact title/body and draft state. It requires an
+  already published branch and rechecks its captured Git ownership before the
+  single explicit `gh pr create`. An exact existing open head is reused before
+  checking a changed base. No implicit push, fork, login or browser launch occurs.
+- The durable engine commits a separate intent and outbox identity, then a
+  dispatch marker before external creation. Project/incarnation and checkout
+  holds prevent conflicting provider, Git, file, terminal and removal actions.
+  Unsent drafts remain editable. Accepted work is not replayed after restart;
+  dispatched uncertain outcomes remain held for read-only inspection or explicit
+  acknowledgment. Not finding a PR is not treated as proof that creation failed.
+  Storage version 20 protects these holds from older binaries.
+- Real Git fixtures push only to private local bare repositories, then use a
+  bounded offline `gh` peer with no HTTP path. Coverage includes exact fork and
+  published-upstream identity, existing PRs with another base, literal Unicode
+  title/body, one-create concurrency, stale/forged review rejection, cancellation
+  and child drain, missing CLI, authentication/access/rate limits and bounded
+  diagnostics. The production service also runs through the real SQLite engine:
+  the peer requires its exact operation to be dispatching and outbox row running
+  before accepting creation. Success and lost replies before/after mutation retain
+  Git/index/HEAD, the current draft and journal projection across reopen, without
+  another create. Reconciliation is read-only.
+- Native Store coverage checks shared checkout ownership across windows, the
+  pre-SQLite acceptance hold, blocked Send preserving the latest draft, uncertain
+  restart/found/not-found/acknowledgment and stale canceled context reads. Native
+  offscreen reviews, descriptions, unpublished-branch guidance and the entire
+  unconfirmed sheet fit at 320/680 points in light/dark appearances. These checks
+  do not execute interactive GUI tests locally.
+- A retained registry drains every canceled/replaced PR read during shutdown,
+  including an old read after its replacement finishes. The regression fails on
+  the previous implementation and passes with the fix. Valid 4,096-byte titles
+  also reproduced a clipped recovery screen. Pending recovery now scrolls between
+  the fixed header/footer; completed operation cards have a bounded scroll area.
+  Tests measure the actual heading and close-button frames, preserve the full
+  captured title and cover both pending and read-only reconciled outcomes. The
+  same test fails when the unbounded operation layout is restored.
+- Hosted screenshots exposed an earlier composer draft being submitted. The
+  actual Send action now reads the latest Store draft when invoked. Two injected
+  provider cases capture the action before editing, set a complete Unicode
+  prompt and submit before the debounce can save; the complete input reaches the
+  provider and durable user message exactly once. Hosted fixtures additionally
+  assert the intended editor value and run an initialize-only exact-wrapper
+  preflight with bounded launch/error evidence. The launch failure itself is
+  still awaiting hosted diagnosis; no speculative provider-protocol fix is made.
+- The hosted runner now requires all eleven workflows and zero skips. The added
+  offline native workflow reviews exact fields, cancels without a create, creates
+  once with a lost reply, restarts with a held state, inspects without retry and
+  preserves the draft and published local Git state. All original ten workflows
+  remain. Ten GUI-free peer/configuration tests pass and the complete runner
+  compiles. Actual hosted execution of the new workflow remains pending.
+- Previous commit `b3d64cc` [run 39722212655](https://github.com/apoorvdarshan/coincide/actions/runs/39722212655)
+  passes production tests, packaging, signing and native resource checks. Its
+  actual ten-workflow GUI run passes eight, fails two and skips none. The native
+  Files/editor/inspector workflow passes in 93.148 seconds, establishing hosted
+  evidence for the AppKit inspector replacement. History and restoration fail
+  before the first offline provider reply, with an OS operation-not-permitted
+  notice and no peer wire receipt; their later history/file assertions did not
+  run. Execution-boundary diagnosis remains separate from protocol correctness.
+- The complete initial PR run passes 642 Swift tests, including 533 Core in
+  166.742 seconds, six terminal and 13 Markdown. After the final App-only draft,
+  read-drain and long-title corrections, the entire native UI/Store target passes
+  92 tests in 36.236 seconds. Current source therefore has 644 passing Swift tests
+  across these runs, plus the ten GUI-free Python checks. No interactive native
+  GUI workflow ran locally.
+- The repository-owned app packages and launches. Deep/strict app/helper
+  signatures and native math-resource rendering pass. A fresh private SQLite
+  backup after graceful shutdown verifies storage 19 to 20 preserves the entire
+  canonical workspace: three conversations and 25 messages. No system install,
+  public binary release or live GitHub mutation was performed.
+
+AI PR content generation, compound commit/push/create, PR checkout/import,
+review/merge actions, stacks, other hosts and broader live authentication/network
+coverage remain pending. No live GitHub PR was created by these tests, and this
+milestone does not establish full T3 parity.
+
 ## 2026-10-22 — combined native rewind and checkpoint restoration
 
 - Rewind now offers Cancel, Revert and Keep Changes, and a separately prepared

@@ -149,9 +149,10 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var acpAgents: [ACPAgentConfiguration] = []
     public var sidebarPreferences: SidebarPreferences?
     public var conversationHistoryOperations: [ConversationHistoryOperation]?
+    public var pullRequestCreations: [PullRequestCreationOperation]?
     public var checkpointRestoreOperations: [RunCheckpointRestoreOperation]?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -160,10 +161,17 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         acpAgents = try values.decodeIfPresent([ACPAgentConfiguration].self, forKey: .acpAgents) ?? []
         sidebarPreferences = try values.decodeIfPresent(SidebarPreferences.self, forKey: .sidebarPreferences)
         conversationHistoryOperations = try values.decodeIfPresent([ConversationHistoryOperation].self, forKey: .conversationHistoryOperations)
+        pullRequestCreations = try values.decodeIfPresent([PullRequestCreationOperation].self, forKey: .pullRequestCreations)
         checkpointRestoreOperations = try values.decodeIfPresent([RunCheckpointRestoreOperation].self, forKey: .checkpointRestoreOperations)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        for i in (pullRequestCreations ?? []).indices {
+            guard let phase = pullRequestCreations?[i].phase, phase == .accepted || phase == .dispatching else { continue }
+            pullRequestCreations?[i].phase = phase == .accepted ? .failed : .unconfirmed
+            pullRequestCreations?[i].error = phase == .accepted ? PullRequestCreationOperation.failureMessage : PullRequestCreationOperation.unconfirmedMessage
+            pullRequestCreations?[i].updatedAt = Date()
+        }
         for i in (checkpointRestoreOperations ?? []).indices {
             guard let phase = checkpointRestoreOperations?[i].phase, phase == .accepted || phase == .dispatching else { continue }
             checkpointRestoreOperations?[i].phase = phase == .accepted ? .failed : .unconfirmed

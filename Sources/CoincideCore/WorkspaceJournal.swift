@@ -9,6 +9,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case acpAgentsReplaced([ACPAgentConfiguration])
     case sidebarPreferencesChanged(SidebarPreferences?)
     case conversationHistoryOperationsReplaced([ConversationHistoryOperation]?)
+    case pullRequestCreationsReplaced([PullRequestCreationOperation]?)
     case checkpointRestoreOperationsReplaced([RunCheckpointRestoreOperation]?)
     case threadMetadataUpserted(CodingThread)
     case threadRemoved(UUID)
@@ -20,6 +21,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
         case .conversationHistoryOperationsReplaced(let operations): snapshot.conversationHistoryOperations = operations
+        case .pullRequestCreationsReplaced(let operations): snapshot.pullRequestCreations = operations
         case .checkpointRestoreOperationsReplaced(let operations): snapshot.checkpointRestoreOperations = operations
         case .sidebarPreferencesChanged(let preferences): snapshot.sidebarPreferences = preferences
         case .acpAgentsReplaced(let agents): snapshot.acpAgents = agents
@@ -91,6 +93,7 @@ public enum WorkspaceJournal {
               }) else {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
+        try snapshot.validatePullRequestCreations()
         try snapshot.validateConversationHistory()
         try snapshot.validateConversationHistoryFilesLedger()
         try snapshot.validateCheckpointRestores()
@@ -175,6 +178,7 @@ public enum WorkspaceJournal {
         try validate(previous); try validate(next)
         var events: [WorkspaceEvent] = []
         if previous.conversationHistoryOperations != next.conversationHistoryOperations { events.append(.conversationHistoryOperationsReplaced(next.conversationHistoryOperations)) }
+        if previous.pullRequestCreations != next.pullRequestCreations { events.append(.pullRequestCreationsReplaced(next.pullRequestCreations)) }
         if previous.checkpointRestoreOperations != next.checkpointRestoreOperations { events.append(.checkpointRestoreOperationsReplaced(next.checkpointRestoreOperations)) }
         if previous.sidebarPreferences != next.sidebarPreferences { events.append(.sidebarPreferencesChanged(next.sidebarPreferences)) }
         if previous.acpAgents != next.acpAgents { events.append(.acpAgentsReplaced(next.acpAgents)) }

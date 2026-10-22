@@ -150,6 +150,16 @@ unused review removes only its verified temporary data. Current review limits
 are 100,000 filesystem entries and 512 MiB of regular-file bytes, including
 ignored files; executable checkout filters and unsupported layouts are rejected.
 
+The **Changes** inspector also opens a native **Pull Requests…** browser for
+GitHub repositories. It uses your installed `gh` CLI and existing sign-in. Search
+open, closed or merged requests, inspect their description/checks, or review a new
+request's repository, published head, exact base, title, body and draft state.
+Push the branch through the existing Git controls first. An existing open request
+is reused. Creation is saved before its single dispatch; reopening the app never
+resends it. An uncertain result holds the checkout for **Inspect Creation State**
+or explicit acknowledgment. Other PR hosts, automatic content generation,
+combined commit/push/create, PR checkout, reviews and stacks remain pending.
+
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a
 UTF-8 file, edit it, and save. Files over 1 MiB open as read-only previews. Binary

@@ -119,7 +119,7 @@ The peer runs only from a private PATH entry with a private CODEX_HOME. Its
 bounded state and wire log live under the test-owned workspace; flock plus
 atomic state replacement preserve boundaries across fresh metadata/fork
 processes. The CI shell resolves Python before entering the sandbox so the test
-does not invoke Apple's developer-tool shim. Seven GUI-free configuration and
+does not invoke Apple's developer-tool shim. Ten GUI-free configuration and
 peer tests validate isolation, persistence and the strict result gate.
 
 The tenth workflow uses an actual local Git repository and a natively prepared,
@@ -141,7 +141,7 @@ exact-head hosted job runs; compilation and fixture tests alone are not GUI proo
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all ten tests to pass with zero
+gate requires all eleven tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 
@@ -152,3 +152,16 @@ packaging, and UI-harness changes. Configuration tests run without a GUI:
 ```sh
 python3 -m unittest discover -s UITests/macOS -p 'test_*.py' -v
 ```
+
+The eleventh workflow publishes main and a feature commit to a private local bare
+repository, then binds the checkout's remote metadata to a closed-world fake gh
+executable on its private PATH. Every GitHub response and creation receipt is
+local; the peer refuses other repositories, hosts, cwd values and unsupported
+commands and never delegates to a real CLI or network. Native Review and Cancel
+must produce zero create attempts. An explicit reviewed draft creation persists
+one fixture PR and deliberately loses its reply. The app must hold the uncertain
+outcome across graceful relaunch, preserve the selected conversation/draft and
+Git bytes, then recover only after explicit read-only Inspect Creation State.
+List/detail and native Markdown must expose that exact result; the recorded body,
+head/base SHAs and one creation attempt remain unchanged. No browser is opened.
+This is production CLI integration against a fake GitHub peer, not a live PR.

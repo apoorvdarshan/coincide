@@ -1041,6 +1041,13 @@ public actor WorkspaceEngine {
     }
     private var checkpointRestoreReviews: [UUID: PreparedCheckpointRestore] = [:]
     private var acceptingCheckpointRestores: Set<UUID> = []
+    public typealias PullRequestFactory = @Sendable (URL) throws -> any GitHubPullRequestSession
+    private let pullRequestFactory: PullRequestFactory
+    private struct PreparedPullRequestCreation: Sendable { let operation: PullRequestCreationOperation; let digest: String }
+    private var pullRequestCreationReviews: [UUID: PreparedPullRequestCreation] = [:]
+    private var acceptingPullRequestCreations: Set<UUID> = []
+    private struct PullRequestRead: Sendable { let projectID: UUID; let drain: Task<Void, Never>; let cancel: @Sendable () -> Void }
+    private var pullRequestReads: [UUID: PullRequestRead] = [:]
     public typealias ProviderFactory = @Sendable (CodingThread) throws -> any ProviderSession
     public typealias WorktreeFactory = @Sendable (GitWorktreeRequest) throws -> any WorkspaceWorktreeSession
     public typealias CloneFactory = @Sendable (GitClonePlan) throws -> any ProjectCloneSession
@@ -1166,7 +1173,8 @@ public actor WorkspaceEngine {
                 worktreeFactory: @escaping WorktreeFactory = { GitWorktreeService(request: $0) },
                 projectScriptPlanner: @escaping ProjectScriptPlanner = { try await ProjectScriptSetupPlanner.plan($0) },
                 projectScriptFactory: @escaping ProjectScriptFactory = { _ in throw ProjectScriptExecutionError(.helperUnavailable) },
-                checkpointFactory: @escaping CheckpointFactory = { GitCheckpointService(root: $0) }) throws {
+                checkpointFactory: @escaping CheckpointFactory = { GitCheckpointService(root: $0) },
+                pullRequestFactory: @escaping PullRequestFactory = { GitHubPullRequestService(root: $0) }) throws {
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
@@ -1175,7 +1183,7 @@ public actor WorkspaceEngine {
         self.identityResolver = identityResolver
         self.worktreeFactory = worktreeFactory
         self.projectScriptPlanner = projectScriptPlanner; self.projectScriptFactory = projectScriptFactory
-        self.checkpointFactory = checkpointFactory
+        self.checkpointFactory = checkpointFactory; self.pullRequestFactory = pullRequestFactory
         worktreesRoot = url.deletingLastPathComponent().appendingPathComponent("Worktrees", isDirectory: true).standardizedFileURL
         try FileManager.default.createDirectory(at: worktreesRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let pair = AsyncStream<Envelope>.makeStream()
@@ -1327,6 +1335,10 @@ public actor WorkspaceEngine {
                 if let fatalError { throw CoincideError(fatalError) }
                 let decision: WorkspaceDecision
                 do {
+                    if case .pullRequestCreationAccepted(let operation) = envelope.command,
+                       projectIncarnations[operation.projectID] != operation.sourceIncarnation {
+                        throw WorkspaceCommandError("This project changed. Review its current pull request checkout again.")
+                    }
                     if case .checkpointRestoreAccepted(let review) = envelope.command,
                        threadIncarnations[review.threadID] != review.sourceIncarnation {
                         throw WorkspaceCommandError("This conversation changed. Review its files again before restoring.")
@@ -1339,7 +1351,7 @@ public actor WorkspaceEngine {
                        (threadIncarnations[threadID] != incarnation || request.destinationRoot != worktreesRoot.path) {
                         throw WorkspaceCommandError("This conversation changed. Choose the worktree again in its current workspace.")
                     }
-                    if !ownsCheckpointRestoreEvent(envelope.command) || !ownsHistoryEvent(envelope.command) || !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
+                    if !ownsPullRequestCreationEvent(envelope.command) || !ownsCheckpointRestoreEvent(envelope.command) || !ownsHistoryEvent(envelope.command) || !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else if case .worktreeRecovered(let threadID, let attemptID, let incarnation, _) = envelope.command,
                        !ownsWorktree(threadID: threadID, attemptID: attemptID, incarnation: incarnation) {
@@ -1433,6 +1445,11 @@ public actor WorkspaceEngine {
             projectIncarnations[project.id] = UUID()
         }
         for id in removedProjects { projectIncarnations.removeValue(forKey: id) }
+        for (id, read) in pullRequestReads where removedProjects.contains(read.projectID) {
+            read.cancel(); jobs.append(read.drain); pullRequestReads.removeValue(forKey: id)
+        }
+        pullRequestCreationReviews = pullRequestCreationReviews.filter { !removedProjects.contains($0.value.operation.projectID) }
+
         let previousThreads = Dictionary(uniqueKeysWithValues: previous.threads.map { ($0.id, $0) })
         for old in previous.threads {
             if let generation = old.settlement?.id,
@@ -1638,6 +1655,7 @@ public actor WorkspaceEngine {
         let historyFilesIncarnation: UUID?
         if case .conversationHistoryFiles = effect.request { historyFilesIncarnation = effect.request.threadID.flatMap { threadIncarnations[$0] } }
         else { historyFilesIncarnation = nil }
+        let pullRequestIncarnation = effect.request.pullRequestCreationOperationID == nil ? nil : effect.request.projectID.flatMap { projectIncarnations[$0] }
         let restoreIncarnation = effect.request.checkpointRestoreOperationID == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
         defer {
             effects.removeValue(forKey: effect.id); effectRequests.removeValue(forKey: effect.id)
@@ -1660,7 +1678,7 @@ public actor WorkspaceEngine {
         }
         catch is CancellationError { result = .cancelled }
         catch {
-            let message = historyFilesIncarnation != nil ? ConversationHistoryFilesState.failureMessage : restoreIncarnation != nil ? RunCheckpointRestoreOperation.failureMessage : historyIncarnation != nil ? ConversationHistoryOperation.failureMessage : effect.request.checkpointOwner != nil ? ThreadRunCheckpointAttempt.failureMessage : effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError(for: effect.request.projectScriptOwner?.role ?? .setup) : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
+            let message = pullRequestIncarnation != nil ? PullRequestCreationOperation.failureMessage : historyFilesIncarnation != nil ? ConversationHistoryFilesState.failureMessage : restoreIncarnation != nil ? RunCheckpointRestoreOperation.failureMessage : historyIncarnation != nil ? ConversationHistoryOperation.failureMessage : effect.request.checkpointOwner != nil ? ThreadRunCheckpointAttempt.failureMessage : effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError(for: effect.request.projectScriptOwner?.role ?? .setup) : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
             result = .failed(message)
         }
         heartbeat.cancel()
@@ -1668,12 +1686,14 @@ public actor WorkspaceEngine {
             do {
                 let owned: Bool
                 switch result {
-                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed: owned = try await database.settleEffect(effect.id, workerID: workerID)
+                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed: owned = try await database.settleEffect(effect.id, workerID: workerID)
                 case .failed(let message): owned = try await database.settleEffect(effect.id, workerID: workerID, error: message)
                 case .cancelled: owned = try await database.cancelEffect(effect.id, workerID: workerID, reason: "The targeted run or request is no longer active.")
                 }
                 guard owned else { await infrastructureFailed("Provider execution lost its workspace lease."); return }
-                if let historyFilesIncarnation {
+                if let pullRequestIncarnation {
+                    if !retiringEffects.contains(effect.id) { _ = try await enqueue(.pullRequestCreationEffectResult(effect.request, result, incarnation: pullRequestIncarnation)) }
+                } else if let historyFilesIncarnation {
                     if !retiringEffects.contains(effect.id) {
                         _ = try await enqueue(.conversationHistoryFilesEffectResult(effect.request, result, incarnation: historyFilesIncarnation))
                         if case .conversationHistoryFiles(_, let operationID, _) = effect.request,
@@ -1716,6 +1736,7 @@ public actor WorkspaceEngine {
         guard !stoppingEffects, fatalError == nil else { throw CancellationError() }
         if await waitForRemovalCommit(threadID: request.threadID, projectID: request.projectID) { return .cancelled }
         try Task.checkCancellation()
+        if case .pullRequestCreation = request { return try await performPullRequestCreation(request) }
         if case .checkpointRestore = request { return try await performCheckpointRestore(request) }
         if case .conversationHistoryFiles = request { return try await performConversationHistoryFiles(request) }
         if case .conversationHistory = request { return try await performConversationHistory(request) }
@@ -1743,7 +1764,7 @@ public actor WorkspaceEngine {
         }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
-        case .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
+        case .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
             await awaitCheckpointDrains(threadID: thread.id)
@@ -1957,6 +1978,8 @@ public actor WorkspaceEngine {
         for read in historyReads.values { read.cancel() }
         historyReviews = [:]
         checkpointRestoreReviews = [:]
+        pullRequestCreationReviews = [:]
+        for read in pullRequestReads.values { read.cancel() }
         let inspections = worktreeInspections; worktreeInspections = [:]
         for inspection in inspections.values {
             inspection.task.cancel()
@@ -1994,7 +2017,7 @@ public actor WorkspaceEngine {
                   current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent,
                   revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         }
-        guard !closing, !stoppingEffects, !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath) else { throw CancellationError() }
+        guard !closing, !stoppingEffects, !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath) else { throw CancellationError() }
         let id = UUID(), session = try factory(thread)
         metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: owned ? thread.id : nil,
                                      projectID: owned ? thread.projectID : nil, configuration: owned ? .init(thread: thread) : nil)
@@ -2045,6 +2068,8 @@ public actor WorkspaceEngine {
         stoppingEffects = true
         if loaded, fatalError == nil { _ = try? await enqueue(.pauseQueues) }
         closing = true
+        let pullRequestReadJobs = Array(pullRequestReads.values); for read in pullRequestReadJobs { read.cancel() }
+        pullRequestCreationReviews = [:]
         let history = Array(historyReads.values); historyReads = [:]
         for read in history { read.cancel() }
         let unusedHistoryReviews = Array(historyReviews.values)
@@ -2064,6 +2089,7 @@ public actor WorkspaceEngine {
         }
         for job in jobs { await job.value }
         for read in history { await read.drain.value }
+        for read in pullRequestReadJobs { await read.drain.value }
         for inspection in inspections { _ = try? await inspection.task.value }
         while !cleanupTasks.isEmpty {
             let tasks = cleanupTasks.values.map(\.task)
@@ -2090,5 +2116,143 @@ public actor WorkspaceEngine {
         incoming.finish(); commandWorker?.cancel(); commandWorker = nil
         for listener in listeners.values { listener.finish() }; listeners = [:]
         ownership.release()
+    }
+}
+
+extension WorkspaceEngine {
+    public func reviewPullRequestCreation(projectID: UUID, workspacePath: String, title: String, body: String,
+                                          baseBranch: String?, isDraft: Bool) async throws -> GitHubPullRequestCreateReview {
+        _ = try await load(); try Task.checkCancellation()
+        if await waitForRemovalCommit(projectID: projectID) { throw CancellationError() }
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let project = revision.snapshot.projects.first(where: { $0.id == projectID }),
+              let incarnation = projectIncarnations[projectID],
+              revision.snapshot.ownsPullRequestWorkspace(projectID: projectID, workspacePath: workspacePath),
+              !revision.snapshot.isPullRequestCreationLocked(path: workspacePath),
+              !revision.snapshot.isCheckpointRestoreLocked(path: workspacePath) else {
+            throw WorkspaceCommandError("Choose an available registered project checkout before reviewing a pull request.")
+        }
+        let session = try pullRequestFactory(URL(fileURLWithPath: workspacePath))
+        let review = try await readPullRequest(projectID: projectID, incarnation: incarnation) {
+            try await session.reviewCreate(title: title, body: body, baseBranch: baseBranch, isDraft: isDraft)
+        }
+        let canonical = URL(fileURLWithPath: workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
+        guard review.context.workspacePath == canonical,
+              projectIncarnations[projectID] == incarnation else { throw GitHubPullRequestError(.staleReview) }
+        let operation = PullRequestCreationOperation(projectID: projectID, projectPath: project.path, sourceIncarnation: incarnation,
+            review: review, registeredWorkspacePath: workspacePath)
+        var admission = WorkspaceDecision(snapshot: revision.snapshot)
+        try admission.acceptPullRequestCreation(operation)
+        guard pullRequestRuntimeScopeAvailable(operation) else { throw WorkspaceCommandError("Finish workspace scripts and closing jobs before creating a pull request.") }
+        pullRequestCreationReviews[review.id] = .init(operation: operation, digest: try pullRequestReviewDigest(review))
+        return review
+    }
+    public func discardPullRequestCreationReview(reviewID: UUID) {
+        guard !acceptingPullRequestCreations.contains(reviewID) else { return }
+        pullRequestCreationReviews.removeValue(forKey: reviewID)
+    }
+    @discardableResult public func beginPullRequestCreation(projectID: UUID, review: GitHubPullRequestCreateReview) async throws -> WorkspaceCommandReceipt {
+        _ = try await load(); try Task.checkCancellation(); try review.validate()
+        guard !closing, !stoppingEffects, fatalError == nil else { throw CancellationError() }
+        if let existing = revision.snapshot.pullRequestCreation(review.id) {
+            guard existing.projectID == projectID, existing.review == review, let receipt = try await database.receipt(review.id) else { throw GitHubPullRequestError(.staleReview) }
+            return receipt
+        }
+        guard let prepared = pullRequestCreationReviews[review.id], prepared.operation.projectID == projectID,
+              prepared.digest == (try pullRequestReviewDigest(review)),
+              projectIncarnations[projectID] == prepared.operation.sourceIncarnation else { throw GitHubPullRequestError(.staleReview) }
+        var admission = WorkspaceDecision(snapshot: revision.snapshot); try admission.acceptPullRequestCreation(prepared.operation)
+        guard pullRequestRuntimeScopeAvailable(prepared.operation) else { throw WorkspaceCommandError("Finish workspace scripts and closing jobs before creating a pull request.") }
+        acceptingPullRequestCreations.insert(review.id)
+        defer { acceptingPullRequestCreations.remove(review.id); pullRequestCreationReviews.removeValue(forKey: review.id) }
+        let receipt = try await enqueue(.pullRequestCreationAccepted(prepared.operation), id: review.id)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+    @discardableResult public func reconcilePullRequestCreation(operationID: UUID) async throws -> WorkspaceCommandReceipt {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let operation = revision.snapshot.pullRequestCreation(operationID), operation.phase == .unconfirmed,
+              operation.acknowledgedAt == nil, let incarnation = projectIncarnations[operation.projectID] else {
+            throw WorkspaceCommandError("Only an uncertain pull request creation can be refreshed.")
+        }
+        try revision.snapshot.validatePullRequestCreationSource(operation)
+        let session = try pullRequestFactory(URL(fileURLWithPath: operation.workspacePath))
+        let result = try await readPullRequest(projectID: operation.projectID, incarnation: incarnation) { try await session.reconcileCreate(operation.review) }
+        guard revision.snapshot.pullRequestCreation(operationID) == operation,
+              projectIncarnations[operation.projectID] == incarnation else { throw GitHubPullRequestError(.staleReview) }
+        let receipt = try await enqueue(.pullRequestCreationReconciled(operationID: operationID, incarnation: incarnation, result: result))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+    private func pullRequestReviewDigest(_ review: GitHubPullRequestCreateReview) throws -> String {
+        SHA256.hash(data: try encoder.encode(review)).map { String(format: "%02x", $0) }.joined()
+    }
+    private func readPullRequest<Value: Sendable>(projectID: UUID, incarnation: UUID,
+        operation: @escaping @Sendable () async throws -> Value) async throws -> Value {
+        guard !closing, !stoppingEffects, fatalError == nil, projectIncarnations[projectID] == incarnation else { throw CancellationError() }
+        let token = UUID(), task = Task { try await operation() }, drain = Task<Void, Never> { _ = try? await task.value }
+        pullRequestReads[token] = .init(projectID: projectID, drain: drain, cancel: { task.cancel() })
+        defer { pullRequestReads.removeValue(forKey: token) }
+        return try await withTaskCancellationHandler {
+            let result = try await task.value; try Task.checkCancellation()
+            guard !closing, !stoppingEffects, fatalError == nil, projectIncarnations[projectID] == incarnation else { throw CancellationError() }
+            return result
+        } onCancel: { task.cancel() }
+    }
+    private func ownsPullRequestCreationEvent(_ command: EngineCommand) -> Bool {
+        switch command {
+        case .pullRequestCreationAccepted(let operation): return projectIncarnations[operation.projectID] == operation.sourceIncarnation
+        case .pullRequestCreationDispatching(let projectID, _, let incarnation): return projectIncarnations[projectID] == incarnation
+        case .pullRequestCreationEffectResult(let request, _, let incarnation): return request.projectID.map { projectIncarnations[$0] == incarnation } ?? false
+        case .pullRequestCreationReconciled(let id, let incarnation, _):
+            return revision.snapshot.pullRequestCreation(id).map { projectIncarnations[$0.projectID] == incarnation } ?? false
+        default: return true
+        }
+    }
+    private func pullRequestRuntimeScopeAvailable(_ operation: PullRequestCreationOperation) -> Bool {
+        !scriptRuntimes.values.contains { runtime in
+            guard let thread = revision.snapshot.threads.first(where: { $0.id == runtime.threadID }) else { return true }
+            return thread.projectID == operation.projectID || thread.pullRequestCreationScopePaths.contains { path in operation.scopePaths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }
+        }
+    }
+    private func drainPullRequestOwners(_ operation: PullRequestCreationOperation) async {
+        let paths = operation.scopePaths
+        func overlaps(_ path: String) -> Bool { paths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }
+        for id in runtimes.filter({ $0.value.projectID == operation.projectID || overlaps($0.value.path) }).map(\.key) { await closeRuntime(id) }
+        for id in metadataSessions.filter({ $0.value.projectID == operation.projectID || overlaps($0.value.path) }).map(\.key) {
+            if let task = beginMetadataClose(id) { await task.value }; metadataSessions.removeValue(forKey: id)
+        }
+        let sourceThreads = revision.snapshot.threads.filter { $0.projectID == operation.projectID || $0.pullRequestCreationScopePaths.contains(where: overlaps) }
+        for thread in sourceThreads { await awaitCheckpointDrains(threadID: thread.id) }
+        let jobs = cleanupTasks.values.filter { $0.projectIDs.contains(operation.projectID) || $0.workspacePaths.contains(where: overlaps) }.map(\.task)
+        for job in jobs { await job.value }
+    }
+    private func performPullRequestCreation(_ request: WorkspaceEffectRequest) async throws -> EffectResult {
+        guard case .pullRequestCreation(let projectID, let operationID, let effectID) = request,
+              let operation = revision.snapshot.pullRequestCreation(operationID), operation.phase == .accepted,
+              operation.projectID == projectID, operation.effectID == effectID,
+              projectIncarnations[projectID] == operation.sourceIncarnation else { return .cancelled }
+        var apiStarted = false
+        do {
+            try revision.snapshot.validatePullRequestCreationSource(operation)
+            guard pullRequestRuntimeScopeAvailable(operation) else { throw GitHubPullRequestError(.staleReview) }
+            await drainPullRequestOwners(operation); try Task.checkCancellation()
+            try revision.snapshot.validatePullRequestCreationSource(operation)
+            guard projectIncarnations[projectID] == operation.sourceIncarnation, pullRequestRuntimeScopeAvailable(operation) else { throw GitHubPullRequestError(.staleReview) }
+            let session = try pullRequestFactory(URL(fileURLWithPath: operation.workspacePath))
+            let receipt = try await enqueue(.pullRequestCreationDispatching(projectID: projectID, operationID: operationID, incarnation: operation.sourceIncarnation))
+            guard receipt.rejection == nil, revision.snapshot.pullRequestCreation(operationID)?.phase == .dispatching,
+                  projectIncarnations[projectID] == operation.sourceIncarnation else { throw GitHubPullRequestError(.staleReview) }
+            try Task.checkCancellation(); apiStarted = true
+            let outcome = try await session.create(operation.review)
+            guard projectIncarnations[projectID] == operation.sourceIncarnation else { return .pullRequestCreationUnconfirmed }
+            var completed = operation
+            switch outcome { case .created: completed.phase = .created; case .openedExisting: completed.phase = .openedExisting }
+            completed.result = outcome; try completed.validate()
+            return .pullRequestCreationConfirmed(outcome)
+        } catch let error as GitHubPullRequestError {
+            return error.mayHaveCreated ? .pullRequestCreationUnconfirmed : .failed(PullRequestCreationOperation.failureMessage)
+        } catch { return apiStarted ? .pullRequestCreationUnconfirmed : .failed(PullRequestCreationOperation.failureMessage) }
     }
 }

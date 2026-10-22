@@ -56,7 +56,7 @@ struct GitWorktreeCommand: Sendable {
 struct GitWorktreeCommandResult: Sendable { let status: Int32; let output: Data; let overflow: Bool; let stdoutOverflow: Bool; let stderrOverflow: Bool; let errorOutput: Data }
 
 /// Captures output directly into a bounded accumulator; no unbounded raw-byte event queue.
-private final class GitWorktreeProcess: @unchecked Sendable {
+final class GitWorktreeProcess: @unchecked Sendable {
     private let pid: pid_t, maxBytes: Int
     private let lock = NSLock()
     private var stopped = false, signalAllowed = true, readerShutdown = false, overflow = false, stdoutOverflow = false, stderrOverflow = false

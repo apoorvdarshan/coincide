@@ -5,10 +5,19 @@ import SwiftUI
 struct GitInspectorView: View {
     let workspace: WorkspaceStore
     @State var model: GitInspectorStore
+    @State private var pullRequests: PullRequestStore
     @State private var sheet: GitInspectorSheet?
+    @State private var pendingPush = false
 
-    init(workspace: WorkspaceStore, path: String) { self.workspace = workspace; _model = State(initialValue: workspace.gitInspector(path: path)) }
-    init(workspace: WorkspaceStore, model: GitInspectorStore) { self.workspace = workspace; _model = State(initialValue: model) }
+    init(workspace: WorkspaceStore, path: String) {
+        self.workspace = workspace
+        _model = State(initialValue: workspace.gitInspector(path: path))
+        _pullRequests = State(initialValue: workspace.pullRequestStore(path: path))
+    }
+    init(workspace: WorkspaceStore, model: GitInspectorStore) {
+        self.workspace = workspace; _model = State(initialValue: model)
+        _pullRequests = State(initialValue: workspace.pullRequestStore(path: model.git.root.path))
+    }
 
     private var workspaceBusy: Bool {
         let root = (model.snapshot?.repositoryRoot ?? model.git.root).standardizedFileURL.resolvingSymlinksInPath().path
@@ -61,6 +70,9 @@ struct GitInspectorView: View {
                         .disabled(mutationsDisabled || !snapshot.isClean || snapshot.isDetached || snapshot.isUnborn || model.upstream == nil)
                     Button("Push…") { sheet = .push }.disabled(mutationsDisabled || snapshot.isDetached || snapshot.isUnborn || snapshot.hasConflicts || model.remotes.isEmpty)
                 }.controlSize(.small).padding(.horizontal)
+                PullRequestBranchCard(model: pullRequests) { reference in
+                    sheet = .pullRequests(reference)
+                }.padding(.horizontal)
                 if workspaceBusy { Text("A coding agent is using this workspace.").font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
                 if snapshot.hasConflicts { Label("Resolve conflicts before committing.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).padding(.horizontal) }
                 List(model.files, selection: $model.selected) { file in
@@ -108,13 +120,23 @@ struct GitInspectorView: View {
         .onChange(of: model.staged) { Task { await model.loadDiff() } }
         .onChange(of: workspaceBusy) { if !workspaceBusy { Task { await model.refresh() } } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await model.refresh() } }
-        .sheet(item: $sheet) { kind in GitActionSheet(kind: kind, model: model, blocked: workspaceBusy) }
+        .sheet(item: $sheet, onDismiss: {
+            if pendingPush { pendingPush = false; sheet = .push }
+        }) { kind in
+            switch kind {
+            case .pullRequests(let reference):
+                PullRequestsSheet(model: pullRequests, initialSelection: reference) {
+                    pendingPush = true; sheet = nil
+                }
+            default: GitActionSheet(kind: kind, model: model, blocked: workspaceBusy)
+            }
+        }
     }
 }
 
 private enum GitInspectorSheet: Identifiable {
-    case initialize, branch(GitBranch?), push
-    var id: String { switch self { case .initialize: "initialize"; case .branch(let branch): "branch:" + (branch?.ref ?? "new"); case .push: "push" } }
+    case initialize, branch(GitBranch?), push, pullRequests(GitHubPullRequestReference?)
+    var id: String { switch self { case .initialize: "initialize"; case .branch(let branch): "branch:" + (branch?.ref ?? "new"); case .push: "push"; case .pullRequests(let reference): "pullRequests:" + (reference.map { String($0.number) } ?? "all") } }
 }
 
 private struct GitActionSheet: View {
@@ -125,8 +147,8 @@ private struct GitActionSheet: View {
     @State private var name = ""
     @State private var remote = ""
     @State private var setUpstream = true
-    private var title: String { switch kind { case .initialize: "Initialize Repository"; case .branch: "Create and Switch Branch"; case .push: "Push Branch" } }
-    private var action: String { switch kind { case .initialize: "Initialize"; case .branch: "Create Branch"; case .push: "Push" } }
+    private var title: String { switch kind { case .initialize: "Initialize Repository"; case .branch: "Create and Switch Branch"; case .push: "Push Branch"; case .pullRequests: "Pull Requests" } }
+    private var action: String { switch kind { case .initialize: "Initialize"; case .branch: "Create Branch"; case .push: "Push"; case .pullRequests: "Done" } }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(title).font(.title2.bold())
@@ -142,6 +164,7 @@ private struct GitActionSheet: View {
                 Picker("Remote", selection: $remote) { ForEach(model.remotes, id: \.self) { Text($0).tag($0) } }
                 TextField("Remote branch", text: $name)
                 Toggle("Track this upstream for future pulls", isOn: $setUpstream)
+            case .pullRequests: EmptyView()
             }
             if blocked { Text("Wait for the coding agent to finish using this workspace.").font(.caption).foregroundStyle(.secondary) }
             HStack {
@@ -152,6 +175,7 @@ private struct GitActionSheet: View {
                     case .initialize: model.initialize(branch: name)
                     case .branch(let branch): model.createBranch(name, tracking: branch?.ref)
                     case .push: model.push(remote: remote, branch: name, setUpstream: setUpstream)
+                    case .pullRequests: break
                     }
                     dismiss()
                 }.keyboardShortcut(.defaultAction).disabled(blocked || model.isBusy || name.isEmpty || (kind.id == "push" && remote.isEmpty))
@@ -168,6 +192,7 @@ private struct GitActionSheet: View {
             case .push:
                 remote = model.upstream.flatMap { model.remotes.contains($0.remote) ? $0.remote : nil } ?? (model.remotes.contains("origin") ? "origin" : model.remotes.first ?? "")
                 name = model.upstream?.branch ?? model.snapshot?.branch ?? ""
+            case .pullRequests: break
             }
         }
     }
