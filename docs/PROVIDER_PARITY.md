@@ -20,6 +20,15 @@ The separate default Liquid Glass requirement also remains mandatory. Provider
 integration work does not satisfy the native chrome, control, accessibility,
 older-macOS fallback, or actual visual-verification requirements.
 
+The Codex owned-auth Core layer has offline coverage for PKCE/JWT verification,
+the native loopback callback, Keychain byte storage and saved registrations,
+serialized rotating credentials, explicit sign-in/cancel/logout coordination,
+shared-history/private-auth home layout and literal token-sharing launch values.
+It is not yet connected to the production workspace/runtime/Settings path.
+Accordingly, the Codex row still lists native managed authentication as
+unfinished. No real ChatGPT sign-in, Keychain entitlement acceptance or owned
+model execution is claimed by these tests.
+
 ## Inventory and evidence
 
 The pinned [built-in driver registry][t3-drivers] registers eight dedicated

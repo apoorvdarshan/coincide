@@ -1,5 +1,68 @@
 # Validation record
 
+## 2026-10-22 — bounded reducer validation and owned Codex auth Core
+
+- Hosted run `39804247499` at `d6ffea5` fails with signal 10/SIGBUS during
+  provider-result history-ledger validation. All 14 GUI acceptance cases skip.
+  The sanitized stack reaches checkpoint fingerprint encoding through
+  `WorkspaceJournal.validate` under `WorkspaceDecision.makeGeneral`. The earlier
+  acceptance-only extraction does not cover this later event. Stack pressure is
+  a hypothesis, not a proven cause or a claim that the hosted crash is resolved.
+- General reduction now returns before grouping reconciliation and full ledger
+  validation. History, file-history, checkpoint restore and compound project
+  registration have bounded non-inlined dispatch helpers. Existing validation,
+  fingerprints, effect order, legacy aliases and exact ignored-event behavior
+  remain. Local object inspection confirms final validation retains 1488 fixed
+  bytes plus 28 metadata-sized slots across its two reducer frames; no full
+  validator call remains inside the general reducer's 51920-byte/338-slot frame.
+  Tests retain exact held ledgers and reject corrupted fingerprints for draft,
+  pin and registration commands.
+- Native owned-auth Core components implement discovered endpoints, PKCE and
+  one-use callbacks, in-memory generated RSA/P-256 identity verification, bounded
+  loopback HTTP, opaque profile generations, saved reconnect registrations and
+  renewable credentials. Keychain queries use Data Protection, device-only
+  after-first-unlock access and an interaction-disabled authentication context.
+  Security tests replace the API entirely; no real Keychain call occurs.
+- Exact-instance `flock` ownership covers reads, token rotation and publication.
+  An atomic add-only initial Keychain claim binds the private lock root, including
+  competing actors with different roots. Durable empty uncertainty receipts
+  prevent retrying an old token after lost rotation, failed publication or a
+  replaced directory. Proven pre-POST failures permit later explicit access.
+  Received verified rotations are committed despite late cancellation; inactive
+  accounts do not become active because cancellation raced completion.
+- Pending issued registrations survive initial code expiry without a trusted
+  identity, credential, sharing grant or active binding. Explicit reconnect must
+  verify the issued registration's identity. Declined sharing preserves a
+  different active account. Logout retains registrations, other profiles, CLI
+  auth and shared history; unconfirmed remote revocation is stated explicitly.
+- The auth controller holds an injected workspace lease through explicit browser
+  handoff, exact callback/network cleanup, credential publication and joined
+  apply/invalidation. Offline peers exercise lease order, coalescing/cancel,
+  deadline/shutdown, declined sharing, apply failure, expired registration,
+  uncertain reconnect and late-cancel publication. There is no browser or vendor
+  call. Tests also exercise the real loopback listener and an independent local
+  process holding the rotation lock.
+- Home layout follows the pinned T3 shared/discovered entry set, refuses private
+  auth redirects, preserves real model caches, retains displaced native locks
+  with ownership proof and recovers interrupted moves. Initial positive checks
+  expose Foundation's `/private/var` to `/var` normalization. Darwin physical
+  resolution plus literal lexical validation preserves the no-follow walk;
+  alias and missing-child regressions cover the corrected path. The launch value
+  uses all eleven pinned overrides as literal argv pairs, fixed Responses/model
+  endpoints, scrubbed ambient aliases and the token only in the child environment.
+- Final focused `swift test --no-parallel` passes 73 declarations in 3.169 seconds,
+  including the exact hosted-crash history case and the unchanged full-ledger
+  validation assertions. The complete canonical run passes 1282 declarations:
+  1272 pass and ten optional installed-provider checks skip. Core reports 1097
+  declarations in 278.110 seconds; all 166 native view/store declarations pass in
+  58.373 seconds, terminal six in 1.347 seconds and Markdown 13 in 0.151 seconds.
+  Hosted crash resolution and actual GUI acceptance still require the next CI run.
+- These components are not yet exposed by production Settings or the provider
+  factory. Engine admission/drain, captured account generations, lazy runtime
+  launch, signed-app Keychain acceptance, native account UI, profile transfer and
+  installed owned authentication/model execution remain unfinished. No user
+  account, actual CLI credential or workspace database is changed by this batch.
+
 ## 2026-10-22 — captured Codex runtime and complete managed package
 
 - Installed CLI behavior stays the default. Explicit managed/custom executable

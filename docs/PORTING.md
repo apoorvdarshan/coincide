@@ -78,6 +78,19 @@ must each be mapped and verified before declaring parity.
   ChatGPT authentication: native OAuth, account profiles, broader usage, skills
   and MCP/configuration parity remain unfinished. Installed managed-package and
   conversation evidence must be recorded separately from offline checks.
+- The Codex owned-auth Core layer now implements PKCE, verified RS256/ES256
+  identity, a bounded native loopback callback listener, saved registrations and
+  separate renewable account credentials in device-only Keychain storage.
+  Cross-process rotation ownership and durable uncertainty receipts prevent
+  replaying an unconfirmed old refresh token. The explicit flow controller keeps
+  an injected workspace lease through publication, cancellation and cleanup.
+  Native home overlays share T3's history/configuration entries while preserving
+  private auth and model-cache data; fixed token-sharing arguments place the
+  access token only in the child environment. These are offline-tested Core
+  components, not enabled managed account support: captured auth identity,
+  Engine admission/drain integration, lazy session launch, native Settings,
+  signed-app Keychain acceptance, profile transfer and installed sign-in/model
+  verification remain required before the account feature is complete.
 - Custom installed ACP agents use a native JSON-RPC 2.0 adapter. Saved named
   invocations pass literal arguments and are captured in each conversation/queue.
   Config options take precedence over legacy model/mode fields. Permissions keep
