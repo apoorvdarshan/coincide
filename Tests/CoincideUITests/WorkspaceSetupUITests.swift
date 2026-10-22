@@ -62,8 +62,12 @@ private actor NativeSetupOutput {
             try Data("Dirty source kept\n".utf8).write(to: source.appendingPathComponent("notes.txt"))
             try Data("Untracked source kept\n".utf8).write(to: source.appendingPathComponent("untracked.txt"))
             let project = WorkspaceProject(path: source.path)
+            // The injected peer owns the protocol; Store still checks that its executable exists.
+            let agent = ACPAgentConfiguration(name: "Synthetic setup provider", executable: "/usr/bin/true")
             var thread = CodingThread(project: project); thread.draft = "Keep the unsent setup discussion"; thread.model = "first-model"
+            thread.provider = .acp; thread.acpAgent = agent
             var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
+            snapshot.acpAgents = [agent]
             let database = root.appendingPathComponent("workspace.sqlite")
             _ = try await WorkspaceDatabase(url: database).commit(snapshot, event: "fixture", commandID: UUID())
             let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
