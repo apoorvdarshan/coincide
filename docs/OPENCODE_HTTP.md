@@ -57,16 +57,31 @@ V1 is directory-scoped; v2 is a global feed whose adapter routes exact
 native session identities. Framing handles split UTF-8, BOM, CR/LF, comments,
 multiline data and committed event IDs. Each line/event is bounded, as are raw
 bytes and queued events. Heartbeat bytes refresh a 45-second silence watchdog.
+Raw bytes coalesce into chunks of at most 16 KiB under a fixed 512 KiB backlog
+budget. Small URLSession callbacks consume their actual bytes, so fragmentation
+cannot independently exhaust an item-count limit. Overflow preserves the accepted
+prefix, reports a fixed error and cancels that exact request. Pending consumers,
+explicit closure and unread-stream abandonment retain owned cancellation/drain.
+The separate sixteen-event decoded queue keeps its existing limit.
 EOF, invalid framing, overflow and silence fail explicitly and require session
 reconciliation. They never complete a provider turn or replay a prompt. An
 unfinished event does not advance the committed cursor. A cursor alone does not
 make OpenCode's global stream durable.
 
+Known raw HTTP failures retain a fixed diagnostic category across SSE shutdown;
+unknown transport errors remain sanitized. V1 records only that category and the
+generated local run UUID in unified logging. Request URLs, headers, credentials,
+payloads and arbitrary error descriptions are excluded. The earlier intermittent
+connection loss has no retained underlying category, so its precise cause remains
+unproven even though the independent fragmentation defect has a deterministic
+regression.
+
 ## Captured native conversation configuration
 
-The native provider choice is separate from ACP. Storage version 36 prevents an
-older binary from reopening unfamiliar native configuration, run, effect and
-message-history recovery semantics. Legacy Codex, Claude and ACP payloads still
+The native provider choice is separate from ACP. Storage version 36 introduced
+the native configuration, run, effect and message-history recovery fields; the
+current workspace version is 37. Older binaries cannot reopen unfamiliar storage.
+Legacy Codex, Claude and ACP payloads still
 decode without native OpenCode settings. The durable value captures instance identity, generation,
 one local executable, exact provider/model/variant IDs and agent ID. Runtime
 credentials, ports, catalogs and inherited environment are not persisted.

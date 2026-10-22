@@ -2,15 +2,49 @@ import Foundation
 
 public enum OpenCodeSSEConnectionError: Error, Sendable, Equatable, LocalizedError {
     case invalidDirectory, invalidWatchdog, disconnected, heartbeatTimedOut, eventBufferOverflow
+    case rawHTTPFailure(OpenCodeHTTPError)
 
     public var errorDescription: String? {
         switch self {
         case .invalidDirectory: "The OpenCode event directory is invalid."
         case .invalidWatchdog: "The OpenCode event watchdog is invalid."
-        case .disconnected: "The OpenCode event stream disconnected. Reconcile native sessions before continuing."
+        case .disconnected, .rawHTTPFailure: "The OpenCode event stream disconnected. Reconcile native sessions before continuing."
         case .heartbeatTimedOut: "The OpenCode event stream stopped receiving bytes. Reconcile native sessions before continuing."
         case .eventBufferOverflow: "The OpenCode event consumer exceeded its bounded buffer. Reconcile native sessions before continuing."
         }
+    }
+
+    /// Only fixed categories may enter diagnostic evidence. Associated HTTP
+    /// status values, arbitrary errors and transport payloads are never rendered.
+    public var diagnosticCategory: String {
+        switch self {
+        case .invalidDirectory: "sse-invalid-directory"
+        case .invalidWatchdog: "sse-invalid-watchdog"
+        case .disconnected: "sse-disconnected"
+        case .heartbeatTimedOut: "sse-heartbeat-timed-out"
+        case .eventBufferOverflow: "sse-event-buffer-overflow"
+        case .rawHTTPFailure(let error):
+            switch error {
+            case .invalidOrigin: "raw-http-invalid-origin"
+            case .invalidPath: "raw-http-invalid-path"
+            case .invalidQuery: "raw-http-invalid-query"
+            case .invalidMethod: "raw-http-invalid-method"
+            case .invalidLimit: "raw-http-invalid-limit"
+            case .requestBodyTooLarge: "raw-http-request-body-too-large"
+            case .responseBodyTooLarge: "raw-http-response-body-too-large"
+            case .invalidResponse: "raw-http-invalid-response"
+            case .redirectDenied: "raw-http-redirect-denied"
+            case .eventResponseRejected: "raw-http-event-response-rejected"
+            case .eventBufferOverflow: "raw-http-event-buffer-overflow"
+            case .transportFailure: "raw-http-transport-failure"
+            case .clientClosed: "raw-http-client-closed"
+            }
+        }
+    }
+
+    static func sanitizingStreamFailure(_ error: any Error) -> Self {
+        if let safe = error as? OpenCodeHTTPError { return .rawHTTPFailure(safe) }
+        return .disconnected
     }
 }
 
@@ -83,13 +117,14 @@ public actor OpenCodeSSEConnection {
         }
         let bytes = bytes
         reader = Task.detached(priority: .utility) { [weak self, bytes] in
+            var failure = OpenCodeSSEConnectionError.disconnected
             do {
                 for try await chunk in bytes.stream {
                     guard !Task.isCancelled else { break }
                     guard await self?.receive(chunk) == true else { break }
                 }
-            } catch { /* Raw transport errors may include private data; never forward them. */ }
-            await self?.streamEnded()
+            } catch { failure = .sanitizingStreamFailure(error) }
+            await self?.streamEnded(cause: failure)
         }
         watchdog = Task.detached(priority: .utility) { [weak self] in
             while !Task.isCancelled {
@@ -143,9 +178,9 @@ public actor OpenCodeSSEConnection {
         beginStop(error: OpenCodeSSEConnectionError.heartbeatTimedOut); return true
     }
 
-    private func streamEnded() {
+    private func streamEnded(cause: OpenCodeSSEConnectionError) {
         guard state == .running else { return }
-        beginStop(error: OpenCodeSSEConnectionError.disconnected)
+        beginStop(error: cause)
     }
 
     private func consumerStopped() { beginStop(error: nil) }

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Fixed messages never include native payloads, server URLs or credentials.
 public enum OpenCodeV1SessionError: Error, Sendable, Equatable, LocalizedError {
@@ -41,6 +42,7 @@ extension OpenCodeV1SessionTransport {
 /// Generation 1 has native messages and session-idle signals, not a durable
 /// inbox or execution IDs. A successful POST alone never completes a run.
 public actor OpenCodeV1Session: ProviderSession {
+    private let logger = Logger(subsystem: "com.apoorvdarshan.coincide", category: "OpenCodeV1")
     public nonisolated let events: AsyncStream<ProviderEvent>
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let cwd: URL
@@ -360,13 +362,29 @@ public actor OpenCodeV1Session: ProviderSession {
             let stream = try await transport.connect()
             guard !closing else { throw CancellationError() }
             reader = Task { [weak self] in
+                var failureCategory = "sse-eof"
                 do {
                     for try await frame in stream {
                         guard !Task.isCancelled else { return }
                         await self?.consume(frame)
                     }
-                } catch { /* Native transport errors may contain private data. */ }
-                await self?.streamEnded()
+                } catch let failure as OpenCodeSSEConnectionError {
+                    failureCategory = failure.diagnosticCategory
+                } catch let failure as OpenCodeProtocolError {
+                    switch failure {
+                    case .invalidEvent: failureCategory = "sse-invalid-event"
+                    case .eventLimitExceeded: failureCategory = "sse-parser-limit-exceeded"
+                    case .closed: failureCategory = "sse-parser-closed"
+                    default: failureCategory = "sse-protocol-error"
+                    }
+                } catch is CancellationError {
+                    failureCategory = "sse-cancelled"
+                } catch {
+                    // Descriptions, NSError userInfo and raw native transport
+                    // errors can contain private request data. Log no values.
+                    failureCategory = "sse-unknown-error"
+                }
+                await self?.streamEnded(category: failureCategory)
             }
             connected = true
         } catch {
@@ -883,8 +901,13 @@ public actor OpenCodeV1Session: ProviderSession {
         earlyChildren[nativeID, default: []].append(event); earlyChildBytes += size
     }
 
-    private func streamEnded() {
-        if !closing { failConnection(.connectionLost) }
+    private func streamEnded(category: String) {
+        guard !closing, !uncertain else { return }
+        // `category` is selected solely from fixed local literals or the
+        // finite OpenCodeSSEConnectionError allowlist, never an error payload.
+        let run = activeRunID?.uuidString ?? "none"
+        logger.error("Event stream ended: category=\(category, privacy: .public) run=\(run, privacy: .public)")
+        failConnection(.connectionLost)
     }
 
     private func failConnection(_ error: OpenCodeV1SessionError) {

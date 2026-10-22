@@ -42,13 +42,17 @@ public struct OpenCodeHTTPResponse: Sendable {
 public struct OpenCodeHTTPByteStream: Sendable {
     public let stream: AsyncThrowingStream<Data, Error>
     private let cancelRequest: @Sendable () async -> Void
+    private let waitForRequest: @Sendable () async -> Void
 
-    fileprivate init(stream: AsyncThrowingStream<Data, Error>, cancel: @escaping @Sendable () async -> Void) {
-        self.stream = stream; cancelRequest = cancel
+    fileprivate init(stream: AsyncThrowingStream<Data, Error>, cancel: @escaping @Sendable () async -> Void,
+                     wait: @escaping @Sendable () async -> Void) {
+        self.stream = stream; cancelRequest = cancel; waitForRequest = wait
     }
 
     public func cancel() async { await cancelRequest() }
     public func close() async { await cancelRequest() }
+    /// Joins natural request completion without consuming bytes or cancelling it.
+    func waitUntilFinished() async { await waitForRequest() }
 }
 
 /// A credential is held only by this runtime client and sent only in an Authorization header.
@@ -262,7 +266,7 @@ private final class OpenCodeHTTPSessionOwner: NSObject, URLSessionDataDelegate, 
 }
 
 /// Each URLSession response is consumed incrementally. No unbounded `data(for:)` allocation occurs.
-private final class OpenCodeHTTPTaskState: @unchecked Sendable {
+final class OpenCodeHTTPTaskState: @unchecked Sendable {
     private let lock = NSLock()
     private let maximumBytes: Int
     private let events: Bool
@@ -277,16 +281,18 @@ private final class OpenCodeHTTPTaskState: @unchecked Sendable {
     private var openingContinuation: CheckedContinuation<OpenCodeHTTPByteStream, Error>?
     private var drainWaiters: [CheckedContinuation<Void, Never>] = []
     private var byteStream: OpenCodeHTTPByteStream?
-    private var streamContinuation: AsyncThrowingStream<Data, Error>.Continuation?
+    private var eventBuffer: OpenCodeHTTPEventBuffer?
 
     init(maximumBytes: Int, events: Bool) {
         self.maximumBytes = maximumBytes; self.events = events
         if events {
-            // At most 32 chunks of at most 16 KiB: a 512 KiB consumer backlog, never silent loss.
-            let pair = AsyncThrowingStream<Data, Error>.makeStream(bufferingPolicy: .bufferingOldest(32))
-            streamContinuation = pair.continuation
-            byteStream = OpenCodeHTTPByteStream(stream: pair.stream, cancel: { [weak self] in await self?.cancelAndWait() })
-            pair.continuation.onTermination = { [weak self] _ in self?.cancel() }
+            // Enforce the byte budget independently of URLSession callback
+            // fragmentation, while keeping the same 512KiB maximum backlog.
+            let buffer = OpenCodeHTTPEventBuffer(onCancel: { [weak self] in self?.cancel() })
+            eventBuffer = buffer
+            byteStream = OpenCodeHTTPByteStream(stream: buffer.makeStream(),
+                cancel: { [weak self] in await self?.cancelAndWait() },
+                wait: { [weak self] in await self?.waitUntilFinished() })
         }
     }
 
@@ -312,6 +318,10 @@ private final class OpenCodeHTTPTaskState: @unchecked Sendable {
 
     func cancelAndWait() async {
         cancel()
+        await waitUntilFinished()
+    }
+
+    func waitUntilFinished() async {
         await withCheckedContinuation { continuation in
             let alreadyFinished = lock.withLock {
                 if finished { return true }; drainWaiters.append(continuation); return false
@@ -364,20 +374,14 @@ private final class OpenCodeHTTPTaskState: @unchecked Sendable {
     func receive(_ data: Data) {
         guard !data.isEmpty else { return }
         if events {
-            let continuation = lock.withLock {
-                !finished && !cancelled && failure == nil && response != nil ? streamContinuation : nil
+            let buffer = lock.withLock {
+                !finished && !cancelled && failure == nil && response != nil ? eventBuffer : nil
             }
-            guard let continuation else { return }
-            var start = data.startIndex
-            while start < data.endIndex {
-                let end = data.index(start, offsetBy: min(16 * 1_024, data.distance(from: start, to: data.endIndex)))
-                switch continuation.yield(data.subdata(in: start..<end)) {
-                case .enqueued: break
-                case .dropped: reject(.eventBufferOverflow); return
-                case .terminated: cancel(); return
-                @unknown default: reject(.eventBufferOverflow); return
-                }
-                start = end
+            guard let buffer else { return }
+            switch buffer.append(data) {
+            case .enqueued: break
+            case .overflow: reject(.eventBufferOverflow)
+            case .terminated: cancel()
             }
         } else {
             let overflow = lock.withLock { () -> Bool in
@@ -400,11 +404,11 @@ private final class OpenCodeHTTPTaskState: @unchecked Sendable {
             else { nil }
         let response = response.map { OpenCodeHTTPResponse(status: $0.status, headers: $0.headers, body: body) }
         let responseContinuation = responseContinuation, openingContinuation = openingContinuation
-        let streamContinuation = streamContinuation, waiters = drainWaiters
+        let eventBuffer = eventBuffer, waiters = drainWaiters
         // Dropping the last unreturned stream can synchronously invoke its
         // onTermination callback, which re-enters cancel(). Release it unlocked.
         let pendingByteStream = byteStream
-        self.responseContinuation = nil; self.openingContinuation = nil; self.streamContinuation = nil
+        self.responseContinuation = nil; self.openingContinuation = nil; self.eventBuffer = nil
         self.byteStream = nil; self.task = nil; body = Data(); drainWaiters.removeAll()
         lock.unlock()
         if let responseContinuation {
@@ -414,8 +418,7 @@ private final class OpenCodeHTTPTaskState: @unchecked Sendable {
         if let openingContinuation {
             openingContinuation.resume(throwing: resultError ?? OpenCodeHTTPError.invalidResponse)
         }
-        if let resultError { streamContinuation?.finish(throwing: resultError) }
-        else { streamContinuation?.finish() }
+        eventBuffer?.finish(throwing: resultError)
         withExtendedLifetime(pendingByteStream) { }
         for waiter in waiters { waiter.resume() }
     }

@@ -118,6 +118,44 @@ import Testing
         }
     }
 
+    @Test func typedRawHTTPFailureSurvivesTheRealClientSSEPathWithoutPublishingPrivateErrorDetails() async throws {
+        try await withOpenCodeSSEFixture { fixture, client in
+            let opening = Task { try await OpenCodeSSEConnection.open(client: client, generation: .v1, directory: URL(fileURLWithPath: "/tmp/project")) }
+            let channel = try await fixture.started()
+            channel.respond(status: 200, headers: ["Content-Type": "text/event-stream"])
+            let connection = try await opening.value
+            channel.fail(NSError(domain: "private-stream-domain-canary", code: 918_273,
+                userInfo: [NSLocalizedDescriptionKey: "private-stream-description-canary", "private-field": "private-stream-payload-canary"]))
+            let observed = await collectOpenCodeSSEEvents(connection.events)
+            #expect(observed.events.isEmpty && observed.failure == .rawHTTPFailure(.transportFailure))
+            #expect(observed.failure?.diagnosticCategory == "raw-http-transport-failure")
+            #expect(observed.failure?.errorDescription == OpenCodeSSEConnectionError.disconnected.errorDescription)
+            #expect(!observed.unexpectedError && observed.framingFailure == nil)
+            await connection.close()
+            // Error classification must not close the client or retry the stream.
+            let independent = Task { try await client.request(path: ["provider"]) }
+            let metadata = try await fixture.started(index: 1)
+            metadata.respond(status: 200, headers: ["Content-Type": "application/json"])
+            metadata.send(Data("{}".utf8)); metadata.finish()
+            let response = try await independent.value
+            #expect(response.status == 200 && fixture.startCount == 2)
+        }
+    }
+
+    @Test func rawFailureDiagnosticsAllowOnlyFixedTypedCategoriesAndSanitizeUnknownErrors() {
+        let overflow = OpenCodeSSEConnectionError.sanitizingStreamFailure(OpenCodeHTTPError.eventBufferOverflow)
+        #expect(overflow == .rawHTTPFailure(.eventBufferOverflow))
+        #expect(overflow.diagnosticCategory == "raw-http-event-buffer-overflow")
+        let status = OpenCodeSSEConnectionError.sanitizingStreamFailure(OpenCodeHTTPError.eventResponseRejected(status: 413))
+        #expect(status.diagnosticCategory == "raw-http-event-response-rejected")
+        #expect(status.errorDescription == OpenCodeSSEConnectionError.disconnected.errorDescription)
+        let unknown = OpenCodeSSEConnectionError.sanitizingStreamFailure(NSError(domain: "private-stream-domain-canary", code: 918_273,
+            userInfo: [NSLocalizedDescriptionKey: "private-stream-description-canary", "private-field": "private-stream-payload-canary"]))
+        #expect(unknown == .disconnected && unknown.diagnosticCategory == "sse-disconnected")
+        #expect(unknown.errorDescription == OpenCodeSSEConnectionError.disconnected.errorDescription)
+        #expect(!unknown.diagnosticCategory.contains("canary") && !unknown.diagnosticCategory.contains("918273"))
+    }
+
     @Test func malformedUTF8FailsFramingWithoutPublishingPrivateWireData() async throws {
         try await withOpenCodeSSEFixture { fixture, client in
             let opening = Task { try await OpenCodeSSEConnection.open(client: client, generation: .v2, directory: URL(fileURLWithPath: "/tmp/project")) }
@@ -298,4 +336,5 @@ private final class OpenCodeSSEFixtureProtocol: URLProtocol, @unchecked Sendable
     }
     func send(_ bytes: Data) { fixtureLock.withLock { if !stopped { client?.urlProtocol(self, didLoad: bytes) } } }
     func finish() { fixtureLock.withLock { if !stopped { client?.urlProtocolDidFinishLoading(self) } } }
+    func fail(_ error: any Error) { fixtureLock.withLock { if !stopped { client?.urlProtocol(self, didFailWithError: error) } } }
 }

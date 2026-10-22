@@ -176,6 +176,52 @@ import Testing
         await stream.close(); await client.close()
     }
 
+    @Test func tinyFragmentBurstWithinByteBudgetPreservesEveryByteForAHeldConsumer() async throws {
+        let fixture = OpenCodeHTTPFixture(); defer { fixture.remove() }
+        let client = try OpenCodeHTTPClient(origin: fixture.origin, configuration: fixture.configuration)
+        do {
+            let opening = Task { try await client.openEvents(path: ["api", "event"]) }
+            let channel = try await fixture.started()
+            channel.respond(status: 200, headers: ["Content-Type": "text/event-stream"])
+            let stream = try await opening.value
+            let expected = Data((0..<(33 * 11)).map { UInt8(65 + $0 % 26) })
+            // The consumer deliberately starts only after all callbacks. These
+            // 363 bytes are far below the existing 32 * 16KiB byte allowance;
+            // callback fragmentation must not independently exhaust it.
+            for index in 0..<33 { channel.send(expected.subdata(in: (index * 11)..<((index + 1) * 11))) }
+            channel.finish()
+            await stream.waitUntilFinished()
+            var observed = Data(), failed = false, failure: OpenCodeHTTPError?
+            do { for try await chunk in stream.stream { observed.append(chunk) } }
+            catch { failed = true; failure = error as? OpenCodeHTTPError }
+            #expect(!failed && failure == nil)
+            #expect(observed == expected)
+            #expect(fixture.startCount == 1)
+            await stream.close(); await client.close()
+        } catch { await client.close(); throw error }
+    }
+
+    @Test func independentTinyDelegateCallbacksWithinTheByteBudgetRemainLossless() async throws {
+        let operation = OpenCodeHTTPTaskState(maximumBytes: 0, events: true)
+        let response = try #require(HTTPURLResponse(url: URL(string: "https://callback-fixture.invalid/event")!,
+            statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/event-stream"]))
+        let stream: OpenCodeHTTPByteStream = try await withCheckedThrowingContinuation { continuation in
+            operation.setEventContinuation(continuation)
+            #expect(operation.receive(response))
+        }
+        // Inject at the actual delegate boundary: URLProtocol and real TCP can
+        // coalesce writes, so neither proves how many Data callbacks arrived.
+        let expected = Data((0..<(33 * 11)).map { UInt8(65 + $0 % 26) })
+        for index in 0..<33 { operation.receive(expected.subdata(in: (index * 11)..<((index + 1) * 11))) }
+        operation.complete(nil)
+        var observed = Data(), failure: OpenCodeHTTPError?
+        do { for try await chunk in stream.stream { observed.append(chunk) } }
+        catch { failure = error as? OpenCodeHTTPError; #expect(error is OpenCodeHTTPError) }
+        #expect(failure == nil)
+        #expect(observed == expected)
+        await stream.close()
+    }
+
     @Test func cancellingAnOpeningRequestStopsItsExactOwnedTask() async throws {
         let fixture = OpenCodeHTTPFixture(); defer { fixture.remove() }
         let client = try OpenCodeHTTPClient(origin: fixture.origin, configuration: fixture.configuration)
@@ -208,6 +254,28 @@ import Testing
         await client.close(); await client.close()
         await #expect(throws: OpenCodeHTTPError.clientClosed) { try await client.request(path: ["api", "info"]) }
         #expect(fixture.startCount == 2)
+    }
+
+    @Test func abandoningAnUnreadByteStreamCancelsOnlyItsOwnedRequest() async throws {
+        let fixture = OpenCodeHTTPFixture(); defer { fixture.remove() }
+        let client = try OpenCodeHTTPClient(origin: fixture.origin, configuration: fixture.configuration)
+        do {
+            var opening: Task<OpenCodeHTTPByteStream, any Error>? = Task { try await client.openEvents(path: ["api", "event"]) }
+            let channel = try await fixture.started()
+            channel.respond(status: 200, headers: ["Content-Type": "text/event-stream"])
+            var stream = try await opening?.value
+            opening = nil
+            #expect(stream != nil)
+            stream = nil
+            try await fixture.stopped()
+            #expect(fixture.stopCount == 1)
+            let metadata = Task { try await client.request(path: ["provider"]) }
+            let independent = try await fixture.started(index: 1)
+            #expect(fixture.startCount == 2 && fixture.stopCount == 1)
+            independent.respond(status: 200); independent.send(Data("{}".utf8)); independent.finish()
+            #expect(try await metadata.value.body == Data("{}".utf8))
+            await client.close()
+        } catch { await client.close(); throw error }
     }
 
     @Test func requestCancellationPreservesCancellationAndNeverReplaysAMutation() async throws {
