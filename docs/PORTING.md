@@ -103,6 +103,17 @@ must each be mapped and verified before declaring parity.
   cannot complete it. Original-run background revisions retain attribution.
   Offline stdio/Engine and native view/store checks cover the initial integration;
   installed Muse execution, steering, broader recovery and usage remain pending.
+- Native Antigravity uses its paired ACP server and harness over a dedicated
+  bounded JSON-RPC connection. Captured account generations, models and native
+  modes govern each input; resume reapplies controls without loading old tools.
+  Explicit Google/Enterprise/key/Agent Platform setup stages a fresh isolated
+  generation under an Engine lease. Runtime initialization is separate from
+  verified account/model access; browser URLs stay transient and keys stay in
+  Keychain. Exact native options and persistent-grant warnings remain visible.
+  Delegated file access is anchored to the captured workspace and drained before
+  account or workspace changes. Offline peers exercise the initial integration;
+  installed execution, managed installation, usage, skills/MCP, portable handoff
+  and broader recovery remain unfinished.
 - Transcript entities retain their session, type, opaque ID, structured fields,
   and chunk annotations. The native reducer applies replacements, null clearing,
   metadata patches, independently decoded terminal bytes, and typed user-message
@@ -136,8 +147,8 @@ must each be mapped and verified before declaring parity.
   unfinished.
 - Queued turns capture their model, reasoning effort, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 29 protects these fields,
-  native generation/profile/Pi/Muse captures and typed question-with-notes effects
+  hold it for explicit resumption. Database storage version 30 protects these fields,
+  native generation/profile/Pi/Muse/Antigravity captures and typed question-with-notes effects
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
 - Direct steering durably accepts one authored input into the active local run,
   preserving its captured settings, exact runtime/native thread/turn, attachments,

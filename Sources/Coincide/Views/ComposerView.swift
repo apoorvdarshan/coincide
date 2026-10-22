@@ -97,6 +97,17 @@ struct ComposerView: View {
                 .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
                 .accessibilityIdentifier("grok-runtime-mode-menu")
                 .help("Grok's native launch policy applies to future inputs. Active and queued inputs retain their captured policy.")
+        } else if provider == .antigravity {
+            Menu {
+                ForEach(PermissionMode.allCases) { mode in
+                    Button { setPermission(mode) } label: {
+                        if mode == permission { Label(mode.antigravityTitle, systemImage: "checkmark") } else { Text(mode.antigravityTitle) }
+                    }
+                }
+            } label: { Label(permission.antigravityTitle, systemImage: "slider.horizontal.3").font(.caption) }
+                .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
+                .accessibilityIdentifier("antigravity-permission-menu")
+                .help("Applies to future inputs. Antigravity verifies its native mode before sending; active and queued inputs keep their captured policy.")
         } else if provider == .muse {
             Menu {
                 ForEach([PermissionMode.supervised, .fullAccess]) { mode in

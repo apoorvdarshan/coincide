@@ -71,6 +71,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var openCodeConfiguration: OpenCodeConfiguration?
     public var piConfiguration: PiConfiguration?
     public var museConfiguration: MuseConfiguration?
+    public var antigravityConfiguration: AntigravityConfiguration?
     public var agentModeID: String?
     public var agentConfigValues: [String: String]?
     public var providerMetadata: JSONValue?
@@ -111,6 +112,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
         case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
         case museConfiguration
+        case antigravityConfiguration
         case providerActivity, agentConfiguration
     }
     public init(from decoder: any Decoder) throws {
@@ -127,6 +129,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         openCodeConfiguration = try values.decodeIfPresent(OpenCodeConfiguration.self, forKey: .openCodeConfiguration)
         piConfiguration = try values.decodeIfPresent(PiConfiguration.self, forKey: .piConfiguration)
         museConfiguration = try values.decodeIfPresent(MuseConfiguration.self, forKey: .museConfiguration)
+        antigravityConfiguration = try values.decodeIfPresent(AntigravityConfiguration.self, forKey: .antigravityConfiguration)
         agentModeID = try values.decodeIfPresent(String.self, forKey: .agentModeID)
         agentConfigValues = try values.decodeIfPresent([String: String].self, forKey: .agentConfigValues)
         providerMetadata = try values.decodeIfPresent(JSONValue.self, forKey: .providerMetadata)
@@ -298,7 +301,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var id: JSONValue
     public var method: String
     public var params: JSONValue
-    public var isQuestion: Bool { method == "muse/userInput" || method == "opencode/form" || method == "opencode/question" || GrokACP.questionMethod(method) || method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
+    public var isQuestion: Bool { method == AntigravityProtocol.questionMethod || method == "muse/userInput" || method == "opencode/form" || method == "opencode/question" || GrokACP.questionMethod(method) || method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
     public var openCodeForm: OpenCodeV2Form? { try? OpenCodeV2Form.presentation(self) }
     public var openCodeQuestion: OpenCodeV1Question? { try? OpenCodeV1Question.presentation(self) }
     public var grokQuestion: GrokACPQuestionRequest? { GrokACP.questionMethod(method) ? try? .init(params: params) : nil }
@@ -306,6 +309,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var piExtension: PiExtensionRequest? { try? PiExtensionRequest.presentation(self) }
     public var museApproval: MuseApprovalRequest? { try? MuseApprovalRequest.presentation(self) }
     public var museUserInput: MuseUserInputRequest? { try? MuseUserInputRequest.presentation(self) }
+    public var antigravityPermission: AntigravityPermissionRequest? { try? AntigravityPermissionRequest.presentation(self) }
     public var questions: [JSONValue] {
         if method == "can_use_tool" {
             return (params["input"]["questions"].array ?? []).map { question in
@@ -317,6 +321,9 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
+        if method == AntigravityProtocol.questionMethod || method == AntigravityProtocol.permissionMethod {
+            return antigravityPermission?.title ?? "Antigravity needs a decision"
+        }
         if method == "muse/approval" { return museApproval?.title ?? "Muse needs your approval" }
         if method == "muse/userInput" { return "Answer Muse questions" }
         if method == "pi/extension" { return piExtension?.title ?? "Pi needs your input" }
@@ -330,6 +337,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return method.contains("fileChange") ? "Approve file changes" : "Approve command"
     }
     public var detail: String {
+        if method == AntigravityProtocol.questionMethod || method == AntigravityProtocol.permissionMethod { return antigravityPermission?.title ?? "Review Antigravity's request." }
         if method == "muse/approval" { return museApproval?.detail ?? "Review Muse's request." }
         if method == "pi/extension" { return piExtension?.message ?? "Review Pi's request." }
         if method == "opencode/permission" { return params["description"].string ?? "Review the requested action." }

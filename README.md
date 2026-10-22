@@ -35,8 +35,8 @@ so macOS can retain file-access consent across local rebuilds. Set
 CI uses ad-hoc signing. Local signing does not notarize or publish the app.
 
 Add a project folder, start a thread, and send a message. Coincide connects directly
-to the selected provider's native CLI protocol using its existing sign-in and
-configuration. Each conversation owns its provider connection.
+to the selected provider's native CLI protocol. Each conversation owns its
+provider connection; provider-specific account setup is described below.
 Choose the provider in a new conversation's header. Review requested commands and file
 changes in the conversation. Use the inspector to browse/edit files or inspect,
 stage, and commit Git changes. The branch menu creates/switches local branches or
@@ -78,6 +78,15 @@ older hosts without that proof are unsupported. Scoped approvals and questions
 retain the native choices, rule previews and written notes. Offline protocol and
 Engine checks cover queueing and exact-turn Stop; installed Muse execution,
 steering, broader recovery, setup/auth and usage remain unfinished.
+
+Antigravity uses its paired `agy_acp_server.par` and `localharness_external`
+runtime. In **Settings → Providers → Antigravity**, choose the pair and explicitly
+check account access with Google account, Gemini Enterprise, Gemini API key or
+Agent Platform. Google sign-in opens only when you choose its button. API keys
+stay in Keychain; account changes pause affected conversations and keep queued
+inputs for review. Models and native permission choices apply to future inputs.
+The initial integration uses offline peers for verification; managed installation,
+usage, broader recovery and installed account/model execution remain unfinished.
 
 **Settings → Providers → Codex Account** reads the existing CLI sign-in, plan,
 and available allowance windows. Email stays hidden until revealed. Refresh

@@ -1,5 +1,56 @@
 # Validation record
 
+## 2026-10-22 — native Antigravity ACP and explicit account setup
+
+- Added a dedicated native adapter for the pinned flat ACP dialect and paired
+  server/harness. Native prompt responses finish turns; admission, idle status
+  and locally generated IDs cannot substitute for terminal proof. Models,
+  account generations and modes are captured independently of future choices.
+- Explicit account setup stages isolated profiles and Keychain credentials under
+  an Engine lease. Google URLs remain transient and open only from the explicit
+  native action. Initialization-only runtime checks do not claim account access.
+  Failed or uncertain logout downgrades the exact saved generation rather than
+  permitting automatic repeat. Credentials and authorization URLs are excluded
+  from workspace persistence.
+- Offline peers cover native framing, process ownership, setup, resume, questions,
+  permissions, delegated files and Engine integration. Synthetic account sessions
+  and private temporary registries keep these checks independent of real Google
+  accounts and the user's Keychain. Installed execution, managed installation,
+  usage, skills/MCP and broader recovery remain unfinished.
+- All 57 focused declarations pass: nine native view/store declarations
+  (1.059 seconds) and 48 Core declarations (0.674 seconds), including existing
+  grouping and OpenCode stop-observation regressions. These include 49 new
+  Antigravity declarations. The incremental build completes in 6.12 seconds.
+  Real pipes verify cancelled queued notifications send no bytes, already-started
+  frames finish intact, and the next request stays usable. A gated native probe
+  verifies shutdown waits for a process whose metadata RPC already returned.
+  Account leases reject new starts atomically and drain held baseline capture.
+- The complete canonical `swift test --no-parallel` run passes 1131 declarations:
+  1123 pass and eight optional installed-provider checks skip. Core reports 958
+  declarations (270.968 seconds); all 154 native view/store declarations
+  (51.536 seconds), six terminal declarations (1.333 seconds) and 13 Markdown
+  declarations (0.127 seconds) pass. An earlier default-parallel invocation
+  produced widespread timing failures under excess process load; it is not the
+  documented/CI runner mode and is not claimed as passing. Assertions, deadlines
+  and test coverage were not relaxed.
+- Packaging completes in 0.58 seconds. Strict/deep signature verification and
+  native math-resource rendering pass. The development app reopens and its real
+  window is captured. A consistent private backup precedes storage 29-to-30;
+  integrity remains `ok`, with the same three conversations, 25 messages and
+  canonical workspace payload hash. Hosted native GUI acceptance remains pending.
+- An opt-in offscreen render of the native question, permission and account views
+  produces 24 narrow/wide, light/dark and left-to-right/right-to-left captures;
+  its declaration passes in 0.866 seconds. Representative captures were inspected
+  for wrapping and control placement. These do not establish composited glass
+  contrast or installed-provider interaction acceptance.
+- Hosted production run `39784118056` reports assertion failures in OpenCode's
+  synthetic stop observation and grouped checkout selection. The exact same
+  production Core code passes in `39783333814`; the failure is not a crash.
+  OpenCode's fixture now retains its exact request owner and observes the native
+  stop callback within the existing budget. The grouping test waits for thread
+  creation's selection continuation before issuing the next selection. Existing
+  assertions, coverage and deadlines are preserved.
+
 ## 2026-10-22 — history status accessibility identity
 
 - Hosted run `39777011810` at `3645f869` finishes all 14 native GUI scenarios:

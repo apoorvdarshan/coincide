@@ -129,7 +129,7 @@ struct ProviderMenu: View {
             }
             Divider()
             Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
-                .disabled((thread.provider == .acp || thread.provider == .opencode || thread.provider == .pi || thread.provider == .muse) && !store.workspaceReady(for: thread))
+                .disabled(((thread.provider == .acp || thread.provider == .opencode || thread.provider == .pi || thread.provider == .muse || thread.provider == .antigravity) && !store.workspaceReady(for: thread)) || (thread.provider == .antigravity && store.antigravityAccount.isWorking))
         } label: {
             // AppKit's native menu button derives its title from a single Text.
             // Nested label stacks otherwise lose the selected model and effort.

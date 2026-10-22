@@ -13,7 +13,14 @@ struct ApprovalView: View {
     private var questions: [JSONValue] { request.questions }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if request.method == "muse/approval" {
+            if request.method == AntigravityProtocol.permissionMethod || request.method == AntigravityProtocol.questionMethod {
+                if let input = request.antigravityPermission {
+                    AntigravityPermissionView(request: input, isResponding: isResponding,
+                        onOption: onOption, onCancel: { onDecision(false) })
+                } else {
+                    Text("This Antigravity request cannot be displayed safely. Stop the conversation to dismiss it.")
+                }
+            } else if request.method == "muse/approval" {
                 if let input = request.museApproval {
                     MuseApprovalView(request: input, isResponding: isResponding, onOption: onOption)
                 } else { Text("This Muse approval cannot be displayed safely. Stop the conversation to dismiss it.") }

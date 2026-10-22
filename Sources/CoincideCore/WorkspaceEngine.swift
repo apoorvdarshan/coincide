@@ -161,7 +161,7 @@ extension WorkspaceEngine {
             thread.provider = configuration.provider; thread.workspacePath = configuration.workspacePath
             thread.model = configuration.model; thread.reasoningEffort = configuration.reasoningEffort; thread.permission = configuration.permission
             thread.agentModeID = configuration.agentModeID; thread.agentConfigValues = configuration.agentConfigValues
-            thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent; thread.openCodeConfiguration = configuration.openCodeConfiguration; thread.piConfiguration = configuration.piConfiguration; thread.museConfiguration = configuration.museConfiguration
+            thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent; thread.openCodeConfiguration = configuration.openCodeConfiguration; thread.piConfiguration = configuration.piConfiguration; thread.museConfiguration = configuration.museConfiguration; thread.antigravityConfiguration = configuration.antigravityConfiguration
             thread.providerThreadID = operation.nativeThreadID
             do {
                 let result = try await runtime.session.steer(input: input, thread: thread, expectedTurnID: operation.nativeTurnID, clientMessageID: operation.messageID)
@@ -649,7 +649,7 @@ extension WorkspaceEngine {
         guard !closing, !stoppingEffects, fatalError == nil, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
         let token = UUID(), metadataID: UUID?, session: any ProviderSession
         if !forceOwnedMetadata, let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
-           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding {
+           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding {
             metadataID = nil; session = runtime.session
         } else {
             var configured = thread
@@ -758,7 +758,7 @@ extension WorkspaceEngine {
         }
         let metadataID: UUID?, session: any ProviderSession
         if review.kind == .rewindBeforeRun, let runtime = runtimes[threadID], runtime.id == thread.runtimeID,
-           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding {
+           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding {
             metadataID = nil; session = runtime.session
         } else {
             var configured = thread
@@ -767,7 +767,7 @@ extension WorkspaceEngine {
                 configured = CodingThread(project: project, model: review.targetConfiguration.model)
                 configured.id = review.targetThreadID!; configured.workspacePath = review.targetConfiguration.workspacePath
                 configured.provider = review.targetConfiguration.provider; configured.reasoningEffort = review.targetConfiguration.reasoningEffort; configured.permission = review.targetConfiguration.permission
-                configured.acpAgent = review.targetConfiguration.acpAgent; configured.openCodeConfiguration = review.targetConfiguration.openCodeConfiguration; configured.piConfiguration = review.targetConfiguration.piConfiguration; configured.museConfiguration = review.targetConfiguration.museConfiguration; configured.agentModeID = review.targetConfiguration.agentModeID
+                configured.acpAgent = review.targetConfiguration.acpAgent; configured.openCodeConfiguration = review.targetConfiguration.openCodeConfiguration; configured.piConfiguration = review.targetConfiguration.piConfiguration; configured.museConfiguration = review.targetConfiguration.museConfiguration; configured.antigravityConfiguration = review.targetConfiguration.antigravityConfiguration; configured.agentModeID = review.targetConfiguration.agentModeID
                 configured.agentConfigValues = review.targetConfiguration.agentConfigValues; configured.agentConfiguration = review.targetConfiguration.agentConfiguration
             }
             let id = UUID(); metadataID = id; session = try factory(configured)
@@ -1299,6 +1299,7 @@ public actor WorkspaceEngine {
         var grokRuntimeMode: GrokACPRuntimeMode?
         var piBinding: PiRuntimeBinding?
         var museBinding: MuseRuntimeBinding?
+        var antigravityBinding: AntigravityRuntimeBinding?
         var reader: Task<Void, Never>?
     }
     private struct MetadataRuntime: Sendable {
@@ -1333,6 +1334,7 @@ public actor WorkspaceEngine {
     private var worktreeInspections: [UUID: WorktreeInspection] = [:]
     private var threadIncarnations: [UUID: UUID] = [:]
     private var codexDefaultReviews: [UUID: ReviewedCodexDefault] = [:]
+    private var antigravityAuthenticationLeases: [UUID: UUID] = [:]
     private let ownership: WorkspaceRuntimeLock
     private let factory: ProviderFactory
     private let cloneFactory: CloneFactory
@@ -1542,6 +1544,7 @@ public actor WorkspaceEngine {
                 let decision: WorkspaceDecision
                 do {
                     try validateCodexDefaultCommand(envelope.command, snapshot: base.snapshot)
+                    try validateAntigravityAdmission(envelope.command, snapshot: base.snapshot)
                     if case .promptSteeringAccepted(let operation) = envelope.command,
                        threadIncarnations[operation.threadID] != operation.sourceIncarnation {
                         throw WorkspaceCommandError("The active provider turn changed before steering was accepted.")
@@ -2004,7 +2007,7 @@ public actor WorkspaceEngine {
             var configured = thread
             configured.provider = configuration.provider; configured.workspacePath = configuration.workspacePath
             configured.providerThreadID = configuration.nativeThreadID; configured.model = configuration.model; configured.reasoningEffort = configuration.reasoningEffort; configured.permission = configuration.permission
-            configured.acpAgent = configuration.acpAgent; configured.openCodeConfiguration = configuration.openCodeConfiguration; configured.piConfiguration = configuration.piConfiguration; configured.museConfiguration = configuration.museConfiguration; configured.agentModeID = configuration.agentModeID
+            configured.acpAgent = configuration.acpAgent; configured.openCodeConfiguration = configuration.openCodeConfiguration; configured.piConfiguration = configuration.piConfiguration; configured.museConfiguration = configuration.museConfiguration; configured.antigravityConfiguration = configuration.antigravityConfiguration; configured.agentModeID = configuration.agentModeID
             configured.agentConfigValues = configuration.agentConfigValues
             configured.agentConfiguration = configuration.agentConfiguration
             let runtime = try await runtime(for: configured, runID: runID)
@@ -2022,7 +2025,9 @@ public actor WorkspaceEngine {
             if let runtime = runtimes[thread.id], runtime.id == thread.runtimeID,
                thread.activeRun?.nativeTurnID != nil ||
                 (thread.activeRun?.configuration.provider == .pi && runtime.provider == .pi &&
-                 runtime.piBinding == thread.activeRun?.configuration.piRuntimeBinding) {
+                 runtime.piBinding == thread.activeRun?.configuration.piRuntimeBinding) ||
+                (thread.activeRun?.configuration.provider == .antigravity && runtime.provider == .antigravity &&
+                 runtime.antigravityBinding == thread.activeRun?.configuration.antigravityRuntimeBinding) {
                 do { try await runtime.session.interrupt(expectedRunID: runID); return .succeeded }
                 catch { /* Fall back only while this same run/runtime is still owned. */ }
             }
@@ -2170,15 +2175,31 @@ public actor WorkspaceEngine {
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
-        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding { return existing }
+        if thread.provider == .antigravity {
+            guard let captured = thread.antigravityConfiguration,
+                  let current = revision.snapshot.threads.first(where: { $0.id == thread.id })?.antigravityConfiguration,
+                  current.runtimeIdentity == captured.runtimeIdentity else {
+                throw CoincideError("This queued input belongs to an earlier Antigravity account or runtime. Review it before sending with the current settings.")
+            }
+        }
+        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding { return existing }
         await closeRuntime(thread.id)
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         // Closing the previous process is an await: removal may have committed during that I/O.
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
         let id = UUID(), session = try factory(thread)
-        var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding)
+        var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding, antigravityBinding: ProviderConfiguration(thread: thread).antigravityRuntimeBinding)
         runtimes[thread.id] = runtime
+        if let native = session as? AntigravitySession {
+            do {
+                try await native.setFileAccessGuard { [weak self] _, writing in
+                    guard let self else { throw CancellationError() }
+                    try await self.validateAntigravityFileAccess(threadID: thread.id, projectID: thread.projectID,
+                        runtimeID: id, path: thread.workspacePath, writing: writing)
+                }
+            } catch { await closeRuntime(thread.id, matching: id); throw error }
+        }
         _ = try await enqueue(.runtimeOpened(threadID: thread.id, runID: runID, runtimeID: id))
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID), runtimes[thread.id]?.id == id else {
             await closeRuntime(thread.id, matching: id); throw CancellationError()
@@ -2195,12 +2216,85 @@ public actor WorkspaceEngine {
         else { runtime.reader?.cancel(); throw CancellationError() }
         return runtime
     }
+    private func validateAntigravityFileAccess(threadID: UUID, projectID: UUID, runtimeID: UUID, path: String, writing: Bool) throws {
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let runtime = runtimes[threadID], runtime.id == runtimeID, runtime.provider == .antigravity, runtime.path == path,
+              let current = revision.snapshot.threads.first(where: { $0.id == threadID && $0.projectID == projectID }),
+              current.provider == .antigravity, current.workspacePath == path, current.runtimeID == runtimeID,
+              current.activeRun?.stopRequested != true, !isAntigravityAuthenticationLocked(current),
+              revision.snapshot.providerReady(for: current),
+              !revision.snapshot.isConversationHistoryLocked(threadID: threadID),
+              !revision.snapshot.isCheckpointRestoreLocked(path: path), !revision.snapshot.isPullRequestCreationLocked(path: path),
+              !revision.snapshot.isPullRequestCheckoutLocked(path: path) else {
+            throw CoincideError(writing ? "Antigravity cannot write while this workspace is changing." : "Antigravity cannot read while this workspace is changing.")
+        }
+    }
     private func ownsRun(threadID: UUID, projectID: UUID, runID: UUID) -> Bool {
         guard !closing, !stoppingEffects, fatalError == nil,
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.projectID == projectID }),
               thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false,
+              !isAntigravityAuthenticationLocked(thread),
               revision.snapshot.workspaceReady(for: thread) else { return false }
         return true
+    }
+    private func isAntigravityAuthenticationLocked(_ thread: CodingThread) -> Bool {
+        let instance = thread.activeRun?.configuration.antigravityConfiguration?.instanceID ?? thread.antigravityConfiguration?.instanceID
+        return instance.map { antigravityAuthenticationLeases[$0] != nil } ?? false
+    }
+    private func validateAntigravityAdmission(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
+        let threadID: UUID
+        switch command {
+        case .client(.submit(let id, _)), .client(.resumeQueue(let id)): threadID = id
+        default: return
+        }
+        guard let thread = snapshot.threads.first(where: { $0.id == threadID }), isAntigravityAuthenticationLocked(thread) else { return }
+        throw WorkspaceCommandError("Wait for the Antigravity account change before sending or resuming messages. Your draft and queued messages were kept.")
+    }
+    /// An explicit account mutation retires every owner sharing that instance.
+    /// The lease remains held through native auth, credential/config persistence
+    /// and final app publication. Drafts and queued input are never replayed.
+    public func beginAntigravityAuthentication(instanceID: UUID) async throws -> UUID {
+        guard loaded, !closing, !stoppingEffects, fatalError == nil, antigravityAuthenticationLeases[instanceID] == nil else {
+            throw WorkspaceCommandError("An Antigravity account change is already running or the workspace is unavailable.")
+        }
+        let affected = revision.snapshot.threads.filter { $0.antigravityConfiguration?.instanceID == instanceID || $0.activeRun?.configuration.antigravityConfiguration?.instanceID == instanceID }
+        guard affected.allSatisfy({ !revision.snapshot.isConversationHistoryLocked(threadID: $0.id) && !revision.snapshot.isCheckpointRestoreLocked(path: $0.workspacePath) && !revision.snapshot.isPullRequestCreationLocked(path: $0.workspacePath) && !revision.snapshot.isPullRequestCheckoutLocked(path: $0.workspacePath) }) else {
+            throw WorkspaceCommandError("Wait for Antigravity workspace operations to finish before changing the account.")
+        }
+        let leaseID = UUID(); antigravityAuthenticationLeases[instanceID] = leaseID
+        do {
+            let receipt = try await enqueue(.antigravityAuthenticationPreparing(instanceID: instanceID))
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+            let owners = Set(affected.map(\.id))
+            while true {
+                let jobs = cleanupTasks.values.filter { !$0.threadIDs.isDisjoint(with: owners) }.map(\.task)
+                if jobs.isEmpty { break }
+                for job in jobs { await job.value }
+            }
+            // Include metadata created without a conversation owner.
+            for (id, metadata) in metadataSessions where metadata.configuration?.antigravityConfiguration?.instanceID == instanceID {
+                if let close = beginMetadataClose(id) { await close.value }
+                metadataSessions.removeValue(forKey: id)
+            }
+            try Task.checkCancellation()
+            guard !closing, !stoppingEffects, fatalError == nil, antigravityAuthenticationLeases[instanceID] == leaseID else { throw CancellationError() }
+            return leaseID
+        } catch {
+            if antigravityAuthenticationLeases[instanceID] == leaseID { antigravityAuthenticationLeases.removeValue(forKey: instanceID) }
+            throw error
+        }
+    }
+    public func endAntigravityAuthentication(leaseID: UUID) async {
+        guard let instance = antigravityAuthenticationLeases.first(where: { $0.value == leaseID })?.key else { return }
+        antigravityAuthenticationLeases.removeValue(forKey: instance)
+    }
+    public func applyAntigravityAccountConfiguration(_ configuration: AntigravityConfiguration) async throws {
+        guard antigravityAuthenticationLeases[configuration.instanceID] != nil, !closing, !stoppingEffects, fatalError == nil else {
+            throw WorkspaceCommandError("Begin an Antigravity account change before saving its settings.")
+        }
+        try configuration.validate()
+        let receipt = try await enqueue(.antigravityAccountConfigured(configuration))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
     }
     private func closeRuntime(_ threadID: UUID, matching expectedID: UUID? = nil) async {
         guard let runtime = runtimes[threadID], expectedID == nil || expectedID == runtime.id else { return }
@@ -2255,7 +2349,7 @@ public actor WorkspaceEngine {
         guard !closing, !stoppingEffects,
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
-              current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding else { throw CancellationError() }
+              current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding else { throw CancellationError() }
         if !revision.snapshot.providerReady(for: current) {
             throw CoincideError("Wait for the workspace to finish preparing before refreshing this agent's models.")
         }
@@ -2266,7 +2360,7 @@ public actor WorkspaceEngine {
         guard !closing, !stoppingEffects, thread.provider == .opencode,
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               current.provider == .opencode, current.workspacePath == thread.workspacePath,
-              current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding,
+              current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding,
               revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         return try await queryProviderMetadata(thread: current, owned: true) { try await $0.openCodeInventory() }
     }
@@ -2275,10 +2369,11 @@ public actor WorkspaceEngine {
     }
     private func queryProviderMetadata<Value: Sendable>(thread: CodingThread, owned: Bool,
                                                        operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
+        guard !isAntigravityAuthenticationLocked(thread) else { throw WorkspaceCommandError("Wait for the Antigravity account change before refreshing models.") }
         if owned {
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
             guard let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
-                  current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding,
+                  current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding,
                   revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         }
         guard !closing, !stoppingEffects, !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else { throw CancellationError() }
@@ -2315,7 +2410,7 @@ public actor WorkspaceEngine {
         guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.projectID == metadata.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
               let configuration = metadata.configuration,
-              thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent, thread.openCodeConfiguration?.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode == configuration.effectiveGrokRuntimeMode, ProviderConfiguration(thread: thread).piRuntimeBinding == configuration.piRuntimeBinding, ProviderConfiguration(thread: thread).museRuntimeBinding == configuration.museRuntimeBinding,
+              thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent, thread.openCodeConfiguration?.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode == configuration.effectiveGrokRuntimeMode, ProviderConfiguration(thread: thread).piRuntimeBinding == configuration.piRuntimeBinding, ProviderConfiguration(thread: thread).museRuntimeBinding == configuration.museRuntimeBinding, ProviderConfiguration(thread: thread).antigravityRuntimeBinding == configuration.antigravityRuntimeBinding,
               revision.snapshot.providerReady(for: thread) else { return false }
         return true
     }

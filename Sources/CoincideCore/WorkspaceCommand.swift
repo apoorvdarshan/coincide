@@ -36,6 +36,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case openCodeGeneration(OpenCodeGeneration), grokRuntimeMode(GrokACPRuntimeMode)
     case piModel(ProviderModel?), piThinking(model: ProviderModel, level: String?)
     case museModel(ProviderModel?), museReasoning(model: ProviderModel, effort: String?)
+    case antigravityConfiguration(AntigravityConfiguration)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -97,6 +98,8 @@ enum EngineCommand: Codable, Sendable {
     case worktreeStarted(threadID: UUID, attemptID: UUID)
     case worktreeRecovered(threadID: UUID, attemptID: UUID, incarnation: UUID, result: GitWorktreeResult)
     case pauseQueues
+    case antigravityAuthenticationPreparing(instanceID: UUID)
+    case antigravityAccountConfigured(AntigravityConfiguration)
     case cloneStarted(projectID: UUID, attemptID: UUID)
     case cloneProgress(projectID: UUID, attemptID: UUID, progress: GitCloneProgress)
     case repositoryIdentityResolved(projectID: UUID, path: String, incarnation: UUID, requestID: UUID, identity: RepositoryIdentity?)
@@ -544,6 +547,13 @@ struct WorkspaceDecision: Sendable {
             switch action {
             case .editThread(_, let edit):
                 switch edit {
+                case .antigravityConfiguration(let configuration):
+                    guard thread.provider == .antigravity, !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty,
+                          thread.runtimeRequests.isEmpty else { throw WorkspaceCommandError("Change the Antigravity runtime in a new, empty conversation.") }
+                    do { try configuration.validate() }
+                    catch { throw WorkspaceCommandError(AntigravityConfiguration.invalid().localizedDescription) }
+                    decision.closeRuntimes.insert(thread.id); thread.antigravityConfiguration = configuration
+                    thread.model = configuration.model ?? ""; thread.providerThreadID = nil; thread.runtimeID = nil
                 case .checkpointPolicy(let value): thread.checkpointPolicy = value
                 case .codexModel(let model): try thread.selectCodexModel(model)
                 case .codexReasoning(let model, let effort): try thread.selectCodexReasoning(model: model, effort: effort)
@@ -582,6 +592,11 @@ struct WorkspaceDecision: Sendable {
                     let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !title.isEmpty else { throw WorkspaceCommandError("A conversation title cannot be empty.") }; thread.title = title
                 case .model(let model):
+                    if thread.provider == .antigravity {
+                        do { try thread.selectAntigravityModel(model.isEmpty ? nil : model) }
+                        catch { throw WorkspaceCommandError(AntigravityConfiguration.invalid().localizedDescription) }
+                        break
+                    }
                     if thread.provider == .muse {
                         guard model.isEmpty else { throw WorkspaceCommandError("Choose an available Muse model.") }
                         try thread.selectMuseModel(nil); break
@@ -623,6 +638,7 @@ struct WorkspaceDecision: Sendable {
                     thread.openCodeConfiguration = kind == .opencode ? .init(instanceID: id) : nil
                     thread.piConfiguration = kind == .pi ? .init(instanceID: id) : nil
                     thread.museConfiguration = kind == .muse ? .init(instanceID: id) : nil
+                    thread.antigravityConfiguration = kind == .antigravity ? .init() : nil
                     if kind == .muse, thread.permission != .supervised && thread.permission != .fullAccess { thread.permission = .supervised }
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
@@ -631,6 +647,7 @@ struct WorkspaceDecision: Sendable {
                     thread.openCodeConfiguration = nil
                     thread.piConfiguration = nil
                     thread.museConfiguration = nil
+                    thread.antigravityConfiguration = nil
                     thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value
@@ -709,6 +726,12 @@ struct WorkspaceDecision: Sendable {
                 let request = thread.runtimeRequests[i].request
                 switch response {
                 case .option(let id):
+                    if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
+                        guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity request is no longer available.") }
+                        do { _ = try input.response(optionID: id) }
+                        catch { throw WorkspaceCommandError("Choose a current Antigravity option.") }
+                        break
+                    }
                     if request.method == "muse/approval" {
                         guard thread.provider == .muse, let input = request.museApproval else { throw WorkspaceCommandError("This Muse approval is no longer available.") }
                         do { _ = try input.decisionBody(choiceID: id) }
@@ -726,7 +749,15 @@ struct WorkspaceDecision: Sendable {
                         throw WorkspaceCommandError("This permission option is no longer available.")
                     }
                 case .decision(let allow):
-                    if request.method == "muse/approval" || request.method == "muse/userInput" {
+                    if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
+                        guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity request is no longer available.") }
+                        do {
+                            if input.isQuestion {
+                                guard !allow else { throw AntigravityProtocol.failure() }
+                                _ = try input.response(optionID: nil)
+                            } else { _ = try input.decision(allow: allow) }
+                        } catch { throw WorkspaceCommandError("Choose a current Antigravity option or cancel the question.") }
+                    } else if request.method == "muse/approval" || request.method == "muse/userInput" {
                         guard thread.provider == .muse, !allow else { throw WorkspaceCommandError("Choose a Muse option or answer its questions.") }
                         if request.method == "muse/approval" {
                             guard let input = request.museApproval else { throw WorkspaceCommandError("This Muse approval is no longer available.") }
@@ -752,7 +783,11 @@ struct WorkspaceDecision: Sendable {
                         }
                     } else { guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") } }
                 case .answers(let answers):
-                    if request.method == "muse/userInput" {
+                    if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
+                        guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity question is no longer available.") }
+                        do { _ = try input.answer(answers: answers) }
+                        catch { throw WorkspaceCommandError("Choose one offered Antigravity option.") }
+                    } else if request.method == "muse/userInput" {
                         guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
                         do { _ = try input.answerBody(answers: answers) }
                         catch { throw WorkspaceCommandError("Provide valid answers for the Muse questions.") }
@@ -775,7 +810,11 @@ struct WorkspaceDecision: Sendable {
                         guard CursorACPMethod.canonical(request.method) == nil, request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
                     }
                 case .selections(let selections):
-                    if request.method == "muse/userInput" {
+                    if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
+                        guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity question is no longer available.") }
+                        do { _ = try input.answer(selections: selections) }
+                        catch { throw WorkspaceCommandError("Choose one offered Antigravity option.") }
+                    } else if request.method == "muse/userInput" {
                         guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
                         do { _ = try input.answerBody(selections: selections) }
                         catch { throw WorkspaceCommandError("Provide valid answers for the Muse questions.") }
@@ -843,6 +882,37 @@ struct WorkspaceDecision: Sendable {
             }
         case .effectResult(let request, let result), .projectScriptEffectResult(let request, let result, _), .runCheckpointEffectResult(let request, let result, _):
             decision.finished(request, result: result, now: now)
+        case .antigravityAuthenticationPreparing(let instanceID):
+            for index in decision.snapshot.threads.indices {
+                var thread = decision.snapshot.threads[index]
+                guard thread.antigravityConfiguration?.instanceID == instanceID || thread.activeRun?.configuration.antigravityConfiguration?.instanceID == instanceID else { continue }
+                if var run = thread.activeRun {
+                    run.stopRequested = true; thread.activeRun = run; thread.updateRunRecord()
+                    if thread.runHistory?.first(where: { $0.id == run.id })?.checkpoints?.providerReleased == false {
+                        thread.updateCheckpoint(runID: run.id, stage: .baseline) {
+                            $0.phase = .interrupted; $0.error = ThreadRunCheckpointAttempt.interruptedMessage; $0.updatedAt = now
+                        }
+                        if let record = thread.runHistory?.firstIndex(where: { $0.id == run.id }) {
+                            thread.runHistory?[record].checkpoints?.pendingStart = nil
+                        }
+                    }
+                    thread.finishRunRecord(status: .interrupted, reason: .forcedStop, now: now)
+                    decision.requestPostRunCheckpoint(runID: run.id, in: &thread, now: now)
+                    thread.activeRun = nil; thread.state = .interrupted
+                }
+                thread.queuePaused = true; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil
+                thread.updatedAt = now; decision.closeRuntimes.insert(thread.id); decision.snapshot.threads[index] = thread
+            }
+        case .antigravityAccountConfigured(let configuration):
+            try configuration.validate()
+            for index in decision.snapshot.threads.indices {
+                var thread = decision.snapshot.threads[index]
+                guard thread.provider == .antigravity, thread.antigravityConfiguration?.instanceID == configuration.instanceID else { continue }
+                guard thread.activeRun == nil, thread.runtimeID == nil else { throw WorkspaceCommandError("Wait for Antigravity sessions to close before changing the account.") }
+                thread.antigravityConfiguration = configuration.selecting(model: thread.antigravityConfiguration?.model)
+                thread.model = thread.antigravityConfiguration?.model ?? ""
+                thread.queuePaused = true; thread.updatedAt = now; decision.snapshot.threads[index] = thread
+            }
         case .pauseQueues:
             for i in (decision.snapshot.promptSteerings ?? []).indices where decision.snapshot.promptSteerings?[i].isWorking == true { decision.snapshot.promptSteerings?[i].fallbackAllowed = false }
             for i in decision.snapshot.threads.indices where !decision.snapshot.threads[i].queuedTurns.isEmpty { decision.snapshot.threads[i].queuePaused = true }
@@ -999,7 +1069,9 @@ struct WorkspaceDecision: Sendable {
                         (thread.provider == .opencode && record.configuration.provider == .opencode &&
                          record.configuration.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity) ||
                         (thread.provider == .muse && record.configuration.provider == .muse &&
-                         record.configuration.museConfiguration?.runtimeIdentity == thread.museConfiguration?.runtimeIdentity),
+                         record.configuration.museConfiguration?.runtimeIdentity == thread.museConfiguration?.runtimeIdentity) ||
+                        (thread.provider == .antigravity && record.configuration.provider == .antigravity &&
+                         record.configuration.antigravityConfiguration?.runtimeIdentity == thread.antigravityConfiguration?.runtimeIdentity),
                       record.providerThreadID == thread.providerThreadID else { return }
                 attributedRun = owner
             } else { attributedRun = thread.activeRun?.id }

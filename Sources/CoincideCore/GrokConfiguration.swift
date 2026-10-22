@@ -10,6 +10,7 @@ extension ProviderConfiguration {
     public var permissionSummary: String {
         if provider == .pi { return permission.piTitle }
         if provider == .muse { return permission.museTitle }
+        if provider == .antigravity { return permission.antigravityTitle }
         if provider == .acp, acpAgent?.integration == .grok {
             return effectiveGrokRuntimeMode?.name ?? "Unavailable Grok permissions"
         }

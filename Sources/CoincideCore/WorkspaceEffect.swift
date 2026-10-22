@@ -19,6 +19,7 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
     public var openCodeConfiguration: OpenCodeConfiguration?
     public var piConfiguration: PiConfiguration?
     public var museConfiguration: MuseConfiguration?
+    public var antigravityConfiguration: AntigravityConfiguration?
     public var agentModeID: String?
     public var agentConfigValues: [String: String]?
     public var agentConfiguration: [String: JSONValue]?
@@ -27,6 +28,7 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
         nativeThreadID = thread.providerThreadID; model = thread.model; reasoningEffort = thread.provider == .codex ? thread.reasoningEffort : nil; permission = thread.permission
         acpAgent = thread.acpAgent; openCodeConfiguration = thread.openCodeConfiguration; piConfiguration = thread.piConfiguration; agentModeID = thread.agentModeID
         museConfiguration = thread.museConfiguration
+        antigravityConfiguration = thread.antigravityConfiguration
         agentConfigValues = thread.agentConfigValues
         agentConfiguration = thread.agentConfiguration
     }

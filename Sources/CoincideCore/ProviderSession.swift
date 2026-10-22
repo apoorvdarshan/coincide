@@ -1,11 +1,11 @@
 import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case codex, claude, opencode, pi, muse, acp
-    public static var builtIn: [Self] { [.codex, .claude, .opencode, .pi, .muse] }
+    case codex, claude, opencode, pi, muse, antigravity, acp
+    public static var builtIn: [Self] { [.codex, .claude, .opencode, .pi, .muse, .antigravity] }
     public var id: String { rawValue }
-    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .pi: "Pi"; case .muse: "Muse"; case .acp: "ACP Agent" } }
-    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .pi: "pi"; case .muse: "muse"; case .acp: "" } }
+    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .pi: "Pi"; case .muse: "Muse"; case .antigravity: "Antigravity"; case .acp: "ACP Agent" } }
+    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .pi: "pi"; case .muse: "muse"; case .antigravity: "agy_acp_server.par"; case .acp: "" } }
 }
 
 public enum ProviderEvent: Codable, Sendable, Equatable {
@@ -95,7 +95,21 @@ extension ProviderSession {
 }
 
 public enum ProviderSessions {
-    public static func make(for thread: CodingThread) throws -> any ProviderSession {
+    public static func make(for thread: CodingThread, antigravityStateRoot: URL? = nil) throws -> any ProviderSession {
+        if thread.provider == .antigravity {
+            try AntigravityConfigurationValidation.configuration(.init(thread: thread))
+            guard let configuration = thread.antigravityConfiguration,
+                  let executable = ProcessChannel.findExecutable(configuration.executable) else {
+                throw CoincideError("Choose the Antigravity runtime and its paired harness in Settings before sending a message.")
+            }
+            let registryRoot = (antigravityStateRoot?.deletingLastPathComponent() ??
+                FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Coincide", isDirectory: true))
+                .appendingPathComponent("AntigravitySettings", isDirectory: true)
+            try AntigravityAccountRegistry.validateKnownGeneration(configuration, rootURL: registryRoot)
+            return AntigravitySession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath),
+                configuration: configuration, permission: thread.permission,
+                credentialProvider: { try AntigravityCredentialStore.read(configuration: configuration) }, stateRoot: antigravityStateRoot)
+        }
         if thread.provider == .muse {
             try MuseConfigurationValidation.configuration(.init(thread: thread))
             guard let configuration = thread.museConfiguration, let executable = ProcessChannel.findExecutable(configuration.executable) else {
@@ -143,6 +157,7 @@ public enum ProviderSessions {
         case .opencode: throw OpenCodeConfiguration.invalid()
         case .pi: throw PiConfiguration.invalid()
         case .muse: throw MuseConfiguration.invalid()
+        case .antigravity: throw AntigravityConfiguration.invalid()
         case .acp: throw CoincideError("Choose an ACP agent.")
         }
     }

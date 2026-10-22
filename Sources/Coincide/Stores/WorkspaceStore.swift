@@ -106,6 +106,8 @@ final class WorkspaceStore {
     var openCodeCatalogs: [UUID: OpenCodeMetadataSnapshot] = [:]
     var piModels: [UUID: [ProviderModel]] = [:]
     var museModels: [UUID: [ProviderModel]] = [:]
+    var antigravityModels: [UUID: [ProviderModel]] = [:]
+    let antigravityAccount: AntigravityAccountStore
     var isLoading = true
     var isRefreshingModels = false
     let codexAccount = CodexAccountStore()
@@ -170,6 +172,8 @@ final class WorkspaceStore {
     private var terminating = false
 
     init(databaseURL: URL? = nil) {
+        antigravityAccount = .init(stateRoot: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AntigravitySettings", isDirectory: true))
+        defer { if let engine { antigravityAccount.bind(engine: engine) } }
         projectScriptReader = { try await ProjectConfigurationService.load(using: $0) }
         managedProjectsRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Projects", isDirectory: true)
         worktreesRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Worktrees", isDirectory: true)
@@ -184,11 +188,13 @@ final class WorkspaceStore {
     init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil,
          projectScriptReader: @escaping NativeProjectScriptService.Reader = { try await ProjectConfigurationService.load(using: $0) },
          projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
+        antigravityAccount = .init(stateRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AntigravitySettings", isDirectory: true))
         self.engine = engine
         self.managedProjectsRoot = managedProjectsRoot ?? Self.applicationDataRoot.appendingPathComponent("Projects", isDirectory: true)
         self.worktreesRoot = engine.worktreesRoot
         self.projectCreator = projectCreator
         self.projectScriptReader = projectScriptReader
+        antigravityAccount.bind(engine: engine)
     }
     private static var applicationDataRoot: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -762,6 +768,13 @@ final class WorkspaceStore {
                 museModels.removeValue(forKey: id)
             }
         }
+        for id in Array(antigravityModels.keys) {
+            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
+            if next?.provider != .antigravity || old?.workspacePath != next?.workspacePath ||
+                old?.antigravityConfiguration?.runtimeIdentity != next?.antigravityConfiguration?.runtimeIdentity || old?.permission != next?.permission {
+                antigravityModels.removeValue(forKey: id)
+            }
+        }
         let removedThreads = Set(snapshot.threads.map(\.id)).subtracting(update.snapshot.threads.map(\.id))
         let removedProjects = Set(snapshot.projects.map(\.id)).subtracting(update.snapshot.projects.map(\.id))
         let changedScriptThreads = Set(snapshot.threads.compactMap { old -> UUID? in
@@ -969,6 +982,16 @@ final class WorkspaceStore {
     }
     func setModel(_ model: String, id: UUID) {
         cancelCodexModelDefaultsRead(id)
+        if thread(id)?.provider == .antigravity {
+            _ = enqueuePreparing { [weak self] in
+                guard let self, !self.terminating, let current = self.thread(id), current.provider == .antigravity,
+                      model.isEmpty || self.models(for: current).contains(where: { $0.id == model }) else {
+                    throw WorkspaceCommandError("Refresh Antigravity models before choosing a model.")
+                }
+                return .editThread(id, .model(model))
+            }
+            return
+        }
         if thread(id)?.provider == .muse {
             _ = enqueueMuseEdit(threadID: id) { [weak self] current in
                 if model.isEmpty { return .museModel(nil) }
@@ -1001,6 +1024,12 @@ final class WorkspaceStore {
     }
     func setProvider(_ provider: ProviderKind, id: UUID) {
         cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .provider(provider)))
+        if provider == .antigravity {
+            _ = enqueuePreparing { [weak self] in
+                guard let self, !self.terminating, self.thread(id)?.provider == .antigravity else { throw CancellationError() }
+                return .editThread(id, .antigravityConfiguration(self.antigravityAccount.configuration))
+            }
+        }
     }
     func setACPAgent(_ agent: ACPAgentConfiguration, id: UUID) {
         cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .acpAgent(agent)))
@@ -1170,7 +1199,7 @@ final class WorkspaceStore {
     func saveACPAgent(_ agent: ACPAgentConfiguration) async throws { _ = try await enqueue(.saveACPAgent(agent)).value }
     func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] {
-        if provider == .opencode || provider == .pi || provider == .muse {
+        if provider == .opencode || provider == .pi || provider == .muse || provider == .antigravity {
             guard let selectedThread, selectedThread.provider == provider else { return [] }
             return models(for: selectedThread)
         }
@@ -1179,6 +1208,7 @@ final class WorkspaceStore {
     func models(for thread: CodingThread) -> [ProviderModel] {
         if thread.provider == .pi { return piModels[thread.id] ?? [] }
         if thread.provider == .muse { return museModels[thread.id] ?? [] }
+        if thread.provider == .antigravity { return antigravityModels[thread.id] ?? [] }
         if thread.provider == .opencode {
             guard let inventory = openCodeCatalogs[thread.id] else { return [] }
             return inventory.models.filter(\.enabled).map { descriptor in
@@ -1331,7 +1361,7 @@ final class WorkspaceStore {
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
-        let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.museConfiguration?.executable ?? thread.piConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable
+        let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.antigravityConfiguration?.executable ?? thread.museConfiguration?.executable ?? thread.piConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable
         guard !executable.isEmpty, ProcessChannel.findExecutable(executable) != nil else {
             errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
             return Task { false }
@@ -1512,6 +1542,13 @@ final class WorkspaceStore {
                       current.projectID == thread.projectID, current.workspacePath == thread.workspacePath,
                       current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity else { return }
                 openCodeCatalogs[thread.id] = catalog
+            } else if kind == .antigravity {
+                guard let thread = selectedThread, thread.provider == .antigravity else { throw CoincideError("Choose Antigravity in a conversation before refreshing its models.") }
+                let models = try await engine.models(thread: thread)
+                guard let current = self.thread(thread.id), current.projectID == thread.projectID, current.provider == .antigravity,
+                      current.workspacePath == thread.workspacePath,
+                      ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding else { return }
+                antigravityModels[thread.id] = models
             } else if kind == .muse {
                 guard let thread = selectedThread, thread.provider == .muse else { throw CoincideError("Choose Muse in a conversation before refreshing its models.") }
                 let models = try await engine.models(thread: thread)
@@ -2151,6 +2188,7 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        await antigravityAccount.shutdown()
         await codexAccount.cancel()
         await acpConnections.cancel()
         let modelReads = codexModelDefaultsReads.values.map(\.task); codexModelDefaultsReads.removeAll()

@@ -410,7 +410,7 @@ extension WorkspaceDecision {
             var target = CodingThread(project: project, model: configuration.model)
             target.id = targetID; target.title = operation.targetTitle ?? review.suggestedTitle
             target.workspacePath = configuration.workspacePath; target.provider = configuration.provider
-            target.reasoningEffort = configuration.reasoningEffort; target.permission = configuration.permission; target.acpAgent = configuration.acpAgent; target.openCodeConfiguration = configuration.openCodeConfiguration; target.piConfiguration = configuration.piConfiguration; target.museConfiguration = configuration.museConfiguration
+            target.reasoningEffort = configuration.reasoningEffort; target.permission = configuration.permission; target.acpAgent = configuration.acpAgent; target.openCodeConfiguration = configuration.openCodeConfiguration; target.piConfiguration = configuration.piConfiguration; target.museConfiguration = configuration.museConfiguration; target.antigravityConfiguration = configuration.antigravityConfiguration
             target.agentModeID = configuration.agentModeID; target.agentConfigValues = configuration.agentConfigValues
             target.agentConfiguration = configuration.agentConfiguration; target.providerThreadID = result.reference.nativeThreadID
             target.messages = review.prefix; target.forkedFromHistoryOperationID = operation.id

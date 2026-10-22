@@ -11,6 +11,9 @@ struct SettingsView: View {
         TabView {
             Form {
                 Picker("Provider", selection: $provider) { ForEach(ProviderKind.builtIn) { Text($0.name).tag($0) } }
+                if provider == .antigravity {
+                    AntigravitySettingsSection(account: store.antigravityAccount)
+                } else {
                 LabeledContent("CLI", value: ProcessChannel.findExecutable(provider.executable)?.path ?? "Not installed")
                 Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)
                 Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels(provider: provider) } }
@@ -30,6 +33,7 @@ struct SettingsView: View {
                 LabeledContent("Available models", value: "\(store.models(for: provider).count)")
                 if provider == .codex {
                     CodexAccountSection(account: store.codexAccount) { await store.refreshCodexAccount() }
+                }
                 }
                 Section("ACP Agents") {
                     ForEach(store.snapshot.acpAgents) { agent in

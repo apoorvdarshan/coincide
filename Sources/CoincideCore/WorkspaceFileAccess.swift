@@ -277,15 +277,16 @@ final class WorkspaceFileRoot: @unchecked Sendable {
         let prefix = Data(values.prefix(start))
         return String(data: prefix, encoding: .utf8) == nil ? nil : prefix
     }
-    func write(_ relative: String, contents: String, expected: WorkspaceFileWriteCondition) throws -> WorkspaceTextDocument {
+    func write(_ relative: String, contents: String, expected: WorkspaceFileWriteCondition, maxBytes: Int = 2_000_000,
+               allowGitMetadata: Bool = false) throws -> WorkspaceTextDocument {
         Self.writes.lock(); defer { Self.writes.unlock() }
         try Task.checkCancellation(); try validate()
         let bytes = Data(contents.utf8)
-        guard bytes.count <= 2_000_000 else { throw WorkspaceFileError(.operationFailed, "Text files saved by the editor must be at most 2 MB.") }
+        guard (1...8_388_608).contains(maxBytes), bytes.count <= maxBytes else { throw WorkspaceFileError(.operationFailed, "The text file exceeds this operation's size limit.") }
         guard !bytes.contains(0) else { throw WorkspaceFileError(.binary, "The text editor cannot save binary content.") }
         // Check both named and resolved targets before creating any directory.
-        let (dir, name, resolved) = try parent(relative, create: expected == .missing, denyMetadata: true)
-        try denyGit(relative, resolved: resolved); try validate(dir)
+        let (dir, name, resolved) = try parent(relative, create: expected == .missing, denyMetadata: !allowGitMetadata)
+        if !allowGitMetadata { try denyGit(relative, resolved: resolved) }; try validate(dir)
         var mode = mode_t(0o666)
         func checkExpected() throws {
             switch expected {
@@ -294,7 +295,7 @@ final class WorkspaceFileRoot: @unchecked Sendable {
                 if fstatat(dir.fd, name, &value, AT_SYMLINK_NOFOLLOW) == 0 { throw WorkspaceFileError(.conflict, "This file already exists. Open it before saving changes.") }
                 guard errno == ENOENT else { throw fileFailure() }
             case .matching(let revision):
-                let current = try read(relative, allowMissing: false, maxBytes: 2_000_000)
+                let current = try read(relative, allowMissing: false, maxBytes: maxBytes)
                 guard current.revision == revision else { throw WorkspaceFileError(.conflict, "The file changed on disk. Reload before saving to preserve those changes.") }
                 var value = stat(); guard fstatat(dir.fd, name, &value, AT_SYMLINK_NOFOLLOW) == 0, regular(value) else { throw WorkspaceFileError(.conflict, "The file changed on disk. Reload before saving.") }
                 mode = value.st_mode & 0o777
@@ -322,7 +323,8 @@ final class WorkspaceFileRoot: @unchecked Sendable {
             }
         }
         guard fsync(file) == 0 else { throw fileFailure() }
-        try Task.checkCancellation(); try validate(dir); try denyGit(relative, resolved: resolved); try checkExpected()
+        try Task.checkCancellation(); try validate(dir)
+        if !allowGitMetadata { try denyGit(relative, resolved: resolved) }; try checkExpected()
         let status: Int32
         switch expected {
         case .missing: status = renameatx_np(dir.fd, temporary, dir.fd, name, UInt32(RENAME_EXCL))
@@ -332,6 +334,6 @@ final class WorkspaceFileRoot: @unchecked Sendable {
             if errno == EEXIST { throw WorkspaceFileError(.conflict, "Another file appeared at this path. Its contents were preserved.") }; throw fileFailure()
         }
         promoted = true
-        return try read(relative, allowMissing: false, maxBytes: 2_000_000)
+        return try read(relative, allowMissing: false, maxBytes: maxBytes)
     }
 }
