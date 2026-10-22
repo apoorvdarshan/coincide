@@ -1,12 +1,32 @@
 import Foundation
 
+/// A provider-native turn and an adapter-owned run are different evidence.
+/// The latter never becomes a native turn or a provider history boundary.
+public enum ProviderSteeringTarget: Codable, Sendable, Equatable {
+    case nativeTurn(String)
+    case adapterRun(UUID)
+    public func validate() throws {
+        if case .nativeTurn(let id) = self { try ProviderSteeringValidation.id(id) }
+    }
+    public func matches(run: ActiveRun) -> Bool {
+        guard (try? validate()) != nil else { return false }
+        switch self {
+        case .nativeTurn(let id): return run.nativeTurnID == id
+        case .adapterRun(let id): return run.id == id && run.nativeTurnID == nil && run.configuration.provider == .pi
+        }
+    }
+}
+
 public struct ProviderSteeringCapabilities: Codable, Sendable, Equatable {
     public let supportsActiveSteering: Bool
     public let interruptsTools: Bool
     public let unavailableReason: String?
-    public init(supportsActiveSteering: Bool = false, interruptsTools: Bool = false, unavailableReason: String? = nil) {
+    public let target: ProviderSteeringTarget?
+    public init(supportsActiveSteering: Bool = false, interruptsTools: Bool = false, unavailableReason: String? = nil,
+                target: ProviderSteeringTarget? = nil) {
         self.supportsActiveSteering = supportsActiveSteering; self.interruptsTools = interruptsTools
         self.unavailableReason = unavailableReason
+        self.target = target
     }
 }
 
@@ -15,17 +35,38 @@ public struct ProviderSteeringCapabilities: Codable, Sendable, Equatable {
 public enum ProviderSteeringDelivery: String, Codable, Sendable, Equatable { case acknowledged, submitted }
 
 public struct ProviderSteeringReceipt: Codable, Sendable, Equatable {
-    public let turnID: String
+    public let turnID: String?
+    public let adapterRunID: UUID?
     public let delivery: ProviderSteeringDelivery
-    public init(turnID: String, delivery: ProviderSteeringDelivery = .acknowledged) throws {
-        try ProviderSteeringValidation.id(turnID)
-        self.turnID = turnID; self.delivery = delivery
+    public var target: ProviderSteeringTarget? {
+        switch (turnID, adapterRunID) {
+        case (.some(let id), .none): .nativeTurn(id)
+        case (.none, .some(let id)): .adapterRun(id)
+        default: nil
+        }
     }
-    public func validate() throws { try ProviderSteeringValidation.id(turnID) }
-    private enum CodingKeys: String, CodingKey { case turnID, delivery }
+    public init(turnID: String, delivery: ProviderSteeringDelivery = .acknowledged) throws {
+        try self.init(target: .nativeTurn(turnID), delivery: delivery)
+    }
+    public init(target: ProviderSteeringTarget, delivery: ProviderSteeringDelivery = .acknowledged) throws {
+        try target.validate()
+        switch target {
+        case .nativeTurn(let id): turnID = id; adapterRunID = nil
+        case .adapterRun(let id): turnID = nil; adapterRunID = id
+        }
+        self.delivery = delivery
+    }
+    public func validate() throws {
+        guard let target else { throw ProviderSteeringError(.invalidRequest) }
+        try target.validate()
+    }
+    private enum CodingKeys: String, CodingKey { case turnID, adapterRunID, delivery }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(turnID: c.decode(String.self, forKey: .turnID), delivery: c.decodeIfPresent(ProviderSteeringDelivery.self, forKey: .delivery) ?? .acknowledged)
+        turnID = try c.decodeIfPresent(String.self, forKey: .turnID)
+        adapterRunID = try c.decodeIfPresent(UUID.self, forKey: .adapterRunID)
+        delivery = try c.decodeIfPresent(ProviderSteeringDelivery.self, forKey: .delivery) ?? .acknowledged
+        try validate()
     }
 }
 
@@ -72,6 +113,17 @@ enum ProviderSteeringValidation {
         // Every execution setting must still be the captured active setting.
         var presented = ProviderConfiguration(thread: thread)
         presented.nativeThreadID = configuration.nativeThreadID
+        guard presented == configuration else { throw ProviderSteeringError(.staleTarget) }
+    }
+    static func target(_ thread: CodingThread, provider: ProviderKind, configuration: ProviderConfiguration?, runID: UUID?,
+                       nativeThreadID: String?, target: ProviderSteeringTarget) throws {
+        try target.validate()
+        guard let run = thread.activeRun, let configuration, run.id == runID, !run.stopRequested,
+              run.configuration == configuration, target.matches(run: run), thread.provider == provider,
+              configuration.provider == provider, thread.providerThreadID == nativeThreadID, nativeThreadID != nil else {
+            throw ProviderSteeringError(.staleTarget)
+        }
+        var presented = ProviderConfiguration(thread: thread); presented.nativeThreadID = configuration.nativeThreadID
         guard presented == configuration else { throw ProviderSteeringError(.staleTarget) }
     }
     static func frame(_ frame: JSONValue) throws {

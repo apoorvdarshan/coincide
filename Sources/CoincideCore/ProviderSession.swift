@@ -43,6 +43,7 @@ public protocol ProviderSession: Actor {
     func interrupt() async throws
     func interrupt(expectedRunID: UUID) async throws
     func steeringCapabilities() async -> ProviderSteeringCapabilities
+    func steer(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String) async throws -> ProviderSteeringReceipt
     func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt
     func respond(_ request: ApprovalRequest, allow: Bool) async throws
     func answer(_ request: ApprovalRequest, answers: [String: String]) async throws
@@ -83,6 +84,11 @@ extension ProviderSession {
         throw CoincideError("This provider does not expose Codex model defaults.")
     }
     public func steeringCapabilities() async -> ProviderSteeringCapabilities { .init(unavailableReason: ProviderSteeringError(.unsupported).localizedDescription) }
+    public func steer(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try target.validate()
+        guard case .nativeTurn(let id) = target else { throw ProviderSteeringError(.unsupported) }
+        return try await steer(input: input, thread: thread, expectedTurnID: id, clientMessageID: clientMessageID)
+    }
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt { throw ProviderSteeringError(.unsupported) }
     public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities { throw ProviderHistoryError(.unsupported) }
     public func conversationSnapshot(threadID: String) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }

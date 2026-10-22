@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Native MSP adapter. An admission ACK never completes a run, permission
@@ -41,6 +42,22 @@ public actor MuseSession: ProviderSession {
     private var stopWaiters: [UUID: [UUID: CheckedContinuation<Void, any Error>]] = [:]
     private var stopTimers: [UUID: Task<Void, Never>] = [:]
     private var stopCommands: [UUID: Task<Void, Never>] = [:]
+    private var steers: [String: Steering] = [:]
+    private final class Steering {
+        let commandID: String
+        let runID: UUID
+        let turnID: String
+        let sessionID: String
+        let fingerprint: Data
+        var observed = false
+        var originalTerminal = false
+        var result: Result<ProviderSteeringReceipt, ProviderSteeringError>?
+        var waiters: [UUID: CheckedContinuation<ProviderSteeringReceipt, any Error>] = [:]
+        var task: Task<Void, Never>?
+        init(commandID: String, runID: UUID, turnID: String, sessionID: String, fingerprint: Data) {
+            self.commandID = commandID; self.runID = runID; self.turnID = turnID; self.sessionID = sessionID; self.fingerprint = fingerprint
+        }
+    }
     private struct Run {
         let id: UUID
         let commandID: String
@@ -50,6 +67,7 @@ public actor MuseSession: ProviderSession {
         var stopRequested = false
         var openItems: Set<String> = []
         var projection: MuseProjection
+        var steeringCommands: [String: String] = [:]
     }
     private struct Approval {
         let native: MuseApprovalRequest
@@ -246,6 +264,108 @@ public actor MuseSession: ProviderSession {
         output.yield(.context(runID: runID, event: .turn(turnID)))
     }
     private func commandFinished(_ id: UUID) { turnTasks.removeValue(forKey: id) }
+
+    public func steeringCapabilities() async -> ProviderSteeringCapabilities {
+        pruneSteers()
+        guard !closing, !broken, preparing == nil, authorityReady,
+              let id = activeID, let run = runs[id], run.terminal == nil, !run.stopRequested, run.turnID != nil,
+              approvals.isEmpty, questions.isEmpty, run.steeringCommands.count < 128, steers.count < 1_024 else {
+            return .init(unavailableReason: ProviderSteeringError(.noActiveTurn).localizedDescription)
+        }
+        return .init(supportsActiveSteering: true)
+    }
+
+    public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String,
+                      clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try Task.checkCancellation(); try ProviderSteeringValidation.input(input); try ProviderSteeringValidation.id(clientMessageID)
+        guard let host = connection, let sessionID = nativeSessionID, !closing, !broken, preparing == nil, authorityReady,
+              let id = activeID, let run = runs[id], run.terminal == nil, !run.stopRequested,
+              let turnID = run.turnID, approvals.isEmpty, questions.isEmpty else { throw ProviderSteeringError(.noActiveTurn) }
+        try ProviderSteeringValidation.target(thread, provider: .muse, configuration: run.configuration, runID: id,
+            nativeThreadID: sessionID, turnID: turnID, expectedTurnID: expectedTurnID)
+        guard run.configuration.museConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
+              run.configuration.permission == permission,
+              URL(fileURLWithPath: run.configuration.workspacePath).standardizedFileURL.resolvingSymlinksInPath() == cwd else {
+            throw ProviderSteeringError(.staleTarget)
+        }
+        var parts: [JSONValue] = []
+        if !input.text.isEmpty { parts.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+        parts += input.images.map { .object(["type": .string("image"), "mediaType": .string($0.mimeType), "base64Data": .string($0.data.base64EncodedString())]) }
+        // MSP exact-target steering does not replace session model, roots or
+        // authority. Omitted reasoningEffort preserves the active turn's choice.
+        let body: JSONValue = .object(["sessionId": .string(sessionID), "expectedTurnId": .string(turnID), "input": .array(parts)])
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let bytes = try encoder.encode(body)
+        guard bytes.count < MuseProtocol.maximumFrameBytes - 16_384 else { throw ProviderSteeringError(.invalidRequest) }
+        let fingerprint = Data(SHA256.hash(data: bytes))
+        let command: String
+        if let previousID = run.steeringCommands[clientMessageID], let previous = steers[previousID] {
+            guard previous.fingerprint == fingerprint else { throw ProviderSteeringError(.invalidRequest) }
+            command = previousID
+        } else {
+            pruneSteers()
+            guard run.steeringCommands.count < 128, steers.count < 1_024 else { throw ProviderSteeringError(.rejected) }
+            command = MuseUUIDv7.make().uuidString.lowercased()
+            steers[command] = .init(commandID: command, runID: id, turnID: turnID, sessionID: sessionID, fingerprint: fingerprint)
+            runs[id]?.steeringCommands[clientMessageID] = command
+        }
+        let waiter = UUID()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                guard let record = steers[command] else { continuation.resume(throwing: ProviderSteeringError(.staleTarget)); return }
+                if let result = record.result { continuation.resume(with: result.mapError { $0 as any Error }); return }
+                guard record.waiters.count < 32 else { continuation.resume(throwing: ProviderSteeringError(.rejected)); return }
+                record.waiters[waiter] = continuation
+                if record.task == nil {
+                    record.task = Task { [weak self] in
+                        do {
+                            _ = try await host.command("turn/steer", params: body, commandID: command, onResponse: { [weak self] response in
+                                await self?.steeringResponse(response, commandID: command)
+                            })
+                        } catch { /* Ordered callbacks/closed own all mutation outcomes. */ }
+                        await self?.steeringCommandFinished(command)
+                    }
+                }
+            }
+        } onCancel: { Task { await self.cancelSteeringWaiter(command, waiter: waiter) } }
+    }
+
+    private func steeringResponse(_ response: Result<JSONValue, MuseMSPError>, commandID: String) async {
+        guard let record = steers[commandID], record.result == nil else { return }
+        do {
+            let value = try response.get()
+            guard value["commandId"] == .string(commandID), value["status"] == .string("accepted"),
+                  try MuseProtocol.identity(value["turnId"]) == record.turnID else { throw MuseMSPError(.protocolViolation) }
+            completeSteer(record, .success(try .init(turnID: record.turnID)))
+        } catch {
+            if record.observed, let receipt = try? ProviderSteeringReceipt(turnID: record.turnID) { completeSteer(record, .success(receipt)); return }
+            let failure = error as? MuseMSPError
+            let refused = failure?.kind == .invalidInput || (failure?.kind == .remoteFailure &&
+                ([-32601, -32602, -32001, -32031].contains(failure?.code ?? 0) ||
+                 ["commandRejected", "invalidParams", "authRequired", "capabilityRequired", "overloaded", "backpressured"].contains(failure?.nativeKind ?? "")))
+            completeSteer(record, .failure(.init(refused ? .rejected : .outcomeUncertain)))
+            // A late old request failure is not permission to invalidate an
+            // already-observed terminal or a healthy successor's connection.
+            if !refused, !record.originalTerminal, activeID == record.runID { await failConnection() }
+        }
+    }
+
+    private func completeSteer(_ record: Steering, _ result: Result<ProviderSteeringReceipt, ProviderSteeringError>) {
+        guard record.result == nil else { return }
+        record.result = result
+        let waiters = record.waiters; record.waiters.removeAll()
+        for continuation in waiters.values { continuation.resume(with: result.mapError { $0 as any Error }) }
+    }
+    private func steeringCommandFinished(_ command: String) { steers[command]?.task = nil }
+    private func cancelSteeringWaiter(_ command: String, waiter: UUID) {
+        guard let record = steers[command] else { return }
+        record.waiters.removeValue(forKey: waiter)?.resume(throwing: ProviderSteeringError(.outcomeUncertain))
+        if record.waiters.isEmpty, record.result == nil { record.task?.cancel() }
+    }
+    private func pruneSteers() {
+        steers = steers.filter { !$0.value.originalTerminal || $0.value.task != nil || !$0.value.waiters.isEmpty }
+    }
     private func commandFailed(_ id: UUID, error: any Error) async {
         guard let run = runs[id], run.terminal == nil, !closing, !broken else { return }
         if let failure = error as? MuseMSPError, failure.kind == .remoteFailure, failure.code == -32602 || failure.nativeKind == "commandRejected" || failure.nativeKind == "invalidParams" || failure.nativeKind == "authRequired" {
@@ -301,6 +421,16 @@ public actor MuseSession: ProviderSession {
         }
         if ["item/started", "item/updated", "item/completed"].contains(method) {
             let item = params["item"], itemID = try MuseProtocol.text(item["itemId"], maximum: 4_096)
+            if item["kind"] == .string("userMessage"), item["steered"] == .bool(true),
+               let command = item["commandId"].string, let record = steers[command], record.sessionID == params["sessionId"].string {
+                guard try MuseProtocol.identity(item["turnId"]) == record.turnID else { throw MuseMSPError(.protocolViolation) }
+                _ = try MuseProtocol.integer(item["revision"], minimum: 1)
+                record.observed = true
+                completeSteer(record, .success(try .init(turnID: record.turnID)))
+                // Cancels only a now-unnecessary local ACK wait. Native turn
+                // execution and later revisioned/background items stay owned.
+                record.task?.cancel()
+            }
             guard let turn = item["turnId"].string, let owner = turnOwners[turn] ?? commandOwners[turn], var run = runs[owner] else { return }
             if let old = itemOwners[itemID], old != owner { throw MuseMSPError(.protocolViolation) }
             let revision = try MuseProtocol.integer(item["revision"], minimum: 1)
@@ -465,6 +595,7 @@ public actor MuseSession: ProviderSession {
     private func finish(_ id: UUID, _ state: ThreadState) {
         guard let run = runs[id], run.terminal == nil else { return }
         runs[id]?.terminal = state; if activeID == id { activeID = nil }
+        for record in steers.values where record.runID == id { record.originalTerminal = true }
         if let waiters = stopWaiters.removeValue(forKey: id) {
             for (key, continuation) in waiters {
                 stopTimers.removeValue(forKey: key)?.cancel(); stopCommands[key]?.cancel(); continuation.resume()
@@ -485,6 +616,7 @@ public actor MuseSession: ProviderSession {
         if let activeID { output.yield(.context(runID: activeID, event: .connectionClosed("The Muse connection could not confirm its state. Reopen it before continuing."))) }
         else { output.yield(.connectionClosed("The Muse connection could not confirm its state. Reopen it before continuing.")) }
         activeID = nil
+        for record in steers.values { completeSteer(record, .failure(.init(.outcomeUncertain))); record.task?.cancel() }
         for waiters in stopWaiters.values { for continuation in waiters.values { continuation.resume(throwing: MuseMSPError(.closed)) } }; stopWaiters.removeAll()
         for timer in stopTimers.values { timer.cancel() }; stopTimers.removeAll()
         for command in stopCommands.values { command.cancel() }
@@ -496,6 +628,8 @@ public actor MuseSession: ProviderSession {
     public func close() async {
         if let closeTask { await closeTask.value; return }
         closing = true; preparing = nil; metadataTask?.cancel()
+        let steeringTasks = steers.values.compactMap(\.task)
+        for record in steers.values { completeSteer(record, .failure(.init(.outcomeUncertain))); record.task?.cancel() }
         let pendingTurnTasks = Array(turnTasks.values), pendingStopCommands = Array(stopCommands.values), pendingStopTimers = Array(stopTimers.values)
         for task in pendingTurnTasks { task.cancel() }; turnTasks.removeAll()
         for waiters in stopWaiters.values { for continuation in waiters.values { continuation.resume(throwing: MuseMSPError(.closed)) } }; stopWaiters.removeAll()
@@ -509,6 +643,7 @@ public actor MuseSession: ProviderSession {
             for command in pendingStopCommands { await command.value }
             for timer in pendingStopTimers { await timer.value }
             for turn in pendingTurnTasks { await turn.value }
+            for task in steeringTasks { await task.value }
             reader?.cancel(); await reader?.value
         }
         closeTask = task; await task.value; output.finish()

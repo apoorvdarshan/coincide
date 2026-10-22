@@ -14,6 +14,41 @@ class NativeModelsPeerTests(unittest.TestCase):
             input="".join(json.dumps(frame) + "\n" for frame in frames), text=True, capture_output=True, check=True, timeout=5)
         return [json.loads(line) for line in result.stdout.splitlines()]
 
+    def test_explicit_skills_fixture_preserves_native_rows_and_fresh_reload_without_mutations(self):
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-testing-skills-") as scratch:
+            root = Path(scratch).resolve(); checkout = root / "Checkout"; checkout.mkdir()
+            state, wire = root / "models.json", root / "wire.jsonl"
+            initial = dict(cwd=str(checkout), generation=1, skillsUI=True)
+            state.write_text(json.dumps(initial))
+            response = self.exchange(state, wire, [("skills/list", dict(cwds=[str(checkout)], forceReload=False))])[0]["result"]
+            entry = response["data"][0]
+            self.assertEqual(entry["cwd"], str(checkout))
+            self.assertEqual([row["name"] for row in entry["skills"]], ["review-changes", "ship-check", "disabled-skill", "7k"])
+            self.assertFalse(entry["skills"][2]["enabled"])
+            self.assertEqual(len(entry["errors"]), 1)
+            self.assertEqual(json.loads(state.read_text()), initial)
+            state.write_text(json.dumps(dict(initial, generation=2)))
+            updated = self.exchange(state, wire, [("skills/list", dict(cwds=[str(checkout)], forceReload=True))])[0]["result"]
+            self.assertIn("fresh-check", [row["name"] for row in updated["data"][0]["skills"]])
+            self.assertEqual([row["params"]["forceReload"] for row in map(json.loads, wire.read_text().splitlines())], [False, True])
+
+    def test_skills_require_opt_in_exact_cwd_and_boolean_reload_and_never_accept_input(self):
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-testing-skills-") as scratch:
+            root = Path(scratch).resolve(); checkout = root / "Checkout"; checkout.mkdir()
+            state, wire = root / "models.json", root / "wire.jsonl"
+            state.write_text(json.dumps(dict(cwd=str(checkout), generation=1)))
+            params = dict(cwds=[str(checkout)], forceReload=False)
+            self.assertIn("error", self.exchange(state, wire, [("skills/list", params)])[0])
+            initial = dict(cwd=str(checkout), generation=1, skillsUI=True)
+            state.write_text(json.dumps(initial))
+            calls = [("skills/list", dict(cwds=[str(root)], forceReload=False)),
+                ("skills/list", dict(cwds=[str(checkout)], forceReload=0)),
+                ("skills/list", dict(cwds=[str(checkout)], forceReload=False, extra=True)),
+                ("skills/list", dict(cwds=[str(checkout)])), ("turn/start", {}),
+                ("turn/steer", {}), ("thread/start", {}), ("config/value/write", {})]
+            self.assertTrue(all("error" in row for row in self.exchange(state, wire, calls)))
+            self.assertEqual(json.loads(state.read_text()), initial)
+
     def test_dynamic_catalog_and_cwd_defaults_remain_distinct_across_fresh_processes(self):
         with tempfile.TemporaryDirectory(prefix="coincide-ui-testing-models-") as scratch:
             root = Path(scratch).resolve(); checkout = root / "Checkout"; checkout.mkdir()

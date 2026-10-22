@@ -159,7 +159,7 @@ exact-head hosted job runs; compilation and fixture tests alone are not GUI proo
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all fourteen tests to pass with zero
+gate requires all eighteen tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 
@@ -231,3 +231,22 @@ must survive relaunch unchanged, with no repeat metadata/default read and zero
 provider-input RPCs. The existing staged wrapper preflight remains mandatory.
 This is offline native integration; its actual GUI result remains pending until
 the exact-head hosted run executes the fourteenth workflow.
+
+The fifteenth and sixteenth workflows exercise explicit owned-Codex authentication
+Settings in light and dark appearances. Selecting and saving the mode/shared home
+must preserve the existing conversation, captured runtime and unsent draft across
+relaunch. The unsigned state cannot invent an account or open a browser. These
+offline checks deliberately do not activate Sign In or Refresh Saved Accounts.
+
+The seventeenth and eighteenth workflows exercise real native skill discovery,
+search and keyboard insertion in light and dark appearances. The same immutable
+metadata peer enables `skills/list` only for an explicit skills fixture, exact
+workspace and Boolean reload flag; every provider input and configuration write
+remains forbidden. A typed `$rev` must show only invocable advertised choices,
+keep partial-load warnings safe, and insert the literal `$review-changes ` on
+Return without sending it. Escape preserves the draft; explicit search can
+insert a second mention. Only Refresh may discover the newly added native skill.
+The same unsent Unicode draft and conversation must survive relaunch, with two
+scoped skill reads, no input/thread RPCs and unchanged README/Git HEAD. Screenshots
+capture the running picker and restored composer. Local runner compilation and
+Python peer checks do not establish these workflows' actual GUI outcome.

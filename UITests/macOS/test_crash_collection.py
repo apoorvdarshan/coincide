@@ -369,7 +369,7 @@ class CrashCollectionTests(unittest.TestCase):
     def test_workflow_capture_only_follows_failed_tests_and_cannot_replace_failure(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
         collector = workflow.split("      - name: Collect sanitized Swift test crash stacks", 1)[1].split("      - name: Package the native app", 1)[0]
-        self.assertEqual(collector.count("if: failure() && steps.swift_tests.outcome == 'failure'"), 2)
+        self.assertEqual(collector.count("if: always() && (steps.swift_tests.outcome == 'failure' || steps.codex_inspection.outcome == 'failure')"), 2)
         self.assertEqual(collector.count("continue-on-error: true"), 2)
         self.assertIn("coincide-test-crashes/*.json", collector)
         self.assertIn("if-no-files-found: ignore", collector)

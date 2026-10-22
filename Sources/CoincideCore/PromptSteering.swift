@@ -6,10 +6,12 @@ public struct PromptSteeringAvailability: Sendable, Equatable {
     public let configuration: ProviderConfiguration?
     public let interruptsTools: Bool
     public let unavailableReason: String?
+    public let target: ProviderSteeringTarget?
     public init(canSteer: Bool = false, runID: UUID? = nil, configuration: ProviderConfiguration? = nil,
-                interruptsTools: Bool = false, unavailableReason: String? = nil) {
+                interruptsTools: Bool = false, unavailableReason: String? = nil, target: ProviderSteeringTarget? = nil) {
         self.canSteer = canSteer; self.runID = runID; self.configuration = configuration
         self.interruptsTools = interruptsTools; self.unavailableReason = unavailableReason
+        self.target = target
     }
 }
 
@@ -26,7 +28,15 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
     public let runtimeID: UUID
     public let runID: UUID
     public let nativeThreadID: String
-    public let nativeTurnID: String
+    public let nativeTurnID: String?
+    public let adapterRunID: UUID?
+    public var target: ProviderSteeringTarget? {
+        switch (nativeTurnID, adapterRunID) {
+        case (.some(let id), .none): .nativeTurn(id)
+        case (.none, .some(let id)): .adapterRun(id)
+        default: nil
+        }
+    }
     public let input: QueuedTurn
     public let messageID: String
     public let queuedID: UUID?
@@ -48,14 +58,30 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
                 sourceIncarnation: UUID, runtimeID: UUID, runID: UUID, nativeThreadID: String, nativeTurnID: String,
                 input: QueuedTurn, messageID: String, queuedID: UUID? = nil, configuration: ProviderConfiguration,
                 createdAt: Date = Date(), phase: PromptSteeringPhase = .accepted) {
+        self.init(id: id, effectID: effectID, threadID: threadID, projectID: projectID, sourceIncarnation: sourceIncarnation,
+            runtimeID: runtimeID, runID: runID, nativeThreadID: nativeThreadID, target: .nativeTurn(nativeTurnID),
+            input: input, messageID: messageID, queuedID: queuedID, configuration: configuration, createdAt: createdAt, phase: phase)
+    }
+    public init(id: UUID = UUID(), effectID: UUID = UUID(), threadID: UUID, projectID: UUID,
+                sourceIncarnation: UUID, runtimeID: UUID, runID: UUID, nativeThreadID: String, target: ProviderSteeringTarget,
+                input: QueuedTurn, messageID: String, queuedID: UUID? = nil, configuration: ProviderConfiguration,
+                createdAt: Date = Date(), phase: PromptSteeringPhase = .accepted) {
         self.id = id; self.effectID = effectID; self.threadID = threadID; self.projectID = projectID
         self.sourceIncarnation = sourceIncarnation; self.runtimeID = runtimeID; self.runID = runID
-        self.nativeThreadID = nativeThreadID; self.nativeTurnID = nativeTurnID; self.input = input
+        self.nativeThreadID = nativeThreadID; self.input = input
+        switch target {
+        case .nativeTurn(let id): nativeTurnID = id; adapterRunID = nil
+        case .adapterRun(let id): nativeTurnID = nil; adapterRunID = id
+        }
         self.messageID = messageID; self.queuedID = queuedID; self.configuration = configuration
         self.createdAt = createdAt; updatedAt = createdAt; self.phase = phase; fallbackAllowed = true
     }
     public func validate() throws {
-        try ProviderSteeringValidation.id(nativeThreadID); try ProviderSteeringValidation.id(nativeTurnID)
+        guard let target else { throw ProviderSteeringError(.invalidRequest) }
+        try target.validate(); try ProviderSteeringValidation.id(nativeThreadID)
+        if case .adapterRun(let id) = target {
+            guard id == runID, configuration.provider == .pi else { throw ProviderSteeringError(.invalidRequest) }
+        }
         try ProviderSteeringValidation.id(messageID); try ProviderHistoryValidation.path(configuration.workspacePath)
         try AttachmentLimits.validate(input.attachments ?? [])
         var inputConfiguration = input.configuration; inputConfiguration.nativeThreadID = configuration.nativeThreadID
@@ -69,11 +95,14 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
         switch phase {
         case .accepted, .dispatching, .queued: guard receipt == nil, error == nil, acknowledgedAt == nil else { throw CoincideError("A pending steering input contains delivery evidence.") }
         case .delivered:
-            guard let receipt, error == nil, acknowledgedAt == nil, receipt.turnID == nativeTurnID else { throw CoincideError("The steering receipt does not match its native turn.") }
+            guard let receipt, error == nil, acknowledgedAt == nil, receipt.target == target else { throw CoincideError("The steering receipt does not match its target.") }
             try receipt.validate()
         case .failed: guard receipt == nil, error == Self.failureMessage, acknowledgedAt == nil else { throw CoincideError("A failed steering input lost its delivery explanation.") }
         case .unconfirmed: guard receipt == nil, error == Self.unconfirmedMessage else { throw CoincideError("An uncertain steering input lost its warning.") }
         }
+    }
+    public func matchesActiveRun(_ run: ActiveRun) -> Bool {
+        run.id == runID && run.configuration == configuration && target?.matches(run: run) == true
     }
 }
 
@@ -83,9 +112,10 @@ extension WorkspaceSnapshot {
         (promptSteerings ?? []).contains { $0.threadID == threadID && $0.holdsQueue }
     }
     var promptSteeringReservedIDs: Set<UUID> { Set((promptSteerings ?? []).flatMap { [$0.id, $0.effectID, $0.input.id] }) }
-    func promptSteeringTargetReason(threadID: UUID, queuedID: UUID? = nil) -> String? {
+    func promptSteeringTargetReason(threadID: UUID, queuedID: UUID? = nil, target: ProviderSteeringTarget? = nil) -> String? {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived,
-              let run = thread.activeRun, !run.stopRequested, let turn = run.nativeTurnID, !turn.isEmpty,
+              let run = thread.activeRun, !run.stopRequested,
+              run.nativeTurnID.map({ !$0.isEmpty }) == true || (thread.provider == .pi && run.nativeTurnID == nil),
               thread.runtimeID != nil, thread.providerThreadID != nil,
               thread.provider == run.configuration.provider, workspaceReady(for: thread),
               thread.runtimeRequests.isEmpty, thread.settlement == nil,
@@ -93,6 +123,7 @@ extension WorkspaceSnapshot {
               !isPullRequestCreationLocked(threadID: threadID), !isPullRequestCheckoutLocked(threadID: threadID) else {
             return "Wait for an active provider turn with no pending approval or question before steering."
         }
+        if let target, !target.matches(run: run) { return "The provider turn changed before steering was accepted." }
         guard !isPromptSteeringHoldingQueue(threadID: threadID) else { return "Finish or acknowledge the previous steering delivery before steering again." }
         if let queuedID {
             guard let queued = thread.queuedTurns.first(where: { $0.id == queuedID }) else { return "The selected queued input is no longer available." }
@@ -183,11 +214,11 @@ extension WorkspaceDecision {
     mutating func acceptPromptSteering(_ operation: PromptSteeringOperation) throws {
         try operation.validate()
         guard snapshot.promptSteering(operation.id) == nil,
-              snapshot.promptSteeringTargetReason(threadID: operation.threadID, queuedID: operation.queuedID) == nil,
+              snapshot.promptSteeringTargetReason(threadID: operation.threadID, queuedID: operation.queuedID, target: operation.target) == nil,
               let index = snapshot.threads.firstIndex(where: { $0.id == operation.threadID }) else { throw WorkspaceCommandError("The provider turn or queued input changed before steering was accepted.") }
         var thread = snapshot.threads[index]
         guard let run = thread.activeRun, thread.projectID == operation.projectID, thread.runtimeID == operation.runtimeID,
-              run.id == operation.runID, run.nativeTurnID == operation.nativeTurnID, thread.providerThreadID == operation.nativeThreadID,
+              operation.matchesActiveRun(run), thread.providerThreadID == operation.nativeThreadID,
               run.configuration == operation.configuration, !thread.messages.contains(where: { $0.id == operation.messageID }),
               !snapshot.promptSteeringReservedIDs.contains(operation.id), !snapshot.promptSteeringReservedIDs.contains(operation.effectID),
               !snapshot.promptSteeringReservedIDs.contains(operation.input.id) else { throw WorkspaceCommandError("The exact provider turn is no longer available for this steering input.") }
@@ -213,7 +244,7 @@ extension WorkspaceDecision {
               thread.runtimeRequests.isEmpty, thread.settlement == nil, snapshot.workspaceReady(for: thread),
               !snapshot.isConversationHistoryLocked(threadID: thread.id), !snapshot.isCheckpointRestoreLocked(threadID: thread.id),
               !snapshot.isPullRequestCreationLocked(threadID: thread.id), !snapshot.isPullRequestCheckoutLocked(threadID: thread.id),
-              thread.activeRun?.id == operation.runID, thread.activeRun?.nativeTurnID == operation.nativeTurnID,
+              thread.activeRun.map(operation.matchesActiveRun) == true,
               thread.activeRun?.stopRequested == false, thread.runtimeID == operation.runtimeID,
               thread.providerThreadID == operation.nativeThreadID, operation.fallbackAllowed else { throw WorkspaceCommandError("The steering target ended or was stopped before dispatch.") }
         snapshot.promptSteerings?[index].phase = .dispatching; snapshot.promptSteerings?[index].updatedAt = now
@@ -224,7 +255,7 @@ extension WorkspaceDecision {
               operation.threadID == threadID, operation.sourceIncarnation == incarnation, operation.isWorking else { return }
         switch result {
         case .promptSteeringDelivered(let receipt):
-            try receipt.validate(); guard operation.phase == .dispatching, receipt.turnID == operation.nativeTurnID else { throw CoincideError("The steering acknowledgement belongs to another turn.") }
+            try receipt.validate(); guard operation.phase == .dispatching, let target = operation.target, receipt.target == target else { throw CoincideError("The steering acknowledgement belongs to another target.") }
             operation.phase = .delivered; operation.receipt = receipt; operation.error = nil
         case .promptSteeringUnsentCompleted:
             if operation.fallbackAllowed, let thread = snapshot.threads.first(where: { $0.id == threadID }), !thread.isArchived,

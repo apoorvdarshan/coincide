@@ -43,21 +43,34 @@ jobs:
           path: .build
           key: swift-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
           restore-keys: swift-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+      - name: Begin Swift test diagnostic window
+        run: |
+          python3 -c 'import os, pathlib, time; pathlib.Path(os.environ["RUNNER_TEMP"], "coincide-swift-tests-started").write_text(str(time.time()))'
+      - name: Isolate the Codex executable inspection crash
+        id: codex_inspection
+        shell: bash
+        # A separate helper process distinguishes this test's own failure from
+        # corruption by an earlier case. Its outcome is enforced after the full
+        # suite, so neither failure nor success can replace normal coverage.
+        continue-on-error: true
+        run: |
+          swift test --no-parallel --filter codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp 2>&1 | tee "$RUNNER_TEMP/coincide-codex-inspection.log"
+          grep -F '✔ Test codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp() passed' "$RUNNER_TEMP/coincide-codex-inspection.log"
+          grep -E 'Test run with 1 tests? in ' "$RUNNER_TEMP/coincide-codex-inspection.log"
       - name: Build and test
         id: swift_tests
         # Process/PTY and deadline regressions share a small hosted runner. Keep
         # every test, while avoiding simultaneous fixture launches starving timers.
         run: |
-          python3 -c 'import os, pathlib, time; pathlib.Path(os.environ["RUNNER_TEMP"], "coincide-swift-tests-started").write_text(str(time.time()))'
           swift test --no-parallel
       - name: Collect sanitized Swift test crash stacks
-        if: failure() && steps.swift_tests.outcome == 'failure'
+        if: always() && (steps.swift_tests.outcome == 'failure' || steps.codex_inspection.outcome == 'failure')
         continue-on-error: true
         # ReportCrash may finish after the test helper exits. Poll diagnostics
         # only; the failed test suite is never repeated or changed to success.
         run: python3 script/collect_test_crashes.py --since-file "$RUNNER_TEMP/coincide-swift-tests-started" --output "$RUNNER_TEMP/coincide-test-crashes" --wait-seconds 30
       - name: Keep sanitized Swift test crash stacks
-        if: failure() && steps.swift_tests.outcome == 'failure'
+        if: always() && (steps.swift_tests.outcome == 'failure' || steps.codex_inspection.outcome == 'failure')
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -65,6 +78,11 @@ jobs:
           path: ${{ runner.temp }}/coincide-test-crashes/*.json
           if-no-files-found: ignore
           retention-days: 7
+      - name: Enforce the isolated Codex inspection result
+        if: always() && steps.codex_inspection.outcome == 'failure'
+        run: |
+          echo "The isolated Codex inspection failed. The complete suite still ran and its result is retained."
+          exit 1
       - name: Package the native app
         run: ./script/build_and_run.sh --build-only
       - name: Verify app signature

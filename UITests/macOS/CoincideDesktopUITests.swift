@@ -8,6 +8,119 @@ import XCTest
 final class CoincideDesktopUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
+    @MainActor func testLightCodexSkillsKeyboardInsertionRefreshAndUnsentDraftRestoration() throws {
+        try exerciseCodexSkills(appearance: "light")
+    }
+
+    @MainActor func testDarkCodexSkillsKeyboardInsertionRefreshAndUnsentDraftRestoration() throws {
+        try exerciseCodexSkills(appearance: "dark")
+    }
+
+    @MainActor private func exerciseCodexSkills(appearance: String) throws {
+        let prefix = "codex-skills-" + appearance
+        let fixture = try prepareApplication(appearance: appearance, diagnosticPrefix: prefix)
+        let app = fixture.app, root = fixture.root
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
+        let project = root.appendingPathComponent("Skills Workspace", isDirectory: true)
+        let bin = root.appendingPathComponent("private-bin", isDirectory: true)
+        let home = root.appendingPathComponent("private-codex-home", isDirectory: true)
+        for directory in [project, bin, home] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        let document = project.appendingPathComponent("README.md"), original = Data("Skill selection must preserve this working file.\n".utf8)
+        try original.write(to: document)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Native skills fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: prefix + "-git-" + arguments[0])
+        }
+        let originalHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: prefix + "-original-head")
+        let state = root.appendingPathComponent("skills-peer.json"), wire = root.appendingPathComponent("skills-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 1, "skillsUI": true]).write(to: state, options: .atomic)
+        let peer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_models_ui", withExtension: "py"))
+        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"; app.launchEnvironment["CODEX_HOME"] = home.path
+        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: prefix)
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let threadID = try selectedThreadIdentifier(in: app)
+        var ownedClipboardValues = Set<String>()
+        defer { if let value = NSPasteboard.general.string(forType: .string), ownedClipboardValues.contains(value) { NSPasteboard.general.clearContents() } }
+        func replaceDraft(_ value: String) {
+            ownedClipboardValues.insert(value)
+            NSPasteboard.general.clearContents(); XCTAssertTrue(NSPasteboard.general.setString(value, forType: .string))
+            composer.click(); composer.typeKey("a", modifierFlags: .command); composer.typeKey("v", modifierFlags: .command)
+            XCTAssertTrue(waitForValue(composer, value: value, timeout: 5))
+        }
+        let typed = "Preserve this Unicode draft 😀 $rev"
+        replaceDraft(typed)
+        let review = app.buttons["composer-skill-review-changes"]
+        XCTAssertTrue(review.waitForExistence(timeout: 10)); XCTAssertTrue(review.isEnabled && review.isHittable)
+        XCTAssertFalse(app.buttons["composer-skill-disabled-skill"].exists)
+        XCTAssertFalse(app.buttons["composer-skill-7k"].exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "composer-skills-partial").firstMatch.exists)
+        XCTAssertFalse(app.debugDescription.contains("PRIVATE_SKILL_DIAGNOSTIC_CANARY"))
+        capture(app, name: prefix + "-typed-picker-native-appearance")
+        composer.typeKey(.downArrow, modifierFlags: []); composer.typeKey(.return, modifierFlags: [])
+        let inserted = "Preserve this Unicode draft 😀 $review-changes "
+        XCTAssertTrue(waitForValue(composer, value: inserted, timeout: 5))
+        XCTAssertTrue(waitForAbsence(review, timeout: 5), "Return inserts the selected literal mention and closes the chooser.")
+        _ = try waitForPrivateWorkspace(root, timeout: 5) { snapshot in
+            guard let threads = snapshot["threads"] as? [[String: Any]], threads.count == 1 else { return false }
+            return threads[0]["draft"] as? String == inserted && (threads[0]["messages"] as? [[String: Any]])?.isEmpty == true
+        }
+
+        let dismissed = "Keep this unsent selection $shi"
+        replaceDraft(dismissed)
+        let ship = app.buttons["composer-skill-ship-check"]
+        XCTAssertTrue(ship.waitForExistence(timeout: 5)); composer.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForAbsence(ship, timeout: 5)); XCTAssertTrue(waitForValue(composer, value: dismissed, timeout: 5))
+        replaceDraft("Keep a second draft: ")
+        let choose = app.buttons["composer-skills"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5)); XCTAssertTrue(choose.isEnabled); choose.click()
+        let search = app.textFields["composer-skills-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.click(); search.typeText("ship")
+        XCTAssertTrue(ship.waitForExistence(timeout: 5)); search.typeKey(.return, modifierFlags: [])
+        let manual = "Keep a second draft: $ship-check "
+        XCTAssertTrue(waitForValue(composer, value: manual, timeout: 5)); XCTAssertTrue(waitForAbsence(search, timeout: 5))
+
+        choose.click(); XCTAssertTrue(search.waitForExistence(timeout: 5))
+        let fresh = app.buttons["composer-skill-fresh-check"]
+        XCTAssertFalse(fresh.exists)
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 2, "skillsUI": true]).write(to: state, options: .atomic)
+        let refresh = app.buttons["composer-skills-refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5)); XCTAssertTrue(refresh.isEnabled); refresh.click()
+        XCTAssertTrue(fresh.waitForExistence(timeout: 10)); XCTAssertTrue(fresh.isHittable)
+        XCTAssertFalse(app.buttons["composer-skill-disabled-skill"].exists)
+        capture(app, name: prefix + "-explicit-native-refresh")
+        fresh.click()
+        let finalDraft = manual + "$fresh-check "
+        XCTAssertTrue(waitForValue(composer, value: finalDraft, timeout: 5))
+        let saved = try waitForPrivateWorkspace(root, timeout: 5) { snapshot in
+            guard let thread = (snapshot["threads"] as? [[String: Any]])?.first else { return false }
+            return thread["draft"] as? String == finalDraft && (thread["messages"] as? [[String: Any]])?.isEmpty == true
+        }
+        let savedThreads = try JSONSerialization.data(withJSONObject: XCTUnwrap(saved["threads"]), options: .sortedKeys)
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: finalDraft, timeout: 10)); XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: XCTUnwrap(privateWorkspaceSnapshot(root)["threads"]), options: .sortedKeys), savedThreads)
+        let frames = try historyWire(wire), skills = frames.filter { $0["method"] as? String == "skills/list" }
+        let allowed: Set<String> = ["initialize", "model/list", "config/read", "account/read", "account/rateLimits/read", "skills/list"]
+        XCTAssertTrue(frames.allSatisfy { allowed.contains($0["method"] as? String ?? "") }, "Skill selection must never send input or create/resume a provider thread.")
+        XCTAssertEqual(skills.count, 2, "Typing and reopening cached suggestions reuse the scoped inventory; only explicit refresh reads again.")
+        for (index, frame) in skills.enumerated() {
+            let params = try XCTUnwrap(frame["params"] as? [String: Any])
+            XCTAssertEqual(Set(params.keys), ["cwds", "forceReload"])
+            XCTAssertEqual(params["cwds"] as? [String], [project.path]); XCTAssertEqual(params["forceReload"] as? Bool, index == 1)
+        }
+        XCTAssertEqual(try Data(contentsOf: document), original)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: prefix + "-preserved-head"), originalHead)
+        capture(app, name: prefix + "-restored-unsent-draft")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
     @MainActor func testLightCodexOwnedAuthenticationSettingsPreserveUnsentConversation() throws {
         try exerciseCodexAuthenticationSettings(appearance: "light")
     }

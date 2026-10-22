@@ -1,5 +1,53 @@
 # Validation record
 
+## 2026-10-22 — typed Pi and native Muse steering
+
+- Steering now distinguishes a native turn from an adapter-owned run. Pi uses
+  only the latter, with no fabricated native turn or history IDs. Storage 34
+  protects that distinction; native receipt and operation serialization retain
+  their legacy bytes when the new optional adapter reference is absent.
+- Pi sends native atomic `prompt` steering with captured settings and the exact
+  session file. Its correlated response proves admission only. Old idle probes
+  are invalidated before handoff, outstanding admission holds settlement, and a
+  missing possible-write response never becomes an acknowledgement or replay.
+  Stop during unresolved admission retires the owned connection. A later native
+  cycle can succeed after an earlier native abort without inheriting that abort;
+  explicit user Stop remains separate. `/compact` uses its native command.
+- Muse sends `turn/steer` with an exact native `expectedTurnId` and UUIDv7 command.
+  Exact command/session/turn admission or a matching native steered user-message
+  item proves acceptance. Late old rejection/cancellation cannot retire a healthy
+  successor; original-run background items keep their ownership. Neither settings
+  nor uncertain inputs are silently replaced or resent.
+- Real offline stdio peers exercise each production adapter and Engine, retained
+  future-turn FIFO/settings, authored rows, durable receipts, Stop and shutdown.
+  Pi additionally verifies restart/rebuild without native turns or replay.
+  The initial build found one existing Codex reasoning assertion passing the now
+  optional native reference; it now explicitly requires that native reference.
+  The focused serial run passes 194 Core declarations in three suites and all
+  25 selected native view/store declarations, with no failures or skips.
+- Two new hosted GUI workflows cover the actual Codex skill chooser in light and
+  dark appearance: Unicode draft insertion, arrows/Return/Escape, explicit chooser
+  search, refresh, no send/config mutation and restoration after graceful restart.
+  The runner compiles locally; no interactive GUI test was run locally. All 49
+  Python harness checks pass. Hosted acceptance now requires all eighteen GUI
+  workflows without skips; actual execution of the new pair is still pending.
+- Hosted run `39821311145` at `8121798` again fails in the Codex installation
+  verifier through `memset_s` and the Swift task allocator; GUI checks skip. Its
+  sanitized diagnostic classifies a read-only fault at least 1 MiB from the stack
+  pointer, which does not establish an ordinary stack-guard failure. No source
+  cause is proven. CI now runs the exact managed-install test in a fresh helper
+  before the unchanged complete serial suite, with pipeline failure propagation,
+  sanitized crash collection and a final gate preserving either failure. This is
+  a controlled diagnostic experiment, not a claim that the hosted crash is fixed.
+- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` succeeds with
+  1394 declarations: 1384 pass and ten optional installed-provider checks skip.
+  Core reports 1189 declarations in eight suites in 284.713 seconds; all 186
+  native view/store declarations pass in 64.054 seconds, terminal six in 1.367
+  seconds and Markdown 13 in 0.131 seconds. No test deadline, assertion or full
+  coverage gate was weakened. The staged patch passes the secret scan.
+- Installed Pi/Muse acceptance and hosted GUI execution remain unverified;
+  offline peers do not establish vendor access or complete T3 Code parity.
+
 ## 2026-10-22 — scoped Codex skills and native OpenCode v2 steering
 
 - Codex `skills/list` reads use the exact workspace and captured runtime/account,

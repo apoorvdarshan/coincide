@@ -11,6 +11,7 @@ public actor PiSession: ProviderSession {
     private let permission: PermissionMode
     private let arguments: [String]?
     private let requestTimeout: Duration
+    private let steeringTimeout: Duration
     private var channel: ProcessChannel?
     private var reader: Task<Void, Never>?
     private var closeTask: Task<Void, Never>?
@@ -31,11 +32,15 @@ public actor PiSession: ProviderSession {
     private var nextID: UInt64 = 0
     private var settleTask: Task<Void, Never>?
     private var compacting = false
+    private var steeringTasks: [UUID: Task<ProviderSteeringReceipt, any Error>] = [:]
+    private var steeringMessages = Set<String>()
     private struct Pending {
         let command: String
         let runID: UUID?
         let continuation: CheckedContinuation<JSONValue, any Error>
         var timeout: Task<Void, Never>?
+        var steering = false
+        var writeStarted = false
     }
     private struct UI {
         let wireID: String
@@ -50,6 +55,7 @@ public actor PiSession: ProviderSession {
         var posted = false
         var started = false
         var interrupted = false
+        var nativeAborted = false
         var failed = false
         var acknowledged = false
         var settleRequested = false
@@ -59,14 +65,16 @@ public actor PiSession: ProviderSession {
         self.executable = executable; self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
         self.configuration = configuration; self.permission = permission; self.arguments = nil
         requestTimeout = .seconds(15)
+        steeringTimeout = .seconds(300)
         (events, output) = AsyncStream.makeStream()
     }
     /// Test-only literal invocation; production always owns --mode rpc and its
     /// approval extension. No shell interpolation or provider process reuse.
-    init(executable: URL, cwd: URL, configuration: PiConfiguration, permission: PermissionMode = .supervised, arguments: [String], requestTimeout: Duration = .seconds(15)) {
+    init(executable: URL, cwd: URL, configuration: PiConfiguration, permission: PermissionMode = .supervised, arguments: [String], requestTimeout: Duration = .seconds(15), steeringTimeout: Duration = .seconds(300)) {
         self.executable = executable; self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
         self.configuration = configuration; self.permission = permission; self.arguments = arguments
         self.requestTimeout = requestTimeout
+        self.steeringTimeout = steeringTimeout
         (events, output) = AsyncStream.makeStream()
     }
     private func connect() throws {
@@ -148,6 +156,7 @@ public actor PiSession: ProviderSession {
             try Task.checkCancellation()
             preparing = nil
             generation &+= 1
+            steeringMessages.removeAll()
             active = .init(id: runID, configuration: captured, projection: .init(scope: "pi-\(configuration.instanceID)-\(observed.sessionFile)-\(runID)"))
             var fields: [String: JSONValue] = ["message": .string(input.text), "streamingBehavior": .string("steer")]
             if !input.images.isEmpty { fields["images"] = .array(input.images.map { .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())]) }) }
@@ -174,6 +183,91 @@ public actor PiSession: ProviderSession {
             throw CoincideError(error is PiRejected ? PiProtocol.rejected : PiProtocol.failure)
         }
     }
+    public func steeringCapabilities() async -> ProviderSteeringCapabilities {
+        guard !closing, !broken, registered, preparing == nil, let run = active,
+              run.started, !run.interrupted, nativeID != nil else {
+            return .init(unavailableReason: ProviderSteeringError(.noActiveTurn).localizedDescription)
+        }
+        guard !compacting, steeringTasks.isEmpty, !hasSteeringAdmission(run.id), steeringMessages.count < 64 else {
+            return .init(unavailableReason: "Wait for Pi to finish its pending input or compaction before steering again.")
+        }
+        // Pi's tools finish before queued steering is consumed. There is no
+        // native expected-turn CAS: this target is explicitly adapter-local.
+        return .init(supportsActiveSteering: true, interruptsTools: false, target: .adapterRun(run.id))
+    }
+    public func steer(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget,
+                      clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try Task.checkCancellation(); try target.validate()
+        try ProviderSteeringValidation.id(clientMessageID); try ProviderSteeringValidation.input(input)
+        guard case .adapterRun(let runID) = target else { throw ProviderSteeringError(.unsupported) }
+        try requireSteeringTarget(thread, runID: runID)
+        guard steeringMessages.count < 64, !steeringMessages.contains(clientMessageID), steeringTasks.isEmpty, !hasSteeringAdmission(runID) else {
+            throw ProviderSteeringError(.rejected)
+        }
+        var fields: [String: JSONValue] = ["message": .string(input.text), "streamingBehavior": .string("steer")]
+        var command = "prompt"
+        let trimmed = input.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rest = trimmed.hasPrefix("/compact") ? String(trimmed.dropFirst("/compact".count)) : nil
+        if let rest, rest.isEmpty || rest.first?.isWhitespace == true {
+            guard input.images.isEmpty else { throw ProviderSteeringError(.invalidRequest) }
+            command = "compact"; fields = [:]
+            let instructions = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !instructions.isEmpty { fields["customInstructions"] = .string(instructions) }
+        }
+        if !input.images.isEmpty {
+            fields["images"] = .array(input.images.map { .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())]) })
+        }
+        try ProviderSteeringValidation.frame(.object(fields))
+        steeringMessages.insert(clientMessageID)
+        let id = UUID(), payload = fields, nativeCommand = command
+        let task = Task { try await self.submitSteering(command: nativeCommand, fields: payload, thread: thread, runID: runID) }
+        steeringTasks[id] = task
+        defer {
+            steeringTasks.removeValue(forKey: id)
+            if active?.id == runID { emit(.steeringCapabilitiesChanged, runID: runID) }
+        }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+    private func requireSteeringTarget(_ thread: CodingThread, runID: UUID) throws {
+        guard !closing, !broken, registered, preparing == nil, let run = active, run.started, !run.interrupted else {
+            throw ProviderSteeringError(.noActiveTurn)
+        }
+        guard !compacting else { throw ProviderSteeringError(.unsupported) }
+        guard run.id == runID, let presented = thread.activeRun, presented.id == runID,
+              !presented.stopRequested, presented.nativeTurnID == nil,
+              presented.configuration == run.configuration, run.configuration.provider == .pi, thread.provider == .pi,
+              thread.providerThreadID == nativeID,
+              run.configuration.nativeThreadID == nil || run.configuration.nativeThreadID == nativeID,
+              run.configuration.piConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
+              run.configuration.permission == permission,
+              URL(fileURLWithPath: run.configuration.workspacePath).standardizedFileURL.resolvingSymlinksInPath() == cwd else {
+            throw ProviderSteeringError(.staleTarget)
+        }
+    }
+    private func submitSteering(command: String, fields: [String: JSONValue], thread: CodingThread, runID: UUID) async throws -> ProviderSteeringReceipt {
+        try Task.checkCancellation(); try requireSteeringTarget(thread, runID: runID)
+        // Invalidate the old idle snapshot before handing anything to the
+        // writer. Never reconfigure or start a new local run for this input.
+        generation &+= 1; settleTask?.cancel(); settleTask = nil
+        emit(.steeringCapabilitiesChanged, runID: runID)
+        do {
+            _ = try await request(command, fields: fields, timeout: steeringTimeout, runID: runID, steering: true)
+            // Only an actual correlated native response reaches this point;
+            // finish() deliberately cannot substitute observed run completion.
+            return try .init(target: .adapterRun(runID), delivery: .acknowledged)
+        } catch is PiRejected { throw ProviderSteeringError(.rejected) }
+        catch let error as ProviderSteeringError { throw error }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw ProviderSteeringError(.outcomeUncertain) }
+    }
+    private func hasSteeringAdmission(_ runID: UUID) -> Bool {
+        pending.values.contains { $0.steering && $0.runID == runID }
+    }
+    private func steeringAdmissionRetired(_ runID: UUID?) {
+        guard let runID, active?.id == runID else { return }
+        emit(.steeringCapabilitiesChanged, runID: runID)
+        if active?.settleRequested == true { scheduleSettle(runID) }
+    }
     public func interrupt() async throws {
         let wasPreparing = preparing != nil
         preparing = nil
@@ -182,6 +276,9 @@ public actor PiSession: ProviderSession {
         // Retire this runtime rather than admit a successor ahead of it.
         if wasPreparing { await failConnection(); throw CoincideError(PiProtocol.failure) }
         guard let run = active else { return }
+        // An unresolved prompt may still be accepted after an idle/abort
+        // observation. Pi cannot cancel that exact input by ID.
+        if hasSteeringAdmission(run.id) { await failConnection(); throw CoincideError(PiProtocol.failure) }
         // An ACK can precede extension expansion/agent_start. Pi has no exact
         // prompt cancellation token; an idle read could precede that late work.
         guard run.started else { await failConnection(); throw CoincideError(PiProtocol.failure) }
@@ -236,14 +333,18 @@ public actor PiSession: ProviderSession {
             ui.removeValue(forKey: localID)?.deadline?.cancel(); output.yield(.sessionApprovalDismissed(localID))
         } catch { await failConnection(); throw CoincideError(PiProtocol.failure) }
     }
-    private func request(_ command: String, fields: [String: JSONValue] = [:], timeout: Duration? = nil, runID: UUID? = nil) async throws -> JSONValue {
-        guard pending.count < 64, !closing, !broken else { throw CoincideError(PiProtocol.failure) }
+    private func request(_ command: String, fields: [String: JSONValue] = [:], timeout: Duration? = nil, runID: UUID? = nil, steering: Bool = false) async throws -> JSONValue {
+        guard pending.count < 64, !closing, !broken else {
+            if steering { throw ProviderSteeringError(.rejected) }
+            throw CoincideError(PiProtocol.failure)
+        }
         nextID &+= 1; let id = "coincide-\(nextID)"
         let deadline = timeout ?? requestTimeout
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
                 pending[id] = .init(command: command, runID: runID, continuation: continuation)
+                pending[id]?.steering = steering
                 pending[id]?.timeout = Task { [weak self] in
                     do { try await Task.sleep(for: deadline) } catch { return }
                     await self?.requestFailed(id)
@@ -251,7 +352,7 @@ public actor PiSession: ProviderSession {
                 Task { [weak self] in
                     guard let self else { return }
                     var frame = fields; frame["type"] = .string(command); frame["id"] = .string(id)
-                    do { try await self.writeRequest(id, frame: .object(frame)) } catch { await self.requestFailed(id) }
+                    do { try await self.writeRequest(id, frame: .object(frame)) } catch { await self.requestFailed(id, writeFailure: true) }
                 }
             }
         } onCancel: { Task { await self.requestCancelled(id) } }
@@ -259,19 +360,34 @@ public actor PiSession: ProviderSession {
     private func writeRequest(_ id: String, frame: JSONValue) async throws {
         // A settled run may have retired its missing response before this
         // queued command begins writing. Never send a stale abort afterward.
-        guard pending[id] != nil else { return }
+        guard let wait = pending[id] else { return }
+        if wait.steering {
+            guard active?.id == wait.runID, active?.interrupted == false, !closing, !broken else {
+                pending.removeValue(forKey: id); wait.timeout?.cancel()
+                wait.continuation.resume(throwing: ProviderSteeringError(.staleTarget)); return
+            }
+        }
+        pending[id]?.writeStarted = true
         try await write(frame)
     }
     private func requestCancelled(_ id: String) async {
         guard let wait = pending[id] else { return }
-        if ["get_state", "get_available_models"].contains(wait.command) {
+        if wait.steering { await requestFailed(id) }
+        else if ["get_state", "get_available_models"].contains(wait.command) {
             pending.removeValue(forKey: id); wait.timeout?.cancel()
             wait.continuation.resume(throwing: CancellationError())
         } else { await requestFailed(id) }
     }
-    private func requestFailed(_ id: String) async {
+    private func requestFailed(_ id: String, writeFailure: Bool = false) async {
         guard let wait = pending.removeValue(forKey: id) else { return }
-        wait.timeout?.cancel(); wait.continuation.resume(throwing: CoincideError(PiProtocol.failure))
+        wait.timeout?.cancel()
+        if wait.steering {
+            wait.continuation.resume(throwing: ProviderSteeringError(wait.writeStarted ? .outcomeUncertain : .rejected))
+            if wait.writeStarted || writeFailure { await failConnection() }
+            else { steeringAdmissionRetired(wait.runID) }
+            return
+        }
+        wait.continuation.resume(throwing: CoincideError(PiProtocol.failure))
         await failConnection()
     }
     private func write(_ frame: JSONValue) async throws {
@@ -296,6 +412,7 @@ public actor PiSession: ProviderSession {
             pending.removeValue(forKey: id); wait.timeout?.cancel()
             if success { wait.continuation.resume(returning: frame["data"]) }
             else { wait.continuation.resume(throwing: PiRejected()) }
+            if wait.steering { steeringAdmissionRetired(wait.runID) }
             return
         }
         if let file = frame["sessionFile"].string, file != nativeID { return }
@@ -303,15 +420,18 @@ public actor PiSession: ProviderSession {
         if type == "extension_ui_request" { try extensionUI(frame); return }
         if type == "agent_start" {
             guard active?.posted == true else { throw CoincideError(PiProtocol.failure) }
-            generation &+= 1; settleTask?.cancel(); active?.started = true; active?.settleRequested = false; return
+            generation &+= 1; settleTask?.cancel(); active?.started = true; active?.settleRequested = false
+            active?.nativeAborted = false; active?.failed = false
+            if let run = active { emit(.steeringCapabilitiesChanged, runID: run.id) }; return
         }
         guard var run = active, run.started else { return }
         if ["auto_compaction_start", "compaction_start", "auto_retry_start"].contains(type) { generation &+= 1; settleTask?.cancel() }
         if ["auto_compaction_start", "compaction_start"].contains(type) { compacting = true }
         if ["auto_compaction_end", "compaction_end"].contains(type) { compacting = false }
+        if ["auto_compaction_start", "compaction_start", "auto_compaction_end", "compaction_end"].contains(type) { emit(.steeringCapabilitiesChanged, runID: run.id) }
         if type == "message_end", frame["message"]["role"].string == "assistant" {
             if frame["message"]["stopReason"].string == "error" { run.failed = true }
-            if frame["message"]["stopReason"].string == "aborted" { run.interrupted = true }
+            if frame["message"]["stopReason"].string == "aborted" { run.nativeAborted = true }
         }
         if type == "auto_retry_end", frame["success"] == .bool(true) { run.failed = false }
         if type == "auto_retry_end", frame["success"] == .bool(false) { run.failed = true }
@@ -320,7 +440,7 @@ public actor PiSession: ProviderSession {
         if type == "extension_error" { emit(.message(.init(role: .system, text: "A Pi extension reported an error.")), runID: run.id) }
         if type == "agent_settled" {
             active?.settleRequested = true
-            if frame["aborted"] == .bool(true) { active?.interrupted = true }
+            active?.nativeAborted = frame["aborted"] == .bool(true)
             scheduleSettle(run.id)
         }
         if ["auto_compaction_end", "compaction_end"].contains(type), active?.settleRequested == true { scheduleSettle(run.id) }
@@ -359,7 +479,7 @@ public actor PiSession: ProviderSession {
         pending.deadline?.cancel(); output.yield(.sessionApprovalDismissed(id))
     }
     private func scheduleSettle(_ id: UUID, allowNoStart: Bool = false) {
-        guard active?.id == id, active?.started == true || allowNoStart else { return }
+        guard active?.id == id, active?.started == true || allowNoStart, !hasSteeringAdmission(id) else { return }
         generation &+= 1; let captured = generation; settleTask?.cancel()
         settleTask = Task { [weak self] in
             guard let self else { return }
@@ -381,8 +501,8 @@ public actor PiSession: ProviderSession {
     }
     private func settle(_ id: UUID, generation captured: UInt64, state: PiState) -> Bool {
         guard active?.id == id, captured == generation else { return true }
-        guard state.sessionFile == nativeID, state.idle, let run = active else { return false }
-        finish(id, run.interrupted ? .interrupted : run.failed ? .failed : .idle)
+        guard state.sessionFile == nativeID, state.idle, let run = active, !hasSteeringAdmission(id) else { return false }
+        finish(id, run.interrupted || run.nativeAborted ? .interrupted : run.failed ? .failed : .idle)
         return true
     }
     private func failedSettle(_ id: UUID, generation captured: UInt64) async {
@@ -394,7 +514,7 @@ public actor PiSession: ProviderSession {
         // Retire original-run RPC waiters using typed local completion proof,
         // never invent a wire acknowledgement or let their deadlines kill a
         // healthy successor. Unknown writes without this proof still fail shut.
-        for key in pending.keys.filter({ pending[$0]?.runID == id }) {
+        for key in pending.keys.filter({ pending[$0]?.runID == id && pending[$0]?.steering == false }) {
             if let wait = pending.removeValue(forKey: key) {
                 wait.timeout?.cancel(); wait.continuation.resume(throwing: PiObservedCompletion())
             }
@@ -406,7 +526,11 @@ public actor PiSession: ProviderSession {
     private func failConnection() async {
         guard !broken, !closing else { return }; broken = true; preparing = nil; settleTask?.cancel()
         let run = active?.id; active = nil
-        for wait in pending.values { wait.timeout?.cancel(); wait.continuation.resume(throwing: CoincideError(PiProtocol.failure)) }; pending.removeAll()
+        for wait in pending.values {
+            wait.timeout?.cancel()
+            if wait.steering { wait.continuation.resume(throwing: ProviderSteeringError(wait.writeStarted ? .outcomeUncertain : .rejected)) }
+            else { wait.continuation.resume(throwing: CoincideError(PiProtocol.failure)) }
+        }; pending.removeAll()
         for (id, pending) in ui { pending.deadline?.cancel(); output.yield(.sessionApprovalDismissed(id)) }; ui.removeAll()
         if let run { emit(.connectionClosed(PiProtocol.failure), runID: run) } else { output.yield(.connectionClosed(PiProtocol.failure)) }
         channel?.stop()
@@ -414,12 +538,18 @@ public actor PiSession: ProviderSession {
     public func close() async {
         if let closeTask { await closeTask.value; return }
         closing = true; preparing = nil; settleTask?.cancel(); reader?.cancel()
-        for wait in pending.values { wait.timeout?.cancel(); wait.continuation.resume(throwing: CoincideError(PiProtocol.failure)) }; pending.removeAll()
+        for wait in pending.values {
+            wait.timeout?.cancel()
+            if wait.steering { wait.continuation.resume(throwing: ProviderSteeringError(wait.writeStarted ? .outcomeUncertain : .rejected)) }
+            else { wait.continuation.resume(throwing: CoincideError(PiProtocol.failure)) }
+        }; pending.removeAll()
         for (id, pending) in ui { pending.deadline?.cancel(); output.yield(.sessionApprovalDismissed(id)) }; ui.removeAll(); active = nil
-        let channel = channel, reader = reader, scratch = scratch
+        let channel = channel, reader = reader, scratch = scratch, steering = Array(steeringTasks.values)
+        for task in steering { task.cancel() }
         let task = Task {
             if let channel { await channel.stopAndDrain() }
             await reader?.value
+            for task in steering { _ = await task.result }
             if let scratch { try? FileManager.default.removeItem(at: scratch) }
         }
         closeTask = task; await task.value; output.finish()

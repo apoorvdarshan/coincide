@@ -103,7 +103,7 @@ func codexReasoningAstraPolicyUsesOnlyExactReviewedFamilyAndAdvertisedEfforts(mo
         runtimeID: f.runtimeID, runID: active.id, nativeThreadID: "reasoning-native-thread", nativeTurnID: "reasoning-native-turn",
         input: input, messageID: "user-\(input.id.uuidString)", configuration: active.configuration)
     try f.apply(.promptSteeringAccepted(operation)); try f.apply(.promptSteeringDispatching(operationID: operation.id, incarnation: f.incarnation))
-    try f.apply(.promptSteeringEffectResult(.promptSteering(threadID: f.threadID, operationID: operation.id), .promptSteeringDelivered(try .init(turnID: operation.nativeTurnID)), incarnation: f.incarnation))
+    try f.apply(.promptSteeringEffectResult(.promptSteering(threadID: f.threadID, operationID: operation.id), .promptSteeringDelivered(try .init(turnID: #require(operation.nativeTurnID))), incarnation: f.incarnation))
     let completed = try f.apply(.provider(threadID: f.threadID, runtimeID: f.runtimeID, event: .completed(.idle)))
     #expect(f.snapshot.promptSteering(operation.id)?.configuration.reasoningEffort == "medium")
     #expect(f.snapshot.threads[0].activeRun?.id == queued.id && f.snapshot.threads[0].activeRun?.configuration.reasoningEffort == "high")

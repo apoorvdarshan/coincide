@@ -37,11 +37,11 @@ struct MuseSessionFixture: Sendable {
     let root: URL
     let executable: URL
     let optionsFile: URL
-    init(options: [String: JSONValue] = [:]) throws {
+    init(options: [String: JSONValue] = [:], resource: String = "muse_msp_server") throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-muse-\(UUID())", isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
         executable = root.appendingPathComponent("native-muse-peer"); optionsFile = root.appendingPathComponent("options.json")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        let source = try #require(Bundle.module.url(forResource: "muse_msp_server", withExtension: "py", subdirectory: "Fixtures"))
+        let source = try #require(Bundle.module.url(forResource: resource, withExtension: "py", subdirectory: "Fixtures"))
         try FileManager.default.copyItem(at: source, to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         try JSONEncoder().encode(JSONValue.object(options)).write(to: optionsFile, options: .atomic)

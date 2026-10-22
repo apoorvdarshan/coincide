@@ -3,7 +3,7 @@
 The native job has a 45-minute whole-suite budget after the fourteen-workflow
 run used 29m59s with five paths still failing early. Individual test/command
 deadlines and all fourteen scenarios stay unchanged. Two explicit authentication
-settings scenarios bring the zero-skip result gate to sixteen.
+settings scenarios and two skills workflows bring the zero-skip result gate to eighteen.
 After a failed production suite, diagnostic-only report arrival polling is
 capped at thirty seconds; it never reruns tests or changes their result.
 """
@@ -20,6 +20,21 @@ spec.loader.exec_module(ci)
 
 
 class NativeUIConfigurationTests(unittest.TestCase):
+    def test_isolated_crash_probe_cannot_replace_full_coverage_or_hide_its_failure(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
+        isolation = workflow.split("      - name: Isolate the Codex executable inspection crash", 1)[1].split("      - name: Build and test", 1)[0]
+        complete = workflow.split("      - name: Build and test", 1)[1].split("      - name: Collect sanitized", 1)[0]
+        self.assertIn("continue-on-error: true", isolation)
+        self.assertIn("shell: bash", isolation)
+        self.assertIn("--filter codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp", isolation)
+        self.assertIn("Test run with 1 tests? in ", isolation)
+        self.assertIn("swift test --no-parallel\n", complete)
+        self.assertNotIn("--filter", complete)
+        self.assertNotIn("continue-on-error", complete)
+        enforced = workflow.split("      - name: Enforce the isolated Codex inspection result", 1)[1].split("      - name: Package", 1)[0]
+        self.assertIn("if: always() && steps.codex_inspection.outcome == 'failure'", enforced)
+        self.assertIn("exit 1", enforced)
+
     def test_offline_tools_are_built_signed_and_immutable_inside_the_test_bundle(self):
         directory = Path(__file__).resolve().parent
         project = (directory / "CoincideDesktopUITests.xcodeproj/project.pbxproj").read_text()
@@ -46,9 +61,13 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_sixteen_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=16, passedTests=16, failedTests=0, skippedTests=0)), 16)
-        for summary in [dict(totalTestCount=16, passedTests=15, failedTests=0, skippedTests=1),
+    def test_results_require_eighteen_real_tests_without_silent_skips(self):
+        self.assertEqual(ci.verify_results(dict(totalTestCount=18, passedTests=18, failedTests=0, skippedTests=0)), 18)
+        for summary in [dict(totalTestCount=18, passedTests=17, failedTests=0, skippedTests=1),
+                        dict(totalTestCount=18, passedTests=17, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=17, passedTests=17, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=16, passedTests=16, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=16, passedTests=15, failedTests=0, skippedTests=1),
                         dict(totalTestCount=16, passedTests=15, failedTests=1, skippedTests=0),
                         dict(totalTestCount=15, passedTests=15, failedTests=0, skippedTests=0),
                         dict(totalTestCount=14, passedTests=14, failedTests=0, skippedTests=0),

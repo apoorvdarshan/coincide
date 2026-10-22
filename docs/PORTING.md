@@ -129,8 +129,14 @@ must each be mapped and verified before declaring parity.
   continuation uses a validated native session file. A command ACK or `agent_end`
   does not release the queue: a native settled event and a fresh idle observation
   must agree. Stop is fenced to the app run; unresolved pre-start work retires
-  the connection. Offline stdio/Engine and native view/store checks pass; installed
-  Pi execution, steering, history mutation, setup/auth and usage remain pending.
+  the connection. Active steering now uses a typed adapter-run target after
+  observed native activity, preserving the captured settings and session file.
+  Native `prompt` with `streamingBehavior: "steer"` supplies admission ACK evidence;
+  Pi has no native expected-turn check or per-prompt turn ID. Pending admission
+  invalidates old idle probes and holds settlement; unknown delivery is not
+  retried. `/compact` uses the separate native compact command. Existing
+  conversation stdio/Engine and native view/store checks have passed; the new
+  steering fixtures pass the focused serial run. No installed Pi calls were made. History mutation, setup/auth, usage and installed acceptance remain open.
 - Native Muse uses a separate MSP JSON-RPC connection with bounded framing,
   exact command admission, initialized-before-use ordering and an owned process.
   Captured model/effort/permission values govern each input; session identity and
@@ -138,8 +144,12 @@ must each be mapped and verified before declaring parity.
   and questions retain choices, rule previews and notes until native settlement.
   Only the owned root terminal advances FIFO; an idle status or admission ACK
   cannot complete it. Original-run background revisions retain attribution.
-  Offline stdio/Engine and native view/store checks cover the initial integration;
-  installed Muse execution, steering, broader recovery and usage remain pending.
+  Native steering now sends `turn/steer` with the exact `expectedTurnId` and a
+  UUIDv7 command ID. A matched admission or native steered user-message item
+  proves acceptance for that original session/turn; neither proves consumption.
+  It does not change captured model, effort or permission. Offline stdio/Engine
+  and native view/store checks cover the initial integration; the new steering
+  fixtures pass the focused serial run. No installed Muse calls were made. Installed execution, broader recovery and usage remain open.
 - Native Antigravity uses its paired ACP server and harness over a dedicated
   bounded JSON-RPC connection. Captured account generations, models and native
   modes govern each input; resume reapplies controls without loading old tools.
@@ -188,11 +198,13 @@ must each be mapped and verified before declaring parity.
   unfinished.
 - Queued turns capture their model, reasoning effort, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 30 protects these fields,
+  hold it for explicit resumption. Database storage version 34 protects these fields,
   native generation/profile/Pi/Muse/Antigravity captures and typed question-with-notes effects
-  and durable history gates from older binaries. No exactly-once provider execution is claimed.
+  and durable history gates from older binaries, including the distinction between
+  a native-turn steering target and Pi's adapter-run target. No exactly-once
+  provider execution is claimed.
 - Direct steering durably accepts one authored input into the active local run,
-  preserving its captured settings, exact runtime/native thread/turn, attachments,
+  preserving its captured settings, exact runtime/session and typed target, attachments,
   message identity and leased outbox effect. The dispatch marker commits before
   external handoff. Codex 0.163.x uses `turn/steer` with `expectedTurnId`; a valid
   same-turn receipt acknowledges acceptance without creating a new run or turn.
@@ -202,14 +214,17 @@ must each be mapped and verified before declaring parity.
   Claude has no wire-level expected-turn compare-and-swap, and observed foreground
   Agent/Task ownership keeps steering unavailable until release. Semantic ownership
   events refresh availability without querying on each streamed token.
+  Muse uses native expected-turn steering; Pi uses a locally fenced adapter run
+  and leaves native turn/history IDs unset. Both pass focused offline steering
+  checks and the full local serial suite, with no installed acceptance claim. Neither adapter repeats an input whose delivery is uncertain.
 - The composer defaults to Queue while running, with Command/Control-Return using
   the alternate available action. Settings and an explicit delivery menu offer
   Queue or Steer. Direct steering uses the active run's settings even if the
   future-turn header changes. Promotion removes only the selected queued identity
   and preserves the current draft; incompatible captured settings remain queued.
   Pending questions/approvals and unsupported adapters keep steering unavailable.
-  Interrupt-and-restart, configuration-changing promotion and broader provider
-  steering are still unfinished.
+  Interrupt-and-restart, configuration-changing promotion, OpenCode v1 and the
+  remaining providers' active steering are still unfinished.
 - Pending steering holds future starts in that conversation while the current
   provider stream, Stop and drafting continue. A valid late receipt remains tied
   to the original run. A proven-unsent input whose exact parent normally completed
@@ -540,7 +555,7 @@ must each be mapped and verified before declaring parity.
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, explicit Cursor/Copilot profiles, initialize-only connection checks, Cursor question/plan/todo/task/image extensions, original-run Copilot child attribution, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, complete OpenCode/Cursor/Copilot/Grok/Antigravity/Pi/Muse behavior and installed end-to-end evidence |
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind, standalone restoration and combined provider-then-files intents with retained audit, explicit partial outcomes, inspect-only recovery and one-time latest-draft recall, legacy migration | Complete provider recovery, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |
-| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, direct Codex/Claude/OpenCode v2 same-turn steering with Queue/Steer preference and exact compatible queued promotion, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, workspace-scoped Codex skill chooser with `$` and optional `/skill:` triggers, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, native slash commands and broader inline triggers, other-provider skills, plans, restart/configuration-changing steering and other-provider delivery; hosted skill-picker acceptance |
+| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, direct Codex/Claude/OpenCode v2/Muse same-turn steering and typed Pi adapter-run steering (new Pi/Muse verification pending), Queue/Steer preference and exact compatible queued promotion, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, workspace-scoped Codex skill chooser with `$` and optional `/skill:` triggers, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, native slash commands and broader inline triggers, other-provider skills, plans, restart/configuration-changing steering and remaining-provider delivery; hosted skill-picker acceptance |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
 | Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates, reviewed settle roles with drain-before-resume, automatic workspace observations in private refs with isolated staging and verified scratch cleanup, reviewed standalone and combined rewind checkpoint restoration with owned recovery data, bounded native GitHub PR list/detail/checks and exact reviewed creation, local PR checkout and concurrent managed/reused PR worktrees with captured blank conversations, busy read-only reuse, actual-head warnings and durable inspect-only recovery | AI PR content generation, compound commit/push/create, reviews/merge/stacks/other hosts, large-workspace restoration and recovery-storage management, worktree removal, automatic pull policies, broader credential and network failure coverage |
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |

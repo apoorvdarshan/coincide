@@ -1,4 +1,4 @@
-"""Read-only, closed-world Codex model/default metadata for hosted native UI tests."""
+"""Read-only, closed-world Codex model/default/skill metadata for native UI tests."""
 import fcntl
 import json
 from pathlib import Path
@@ -51,6 +51,23 @@ for line in sys.stdin:
                     or Path(params["cwd"]).resolve(strict=True) != checkout.resolve(strict=True)):
                 raise ValueError("CLI defaults must be read only for this exact private checkout.")
             result = dict(config=dict(model="future-cwd-model", model_reasoning_effort="deep", model_provider="openai"))
+        elif method == "skills/list":
+            if (state.get("skillsUI") is not True or not isinstance(frame.get("params"), dict)
+                    or set(params) != {"cwds", "forceReload"} or params["cwds"] != [str(checkout)]
+                    or type(params["forceReload"]) is not bool):
+                raise ValueError("Skills require an explicit fixture and the exact bounded workspace read.")
+            def skill(name, description, enabled=True):
+                return dict(name=name, path=str(checkout / ".codex" / "skills" / name / "SKILL.md"),
+                    description=description, scope="repo", enabled=enabled)
+            rows = [skill("review-changes", "Review the current workspace"),
+                    skill("ship-check", "Inspect packaging"),
+                    skill("disabled-skill", "Must never be offered", enabled=False),
+                    skill("7k", "A currency-shaped name is not an invocable token")]
+            if state.get("generation") == 2:
+                rows.append(skill("fresh-check", "A newly discovered workspace skill"))
+            result = dict(data=[dict(cwd=str(checkout), skills=rows,
+                errors=[dict(path=str(checkout / ".codex" / "skills" / "broken"),
+                             message="PRIVATE_SKILL_DIAGNOSTIC_CANARY")])])
         elif method == "account/read":
             if (not isinstance(frame.get("params"), dict) or set(params) != {"refreshToken"}
                     or params["refreshToken"] is not False):

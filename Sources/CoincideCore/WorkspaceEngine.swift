@@ -81,16 +81,18 @@ extension WorkspaceEngine {
               revision.snapshot.promptSteeringTargetReason(threadID: threadID, queuedID: queuedID) == nil else {
             return .init(unavailableReason: "The active turn changed. Choose its current delivery action again.")
         }
-        return .init(canSteer: capabilities.supportsActiveSteering, runID: run.id, configuration: run.configuration,
+        let target = capabilities.target ?? run.nativeTurnID.map(ProviderSteeringTarget.nativeTurn)
+        let canSteer = capabilities.supportsActiveSteering && target?.matches(run: run) == true
+        return .init(canSteer: canSteer, runID: run.id, configuration: run.configuration,
                      interruptsTools: capabilities.interruptsTools,
-                     unavailableReason: capabilities.supportsActiveSteering ? nil : capabilities.unavailableReason ?? "This provider does not support active steering.")
+                     unavailableReason: canSteer ? nil : capabilities.unavailableReason ?? "This provider does not support active steering.", target: canSteer ? target : nil)
     }
 
     @discardableResult public func steerPrompt(threadID: UUID, text: String, expectedRunID: UUID, queuedID: UUID? = nil) async throws -> WorkspaceCommandReceipt {
         let availability = await promptSteeringAvailability(threadID: threadID, queuedID: queuedID)
         guard availability.canSteer, availability.runID == expectedRunID,
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), let run = thread.activeRun,
-              run.id == expectedRunID, let turnID = run.nativeTurnID, let nativeID = thread.providerThreadID,
+              run.id == expectedRunID, let target = availability.target, target.matches(run: run), let nativeID = thread.providerThreadID,
               let incarnation = threadIncarnations[threadID], let runtime = runtimes[threadID], runtime.id == thread.runtimeID else {
             throw WorkspaceCommandError(availability.unavailableReason ?? "The exact active turn is no longer available for steering.")
         }
@@ -105,7 +107,7 @@ extension WorkspaceEngine {
                           attachments: thread.draftAttachments.isEmpty ? nil : thread.draftAttachments, checkpointPolicy: thread.effectiveCheckpointPolicy)
         }
         let operation = PromptSteeringOperation(threadID: threadID, projectID: thread.projectID, sourceIncarnation: incarnation,
-            runtimeID: runtime.id, runID: run.id, nativeThreadID: nativeID, nativeTurnID: turnID, input: input,
+            runtimeID: runtime.id, runID: run.id, nativeThreadID: nativeID, target: target, input: input,
             messageID: "user-\(input.id.uuidString)", queuedID: queuedID, configuration: run.configuration)
         let receipt = try await enqueue(.promptSteeringAccepted(operation))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
@@ -129,7 +131,7 @@ extension WorkspaceEngine {
               !revision.snapshot.isConversationHistoryLocked(threadID: thread.id), !revision.snapshot.isCheckpointRestoreLocked(threadID: thread.id),
               !revision.snapshot.isPullRequestCreationLocked(threadID: thread.id), !revision.snapshot.isPullRequestCheckoutLocked(threadID: thread.id),
               let current = revision.snapshot.promptSteering(operation.id), current.isWorking, current.fallbackAllowed,
-              thread.activeRun?.id == operation.runID, thread.activeRun?.nativeTurnID == operation.nativeTurnID,
+              thread.activeRun?.id == operation.runID, thread.activeRun.map({ operation.matchesActiveRun($0) }) == true,
               thread.activeRun?.stopRequested == false, thread.activeRun?.configuration == operation.configuration,
               thread.providerThreadID == operation.nativeThreadID, thread.runtimeID == operation.runtimeID,
               runtimes[thread.id]?.id == operation.runtimeID else { return false }
@@ -154,7 +156,10 @@ extension WorkspaceEngine {
             guard steeringTargetIsActive(operation) else { return steeringUnsentResult(operation) }
             let capabilities = await runtime.session.steeringCapabilities()
             guard steeringTargetIsActive(operation) else { return steeringUnsentResult(operation) }
-            guard capabilities.supportsActiveSteering else { return .failed(PromptSteeringOperation.failureMessage) }
+            let advertisedTarget = capabilities.target ?? threadNativeSteeringTarget(threadID: threadID)
+            guard capabilities.supportsActiveSteering, let target = operation.target, advertisedTarget == target else {
+                return .failed(PromptSteeringOperation.failureMessage)
+            }
             try Task.checkCancellation()
             let receipt = try await enqueue(.promptSteeringDispatching(operationID: id, incarnation: operation.sourceIncarnation))
             guard receipt.rejection == nil else { return steeringUnsentResult(operation) }
@@ -167,9 +172,9 @@ extension WorkspaceEngine {
             thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent; thread.openCodeConfiguration = configuration.openCodeConfiguration; thread.piConfiguration = configuration.piConfiguration; thread.museConfiguration = configuration.museConfiguration; thread.antigravityConfiguration = configuration.antigravityConfiguration; thread.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration
             thread.providerThreadID = operation.nativeThreadID
             do {
-                let result = try await runtime.session.steer(input: input, thread: thread, expectedTurnID: operation.nativeTurnID, clientMessageID: operation.messageID)
+                let result = try await runtime.session.steer(input: input, thread: thread, target: target, clientMessageID: operation.messageID)
                 try result.validate()
-                guard result.turnID == operation.nativeTurnID else { return .promptSteeringUnconfirmed }
+                guard result.target == target else { return .promptSteeringUnconfirmed }
                 return .promptSteeringDelivered(result)
             } catch let error as ProviderSteeringError {
                 if error.mayHaveBeenDelivered { return .promptSteeringUnconfirmed }
@@ -182,6 +187,9 @@ extension WorkspaceEngine {
                 return .failed(PromptSteeringOperation.failureMessage)
             } catch { return .promptSteeringUnconfirmed }
         } catch { return .failed(PromptSteeringOperation.failureMessage) }
+    }
+    private func threadNativeSteeringTarget(threadID: UUID) -> ProviderSteeringTarget? {
+        revision.snapshot.threads.first(where: { $0.id == threadID })?.activeRun?.nativeTurnID.map(ProviderSteeringTarget.nativeTurn)
     }
 }
 
