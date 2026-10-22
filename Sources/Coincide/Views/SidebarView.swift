@@ -5,6 +5,7 @@ struct SidebarView: View {
     @Bindable var store: WorkspaceStore
     let onClone: () -> Void
     let onNewProject: () -> Void
+    var onSettle: ((CodingThread) -> Void)? = nil
     @State private var renaming: SidebarRenameTarget?
     @State private var title = ""
     @State private var removing: ProjectRemovalRequest?
@@ -132,6 +133,8 @@ struct SidebarView: View {
                 Text(thread.title).lineLimit(1)
                 if let clone = project?.clone, !clone.isReady {
                     Text(ProjectClonePresentation.title(clone)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                } else if let settlement = thread.settlement {
+                    Text(settlement.phase == .resuming ? "Resuming…" : "Settled").font(.caption).foregroundStyle(.secondary)
                 } else if thread.state != .idle {
                     Text(thread.state == .awaitingApproval ? "Needs your input" : thread.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
                 }
@@ -140,13 +143,19 @@ struct SidebarView: View {
                 }
             }
         } icon: {
-            Image(systemName: thread.isPinned ? "pin" : thread.state == .running ? "circle.dotted" : "bubble.left")
+            Image(systemName: thread.isPinned ? "pin" : thread.isSettled ? "checkmark.circle" : thread.state == .running ? "circle.dotted" : "bubble.left")
         }
         .tag(thread.id)
         .accessibilityIdentifier("thread-\(thread.id.uuidString)")
         .contextMenu {
             Button(thread.isPinned ? "Unpin" : "Pin") { store.togglePin(thread.id) }
             Button("Rename…") { title = thread.title; renaming = .thread(thread.id) }
+            if let settlement = thread.settlement {
+                Button("Resume Conversation") { store.requestResume(thread.id, generationID: settlement.id) }
+                    .disabled(settlement.phase == .resuming)
+            } else if let onSettle {
+                Button("Settle Conversation…") { onSettle(thread) }.disabled(!store.canSettle(thread))
+            }
             Button(thread.isArchived ? "Unarchive" : "Archive") { store.toggleArchive(thread.id) }.disabled(store.isBusy(thread.id))
             Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
                 .disabled(project?.clone.map { !$0.isReady } ?? false)

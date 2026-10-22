@@ -51,6 +51,6 @@ extension WorkspaceSnapshot {
     }
     public func providerReady(for thread: CodingThread) -> Bool {
         let current = threads.first(where: { $0.id == thread.id }) ?? thread
-        return workspaceReady(for: current) && (current.workspacePreparation?.setup?.providerReleased ?? true)
+        return current.settlement == nil && workspaceReady(for: current) && (current.workspacePreparation?.setup?.providerReleased ?? true)
     }
 }

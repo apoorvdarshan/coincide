@@ -98,15 +98,29 @@ public enum WorkspaceJournal {
         }
         var preparationIDs: Set<UUID> = []
         var scriptIDs: Set<UUID> = []
+        let settlementIDs = Set(snapshot.threads.compactMap { $0.settlement?.id })
+        guard settlementIDs.count == snapshot.threads.filter({ $0.settlement != nil }).count, settlementIDs.isDisjoint(with: cloneIDs) else { throw CoincideError("Settlement generations must have unique identities.") }
         for thread in snapshot.threads {
             if let preparation = thread.workspacePreparation {
                 try preparation.validate(thread: thread)
                 for id in preparation.previousAttempts.map({ $0.request.id }) + [preparation.id] {
-                    guard preparationIDs.insert(id).inserted, !cloneIDs.contains(id), !scriptIDs.contains(id) else { throw CoincideError("Workspace preparation attempts must have unique identities.") }
+                    guard preparationIDs.insert(id).inserted, !cloneIDs.contains(id), !scriptIDs.contains(id), !settlementIDs.contains(id) else { throw CoincideError("Workspace preparation attempts must have unique identities.") }
                 }
                 for setup in preparation.previousAttempts.compactMap(\.setup) + (preparation.setup.map { [$0] } ?? []) {
                     for id in setup.previousPlans.map(\.id) + [setup.id] {
-                        guard scriptIDs.insert(id).inserted, !cloneIDs.contains(id), !preparationIDs.contains(id) else { throw CoincideError("Project setup attempts must have unique identities.") }
+                        guard scriptIDs.insert(id).inserted, !cloneIDs.contains(id), !preparationIDs.contains(id), !settlementIDs.contains(id) else { throw CoincideError("Project setup attempts must have unique identities.") }
+                    }
+                }
+            }
+            if let settlement = thread.settlement {
+                try settlement.validate(thread: thread)
+                if let run = settlement.script {
+                    for id in run.previousPlans.map(\.id) + [run.id] {
+                        guard scriptIDs.insert(id).inserted, !cloneIDs.contains(id), !preparationIDs.contains(id), !settlementIDs.contains(id) else { throw CoincideError("Project script attempts must have unique identities.") }
+                    }
+                    if let plan = run.plan {
+                        guard plan.projectRoot == snapshot.projects.first(where: { $0.id == thread.projectID })?.path,
+                              plan.projectRootIdentity != plan.workspaceIdentity else { throw CoincideError("A settle script cannot run in the shared project checkout.") }
                     }
                 }
             }

@@ -65,9 +65,20 @@ Use **Run Script…** in the toolbar to choose a script declared in the current
 checkout's `t3.json`. Review its command and checkout, then run it in a dedicated
 native terminal tab. Scripts receive `T3CODE_PROJECT_ROOT` and, for a separate
 checkout, `T3CODE_WORKTREE_PATH`. Changing the configuration requires reloading
-the list. This manual action can run any declared script; settle and preview
-flags do not yet trigger their own workflows. Output and exit status stay in the terminal, and
+the list. This manual action can run any declared script. Preview flags do not
+yet trigger their own workflows. Output and exit status stay in the terminal, and
 closing a running script asks before stopping it.
+
+Choose **Settle Conversation…** from the workspace menu, conversation context
+menu, or Thread menu when the conversation is idle and its queue is empty.
+Managed setup jobs stop before settle-script discovery; existing terminal tabs
+stay open. The confirmation offers **Review settle script** by default. In a proven
+separate worktree, Coincide finds the first `runOnSettle` role and waits for exact
+command review before execution. The conversation stays settled after script exit.
+Choose **Resume**, or send a new message, to stop its owned settle jobs and
+continue. Captured messages wait for cleanup, and unsent drafts stay available.
+Each new settlement requires a fresh review; interrupted scripts never replay
+after restart. Resume before changing the conversation's checkout.
 
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a

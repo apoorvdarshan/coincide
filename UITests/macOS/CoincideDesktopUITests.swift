@@ -515,6 +515,133 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
+    @MainActor func testSettleScriptReviewAndExplicitResumeKeepDraftAndCheckout() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "settle")
+        let app = fixture.app
+        app.launchEnvironment["SHELL"] = "/bin/sh"
+        let project = fixture.root.appendingPathComponent("Native Settle", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let command = "pwd -P > settle-cwd.txt; printf 'native-settle-output\\n'; exit 0"
+        let scripts: [[String: Any]] = [
+            ["name": "Reviewed Settle Script", "command": command, "runOnSettle": true, "async": false],
+            ["name": "Unselected Settle Script", "command": "printf 'unexpected\\n' > settle-unselected.txt", "runOnSettle": true]
+        ]
+        let configuration = project.appendingPathComponent("t3.json")
+        try JSONSerialization.data(withJSONObject: ["scripts": scripts], options: [.sortedKeys, .prettyPrinted]).write(to: configuration, options: .atomic)
+        let readme = project.appendingPathComponent("README.md"), readmeBytes = Data("Synthetic explicit settle fixture\n".utf8)
+        try readmeBytes.write(to: readme)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "t3.json", "README.md"], ["commit", "--message", "Explicit settle fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "settle-fixture-\(arguments[0])")
+        }
+        let sourceHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "settle-source-head")
+        let sourceHeadBytes = try Data(contentsOf: project.appendingPathComponent(".git/HEAD")), configurationBytes = try Data(contentsOf: configuration)
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        try openProject(project, in: app)
+        XCTAssertTrue(app.buttons["Collapse Native Settle"].waitForExistence(timeout: 10))
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"], draft = "Keep this unsent discussion through settle and resume"
+        XCTAssertTrue(composer.waitForExistence(timeout: 10)); composer.click(); composer.typeText(draft)
+        let threadID = try selectedThreadIdentifier(in: app)
+        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
+        workspace.click()
+        let choose = app.menuItems["Choose Worktree…"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5)); choose.click()
+        let checkout = app.sheets.containing(.textField, identifier: "worktree-new-branch").element
+        XCTAssertTrue(checkout.waitForExistence(timeout: 10))
+        let branch = checkout.textFields["worktree-new-branch"]
+        branch.click(); branch.typeText("ui-reviewed-settle")
+        let prepare = checkout.buttons["Prepare Worktree"]
+        let prepared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: prepare)
+        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 10), .completed); prepare.click()
+        XCTAssertTrue(waitForAbsence(checkout, timeout: 5))
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value BEGINSWITH %@", fixture.root.appendingPathComponent("Worktrees").path + "/"), object: workspace)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 20), .completed)
+        assertWorkspaceReady(in: app)
+        let worktreePath = try XCTUnwrap(workspace.value as? String), worktree = URL(fileURLWithPath: worktreePath, isDirectory: true)
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(composer.value as? String, draft)
+        app.menuBars.menuBarItems["Thread"].click()
+        let settle = app.menuItems["Settle Conversation…"]
+        XCTAssertTrue(settle.waitForExistence(timeout: 5)); XCTAssertTrue(settle.isEnabled); settle.click()
+        let confirmation = app.sheets.containing(.button, identifier: "settlement-confirm").element
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        let reviewChoice = confirmation.checkBoxes["settlement-review-script"]
+        XCTAssertTrue(reviewChoice.exists)
+        XCTAssertEqual((reviewChoice.value as? NSNumber)?.intValue ?? Int((reviewChoice.value as? String) ?? ""), 1)
+        XCTAssertTrue(confirmation.buttons["settlement-confirm"].isHittable && confirmation.buttons["Cancel"].isHittable)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(confirmation.frame))
+        let confirmationImage = XCTAttachment(screenshot: confirmation.screenshot()); confirmationImage.name = "settle-native-confirmation-default-review"; confirmationImage.lifetime = .keepAlways; add(confirmationImage)
+        confirmation.buttons["Cancel"].click()
+        XCTAssertTrue(waitForAbsence(confirmation, timeout: 5))
+        XCTAssertFalse(app.staticTexts["settlement-status"].exists)
+        XCTAssertEqual(composer.value as? String, draft)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("settle-cwd.txt").path))
+        app.menuBars.menuBarItems["Thread"].click(); XCTAssertTrue(settle.waitForExistence(timeout: 5)); settle.click()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); confirmation.buttons["settlement-confirm"].click()
+        XCTAssertTrue(waitForAbsence(confirmation, timeout: 5))
+        let settled = app.staticTexts["settlement-status"]
+        let isSettled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Conversation settled", "Conversation settled"), object: settled)
+        XCTAssertEqual(XCTWaiter.wait(for: [isSettled], timeout: 15), .completed)
+        let reviewScript = app.buttons["workspace-settle-script-review"]
+        XCTAssertTrue(reviewScript.waitForExistence(timeout: 10))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("settle-cwd.txt").path), "Settling and script discovery must not execute a command.")
+        reviewScript.click()
+        let review = app.sheets.containing(.button, identifier: "workspace-settle-script-run").element
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForValue(review.staticTexts["workspace-settle-script-review-cwd"], value: worktreePath, timeout: 5))
+        let reviewedCommand = review.descendants(matching: .any).matching(identifier: "workspace-settle-script-review-command").element
+        XCTAssertTrue(reviewedCommand.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", command, command)).element.exists)
+        let notice = "The conversation stays settled after this command finishes. Resuming stops its background jobs before messages continue."
+        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", notice, notice)).element.exists)
+        XCTAssertTrue(review.buttons["workspace-settle-script-run"].isHittable && CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
+        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "settle-explicit-command-and-cwd-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
+        review.buttons["Cancel"].click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        XCTAssertTrue(settled.exists && reviewScript.exists)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("settle-cwd.txt").path), "Cancelling script review must never run the command.")
+        XCTAssertEqual(composer.value as? String, draft)
+        reviewScript.click(); XCTAssertTrue(review.waitForExistence(timeout: 5)); review.buttons["workspace-settle-script-run"].click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        let scriptStatus = app.staticTexts["workspace-settle-script-status"]
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Settle script finished", "Settle script finished"), object: scriptStatus)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 15), .completed)
+        let exitDetail = "Command exited with status 0."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", exitDetail, exitDetail)).element.exists)
+        let outputDisclosure = app.descendants(matching: .any).matching(NSPredicate(
+            format: "(elementType == %d OR elementType == %d) AND (identifier == %@ OR label == %@ OR title == %@)",
+            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue,
+            "workspace-settle-script-output-disclosure", "Settle Script Output", "Settle Script Output"
+        )).element
+        XCTAssertTrue(outputDisclosure.waitForExistence(timeout: 10)); XCTAssertTrue(outputDisclosure.isHittable); outputDisclosure.click()
+        let output = app.staticTexts["workspace-settle-script-output"]
+        let received = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label CONTAINS %@ OR value CONTAINS %@)", "native-settle-output", "native-settle-output"), object: output)
+        XCTAssertEqual(XCTWaiter.wait(for: [received], timeout: 10), .completed)
+        XCTAssertEqual(try String(contentsOf: worktree.appendingPathComponent("settle-cwd.txt"), encoding: .utf8), worktreePath + "\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("settle-unselected.txt").path))
+        XCTAssertTrue(settled.exists, "Successful script completion must not resume the conversation implicitly.")
+        XCTAssertEqual(composer.value as? String, draft)
+        capture(app, name: "settle-completed-script-still-settled-with-draft")
+        let resume = app.buttons["settlement-resume"]
+        XCTAssertTrue(resume.exists && resume.isEnabled && resume.isHittable); resume.click()
+        XCTAssertTrue(waitForAbsence(settled, timeout: 10))
+        XCTAssertTrue(waitForAbsence(scriptStatus, timeout: 5))
+        assertWorkspaceReady(in: app)
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(composer.value as? String, draft)
+        assertConversationWorkspace(app, path: worktreePath)
+        XCTAssertEqual(try Data(contentsOf: readme), readmeBytes)
+        XCTAssertEqual(try Data(contentsOf: configuration), configurationBytes)
+        XCTAssertEqual(try Data(contentsOf: project.appendingPathComponent(".git/HEAD")), sourceHeadBytes)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "settle-source-final-head"), sourceHead)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("settle-cwd.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("settle-unselected.txt").path))
+        capture(app, name: "settle-explicit-resume-keeps-draft-checkout-and-source")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
     @MainActor func testWorktreePreparationKeepsExplicitBaseDraftAndSourceFiles() throws {
         let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "worktree")
         let app = fixture.app

@@ -1,5 +1,50 @@
 # Validation record
 
+## 2026-10-22 — explicit settlement generations and reviewed cleanup scripts
+
+- Native workspace/context/Thread menus offer Settle Conversation with a
+  confirmation and default-on settle-script review. Settle requires an idle
+  conversation, empty queue, no pending questions and resolved checkout setup.
+  Repeating Settle keeps the same generation. Provider idle does not settle it.
+- A generation holds provider readiness independently of script exit. Anchored
+  discovery selects the first run-on-settle role in a proven separate linked
+  worktree; main/shared checkouts and unproven legacy ownership skip it. Command
+  review pins the exact configuration and cwd. Changed configuration fails before
+  execution; retry creates another reviewed run. The async flag remains a setup
+  setting and does not release a settled conversation.
+- Retained setup jobs and prior cleanup for the exact thread drain before settle
+  discovery. Scoped cleanup joins cover archive/unarchive followed by Settle,
+  including an already-closing idle provider. Unrelated threads stay responsive.
+  Resume or new user input drains the generation's owned script jobs before
+  clearing its gate and starting captured FIFO messages. A later Stop preserves
+  the paused queue when cleanup completes; explicit Resume Queue releases it.
+- The shared runtime uses a typed setup/settlement owner, per-run output and
+  incarnation fences. Script exit remains separate from job lifetime. Archive,
+  removal, shutdown and restart retain those ownership rules. Interrupted cleanup
+  never replays after restart, and an unstarted review can resume without running.
+  Existing manual terminal tabs stay open.
+- Seventeen focused Core settlement cases and four new native Store/view cases
+  pass alongside the existing setup coverage. Native cases run actual temporary
+  Git worktrees and helper commands, including TERM-ignoring background jobs,
+  two output listeners, automatic input-driven Resume, captured models/permissions,
+  changed commands, fresh review, restart, main-checkout skipping, unsent drafts
+  and preserved source files. The confirmation and exact-command review were
+  inspected in light/dark offscreen renders; small-display geometry passes.
+- Full `swift test --no-parallel`: **396 passed** (318 Core, 6 terminal,
+  13 Markdown, 59 native UI/Store). The eight-workflow actual GUI runner compiles
+  and passes deep/strict signature verification without launching local GUI tests.
+- Packaging/launch, deep strict app/helper signatures and native math-resource
+  loading pass. Storage upgrades from 12 to 13, preserving the complete saved
+  workspace against its private SQLite checkpoint: three conversations and
+  25 messages.
+- An eighth actual GUI workflow covers native confirmation/default review,
+  both Cancel paths without execution, exact command/cwd, first-role execution,
+  exit/output while still settled and explicit Resume with the same draft,
+  thread, checkout and source bytes. Its strict gate requires all eight workflows
+  and zero skips; actual hosted execution remains separate from local build proof.
+- Automatic inactivity/PR settlement, snooze settings and idle-terminal closure
+  remain pending.
+
 ## 2026-10-22 — reviewed checkout setup and provider readiness
 
 - Worktree requests persist the setup-review choice before Git starts. Discovery
@@ -42,7 +87,16 @@
   helper and launcher now use explicit String and C-pointer array types, with an
   unambiguous filesystem path. All 375 local tests pass again; the seven-workflow
   native runner also compiles and verifies its signature. Exact-head hosted
-  compilation and actual GUI execution still need to establish their results.
+  compilation then succeeded in run `39703856781`. Its setup Store test failed
+  because the default Codex executable was absent on the runner, so the Store
+  rejected input before reaching the injected provider. A four-line fixture fix
+  at `d14b85a` saves/selects a synthetic ACP executable (`/usr/bin/true`); the
+  injected peer still owns protocol behavior and all queue assertions remain.
+  Seven focused native setup/settlement cases pass locally with that fixture.
+  Hosted push run `39704717961` passes all 375 tests (142.235 seconds), packaging,
+  signing and resources. Its fixture-only path filter intentionally skips GUI.
+  Manual run `39705334238` records the same immutable `d14b85a` head with the
+  unchanged seven-workflow suite enabled; actual GUI results remain pending.
 - Actual setup GUI workflow verification remains separate from these focused
   tests. The existing manual script workflow and its terminal ownership remain
   unchanged. Settle/resume generations and settle-script execution remain pending.

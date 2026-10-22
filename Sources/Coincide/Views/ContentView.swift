@@ -9,14 +9,16 @@ struct ContentView: View {
     @State private var cloneSheetPresented = false
     @State private var newProjectSheetPresented = false
     @State private var scriptThread: CodingThread?
+    @State private var settlementThread: CodingThread?
     var body: some View {
         NavigationSplitView {
-            SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true })
+            SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true },
+                        onSettle: { settlementThread = $0 })
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
         } detail: {
             if let thread = store.selectedThread {
                 VSplitView {
-                    ChatView(store: store, threadID: thread.id).id(thread.id).frame(minHeight: 280)
+                    ChatView(store: store, threadID: thread.id, onSettle: { settlementThread = $0 }).id(thread.id).frame(minHeight: 280)
                     if terminalVisible, store.workspaceReady(for: thread) {
                         TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
                                       report: { store.errorMessage = $0 }, hide: { terminalVisible = false })
@@ -69,12 +71,16 @@ struct ContentView: View {
         } message: { Text(store.errorMessage ?? "") }
         .sheet(isPresented: $cloneSheetPresented) { CloneRepositorySheet(store: store) }
         .sheet(isPresented: $newProjectSheetPresented) { NewProjectSheet(store: store) }
+        .sheet(item: $settlementThread) { thread in
+            SettleConversationSheet(store: store, threadID: thread.id, close: { settlementThread = nil })
+        }
         .sheet(item: $scriptThread) { thread in
             ProjectScriptsSheet(store: store, thread: thread, terminals: terminals,
                 didRun: { terminalVisible = true; scriptThread = nil }, close: { scriptThread = nil })
         }
-        .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented ? nil : $cloneSheetPresented)
-        .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented ? nil : $newProjectSheetPresented)
+        .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $cloneSheetPresented)
+        .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $newProjectSheetPresented)
+        .focusedSceneValue(\.settlementPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $settlementThread)
         .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .disabled(store.isLoading)

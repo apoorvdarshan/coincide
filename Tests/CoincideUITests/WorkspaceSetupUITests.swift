@@ -5,11 +5,11 @@ import SwiftUI
 import Testing
 @testable import Coincide
 
-private struct NativeSetupProviderCall: Sendable, Equatable {
+struct NativeSetupProviderCall: Sendable, Equatable {
     let prompt: String, path: String, model: String
     let permission: PermissionMode
 }
-private actor NativeSetupProvider: ProviderSession {
+actor NativeSetupProvider: ProviderSession {
     nonisolated let events: AsyncStream<ProviderEvent>
     private let sink: AsyncStream<ProviderEvent>.Continuation
     private var runID: UUID?
@@ -30,27 +30,34 @@ private actor NativeSetupProvider: ProviderSession {
         if let runID { sink.yield(.context(runID: runID, event: event)) } else { sink.yield(event) }
     }
 }
-private actor NativeSetupOutput {
+actor NativeSetupOutput {
     var latest: ProjectScriptOutputSnapshot?
     func receive(_ snapshot: ProjectScriptOutputSnapshot) { latest = snapshot }
 }
 
-@MainActor private struct NativeSetupFixture {
+@MainActor struct NativeSetupFixture {
     let root: URL, source: URL, database: URL, helper: URL
     let project: WorkspaceProject, thread: CodingThread
     let provider: NativeSetupProvider
     let engine: WorkspaceEngine, store: WorkspaceStore
     let configuration: Data
-    static func make(command: String) async throws -> Self {
+    static func make(command: String, settleCommand: String? = nil) async throws -> Self {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-native-setup-" + UUID().uuidString).resolvingSymlinksInPath()
         let source = root.appendingPathComponent("Source ' workspace")
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         do {
-            let configuration = try JSONEncoder().encode(ProjectConfiguration(scripts: [
+            var scripts: [ProjectScript] = try [
                 .init(name: "Manual fixture", command: "printf forbidden > manual-must-not-run"),
                 .init(name: "Prepare checkout", command: command, runOnWorktreeCreate: true, runsAsynchronously: false),
                 .init(name: "Later setup", command: "printf forbidden > later-must-not-run", runOnWorktreeCreate: true)
-            ]))
+            ]
+            if let settleCommand {
+                scripts += try [
+                    .init(name: "Settle checkout", command: settleCommand, runOnSettle: true),
+                    .init(name: "Later settle", command: "printf forbidden > later-settle-must-not-run", runOnSettle: true)
+                ]
+            }
+            let configuration = try JSONEncoder().encode(ProjectConfiguration(scripts: scripts))
             try configuration.write(to: source.appendingPathComponent("t3.json"))
             try Data("Committed base\n".utf8).write(to: source.appendingPathComponent("notes.txt"))
             try await git(["-c", "init.templateDir=", "init", "--initial-branch=main", "--", source.path], cwd: root)
@@ -104,7 +111,7 @@ private actor NativeSetupOutput {
         #expect(try String(contentsOf: source.appendingPathComponent("untracked.txt"), encoding: .utf8) == "Untracked source kept\n")
     }
 }
-@MainActor private func waitNativeSetup(_ condition: () async throws -> Bool) async throws {
+@MainActor func waitNativeSetup(_ condition: () async throws -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(10)
     while try await !condition() {
         guard ContinuousClock.now < deadline else { throw CoincideError("The native setup fixture did not settle.") }
@@ -243,27 +250,33 @@ func nativeWorkspaceSetupReviewAndWorktreeFormsFitSmallDisplaysInBothAppearances
                 let controller = NSHostingController(rootView: view)
                 let size = controller.sizeThatFits(in: CGSize(width: width, height: 620))
                 #expect(size.width <= width && size.height <= 620 && size.height > 200)
-                if ProcessInfo.processInfo.environment["COINCIDE_RENDER_SETUP"] == "1" {
-                    let hosting = NSHostingView(rootView: view.frame(width: width, height: size.height))
-                    let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: width, height: size.height),
-                                          styleMask: .borderless, backing: .buffered, defer: false)
-                    let nativeAppearance = try #require(NSAppearance(named: scheme == .light ? .aqua : .darkAqua))
-                    window.appearance = nativeAppearance; hosting.appearance = nativeAppearance
-                    window.isReleasedWhenClosed = false; window.contentView = hosting
-                    hosting.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(100)); hosting.layoutSubtreeIfNeeded()
-                    let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-                    nativeAppearance.performAsCurrentDrawingAppearance { hosting.cacheDisplay(in: hosting.bounds, to: bitmap) }
-                    let data = try #require(bitmap.representation(using: .png, properties: [:]))
-                    let appearance = scheme == .light ? "light" : "dark"
-                    let path = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-setup-\(name)-\(appearance).png")
-                    try data.write(to: path)
-                    print("Native setup form preview: \(path.path)")
-                    window.close()
-                }
+                try await captureNativeScriptPreview(view, name: "setup-\(name)", width: width, height: size.height, scheme: scheme)
             }
         }
         #expect(fixture.store.thread(fixture.thread.id)?.workspacePreparation?.setup?.canApprove == true)
         #expect(await fixture.provider.calls.isEmpty)
     } catch { await fixture.cleanup(); throw error }
     await fixture.cleanup()
+}
+
+@MainActor func captureNativeScriptPreview<Content: View>(_ content: Content, name: String, width: CGFloat,
+                                                        height: CGFloat, scheme: ColorScheme) async throws {
+    let environment = ProcessInfo.processInfo.environment
+    guard environment["COINCIDE_RENDER_SETUP"] == "1" || environment["COINCIDE_RENDER_SETTLEMENT"] == "1" else { return }
+    let view = content.background(Color(nsColor: .windowBackgroundColor))
+    let hosting = NSHostingView(rootView: view.frame(width: width, height: height))
+    let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: width, height: height),
+                          styleMask: .borderless, backing: .buffered, defer: false)
+    let nativeAppearance = try #require(NSAppearance(named: scheme == .light ? .aqua : .darkAqua))
+    window.appearance = nativeAppearance; hosting.appearance = nativeAppearance
+    window.isReleasedWhenClosed = false; window.contentView = hosting
+    defer { window.close() }
+    hosting.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(100)); hosting.layoutSubtreeIfNeeded()
+    let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+    nativeAppearance.performAsCurrentDrawingAppearance { hosting.cacheDisplay(in: hosting.bounds, to: bitmap) }
+    let data = try #require(bitmap.representation(using: .png, properties: [:]))
+    let appearance = scheme == .light ? "light" : "dark"
+    let path = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-\(name)-\(appearance).png")
+    try data.write(to: path)
+    print("Native script form preview: \(path.path)")
 }

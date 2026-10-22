@@ -4,6 +4,7 @@ import SwiftUI
 struct ChatView: View {
     @Bindable var store: WorkspaceStore
     let threadID: UUID
+    var onSettle: ((CodingThread) -> Void)? = nil
     @State private var sending = false
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
@@ -23,9 +24,15 @@ struct ChatView: View {
                         Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
                             .disabled(!store.workspaceReady(for: thread))
                         ExternalEditorMenu(store: store, workspacePath: thread.workspacePath, title: "Open Workspace in…")
+                        if let settlement = thread.settlement {
+                            Button("Resume Conversation") { store.requestResume(threadID, generationID: settlement.id) }
+                                .disabled(settlement.phase == .resuming)
+                        } else if let onSettle {
+                            Button("Settle Conversation…") { onSettle(thread) }.disabled(!store.canSettle(thread))
+                        }
                         if thread.messages.isEmpty {
                             Button("Choose Worktree…") { worktreeSheet = true }
-                                .disabled(thread.isBusy || !thread.queuedTurns.isEmpty || thread.workspacePreparation?.isRunning == true ||
+                                .disabled(thread.isSettled || thread.isBusy || !thread.queuedTurns.isEmpty || thread.workspacePreparation?.isRunning == true ||
                                           (store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false))
                         }
                     } label: { Label(store.selectedProject?.name ?? "Workspace", systemImage: "folder").font(.caption).foregroundStyle(.secondary) }
@@ -84,9 +91,12 @@ struct ChatView: View {
                         WorktreePreparationBanner(preparation: preparation, cancel: { store.cancelWorktreePreparation(threadID) },
                                                   retry: { store.retryWorktreePreparation(threadID) },
                                                   retrying: store.isPreparingWorkspace(threadID))
-                        if preparation.isReady, let setup = preparation.setup {
+                        if thread.settlement == nil, preparation.isReady, let setup = preparation.setup {
                             WorkspaceSetupBanner(store: store, threadID: threadID, run: setup)
                         }
+                    }
+                    if let settlement = thread.settlement {
+                        ThreadSettlementBanner(store: store, threadID: threadID, settlement: settlement)
                     }
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },

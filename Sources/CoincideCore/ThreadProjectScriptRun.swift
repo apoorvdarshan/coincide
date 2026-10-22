@@ -29,11 +29,17 @@ public struct ThreadProjectScriptRun: Codable, Sendable, Equatable, Identifiable
     public static let discoveryError = "The project setup configuration could not be read. Review t3.json or continue without setup."
     public static let executionError = "The approved setup script could not be started or completed. Review its output before trying again."
     public static let interruptedError = "The app closed during project setup. Review the script before running it again; it may already have made changes."
-    public func validate(workspacePath: String) throws {
+    public static let settleDiscoveryError = "The settle script configuration could not be read. Review t3.json or resume without running it."
+    public static let settleExecutionError = "The approved settle script could not be started or completed. Review its output before trying again."
+    public static let settleInterruptedError = "The app closed during the settle script. Review it before running again; it may already have made changes."
+    public static func discoveryError(for role: ProjectScriptRole) -> String { role == .setup ? discoveryError : settleDiscoveryError }
+    public static func executionError(for role: ProjectScriptRole) -> String { role == .setup ? executionError : settleExecutionError }
+    public static func interruptedError(for role: ProjectScriptRole) -> String { role == .setup ? interruptedError : settleInterruptedError }
+    public func validate(workspacePath: String, role: ProjectScriptRole = .setup) throws {
         let dates = [createdAt, updatedAt] + [startedAt, endedAt].compactMap { $0 }
         guard dates.allSatisfy({ $0.timeIntervalSince1970.isFinite }),
               (phase == .stopping) == (pendingAction != nil),
-              error == nil || [Self.discoveryError, Self.executionError, Self.interruptedError].contains(error!),
+              error == nil || [Self.discoveryError, Self.executionError, Self.interruptedError, Self.settleDiscoveryError, Self.settleExecutionError, Self.settleInterruptedError].contains(error!),
               ![.awaitingApproval, .starting, .running, .succeeded].contains(phase) || plan != nil,
               phase != .running || startedAt != nil,
               phase != .succeeded || (commandExit == .exited(0) && startedAt != nil),
@@ -41,7 +47,8 @@ public struct ThreadProjectScriptRun: Codable, Sendable, Equatable, Identifiable
               Set(previousPlans.map(\.id) + [id]).count == previousPlans.count + 1 else {
             throw CoincideError("This conversation has inconsistent project setup state.")
         }
-        if let plan { try plan.validate(); guard plan.id == id, plan.workspacePath == workspacePath, plan.script.runOnWorktreeCreate else { throw CoincideError("The project setup plan belongs to another workspace.") } }
+        if let plan { try plan.validate(); guard plan.id == id, plan.workspacePath == workspacePath,
+            role == .setup ? plan.script.runOnWorktreeCreate : plan.script.runOnSettle else { throw CoincideError("The project script plan belongs to another workspace or role.") } }
         for previous in previousPlans { try previous.validate() }
         if let commandExit {
             switch commandExit {
@@ -57,22 +64,26 @@ public struct ProjectScriptPlanningContext: Sendable {
     public let id: UUID
     public let projectRoot: URL
     public let workspacePath: URL
-    public init(id: UUID, projectRoot: URL, workspacePath: URL) { self.id = id; self.projectRoot = projectRoot; self.workspacePath = workspacePath }
+    public let role: ProjectScriptRole
+    public init(id: UUID, projectRoot: URL, workspacePath: URL, role: ProjectScriptRole = .setup) { self.id = id; self.projectRoot = projectRoot; self.workspacePath = workspacePath; self.role = role }
 }
 public enum ProjectScriptSetupPlanner {
     public static func plan(_ context: ProjectScriptPlanningContext) async throws -> ProjectScriptExecutionPlan? {
+        if context.role == .settle,
+           context.projectRoot.standardizedFileURL.resolvingSymlinksInPath().path == context.workspacePath.standardizedFileURL.resolvingSymlinksInPath().path { return nil }
         let files = WorkspaceFileService(root: context.workspacePath)
         do {
             let document = try await ProjectConfigurationService.load(using: files)
             guard document.exists else { await files.close(); return nil }
             guard let configuration = document.configuration, let revision = document.revision else { throw CoincideError(ThreadProjectScriptRun.discoveryError) }
-            guard let index = configuration.scripts.firstIndex(where: \.runOnWorktreeCreate) else { await files.close(); return nil }
+            guard let index = configuration.scripts.firstIndex(where: { context.role == .setup ? $0.runOnWorktreeCreate : $0.runOnSettle }) else { await files.close(); return nil }
             let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
             guard shellPath.hasPrefix("/") else { throw ProjectScriptExecutionError(.invalidPlan) }
             let plan = try await ProjectScriptExecutionPlan.capture(scriptIndex: index, using: files, projectRoot: context.projectRoot,
                 shell: URL(fileURLWithPath: shellPath), id: context.id)
             guard plan.configurationRevision == ProjectScriptExecutionRevision(revision), plan.scriptIndex == index,
-                  plan.script == configuration.scripts[index], plan.script.runOnWorktreeCreate else { throw ProjectScriptExecutionError(.configurationChanged) }
+                  plan.script == configuration.scripts[index], context.role == .setup ? plan.script.runOnWorktreeCreate : plan.script.runOnSettle else { throw ProjectScriptExecutionError(.configurationChanged) }
+            if context.role == .settle, plan.projectRootIdentity == plan.workspaceIdentity { await files.close(); return nil }
             await files.close(); try Task.checkCancellation(); return plan
         } catch { await files.close(); try Task.checkCancellation(); throw error }
     }

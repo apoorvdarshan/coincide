@@ -91,10 +91,18 @@ checkout's README, configuration, or Git HEAD. A second declared setup role must
 never run. The test sends no message; provider queue ordering and release remain
 engine/store test evidence. Files and Terminal intentionally remain available
 while setup blocks provider messages.
+The eighth test prepares a private worktree with a settle script, checks the
+native Settle confirmation defaults to reviewing the script, and cancels both
+the confirmation and command review without executing anything. After explicit
+approval, the command must report exit0 and output while the conversation stays
+settled. Only an explicit Resume clears that state; the selected conversation,
+unsent draft, worktree path and original checkout bytes remain unchanged. A
+second settle role must never run. Automatic resume on a submitted message and
+provider queue ownership remain engine/store test evidence.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all seven tests to pass with zero
+gate requires all eight tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 

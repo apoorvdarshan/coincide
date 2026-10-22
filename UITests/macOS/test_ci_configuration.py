@@ -17,11 +17,12 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_seven_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=7, passedTests=7, failedTests=0, skippedTests=0)), 7)
+    def test_results_require_eight_real_tests_without_silent_skips(self):
+        self.assertEqual(ci.verify_results(dict(totalTestCount=8, passedTests=8, failedTests=0, skippedTests=0)), 8)
         for summary in [dict(totalTestCount=0, passedTests=0, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=7, passedTests=6, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=7, passedTests=6, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=8, passedTests=7, failedTests=0, skippedTests=1),
+                        dict(totalTestCount=8, passedTests=7, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=7, passedTests=7, failedTests=0, skippedTests=0),
                         dict(totalTestCount=6, passedTests=6, failedTests=0, skippedTests=0),
                         dict(totalTestCount=5, passedTests=5, failedTests=0, skippedTests=0),
                         dict(totalTestCount=4, passedTests=4, failedTests=0, skippedTests=0),

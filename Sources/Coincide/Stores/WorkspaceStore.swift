@@ -836,7 +836,9 @@ final class WorkspaceStore {
     }
     func prepareWorktree(for id: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode = .none,
                          reviewSetup: Bool = false) async {
-        guard let thread = thread(id), thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty else {
+        guard let thread = thread(id) else { return }
+        guard !thread.isSettled else { errorMessage = "Resume this conversation before choosing another worktree."; return }
+        guard thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty else {
             errorMessage = "Choose the worktree before sending the first message."; return
         }
         guard snapshot.projects.first(where: { $0.id == thread.projectID })?.clone?.isReady ?? true else {
@@ -867,20 +869,68 @@ final class WorkspaceStore {
         try await performProjectScriptCommand(.retryProjectScript(threadID: threadID, runID: runID), threadID: threadID, runID: runID)
     }
     func projectScriptOutput(threadID: UUID, runID: UUID) async throws -> AsyncStream<ProjectScriptOutputSnapshot> {
-        guard !terminating, let engine, thread(threadID)?.workspacePreparation?.setup?.id == runID else { throw CancellationError() }
+        guard !terminating, let engine, projectScriptRun(threadID: threadID, runID: runID) != nil else { throw CancellationError() }
         return try await engine.projectScriptOutput(threadID: threadID, runID: runID)
     }
+    func projectScriptRun(threadID: UUID, runID: UUID) -> ThreadProjectScriptRun? {
+        thread(threadID)?.projectScript(runID: runID)
+    }
+    private func projectScriptOwner(_ thread: CodingThread, runID: UUID) -> ProjectScriptOwner? {
+        if let preparation = thread.workspacePreparation, preparation.setup?.id == runID { return .setup(attemptID: preparation.id) }
+        if let settlement = thread.settlement, settlement.script?.id == runID { return .settlement(generationID: settlement.id) }
+        return nil
+    }
     private func performProjectScriptCommand(_ command: WorkspaceCommand, threadID: UUID, runID: UUID) async throws {
-        guard !terminating, let captured = thread(threadID), captured.workspacePreparation?.setup?.id == runID else { throw CancellationError() }
+        guard !terminating, let captured = thread(threadID), let owner = projectScriptOwner(captured, runID: runID) else { throw CancellationError() }
         flushDrafts()
         let task = enqueue(command) { [weak self] in
             guard let self, !self.terminating, let current = self.thread(threadID),
                   current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
-                  current.workspacePreparation?.id == captured.workspacePreparation?.id,
-                  current.workspacePreparation?.setup?.id == runID,
+                  self.projectScriptOwner(current, runID: runID) == owner,
                   self.canEditWorkspace(current.workspacePath) else { throw CancellationError() }
         }
         _ = try await task.value
+    }
+    func canSettle(_ thread: CodingThread) -> Bool {
+        !terminating && snapshot.canSettle(threadID: thread.id) && canEditWorkspace(thread.workspacePath)
+    }
+    func settleThread(_ id: UUID, reviewScript: Bool = true) async throws {
+        try await performSettlementCommand(for: id) { engine, thread in
+            try await engine.settleThread(threadID: id, expectedWorkspacePath: thread.workspacePath, reviewScript: reviewScript)
+        }
+    }
+    func resumeThread(_ id: UUID, generationID: UUID) async throws {
+        guard thread(id)?.settlement?.id == generationID else { throw CancellationError() }
+        try await performSettlementCommand(for: id) { engine, _ in
+            try await engine.resumeThread(threadID: id, generationID: generationID)
+        }
+    }
+    func requestResume(_ id: UUID, generationID: UUID) {
+        Task {
+            do { try await resumeThread(id, generationID: generationID) }
+            catch is CancellationError { }
+            catch { if !terminating { errorMessage = error.localizedDescription } }
+        }
+    }
+    private func performSettlementCommand(for id: UUID,
+        operation: @escaping @MainActor (WorkspaceEngine, CodingThread) async throws -> WorkspaceCommandReceipt) async throws {
+        guard !terminating, let engine, let captured = thread(id), canEditWorkspace(captured.workspacePath) else { throw CancellationError() }
+        flushDrafts()
+        let previous = commandTail
+        let task = Task<WorkspaceCommandReceipt, any Error> {
+            await previous?.value
+            try Task.checkCancellation()
+            guard !self.terminating, let current = self.thread(id), current.projectID == captured.projectID,
+                  current.workspacePath == captured.workspacePath, current.settlement?.id == captured.settlement?.id,
+                  current.workspacePreparation?.id == captured.workspacePreparation?.id,
+                  self.canEditWorkspace(current.workspacePath) else { throw CancellationError() }
+            let receipt = try await operation(engine, current)
+            if let rejection = receipt.rejection { throw CoincideError(rejection) }
+            self.apply(await engine.current())
+            return receipt
+        }
+        commandTail = Task { _ = await task.result }
+        _ = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
     private func performWorktreeCommand(for id: UUID, changesWorkspace: Bool = false,
                                         operation: @escaping @MainActor (WorkspaceEngine) async throws -> WorkspaceCommandReceipt) async {

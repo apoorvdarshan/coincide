@@ -1,5 +1,6 @@
 import AppKit
 import CoincideMarkdown
+import CoincideCore
 import Darwin
 import SwiftUI
 
@@ -22,6 +23,7 @@ struct CoincideApp: App {
     @State private var store: WorkspaceStore
     @FocusedValue(\.cloneRepositoryPresentation) private var cloneRepositoryPresentation: Binding<Bool>?
     @FocusedValue(\.newProjectPresentation) private var newProjectPresentation: Binding<Bool>?
+    @FocusedValue(\.settlementPresentation) private var settlementPresentation: Binding<CodingThread?>?
     private var defaultWindowSize: CGSize {
         MainWindowSizing.size(fitting: NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 820))
     }
@@ -52,6 +54,14 @@ struct CoincideApp: App {
                     .keyboardShortcut("o", modifiers: [.command, .shift]).disabled(cloneRepositoryPresentation == nil)
             }
             CommandMenu("Thread") {
+                if let thread = store.selectedThread, let settlement = thread.settlement {
+                    Button("Resume Conversation") { store.requestResume(thread.id, generationID: settlement.id) }
+                        .disabled(settlement.phase == .resuming)
+                } else {
+                    Button("Settle Conversation…") {
+                        if let thread = store.selectedThread { settlementPresentation?.wrappedValue = thread }
+                    }.disabled(settlementPresentation == nil || (store.selectedThread.map { !store.canSettle($0) } ?? true))
+                }
                 Button("Stop Turn") { if let id = store.selectedThreadID { Task { await store.interrupt(id) } } }
                     .keyboardShortcut(".").disabled(store.selectedThreadID.map { !store.isBusy($0) } ?? true)
                 Button("Toggle Inspector") { store.inspectorVisible.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])

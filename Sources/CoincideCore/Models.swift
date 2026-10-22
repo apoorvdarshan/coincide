@@ -61,6 +61,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var title: String
     public var workspacePath: String
     public var workspacePreparation: ThreadWorkspacePreparation?
+    public var settlement: ThreadSettlement?
     public var providerThreadID: String?
     public var provider: ProviderKind
     public var acpAgent: ACPAgentConfiguration?
@@ -92,7 +93,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests, workspacePreparation
+        case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests, workspacePreparation, settlement
         case draftAttachments
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
@@ -104,6 +105,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         title = try values.decode(String.self, forKey: .title)
         workspacePath = try values.decode(String.self, forKey: .workspacePath)
         workspacePreparation = try values.decodeIfPresent(ThreadWorkspacePreparation.self, forKey: .workspacePreparation)
+        settlement = try values.decodeIfPresent(ThreadSettlement.self, forKey: .settlement)
         providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
         provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
         acpAgent = try values.decodeIfPresent(ACPAgentConfiguration.self, forKey: .acpAgent)
@@ -157,6 +159,15 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             projects[i].clone = clone
         }
         for i in threads.indices {
+            if var settlement = threads[i].settlement {
+                if var run = settlement.script, [.discovering, .starting, .running, .stopping].contains(run.phase) {
+                    let provenSuccess = run.phase == .stopping && run.pendingAction == .cancel && run.commandExit == .exited(0)
+                    run.phase = provenSuccess ? .succeeded : .interrupted; run.pendingAction = nil
+                    run.error = provenSuccess ? nil : ThreadProjectScriptRun.settleInterruptedError
+                    run.updatedAt = Date(); run.endedAt = Date(); settlement.script = run
+                }
+                settlement.phase = .settled; threads[i].settlement = settlement; threads[i].queuePaused = true
+            }
             if var preparation = threads[i].workspacePreparation, var setup = preparation.setup,
                [.discovering, .starting, .running, .stopping].contains(setup.phase) {
                 let provenSuccess = setup.phase == .stopping && setup.pendingAction == .cancel && setup.commandExit == .exited(0)
