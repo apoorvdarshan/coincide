@@ -1,5 +1,73 @@
 # Validation record
 
+## 2026-10-22 — managed native script process primitive
+
+- A separately signed native helper owns a PTY and remains its process-group
+  leader after the command shell exits. Actual wait status travels through a
+  separate framed status pipe; terminal text cannot impersonate it. Background
+  jobs may retain the PTY without delaying command completion. Explicit close or
+  authority-pipe EOF stops the owned group and drains transport readers before
+  the leader is reaped. Processes that deliberately leave that group are outside
+  this ownership guarantee.
+- Plans capture the exact script/index, complete configuration revision, anchored
+  project/checkout identities and absolute shell. Inherited environment values
+  are not serialized in the plan. Preparation validates without running commands;
+  a one-shot Start revalidates immediately before descriptor-based cwd handoff.
+  Configuration/root replacement rejects execution rather than silently running
+  a changed command. Startup handshakes and frames are bounded and versioned.
+- Output uses one ordered, lossless consumer with bounded backpressure. Separate
+  nonblocking control processing keeps Stop responsive under output pressure;
+  closing does not await an arbitrarily stalled presentation callback. Shell
+  children do not inherit authority/status pipes or directory anchors. The app
+  retains its helper child identity until final group signaling and cleanup.
+- The first focused run failed in fixture discovery because Swift's test runner
+  executable lived outside the build folder. The fixture now uses the explicit
+  checkout/build configuration, and the test target depends on the helper product.
+  Removing only the generated helper binary and running ordinary `swift test`
+  relinked it. The final fourteen-case focused run passed, covering exit 7,
+  background jobs with closed stdio, continuing PTY output after command exit 0,
+  owner-loss EOF, root/config replacement, cancellation/input/resize, ordered
+  Unicode output, held-consumer pressure, descriptor isolation and strict plans.
+  Further cases cover coalesced Stop/Start without execution, unexpected helper
+  death without replay, commands that never read pending PTY input, and aggregate
+  control-write admission before frame allocation (16 pending writes/1 MiB).
+  Write reservations release before completion resumes; close also waits for the
+  serial writer barrier. The final focused run passed in 8.317 seconds.
+- Full `swift test --no-parallel`: **356 passed** (285 core, 6 terminal,
+  13 Markdown, 52 native UI/Store). Packaging/launch, deep strict app signing,
+  separate helper signature, bundled-helper executable loading and native math
+  resources pass. The complete saved workspace remains unchanged against the
+  private checkpoint: three conversations, 25 messages and storage version 11.
+- This is a Core process primitive, not yet automatic setup/settle behavior. Native review,
+  durable readiness/approval/restart state and app-owned presentation remain
+  separate integration work; the existing manual script path is unchanged.
+
+## 2026-10-22 — inspector layout crash investigation
+
+- Hosted run `39697982965` at `8c0df0b` passed four of five actual GUI workflows,
+  with no skips. Project scripts completed discovery/Cancel, stale-config rejection,
+  Reload, dedicated command cwd/environment/exit status, and running-tab close
+  confirmation. Light, dark and grouped-checkout workflows also passed.
+- Files/editor testing crashed the app immediately after opening the inspector,
+  before its Files control appeared. The crash report and video confirm an app
+  failure; changing a test selector would not address it. The main-thread exception
+  cycles through AppKit window constraints, SwiftUI toolbar preferences and layout.
+  This stack identifies the failing framework path, rather than proving an exact
+  source-level cause.
+- Commit `076efa3` moves the inspector from a conditional detail split view to the
+  stable outer navigation host, preserving its content and existing controls.
+  All 342 serial tests pass; packaging/launch, deep strict signing and native math
+  resources pass. The entire saved workspace remains unchanged: three conversations,
+  25 messages and storage version 11.
+- Run `39699162944` at `4e76a90` passed five of six actual GUI workflows, with no
+  skips. Files reproduced the same inspector constraint/toolbar crash. The new
+  worktree workflow passed its complete local-base/branch/submodule-choice,
+  draft/cwd/restart and source-preservation checks (93.905 seconds). Project scripts
+  passed again (93.121 seconds). Actual six-test execution took 647.088 seconds.
+- The unchanged six-workflow GUI suite follows in run `39699875038`. The layout
+  change is not yet claimed to resolve the hosted crash; actual GUI execution must
+  establish that result.
+
 ## 2026-10-22 — explicit submodule initialization for new worktrees
 
 - New worktree requests capture an explicit None/top-level/recursive choice. None

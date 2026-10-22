@@ -163,6 +163,14 @@ must each be mapped and verified before declaring parity.
   even when the shell execs its command into its own process group. Imported setup,
   settle, async and preview fields do not yet trigger automatic behavior. Parsed
   icon/environment/submodule fields do not yet override native project settings.
+- A native managed-script helper provides the process primitive for future
+  setup/settle integration. It separates actual command exit from background-job
+  lifetime, retains ownership independently of windows, and uses bounded private
+  control/status/raw-output pipes. A captured plan pins the command, configuration,
+  checkout, project root and shell; preparation does not execute the command.
+  This primitive is tested with synthetic local scripts. Automatic role discovery,
+  durable approval/readiness gates and native lifecycle controls remain pending;
+  existing user scripts still run only through the explicit Run Script sheet.
 
 ## Current implementation and evidence requirements
 

@@ -13,6 +13,8 @@ BUILD_DIRECTORY="$(swift build --show-bin-path)"
 BUILD_BINARY="$BUILD_DIRECTORY/$APP_NAME"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 cp "$BUILD_BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+mkdir -p "$APP_BUNDLE/Contents/Helpers"
+cp "$BUILD_DIRECTORY/CoincideScriptHelper" "$APP_BUNDLE/Contents/Helpers/CoincideScriptHelper"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Notices"
 /usr/bin/ditto "$BUILD_DIRECTORY/SwiftMath_SwiftMath.bundle" "$APP_BUNDLE/Contents/Resources/SwiftMath_SwiftMath.bundle"
 for NOTICE_FILE in "$ROOT_DIR"/docs/*-LICENSE.txt "$ROOT_DIR"/docs/*-NOTICE.txt; do
@@ -45,6 +47,7 @@ SIGN_IDENTITY="${COINCIDE_SIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" ]]; then
   SIGN_IDENTITY="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null | /usr/bin/awk '/"Apple Development:/ && !found { print $2; found=1 }')"
 fi
+codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE/Contents/Helpers/CoincideScriptHelper" >/dev/null
 codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE" >/dev/null
 case "$MODE" in
   --build-only) echo "$APP_BUNDLE" ;;
