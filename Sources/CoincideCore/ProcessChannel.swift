@@ -10,12 +10,23 @@ public final class ProcessChannel: @unchecked Sendable {
     private let process: Process
     private let input: Pipe
     private let exitState = ProcessExitState()
+    private let outputState = ProcessOutputState()
+    private let drainState = ProcessDrainState()
+    private let readers = DispatchGroup()
     private let lock = NSLock()
     private let writer = DispatchQueue(label: "Coincide.provider-input", qos: .userInitiated)
     private var closed = false
 
-    public init(executable: URL, arguments: [String], cwd: URL? = nil, environment: [String: String]? = nil) throws {
-        let (stream, continuation) = AsyncStream<ProcessEvent>.makeStream()
+    public var processIdentifier: Int32 { process.processIdentifier }
+    public var outputOverflowed: Bool { outputState.overflowed }
+
+    public init(executable: URL, arguments: [String], cwd: URL? = nil, environment: [String: String]? = nil,
+                eventBufferLimit: Int? = nil) throws {
+        if let eventBufferLimit, !(1...512).contains(eventBufferLimit) {
+            throw CoincideError("The provider output buffer limit is invalid.")
+        }
+        let policy: AsyncStream<ProcessEvent>.Continuation.BufferingPolicy = eventBufferLimit.map { .bufferingOldest($0) } ?? .unbounded
+        let (stream, continuation) = AsyncStream<ProcessEvent>.makeStream(bufferingPolicy: policy)
         events = stream
         process = Process()
         let pipes = try Self.withChildLaunch {
@@ -30,6 +41,13 @@ public final class ProcessChannel: @unchecked Sendable {
                     }
                 }
             }
+            for pipe in pipes.dropFirst() {
+                let descriptor = pipe.fileHandleForReading.fileDescriptor
+                let flags = fcntl(descriptor, F_GETFL)
+                guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+                    throw CoincideError("Could not configure provider output.")
+                }
+            }
             return pipes
         }
         input = pipes[0]
@@ -41,24 +59,29 @@ public final class ProcessChannel: @unchecked Sendable {
         let flags = fcntl(descriptor, F_GETFL)
         guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0,
               fcntl(descriptor, F_SETNOSIGPIPE, 1) == 0 else { throw CoincideError("Could not configure provider input.") }
-        let readers = DispatchGroup()
+        let readers = self.readers, drainState = self.drainState
         readers.enter(); readers.enter()
-        let exitState = self.exitState
-        process.terminationHandler = { child in
+        let exitState = self.exitState, outputState = self.outputState
+        process.terminationHandler = { [weak self] child in
             // Native process termination is independent of pipe drainage: a
             // descendant may still hold an inherited stdout descriptor open.
             exitState.finish(child.terminationStatus)
-            readers.notify(queue: .global(qos: .utility)) {
-                continuation.yield(.exited(child.terminationStatus)); continuation.finish()
+            readers.notify(queue: .global(qos: .utility)) { [weak self] in
+                Self.emit(.exited(child.terminationStatus), to: continuation, state: outputState) { self?.stop() }
+                continuation.finish()
             }
         }
         try process.run()
-        DispatchQueue.global(qos: .userInitiated).async {
-            Self.drain(output.fileHandleForReading) { continuation.yield(.stdout($0)) }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            Self.drain(output.fileHandleForReading, state: drainState) {
+                Self.emit(.stdout($0), to: continuation, state: outputState) { self?.stop() }
+            }
             readers.leave()
         }
-        DispatchQueue.global(qos: .userInitiated).async {
-            Self.drain(errors.fileHandleForReading) { continuation.yield(.stderr($0)) }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            Self.drain(errors.fileHandleForReading, state: drainState) {
+                Self.emit(.stderr($0), to: continuation, state: outputState) { self?.stop() }
+            }
             readers.leave()
         }
     }
@@ -123,7 +146,9 @@ public final class ProcessChannel: @unchecked Sendable {
     public func stop() {
         finishInput()
         guard process.isRunning else { return }
-        process.terminate()
+        // Foundation can signal the child's process group. This channel owns
+        // the exact PID, so never use a group-targeting termination operation.
+        _ = Darwin.kill(process.processIdentifier, SIGTERM)
         let child = process
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
             if child.isRunning { kill(child.processIdentifier, SIGKILL) }
@@ -135,7 +160,18 @@ public final class ProcessChannel: @unchecked Sendable {
         stop()
         return await exitState.wait()
     }
-    deinit { stop() }
+    /// Stops the exact child and closes/joins this channel's output readers.
+    /// A descendant retaining a pipe writer is neither waited on nor signaled.
+    /// Output still outstanding after explicit shutdown may be discarded.
+    @discardableResult public func stopAndDrain() async -> Int32 {
+        let status = await stopAndWait()
+        drainState.cancel()
+        await withCheckedContinuation { continuation in
+            readers.notify(queue: .global(qos: .utility)) { continuation.resume() }
+        }
+        return status
+    }
+    deinit { stop(); drainState.cancel() }
 
     /// Coordinate an app-owned fork with the short interval between Darwin pipe
     /// creation and setting close-on-exec. The closure must be synchronous.
@@ -144,16 +180,27 @@ public final class ProcessChannel: @unchecked Sendable {
         return try launch()
     }
 
-    private static func drain(_ file: FileHandle, emit: (Data) -> Void) {
+    private static func drain(_ file: FileHandle, state: ProcessDrainState, emit: (Data) -> Void) {
         defer { try? file.close() }
         // Foundation's read(upToCount:) may wait to fill the requested buffer on pipes.
         // POSIX read delivers available bytes immediately, which is essential for RPC.
         var buffer = [UInt8](repeating: 0, count: 65_536)
-        while true {
+        while !state.cancelled {
             let count = Darwin.read(file.fileDescriptor, &buffer, buffer.count)
             if count > 0 { emit(Data(buffer.prefix(count))) }
             else if count == -1 && errno == EINTR { continue }
+            else if count == -1 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                var descriptor = pollfd(fd: file.fileDescriptor, events: Int16(POLLIN), revents: 0)
+                _ = poll(&descriptor, 1, 50)
+            }
             else { return }
+        }
+    }
+    private static func emit(_ event: ProcessEvent, to continuation: AsyncStream<ProcessEvent>.Continuation,
+                             state: ProcessOutputState, overflow: () -> Void) {
+        guard !state.overflowed else { return }
+        if case .dropped = continuation.yield(event), state.markOverflowed() {
+            continuation.finish(); overflow()
         }
     }
     public static func environment() -> [String: String] {
@@ -175,6 +222,24 @@ public final class ProcessChannel: @unchecked Sendable {
             if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
         }
         return nil
+    }
+}
+
+private final class ProcessDrainState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+    var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
+    func cancel() { lock.lock(); stopped = true; lock.unlock() }
+}
+
+private final class ProcessOutputState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didOverflow = false
+    var overflowed: Bool { lock.lock(); defer { lock.unlock() }; return didOverflow }
+    func markOverflowed() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !didOverflow else { return false }
+        didOverflow = true; return true
     }
 }
 

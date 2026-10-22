@@ -1,5 +1,58 @@
 # Validation record
 
+## 2026-10-22 — native OpenCode HTTP/SSE foundation
+
+- Added native Swift generation/version types, runtime-only header credentials,
+  an owned loopback server, bounded URLSession networking, generation-specific
+  metadata projections and a volatile SSE connection. The existing ACP provider,
+  composer choices and storage version 25 are unchanged. This foundation does
+  not yet implement native OpenCode HTTP chat, approvals, steering or history;
+  [the integration boundary](OPENCODE_HTTP.md) records the remaining full scope.
+- HTTP identity rejects HTML 200, unsupported/wrong generations and mismatched
+  owned v2 PIDs. Authentication failure does not select another generation.
+  Catalogs retain exact advertised wire model/variant/agent IDs and workspace
+  scope while discarding raw headers, settings, system prompts and unknown fields.
+  Metadata cancellation joins only owned reads and preserves shared event I/O.
+- Networking rejects redirects and URL credentials, uses ephemeral state and
+  incrementally bounds bodies, headers and stream buffers. SSE preserves split
+  Unicode, CR/LF, comments, multiline data, empty/reset IDs and large single-line
+  tool snapshots. An incomplete frame cannot advance its committed cursor.
+  Heartbeat bytes refresh a 45-second watchdog; EOF, silence, malformed framing
+  and overflow require reconciliation instead of completing or replaying a turn.
+- Server fixtures cover exact generation-specific argv, fresh credentials,
+  coalesced start, independent waiter cancellation, readiness rejection, deadlines,
+  startup floods, continued post-ready log drainage and repeated/concurrent close.
+  Process output can be bounded explicitly. Exact-PID termination replaces
+  Foundation's group-targeting operation; nonblocking output readers can be
+  closed and joined without signaling a descendant retaining inherited writers.
+  The inherited-pipe test failed with the previous termination call and passed
+  after targeting the positive owned PID. It also verifies the descendant remains
+  alive until its own test-owned release.
+- Testing exposed a synchronous stream-destructor deadlock on rejected/cancelled
+  event opening. Teardown now retains the unreturned stream until after releasing
+  the state lock. Native URLProtocol fixtures explicitly supply JSON MIME types
+  for early body-limit checks and await their actual stop callbacks before
+  asserting counts. No retry, timeout expansion or coverage reduction was added.
+- All 60 focused checks passed in 4.705 seconds. The subsequent serialized full
+  suite executed 906 declarations: 898 passed and eight optional installed checks
+  were skipped. Core reports 757 declarations including those skips (254.826
+  seconds); native views/stores 130 (48.385 seconds), terminal six and Markdown 13
+  all passed. The later large-single-line framing regression is included in that
+  full run.
+- A separately added real TCP integration passed in 0.240 seconds. Its private
+  Python server exercised the actual native owner, HTTP client, metadata reader
+  and SSE connection together: ephemeral header authentication, owned PID/version,
+  directory/model/variant selection, gated fragmented Unicode after metadata
+  closure, independent stream/client lifetimes, real 401 and graceful server EOF.
+  This is a synthetic server, not an installed OpenCode HTTP/provider result.
+- Installed Codex and Claude handshake/model-discovery checks also passed (two
+  tests, 1.816 seconds) after the common process changes; neither sent a model
+  turn. Nineteen Python harness checks passed. Native GUI runner compilation,
+  immutable helper checks, packaging, strict/deep signatures and math resources
+  passed. Canonical user workspace content and SQLite integrity stayed unchanged
+  (three conversations, 25 messages). No installed OpenCode server, authentication
+  or database migration was performed for this work.
+
 ## 2026-10-22 — native workflow accessibility and model summary repairs
 
 - Hosted run `39746111640` reached all 14 GUI scenarios (eight passed, six

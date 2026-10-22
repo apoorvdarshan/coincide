@@ -44,6 +44,12 @@ must each be mapped and verified before declaring parity.
   resources ship inside the app and have a separate runtime-loading CI check.
 - Codex and Claude run as installed CLI processes over stdio. Coincide uses existing
   provider authentication; no API key is embedded or copied into the workspace.
+- The dedicated [OpenCode HTTP integration](OPENCODE_HTTP.md) has native
+  generation-aware identity/catalog reads, an owned loopback subprocess and
+  bounded HTTP/SSE networking. Metadata close preserves shared event I/O;
+  disconnect requires reconciliation rather than completing or replaying work.
+  Native HTTP chat/session controls and installed HTTP verification remain
+  unfinished. Existing OpenCode ACP conversations retain their original path.
 - Native Codex Settings reads existing CLI account/plan and subscription allowance
   with identity consistency, sparse update and stale/unsupported handling. Email
   is hidden by default and observations stay outside persistence. Native sign-in,
