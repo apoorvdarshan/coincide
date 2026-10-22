@@ -46,10 +46,13 @@ must each be mapped and verified before declaring parity.
   provider authentication; no API key is embedded or copied into the workspace.
 - The dedicated [OpenCode HTTP integration](OPENCODE_HTTP.md) has native
   generation-aware identity/catalog reads, an owned loopback subprocess and
-  bounded HTTP/SSE networking. Metadata close preserves shared event I/O;
-  disconnect requires reconciliation rather than completing or replaying work.
-  Native HTTP chat/session controls and installed HTTP verification remain
-  unfinished. Existing OpenCode ACP conversations retain their original path.
+  bounded HTTP/SSE networking. OpenCode 2 now has its own native conversation
+  adapter, captured model/variant/agent configuration, streaming/tool projection,
+  explicit permissions/forms and Stop. Storage 26 preserves captured settings
+  across queued turns and fences older binaries. This has an offline-fixture
+  verification boundary; installed HTTP execution, v1 chat, native history,
+  steering and reconnect reconciliation remain unfinished. Existing OpenCode ACP
+  conversations retain their original path.
 - Native Codex Settings reads existing CLI account/plan and subscription allowance
   with identity consistency, sparse update and stale/unsupported handling. Email
   is hidden by default and observations stay outside persistence. Native sign-in,
@@ -69,7 +72,7 @@ must each be mapped and verified before declaring parity.
   tool execution. Copilot opts into its actual raw event feed and attributes child
   content/lifecycle to the originating run, including background output after the
   parent completes and a new turn starts. Both v1 and experimental v2 preserve
-  these vendor profiles. Storage version 25 protects the captured integration and
+  these vendor profiles. Storage version 26 retains the captured integration and
   typed multi-selection effects from older binaries. Native auth and complete
   vendor SDK/control/usage parity remain unfinished.
 - Transcript entities retain their session, type, opaque ID, structured fields,
@@ -105,7 +108,7 @@ must each be mapped and verified before declaring parity.
   unfinished.
 - Queued turns capture their model, reasoning effort, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 25 protects these fields
+  hold it for explicit resumption. Database storage version 26 protects these fields
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
 - Direct steering durably accepts one authored input into the active local run,
   preserving its captured settings, exact runtime/native thread/turn, attachments,

@@ -18,15 +18,19 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
     public var defaultReasoningEffort: String?
     public var isDefault: Bool
     public var catalogID: String?
+    public var openCodeSelection: OpenCodeModelSelection?
+    public var openCodeVariants: [String]?
 
     public init(id: String, name: String, reasoningEfforts: [ProviderReasoningEffortOption] = [],
-                defaultReasoningEffort: String? = nil, isDefault: Bool = false, catalogID: String? = nil) {
+                defaultReasoningEffort: String? = nil, isDefault: Bool = false, catalogID: String? = nil,
+                openCodeSelection: OpenCodeModelSelection? = nil, openCodeVariants: [String]? = nil) {
         self.id = id; self.name = name; self.reasoningEfforts = reasoningEfforts
         self.defaultReasoningEffort = defaultReasoningEffort; self.isDefault = isDefault; self.catalogID = catalogID
+        self.openCodeSelection = openCodeSelection; self.openCodeVariants = openCodeVariants
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, reasoningEfforts, defaultReasoningEffort, isDefault, catalogID
+        case id, name, reasoningEfforts, defaultReasoningEffort, isDefault, catalogID, openCodeSelection, openCodeVariants
     }
 
     public init(from decoder: any Decoder) throws {
@@ -35,7 +39,9 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
             reasoningEfforts: try values.decodeIfPresent([ProviderReasoningEffortOption].self, forKey: .reasoningEfforts) ?? [],
             defaultReasoningEffort: try values.decodeIfPresent(String.self, forKey: .defaultReasoningEffort),
             isDefault: try values.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false,
-            catalogID: try values.decodeIfPresent(String.self, forKey: .catalogID))
+            catalogID: try values.decodeIfPresent(String.self, forKey: .catalogID),
+            openCodeSelection: try values.decodeIfPresent(OpenCodeModelSelection.self, forKey: .openCodeSelection),
+            openCodeVariants: try values.decodeIfPresent([String].self, forKey: .openCodeVariants))
     }
 }
 

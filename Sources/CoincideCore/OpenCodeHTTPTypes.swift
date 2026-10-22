@@ -1,7 +1,7 @@
 import Foundation
 
 /// The HTTP generations have different routes, envelopes and mutation semantics.
-public enum OpenCodeGeneration: String, Sendable, Equatable, CaseIterable {
+public enum OpenCodeGeneration: String, Codable, Sendable, Equatable, Hashable, CaseIterable {
     case v1, v2
 
     public var minimumVersion: OpenCodeVersion {

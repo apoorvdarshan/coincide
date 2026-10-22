@@ -39,6 +39,7 @@ public struct PullRequestCheckoutReview: Codable, Sendable, Equatable, Identifia
               targetConfiguration.agentConfiguration?.values.allSatisfy({ $0.string != nil || $0 == .bool(true) || $0 == .bool(false) }) ?? true,
               try JSONEncoder().encode(targetConfiguration).count <= 1_048_576 else { throw CoincideError("The pull request checkout review has invalid target settings or identities.") }
         try targetConfiguration.acpAgent?.validate()
+        try CodexReasoningValidation.configuration(targetConfiguration)
     }
 }
 
@@ -300,7 +301,7 @@ extension WorkspaceDecision {
         var target = CodingThread(project: project), configuration = operation.review.targetConfiguration
         configuration.workspacePath = result.destinationPath; configuration.nativeThreadID = nil
         target.id = operation.targetThreadID; target.title = operation.review.title; target.workspacePath = configuration.workspacePath
-        target.provider = configuration.provider; target.model = configuration.model; target.reasoningEffort = configuration.reasoningEffort; target.permission = configuration.permission; target.acpAgent = configuration.acpAgent
+        target.provider = configuration.provider; target.model = configuration.model; target.reasoningEffort = configuration.reasoningEffort; target.permission = configuration.permission; target.acpAgent = configuration.acpAgent; target.openCodeConfiguration = configuration.openCodeConfiguration
         target.agentModeID = configuration.agentModeID; target.agentConfigValues = configuration.agentConfigValues; target.agentConfiguration = configuration.agentConfiguration
         target.checkpointPolicy = operation.review.checkpointPolicy; target.pullRequestCheckoutOperationID = operation.id
         target.queuePaused = true; target.createdAt = now; target.updatedAt = now

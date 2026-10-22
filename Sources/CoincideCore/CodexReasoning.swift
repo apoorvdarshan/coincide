@@ -90,12 +90,14 @@ enum CodexReasoningValidation {
               !value.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw WorkspaceCommandError("The model or reasoning selection is invalid. Refresh models and try again.") }
     }
     static func configuration(_ configuration: ProviderConfiguration) throws {
+        try OpenCodeConfigurationValidation.configuration(configuration)
         if let effort = configuration.reasoningEffort {
             try id(effort, limit: 256)
             guard configuration.provider == .codex else { throw CoincideError("Reasoning effort belongs to a different provider.") }
         }
     }
     static func thread(_ thread: CodingThread) throws {
+        try OpenCodeConfigurationValidation.thread(thread)
         if let effort = thread.reasoningEffort { try id(effort, limit: 256) }
         guard (thread.codexReasoningPreferences?.count ?? 0) <= 128,
               thread.codexModelSelectionSource == nil || (thread.provider == .codex && !thread.model.isEmpty) else { throw CoincideError("The Codex reasoning preferences are invalid.") }

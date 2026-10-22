@@ -1,5 +1,45 @@
 # Validation record
 
+## 2026-10-22 — native OpenCode 2 conversations
+
+- Added a dedicated native HTTP/SSE conversation adapter, durable captured
+  model/variant/agent settings, advertised menu choices, tool/text projection,
+  typed permission scopes/forms and exact Stop routing. Storage 26 preserves
+  these choices through queued turns, journal replay and restart, while existing
+  OpenCode ACP conversations keep their transport. Native v1 chat, authentication,
+  history, steering, reconciliation and complete provider parity remain open.
+- Synthetic actor coverage separates HTTP admission, owned delivered input,
+  execution start, step completion and terminal evidence. It covers stale/late
+  responses, lost replies with conclusive native evidence, Stop during preparation
+  and before admission, malformed ownership, child settlement after parent failure,
+  autonomous Stop and separate retained-run projection budgets. Unknown delivery
+  pauses the queue and never causes automatic replay.
+- The real TCP Engine integration passed in 0.225 seconds through the default
+  production factory, owned executable, URLSession, SSE, reducer and SQLite
+  journal. It verifies exact queued model/variant/agent/permission capture,
+  authoritative text/tool replacement, execution-only FIFO advancement, inbox
+  cancellation plus interruption, concurrent shutdown, stdin EOF and exact owned
+  PID disappearance. This executable is a private synthetic peer; no installed
+  OpenCode server, model, provider authentication or account was used.
+- Its first run rejected the fixture directory before creating a session:
+  Foundation retained `/var/...`, while Python resolved the same working directory
+  to `/private/var/...`. The peer now verifies the Foundation-provided directory
+  with `samefile` before readiness, then retains strict literal protocol equality.
+  Assertions and deadlines were unchanged. Failure diagnostics retain only bounded
+  synthetic state and semantic wire fields, excluding credentials and raw headers.
+- The final serialized full suite executed 961 declarations: 953 passed and
+  eight optional installed-provider checks were skipped. Core reports 806
+  declarations including those skips (256.033 seconds); all 136 native view/store
+  tests (48.700 seconds), six terminal tests and 13 Markdown tests passed.
+  This run includes the final unknown-admission Stop regression and the real TCP
+  Engine integration (0.224 seconds), rather than relying on earlier synthetic
+  or component results for the final implementation.
+- Packaging, strict/deep signatures and bundled native math rendering passed.
+  The rebuilt development bundle reopened successfully; a fresh native-window
+  screenshot was captured. A consistent private backup preceded storage 25-to-26
+  migration. SQLite integrity and canonical workspace content remain unchanged:
+  three conversations and 25 messages. No installed-provider turn was sent.
+
 ## 2026-10-22 — native operation control follow-through
 
 - Removed three additional unused outer identifiers from pull-request creation

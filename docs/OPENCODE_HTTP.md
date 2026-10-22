@@ -1,10 +1,12 @@
 # Native OpenCode HTTP integration
 
-The dedicated native HTTP integration remains **in progress**. The transport,
-owned-server lifecycle, read-only metadata and volatile event subscription are
-implemented in Swift. They do not yet supply an OpenCode `ProviderSession`,
-normal chat turns, approvals, steering or native history. Existing OpenCode ACP
-conversations retain their original transport and captured configuration.
+The dedicated native HTTP integration remains **in progress**. OpenCode 2 now
+has a native `ProviderSession` for owned local HTTP conversations, captured model
+and agent selection, streaming, tools, permissions, forms and explicit Stop.
+This is an implementation and offline-fixture boundary; installed HTTP/provider
+compatibility has not yet been established. Existing OpenCode ACP conversations
+retain their original transport and captured configuration. Native OpenCode 1
+chat, history, steering and complete T3 provider parity remain unfinished.
 
 ## Generation and connection boundaries
 
@@ -46,7 +48,7 @@ observation against server replacement. Closing metadata cancels and joins only
 its own reads, preserving a shared event subscription and HTTP client.
 
 `OpenCodeSSEConnection` waits for accepted event-stream headers before returning.
-V1 is directory-scoped; v2 is a global feed whose future adapter must route exact
+V1 is directory-scoped; v2 is a global feed whose adapter routes exact
 native session identities. Framing handles split UTF-8, BOM, CR/LF, comments,
 multiline data and committed event IDs. Each line/event is bounded, as are raw
 bytes and queued events. Heartbeat bytes refresh a 45-second silence watchdog.
@@ -55,13 +57,56 @@ reconciliation. They never complete a provider turn or replay a prompt. An
 unfinished event does not advance the committed cursor. A cursor alone does not
 make OpenCode's global stream durable.
 
+## Native OpenCode 2 conversations
+
+The native provider choice is separate from ACP. Storage version 26 prevents an
+older binary from reopening unfamiliar native configuration, run or effect
+semantics. Legacy Codex, Claude and ACP payloads still decode without native
+OpenCode settings. The durable value captures instance identity, generation,
+one local executable, exact provider/model/variant IDs and agent ID. Runtime
+credentials, ports, catalogs and inherited environment are not persisted.
+Queued turns and runs retain their own configuration when a future header
+selection changes. Models, variants and primary agents come from the exact
+workspace inventory; menu choices revalidate the current catalog at command
+execution. A model's local menu key is never parsed as a wire model ID.
+
+Each conversation actor owns its loopback process, HTTP client and global event
+subscription. Metadata uses an independent actor/runtime and never creates a
+native session. Session creation uses an exact intended ID and explicit title;
+adoption verifies ID, directory and root ownership. Missing native history is
+not replaced by another conversation. Captured agent, permissions and model are
+applied and reread before input. Existing active/inbox work blocks a new send.
+Preparation rechecks cancellation before every subsequent mutation.
+
+HTTP prompt success acknowledges durable inbox admission. A run completes only
+after its owned delivered input, actual execution start and matching terminal
+evidence; step completion and old terminals do not settle the next run. Deltas
+append exactly, while ended snapshots replace. Projection keys preserve native
+instance, session, assistant and item identity, with separate bounded projection
+state for each retained original run. Proven child calls retain that original
+run after foreground completion, and a background launch is not child success.
+
+Permissions offer explicit once, conversation and workspace scopes. Cancel and
+Decline have different native operations. Forms preserve exact option values,
+multiple selections, optional fields and native UTF-16/count constraints.
+Unsupported hidden, conditional or other field types remain visible and can be
+cancelled. A pending local request maps to one exact native session/request on
+that runtime. No rendering or default selection submits a response.
+
+Unresolved create/prompt acceptance and event disconnection fail conservatively
+and pause the queue. Conclusive delivered-input events can establish admission
+when the HTTP reply is lost; a late reply still belongs to its original run.
+Stop before either HTTP or native admission evidence closes and drains that
+owned runtime and preserves uncertain delivery: an early inbox deletion cannot
+prove that a still-pending POST was cancelled. Native history and unresolved work
+are not automatically replayed, and cancelling local HTTP I/O is not represented
+as native Stop.
+
 ## Remaining integration
 
-Native chat must add captured durable configuration with the storage-version
-fence, a shared runtime lease registry, exact inbox/input/run attribution,
-generation-specific tool/text/reasoning events, questions and permissions,
-explicit Stop and reconnect reconciliation. V2 HTTP prompt success is durable
-inbox admission, not execution completion. V1 and v2 history have distinct
+Remaining work includes a shared instance lease registry, native v1 chat,
+bounded reconnect/backfill reconciliation, complete autonomous/early-child
+recovery, native steering and session import/history. V1 and v2 history have distinct
 semantics; files remain under Coincide's reviewed checkpoint service. Native
 setup/authentication, commands, skills, usage and installed-provider verification
 also remain required by [the full parity inventory](PROVIDER_PARITY.md).

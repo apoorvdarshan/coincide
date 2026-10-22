@@ -19,6 +19,9 @@ and what still needs implementation and verification.
 Requires macOS 14+, a Swift 6.2+ toolchain, and Xcode Command Line Tools. Codex
 conversations require an installed, authenticated `codex` CLI; Claude conversations
 use the installed, authenticated `claude` CLI.
+Native OpenCode conversations use the installed OpenCode 2 CLI through its HTTP
+interface. This integration currently has offline-fixture verification;
+installed-provider verification and complete OpenCode parity remain unfinished.
 ACP v1 agents can use other installed CLIs, such as `opencode acp`.
 
 ```sh
@@ -31,7 +34,8 @@ so macOS can retain file-access consent across local rebuilds. Set
 CI uses ad-hoc signing. Local signing does not notarize or publish the app.
 
 Add a project folder, start a thread, and send a message. Coincide connects directly
-to Codex app-server or Claude's stream-json protocol using their existing sign-in.
+to Codex app-server, Claude's stream-json protocol, or an owned local OpenCode 2
+HTTP process using the CLI's existing sign-in and configuration.
 Choose the provider in a new conversation's header. Review requested commands and file
 changes in the conversation. Use the inspector to browse/edit files or inspect,
 stage, and commit Git changes. The branch menu creates/switches local branches or
@@ -46,6 +50,12 @@ reasoning options. Reasoning preferences are saved separately for each model;
 current checkout's CLI configuration and captures its concrete default model,
 keeping any saved reasoning preference for it. These choices apply to future
 turns. Active and queued turns retain the settings they already captured.
+
+For native OpenCode, **Refresh Models** reads the current workspace's models,
+variants and primary agents. These choices apply to future inputs; queued turns
+retain their captured model, variant, agent and permissions. Approval controls
+distinguish once, conversation-only and workspace-wide grants. Direct steering
+and native OpenCode history are still unfinished.
 
 **Settings → Providers → Codex Account** reads the existing CLI sign-in, plan,
 and available allowance windows. Email stays hidden until revealed. Refresh

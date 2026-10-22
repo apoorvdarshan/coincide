@@ -12,7 +12,15 @@ struct ApprovalView: View {
     private var questions: [JSONValue] { request.questions }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let question = request.cursorQuestion {
+            if request.method == "opencode/form" {
+                if let form = request.openCodeForm {
+                    OpenCodeFormApprovalView(form: form, isResponding: isResponding,
+                        onSelections: onSelections, onCancel: { onDecision(false) })
+                } else {
+                    Text("This OpenCode form cannot be displayed safely.")
+                    Button("Cancel Form") { onDecision(false) }
+                }
+            } else if let question = request.cursorQuestion {
                 CursorQuestionApprovalView(request: question, isResponding: isResponding,
                     onSelections: onSelections, onSkip: { onDecision(false) })
             } else if let plan = request.cursorPlan {
@@ -34,7 +42,7 @@ struct ApprovalView: View {
             } else {
                 Label(request.title, systemImage: "hand.raised").font(.headline)
                 ScrollView { Text(request.detail).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 140)
-                if request.method == "session/request_permission" {
+                if request.method == "session/request_permission" || request.method == "opencode/permission" {
                     ViewThatFits(in: .horizontal) {
                         HStack { permissionOptions }
                         VStack(alignment: .leading) { permissionOptions }

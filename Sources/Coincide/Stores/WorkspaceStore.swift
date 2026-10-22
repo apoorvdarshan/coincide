@@ -103,6 +103,7 @@ final class WorkspaceStore {
     var errorMessage: String?
     var providerModels: [ProviderKind: [ProviderModel]] = [:]
     var acpModels: [UUID: [ProviderModel]] = [:]
+    var openCodeCatalogs: [UUID: OpenCodeMetadataSnapshot] = [:]
     var isLoading = true
     var isRefreshingModels = false
     let codexAccount = CodexAccountStore()
@@ -738,6 +739,13 @@ final class WorkspaceStore {
                 acpModels.removeValue(forKey: id)
             }
         }
+        for id in Array(openCodeCatalogs.keys) {
+            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
+            if next?.provider != .opencode || old?.workspacePath != next?.workspacePath ||
+                old?.openCodeConfiguration?.runtimeIdentity != next?.openCodeConfiguration?.runtimeIdentity {
+                openCodeCatalogs.removeValue(forKey: id)
+            }
+        }
         let removedThreads = Set(snapshot.threads.map(\.id)).subtracting(update.snapshot.threads.map(\.id))
         let removedProjects = Set(snapshot.projects.map(\.id)).subtracting(update.snapshot.projects.map(\.id))
         let changedScriptThreads = Set(snapshot.threads.compactMap { old -> UUID? in
@@ -945,6 +953,16 @@ final class WorkspaceStore {
     }
     func setModel(_ model: String, id: UUID) {
         cancelCodexModelDefaultsRead(id)
+        if let current = thread(id), current.provider == .opencode {
+            _ = enqueueOpenCodeEdit(threadID: id) { [weak self] current in
+                if model.isEmpty { return .openCodeModel(nil) }
+                guard let advertised = self?.models(for: current).first(where: { $0.id == model }) else {
+                    throw CoincideError("Refresh OpenCode models before choosing a model.")
+                }
+                return .openCodeModel(advertised)
+            }
+            return
+        }
         if thread(id)?.provider == .codex, let advertised = models(for: .codex).first(where: { $0.id == model }) {
             sendCommand(.editThread(id, .codexModel(advertised)))
         } else { sendCommand(.editThread(id, .model(model))) }
@@ -954,6 +972,38 @@ final class WorkspaceStore {
     }
     func setACPAgent(_ agent: ACPAgentConfiguration, id: UUID) {
         cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .acpAgent(agent)))
+    }
+    @discardableResult func setOpenCodeVariant(_ variant: String?, model: ProviderModel, threadID: UUID) -> Task<Bool, Never> {
+        enqueueOpenCodeEdit(threadID: threadID) { [weak self] current in
+            guard current.model == model.id, let advertised = self?.models(for: current).first(where: { $0.id == model.id }) else {
+                throw CoincideError("The selected OpenCode model changed. Refresh models and choose again.")
+            }
+            return .openCodeVariant(model: advertised, variant: variant)
+        }
+    }
+    @discardableResult func setOpenCodeAgent(_ agent: String, threadID: UUID) -> Task<Bool, Never> {
+        enqueueOpenCodeEdit(threadID: threadID) { [weak self] _ in
+            guard self?.openCodeCatalogs[threadID]?.agents.contains(where: { $0.id == agent && !$0.hidden && $0.mode != .subagent }) == true else {
+                throw CoincideError("This OpenCode agent is no longer available. Refresh agents and choose again.")
+            }
+            return .openCodeAgent(agent)
+        }
+    }
+    private func enqueueOpenCodeEdit(threadID: UUID, prepare: @escaping @MainActor (CodingThread) throws -> ThreadEdit) -> Task<Bool, Never> {
+        guard !terminating, let captured = thread(threadID), captured.provider == .opencode else { return Task { false } }
+        let task = enqueuePreparing { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == .opencode,
+                  current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
+                  current.openCodeConfiguration?.runtimeIdentity == captured.openCodeConfiguration?.runtimeIdentity else { throw CancellationError() }
+            return .editThread(threadID, try prepare(current))
+        }
+        return Task {
+            do { _ = try await task.value; return true }
+            catch {
+                if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription }
+                return false
+            }
+        }
     }
     func codexReasoningModel(threadID: UUID) -> ProviderModel? {
         guard let thread = thread(threadID), thread.provider == .codex else { return nil }
@@ -1034,8 +1084,22 @@ final class WorkspaceStore {
     }
     func saveACPAgent(_ agent: ACPAgentConfiguration) async throws { _ = try await enqueue(.saveACPAgent(agent)).value }
     func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
-    func models(for provider: ProviderKind) -> [ProviderModel] { providerModels[provider] ?? [] }
+    func models(for provider: ProviderKind) -> [ProviderModel] {
+        if provider == .opencode {
+            guard let selectedThread, selectedThread.provider == .opencode else { return [] }
+            return models(for: selectedThread)
+        }
+        return providerModels[provider] ?? []
+    }
     func models(for thread: CodingThread) -> [ProviderModel] {
+        if thread.provider == .opencode {
+            guard let inventory = openCodeCatalogs[thread.id] else { return [] }
+            return inventory.models.filter(\.enabled).map { descriptor in
+                .init(id: descriptor.selection.catalogID, name: descriptor.name,
+                      isDefault: inventory.defaults.contains(descriptor.selection),
+                      openCodeSelection: descriptor.selection, openCodeVariants: descriptor.variants)
+            }
+        }
         guard thread.provider == .acp else { return models(for: thread.provider) }
         if let refreshed = acpModels[thread.id] { return refreshed }
         if let metadata = thread.providerMetadata { return ACPConfigurationOptions.models(metadata) }
@@ -1180,7 +1244,7 @@ final class WorkspaceStore {
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
-        let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.provider.executable
+        let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.openCodeConfiguration?.executable ?? thread.provider.executable
         guard !executable.isEmpty, ProcessChannel.findExecutable(executable) != nil else {
             errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
             return Task { false }
@@ -1348,7 +1412,16 @@ final class WorkspaceStore {
         defer { isRefreshingModels = false }
         do {
             let kind = provider ?? selectedThread?.provider ?? .codex
-            if kind == .acp, let thread = selectedThread, thread.acpAgent != nil {
+            if kind == .opencode {
+                guard let thread = selectedThread, thread.provider == .opencode else {
+                    throw CoincideError("Choose OpenCode in a conversation before refreshing its workspace models.")
+                }
+                let catalog = try await engine.openCodeInventory(thread: thread)
+                guard let current = self.thread(thread.id), current.provider == .opencode,
+                      current.projectID == thread.projectID, current.workspacePath == thread.workspacePath,
+                      current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity else { return }
+                openCodeCatalogs[thread.id] = catalog
+            } else if kind == .acp, let thread = selectedThread, thread.acpAgent != nil {
                 let models = try await engine.models(thread: thread)
                 guard let current = self.thread(thread.id), current.provider == thread.provider,
                       current.acpAgent == thread.acpAgent, current.workspacePath == thread.workspacePath else { return }

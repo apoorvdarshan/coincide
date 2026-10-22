@@ -68,6 +68,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var providerThreadID: String?
     public var provider: ProviderKind
     public var acpAgent: ACPAgentConfiguration?
+    public var openCodeConfiguration: OpenCodeConfiguration?
     public var agentModeID: String?
     public var agentConfigValues: [String: String]?
     public var providerMetadata: JSONValue?
@@ -106,7 +107,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
         case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
-        case acpAgent, agentModeID, agentConfigValues, providerMetadata
+        case acpAgent, openCodeConfiguration, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
     }
     public init(from decoder: any Decoder) throws {
@@ -120,6 +121,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
         provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
         acpAgent = try values.decodeIfPresent(ACPAgentConfiguration.self, forKey: .acpAgent)
+        openCodeConfiguration = try values.decodeIfPresent(OpenCodeConfiguration.self, forKey: .openCodeConfiguration)
         agentModeID = try values.decodeIfPresent(String.self, forKey: .agentModeID)
         agentConfigValues = try values.decodeIfPresent([String: String].self, forKey: .agentConfigValues)
         providerMetadata = try values.decodeIfPresent(JSONValue.self, forKey: .providerMetadata)
@@ -291,7 +293,8 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var id: JSONValue
     public var method: String
     public var params: JSONValue
-    public var isQuestion: Bool { method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
+    public var isQuestion: Bool { method == "opencode/form" || method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
+    public var openCodeForm: OpenCodeV2Form? { try? OpenCodeV2Form.presentation(self) }
     public var questions: [JSONValue] {
         if method == "can_use_tool" {
             return (params["input"]["questions"].array ?? []).map { question in
@@ -303,6 +306,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
+        if method == "opencode/form" || method == "opencode/permission" { return params["title"].string ?? "OpenCode needs your input" }
         if let question = cursorQuestion { return question.title ?? "Answer Cursor questions" }
         if let plan = cursorPlan { return plan.name ?? "Review Cursor plan" }
         if method == "session/request_permission" { return params["title"].string ?? params["toolCall"]["title"].string ?? "Approve agent tool" }
@@ -310,6 +314,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return method.contains("fileChange") ? "Approve file changes" : "Approve command"
     }
     public var detail: String {
+        if method == "opencode/permission" { return params["description"].string ?? "Review the requested action." }
         if let plan = cursorPlan { return plan.plan }
         if method == "session/request_permission" {
             if params.object?["subject"] != nil { return [params["description"].string, params["subject"].pretty].compactMap { $0 }.joined(separator: "\n") }

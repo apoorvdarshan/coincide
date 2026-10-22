@@ -13,10 +13,14 @@ struct ProviderMenu: View {
     private var summary: String {
         var parts = [thread.providerName]
         if !thread.model.isEmpty {
-            parts.append(store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? thread.model)
+            parts.append(store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? thread.openCodeConfiguration?.model?.id ?? thread.model)
         }
         if thread.provider == .codex, let effort = thread.reasoningEffort {
             parts.append(String(localized: "Reasoning: \(ReasoningEffortPresentation.title(effort))"))
+        }
+        if thread.provider == .opencode {
+            if let variant = thread.openCodeConfiguration?.model?.variant { parts.append(variant) }
+            if let agent = thread.openCodeConfiguration?.agentID { parts.append(agent) }
         }
         return parts.joined(separator: " · ")
     }
@@ -54,6 +58,9 @@ struct ProviderMenu: View {
                 Divider()
                 reasoningMenu(model)
             }
+            if thread.provider == .opencode {
+                openCodeOptions
+            }
             if thread.provider == .acp {
                 Divider()
                 Button("Reset Agent Options") { store.resetAgentOptions(thread.id) }
@@ -89,7 +96,7 @@ struct ProviderMenu: View {
             }
             Divider()
             Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
-                .disabled(thread.provider == .acp && !store.workspaceReady(for: thread))
+                .disabled((thread.provider == .acp || thread.provider == .opencode) && !store.workspaceReady(for: thread))
         } label: {
             // AppKit's native menu button derives its title from a single Text.
             // Nested label stacks otherwise lose the selected model and effort.
@@ -100,6 +107,32 @@ struct ProviderMenu: View {
         .accessibilityValue(summary)
         .accessibilityIdentifier("provider-model-menu")
         .help(summary)
+    }
+    @ViewBuilder private var openCodeOptions: some View {
+        if let selected = thread.openCodeConfiguration?.model,
+           let model = store.models(for: thread).first(where: { $0.id == selected.catalogID }),
+           let variants = model.openCodeVariants, !variants.isEmpty {
+            Divider()
+            Menu("Variant") {
+                Button { store.setOpenCodeVariant(nil, model: model, threadID: thread.id) } label: {
+                    choice("Model Default", selected: selected.variant == nil)
+                }
+                ForEach(variants, id: \.self) { variant in
+                    Button { store.setOpenCodeVariant(variant, model: model, threadID: thread.id) } label: {
+                        choice(variant, selected: selected.variant == variant)
+                    }
+                }
+            }.accessibilityIdentifier("opencode-variant-menu")
+        }
+        if let catalog = store.openCodeCatalogs[thread.id] {
+            Menu("Agent") {
+                ForEach(catalog.agents.filter { !$0.hidden && $0.mode != .subagent }, id: \.id) { agent in
+                    Button { store.setOpenCodeAgent(agent.id, threadID: thread.id) } label: {
+                        choice(agent.name, selected: thread.openCodeConfiguration?.agentID == agent.id)
+                    }
+                }
+            }.accessibilityIdentifier("opencode-agent-menu")
+        }
     }
     private func reasoningMenu(_ model: ProviderModel) -> some View {
         Menu("Reasoning") {

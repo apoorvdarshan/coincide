@@ -2,7 +2,7 @@ import Foundation
 
 /// These are the advertised wire identifiers, not a slash-split display label or
 /// the upstream `modelID` used inside a provider implementation.
-public struct OpenCodeModelSelection: Sendable, Equatable, Hashable {
+public struct OpenCodeModelSelection: Codable, Sendable, Equatable, Hashable {
     public let providerID: String
     public let id: String
     public let variant: String?

@@ -32,6 +32,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case resetAgentOptions
     case checkpointPolicy(RunCheckpointPolicy)
     case codexModel(ProviderModel), codexReasoning(model: ProviderModel, effort: String?), codexDefaultModel(CodexDefaultModelSelection)
+    case openCodeModel(ProviderModel?), openCodeVariant(model: ProviderModel, variant: String?), openCodeAgent(String)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -546,10 +547,19 @@ struct WorkspaceDecision: Sendable {
                 case .codexModel(let model): try thread.selectCodexModel(model)
                 case .codexReasoning(let model, let effort): try thread.selectCodexReasoning(model: model, effort: effort)
                 case .codexDefaultModel(let selection): try thread.selectCodexDefaultModel(selection)
+                case .openCodeModel(let model): try thread.selectOpenCodeModel(model)
+                case .openCodeVariant(let model, let variant): try thread.selectOpenCodeVariant(model: model, variant: variant)
+                case .openCodeAgent(let agent):
+                    guard thread.provider == .opencode, let native = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
+                    let selected = native.selecting(agentID: agent); try selected.validate(); thread.openCodeConfiguration = selected
                 case .title(let title):
                     let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !title.isEmpty else { throw WorkspaceCommandError("A conversation title cannot be empty.") }; thread.title = title
                 case .model(let model):
+                    if thread.provider == .opencode {
+                        guard model.isEmpty else { throw WorkspaceCommandError("Choose an advertised native OpenCode model.") }
+                        try thread.selectOpenCodeModel(nil); break
+                    }
                     if thread.model != model { thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil }
                     thread.model = model
                 case .permission(let mode): thread.permission = mode
@@ -569,10 +579,12 @@ struct WorkspaceDecision: Sendable {
                     guard kind != .acp else { throw WorkspaceCommandError("Choose a configured ACP agent.") }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
                     decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
+                    thread.openCodeConfiguration = kind == .opencode ? .init(instanceID: id) : nil
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
                     guard decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Save this agent in Settings first.") }
                     decision.closeRuntimes.insert(thread.id); thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
+                    thread.openCodeConfiguration = nil
                     thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value
@@ -651,24 +663,37 @@ struct WorkspaceDecision: Sendable {
                 let request = thread.runtimeRequests[i].request
                 switch response {
                 case .option(let id):
-                    guard request.method == "session/request_permission", (request.params["options"].array ?? []).contains(where: { $0["optionId"].string == id }) else {
+                    guard (request.method == "session/request_permission" || (thread.provider == .opencode && request.method == "opencode/permission")),
+                          (request.params["options"].array ?? []).contains(where: { $0["optionId"].string == id }) else {
                         throw WorkspaceCommandError("This permission option is no longer available.")
                     }
                 case .decision(let allow):
-                    if let method = CursorACPMethod.canonical(request.method) {
+                    if request.method == "opencode/form" {
+                        guard thread.provider == .opencode, !allow else { throw WorkspaceCommandError("Answer the OpenCode form or cancel it.") }
+                    } else if let method = CursorACPMethod.canonical(request.method) {
                         guard thread.provider == .acp, thread.acpAgent?.integration == .cursor,
                               method == CursorACPMethod.question ? (!allow && request.cursorQuestion != nil) : request.cursorPlan != nil else {
                             throw WorkspaceCommandError("This Cursor request is no longer valid.")
                         }
                     } else { guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") } }
                 case .answers(let answers):
-                    guard CursorACPMethod.canonical(request.method) == nil, request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
-                case .selections(let selections):
-                    guard thread.provider == .acp, thread.acpAgent?.integration == .cursor, let question = request.cursorQuestion else {
-                        throw WorkspaceCommandError("This selectable question is no longer valid.")
+                    if request.method == "opencode/form" {
+                        guard thread.provider == .opencode, let form = request.openCodeForm else { throw WorkspaceCommandError("This OpenCode form is no longer valid.") }
+                        _ = try form.answerBody(answers: answers)
+                    } else {
+                        guard CursorACPMethod.canonical(request.method) == nil, request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
                     }
-                    do { _ = try question.response(for: selections) }
-                    catch { throw WorkspaceCommandError("Select valid answers for every required question.") }
+                case .selections(let selections):
+                    if request.method == "opencode/form" {
+                        guard thread.provider == .opencode, let form = request.openCodeForm else { throw WorkspaceCommandError("This OpenCode form is no longer valid.") }
+                        _ = try form.answerBody(selections: selections)
+                    } else {
+                      guard thread.provider == .acp, thread.acpAgent?.integration == .cursor, let question = request.cursorQuestion else {
+                        throw WorkspaceCommandError("This selectable question is no longer valid.")
+                      }
+                      do { _ = try question.response(for: selections) }
+                      catch { throw WorkspaceCommandError("Select valid answers for every required question.") }
+                    }
                 }
                 thread.runtimeRequests[i].responding = true
                 if sessionScoped, let runtimeID = thread.runtimeID {
@@ -836,7 +861,9 @@ struct WorkspaceDecision: Sendable {
                 // recorded provider/run. Raw entity metadata cannot retarget it.
                 guard let record = thread.runHistory?.first(where: { $0.id == owner }),
                       record.removedByHistoryOperationID == nil, record.checkpoints?.providerReleased != false,
-                      record.configuration.provider == .acp, record.configuration.acpAgent?.integration == .copilot,
+                      (record.configuration.provider == .acp && record.configuration.acpAgent?.integration == .copilot) ||
+                        (thread.provider == .opencode && record.configuration.provider == .opencode &&
+                         record.configuration.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity),
                       record.providerThreadID == thread.providerThreadID else { return }
                 attributedRun = owner
             } else { attributedRun = thread.activeRun?.id }
@@ -908,7 +935,7 @@ struct WorkspaceDecision: Sendable {
             let status: ThreadRunStatus = stopped || state == .interrupted ? .interrupted : state == .idle ? .completed : state == .failed ? .failed : .unknown
             thread.finishRunRecord(status: status, reason: .providerCompleted, now: now)
             if let runID = thread.activeRun?.id { requestPostRunCheckpoint(runID: runID, in: &thread, now: now) }
-            thread.activeRun = nil; thread.runtimeRequests = []; thread.state = stopped ? .interrupted : state
+            thread.activeRun = nil; thread.runtimeRequests.removeAll { $0.sessionScoped != true }; thread.state = stopped ? .interrupted : state
             if stopped || state != .idle { thread.queuePaused = true }
             else { startNext(in: &thread, now: now) }
         case .failure(let message), .connectionClosed(let message):

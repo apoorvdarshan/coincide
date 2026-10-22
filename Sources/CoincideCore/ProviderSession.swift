@@ -1,11 +1,11 @@
 import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case codex, claude, acp
-    public static var builtIn: [Self] { [.codex, .claude] }
+    case codex, claude, opencode, acp
+    public static var builtIn: [Self] { [.codex, .claude, .opencode] }
     public var id: String { rawValue }
-    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .acp: "ACP Agent" } }
-    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .acp: "" } }
+    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .acp: "ACP Agent" } }
+    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .acp: "" } }
 }
 
 public enum ProviderEvent: Codable, Sendable, Equatable {
@@ -33,6 +33,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
 public protocol ProviderSession: Actor {
     nonisolated var events: AsyncStream<ProviderEvent> { get }
     func models() async throws -> [ProviderModel]
+    func openCodeInventory() async throws -> OpenCodeMetadataSnapshot
     func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection
     func codexAccountSnapshot() async throws -> CodexAccountSnapshot
     func acpConnectionInfo() async throws -> ACPConnectionInfo
@@ -54,6 +55,9 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
+        throw CoincideError("This provider does not expose a native OpenCode catalog.")
+    }
     public func acpConnectionInfo() async throws -> ACPConnectionInfo {
         throw CoincideError("This provider does not expose an ACP connection.")
     }
@@ -84,6 +88,15 @@ extension ProviderSession {
 
 public enum ProviderSessions {
     public static func make(for thread: CodingThread) throws -> any ProviderSession {
+        if thread.provider == .opencode {
+            guard let configuration = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
+            try OpenCodeConfigurationValidation.thread(thread)
+            guard configuration.generation == .v2 else { throw OpenCodeProtocolError.wrongGeneration }
+            guard let executable = ProcessChannel.findExecutable(configuration.executable) else {
+                throw CoincideError("Install and sign in to OpenCode 2 before sending a message.")
+            }
+            return OpenCodeV2Session(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration)
+        }
         if thread.provider == .acp {
             guard let agent = thread.acpAgent else { throw CoincideError("Choose an ACP agent in Settings before sending a message.") }
             try agent.validate()
@@ -101,6 +114,7 @@ public enum ProviderSessions {
         switch thread.provider {
         case .codex: return try CodexSession(executable: executable, cwd: cwd)
         case .claude: return try ClaudeSession(executable: executable, cwd: cwd, resumeID: thread.providerThreadID)
+        case .opencode: throw OpenCodeConfiguration.invalid()
         case .acp: throw CoincideError("Choose an ACP agent.")
         }
     }

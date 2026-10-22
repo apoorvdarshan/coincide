@@ -15,13 +15,14 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
     public var reasoningEffort: String?
     public var permission: PermissionMode
     public var acpAgent: ACPAgentConfiguration?
+    public var openCodeConfiguration: OpenCodeConfiguration?
     public var agentModeID: String?
     public var agentConfigValues: [String: String]?
     public var agentConfiguration: [String: JSONValue]?
     public init(thread: CodingThread) {
         provider = thread.provider; workspacePath = thread.workspacePath
         nativeThreadID = thread.providerThreadID; model = thread.model; reasoningEffort = thread.provider == .codex ? thread.reasoningEffort : nil; permission = thread.permission
-        acpAgent = thread.acpAgent; agentModeID = thread.agentModeID
+        acpAgent = thread.acpAgent; openCodeConfiguration = thread.openCodeConfiguration; agentModeID = thread.agentModeID
         agentConfigValues = thread.agentConfigValues
         agentConfiguration = thread.agentConfiguration
     }

@@ -20,7 +20,7 @@ private func markerImage(_ marker: String) throws -> Data {
 }
 
 /// Explicit opt-in: incurs real provider usage and sends only generated test data.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_ATTACHMENTS"] == "1"), .timeLimit(.minutes(3)), arguments: ProviderKind.builtIn)
+@Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_ATTACHMENTS"] == "1"), .timeLimit(.minutes(3)), arguments: [ProviderKind.codex, .claude])
 func installedProvidersReadAnImageAndFileThroughTheNativeEngine(_ kind: ProviderKind) async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"))

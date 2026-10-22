@@ -13,7 +13,12 @@ struct SettingsView: View {
                 Picker("Provider", selection: $provider) { ForEach(ProviderKind.builtIn) { Text($0.name).tag($0) } }
                 LabeledContent("CLI", value: ProcessChannel.findExecutable(provider.executable)?.path ?? "Not installed")
                 Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)
-                Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels(provider: provider) } }.disabled(store.isRefreshingModels)
+                Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels(provider: provider) } }
+                    .disabled(store.isRefreshingModels || (provider == .opencode && store.selectedThread?.provider != .opencode))
+                if provider == .opencode {
+                    Text("Choose OpenCode in a new conversation to use native OpenCode 2 and refresh the models and agents available in that workspace.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 LabeledContent("Available models", value: "\(store.models(for: provider).count)")
                 if provider == .codex {
                     CodexAccountSection(account: store.codexAccount) { await store.refreshCodexAccount() }

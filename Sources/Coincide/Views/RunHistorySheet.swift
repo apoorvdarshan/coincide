@@ -349,6 +349,12 @@ enum RunHistoryPresentation {
         configuration.provider == .acp ? configuration.acpAgent?.name ?? configuration.provider.name : configuration.provider.name
     }
     static func model(_ configuration: ProviderConfiguration) -> String {
+        if configuration.provider == .opencode, let native = configuration.openCodeConfiguration {
+            var parts = [native.model.map { $0.providerID + " / " + $0.id } ?? String(localized: "Default model")]
+            if let variant = native.model?.variant { parts.append(variant) }
+            parts.append(String(localized: "Agent: \(native.agentID)"))
+            return parts.joined(separator: " · ")
+        }
         guard configuration.model.isEmpty else { return configuration.model }
         return hasSavedAgentOptions(configuration)
             ? String(localized: "Agent-managed model") : String(localized: "Default model")

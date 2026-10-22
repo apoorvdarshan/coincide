@@ -120,7 +120,7 @@ func attachmentImageData(type: UTType = .png, width: Int = 120, height: Int = 60
     let input = try await store.prepare(text: "Read this note", attachments: [image, note])
     #expect(input.images.count == 1 && input.text.contains("Attached file"))
     let peer = try #require(Bundle.module.url(forResource: "attachment_server", withExtension: "py", subdirectory: "Fixtures"))
-    for kind in ProviderKind.builtIn {
+    for kind in [ProviderKind.codex, .claude] {
         var thread = CodingThread(project: WorkspaceProject(path: root.path)); thread.provider = kind
         let session: any ProviderSession = kind == .codex
             ? try CodexSession(executable: URL(fileURLWithPath: "/usr/bin/python3"), cwd: root, arguments: [peer.path, kind.rawValue])
