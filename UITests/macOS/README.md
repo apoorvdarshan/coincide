@@ -23,7 +23,9 @@ normal app data. Git identity and hooks are configured through a private
 test-only Git config, without changing the runner's global settings. Composer
 text remains unsent in the first eight workflows. The ninth sends three synthetic
 prompts, and the tenth and twelfth send one each, only to a bundled offline Codex
-protocol peer; no real coding agent or network provider is invoked.
+protocol peer. The thirteenth sends an initial prompt and an explicit follow-up
+into that same running turn through a separate closed-world peer; no real coding
+agent or network provider is invoked.
 The shell resolves the selected Xcode's real Git executable before entering the
 sandbox; commit verification avoids `/usr/bin/git`'s developer-tool shim and
 retains both output streams in the test result for diagnosis.
@@ -141,7 +143,7 @@ exact-head hosted job runs; compilation and fixture tests alone are not GUI proo
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all twelve tests to pass with zero
+gate requires all thirteen tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 
@@ -180,3 +182,20 @@ graceful restart must preserve both conversations, the original source transcrip
 and draft, and the same worktree. Source README/HEAD and the remote creation log
 remain unchanged. This workflow performs no live GitHub writes or network fetch;
 its runtime outcome remains pending until the exact-head hosted run executes it.
+
+The thirteenth workflow holds one offline Codex turn open. Plain Return must
+initially send, then retain the default Queue behavior during that running turn.
+The test queues a temporary follow-up, verifies that it did not start another
+provider turn, and explicitly removes it. It pastes literal Unicode text into
+the native composer and uses Command-Return as the alternate Steer delivery.
+The dedicated peer requires the exact existing thread/turn, unchanged text, the
+immutable client user-message ID, and no model/permission/configuration override;
+it acknowledges once and completes the original turn. The native transcript and
+the test-owned SQLite projection must contain exactly two user rows, one run,
+an empty queue, and one acknowledged durable steering receipt linked to the
+second user row. Graceful relaunch must preserve that audit and a newer unsent
+draft without repeating any thread/start, turn/start or turn/steer RPC. README
+and Git HEAD remain unchanged. The peer has no real provider or network fallback,
+and the same staged wrapper preflight applies without a bypass. SQLite is opened
+read-only solely beneath this test's private root; no app launch hooks seed the
+projection. Its runtime outcome remains pending until hosted execution.

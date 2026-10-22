@@ -88,7 +88,7 @@ extension WorkspaceSnapshot {
     func validatePullRequestCreations() throws {
         let operations = pullRequestCreations ?? []
         let identities = operations.flatMap { [$0.id, $0.effectID] }
-        var reserved = pullRequestCheckoutReservedIDs.union(Set(projects.map(\.id) + threads.map(\.id) + (checkpointRestoreOperations ?? []).map(\.id) +
+        var reserved = pullRequestCheckoutReservedIDs.union(promptSteeringReservedIDs).union(Set(projects.map(\.id) + threads.map(\.id) + (checkpointRestoreOperations ?? []).map(\.id) +
             (conversationHistoryOperations ?? []).flatMap { [$0.id] + ($0.review.targetThreadID.map { [$0] } ?? []) + ($0.review.files.map { [$0.id] } ?? []) }))
         for project in projects { if let clone = project.clone { reserved.formUnion((clone.previousPlans + [clone.plan]).map(\.id)) } }
         for thread in threads {

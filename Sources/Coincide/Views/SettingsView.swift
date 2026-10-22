@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var store: WorkspaceStore
     @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("followUpBehavior") private var followUpBehavior = ComposerFollowUpBehavior.queue.rawValue
     @State private var provider = ProviderKind.codex
     @State private var editingAgent: ACPAgentConfiguration?
     var body: some View {
@@ -37,6 +38,11 @@ struct SettingsView: View {
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "cpu") }
             Form {
                 Picker("Appearance", selection: $appearance) { Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark") }
+                Picker("Messages during a running turn", selection: $followUpBehavior) {
+                    ForEach(ComposerFollowUpBehavior.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                Text("Queue waits for the next turn. Steer sends into a supported running turn with that turn's settings. Command-Return uses the alternate action; unavailable steering keeps the message queued.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Group projects", selection: Binding(get: { store.projectGroupingMode }, set: { store.setProjectGroupingMode($0) })) {
                     ForEach(ProjectGroupingMode.allCases) { Text($0.title).tag($0) }
                 }

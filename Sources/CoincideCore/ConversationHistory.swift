@@ -146,16 +146,23 @@ extension WorkspaceSnapshot {
     public func canReviewConversationHistory(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty, thread.heldPostRunCheckpoint == nil,
-              thread.settlement == nil, workspaceReady(for: thread), !isPullRequestCheckoutLocked(threadID: threadID), !isPullRequestCreationLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
+              thread.settlement == nil, !(promptSteerings ?? []).contains(where: { $0.threadID == threadID && $0.isWorking }), workspaceReady(for: thread), !isPullRequestCheckoutLocked(threadID: threadID), !isPullRequestCreationLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !(conversationHistoryOperations ?? []).contains(where: { $0.id != excludingOperationID && $0.review.sourceThreadID == threadID && $0.locksSource }) else { return false }
         return thread.workspacePreparation?.setup.map { [.succeeded, .skipped].contains($0.phase) } ?? true
     }
     public func historySourceFingerprint(threadID: UUID) throws -> String {
         guard let thread = threads.first(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
+        struct SteeringProof: Encodable {
+            let id: UUID, runID: UUID
+            let messageID: String
+            let phase: PromptSteeringPhase
+            let receipt: ProviderSteeringReceipt?
+        }
         struct Source: Encodable {
             let id: UUID, projectID: UUID
             let configuration: ProviderConfiguration
             let messages: [ChatMessage]
+            let steering: [SteeringProof]?
             let records: [ThreadRunRecord]
             let checkpointPolicy: RunCheckpointPolicy?
             let activeRun: ActiveRun?
@@ -166,7 +173,8 @@ extension WorkspaceSnapshot {
             let archived: Bool, queuePaused: Bool
         }
         let records = thread.activeHistoryRuns.map { value in var value = value; value.checkpoints = nil; return value }
-        let source = Source(id: thread.id, projectID: thread.projectID, configuration: .init(thread: thread), messages: thread.visibleMessages,
+        let steering = (promptSteerings ?? []).filter { $0.threadID == thread.id }.map { SteeringProof(id: $0.id, runID: $0.runID, messageID: $0.messageID, phase: $0.phase, receipt: $0.receipt) }
+        let source = Source(id: thread.id, projectID: thread.projectID, configuration: .init(thread: thread), messages: thread.visibleMessages, steering: steering.isEmpty ? nil : steering,
             records: records, checkpointPolicy: thread.checkpointPolicy, activeRun: thread.activeRun,
             queuedTurns: thread.queuedTurns, runtimeRequests: thread.runtimeRequests,
             preparation: thread.workspacePreparation, settlement: thread.settlement, archived: thread.isArchived, queuePaused: thread.queuePaused)
@@ -182,7 +190,10 @@ extension WorkspaceSnapshot {
               run.configuration.workspacePath == thread.workspacePath, !run.turnIDs.isEmpty,
               run.providerThreadID == thread.providerThreadID, run.providerThreadID != nil else { return "This run has no verified boundary in the current Codex conversation and checkout." }
         if kind == .forkAfterRun, run.status != .completed { return "Native forks require a completed run with a verified provider turn." }
-        do { _ = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun) }
+        do {
+            let prefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
+            guard !hasUnverifiedSteering(in: prefix) else { return "This retained transcript includes steering whose native delivery is unconfirmed. Rewind before its run instead." }
+        }
         catch { return "This run has no verified local transcript boundary." }
         return nil
     }
@@ -199,7 +210,9 @@ extension WorkspaceSnapshot {
               run.configuration.provider == .codex, thread.provider == .codex,
               run.providerThreadID == review.sourceReference.nativeThreadID, thread.providerThreadID == review.sourceReference.nativeThreadID,
               !run.turnIDs.isEmpty else { throw WorkspaceCommandError("This conversation or its reviewed history changed. Review the current run again.") }
-        let prefix = try thread.transcriptPrefix(runID: run.id, boundary: review.kind == .forkAfterRun ? .afterRun : .beforeRun)
+        let rawPrefix = try thread.transcriptPrefix(runID: run.id, boundary: review.kind == .forkAfterRun ? .afterRun : .beforeRun)
+        guard !hasUnverifiedSteering(in: rawPrefix) else { throw WorkspaceCommandError("This native history prefix includes unconfirmed steering delivery.") }
+        let prefix = review.kind == .forkAfterRun ? try verifiedForkPrefix(rawPrefix) : rawPrefix
         guard prefix == review.prefix else { throw WorkspaceCommandError("The reviewed transcript prefix changed. Review it again.") }
         switch review.kind {
         case .forkAfterRun:
@@ -291,7 +304,7 @@ extension WorkspaceDecision {
     }
 
     mutating func acceptConversationHistory(_ review: ConversationHistoryReview, title: String?, now: Date) throws {
-        let checkoutIDs = snapshot.pullRequestCheckoutReservedIDs
+        let checkoutIDs = snapshot.pullRequestCheckoutReservedIDs.union(snapshot.promptSteeringReservedIDs)
         guard !([review.id] + (review.targetThreadID.map { [$0] } ?? []) + (review.files.map { [$0.id] } ?? [])).contains(where: { checkoutIDs.contains($0) }) else { throw WorkspaceCommandError("This history identity is reserved by a pull request checkout.") }
         guard snapshot.conversationHistoryOperation(review.id) == nil,
               !snapshot.threads.contains(where: { $0.id == review.id }),

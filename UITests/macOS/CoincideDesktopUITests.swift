@@ -1,11 +1,141 @@
 import AppKit
 import CoreGraphics
 import Darwin
+import SQLite3
 import Vision
 import XCTest
 
 final class CoincideDesktopUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
+
+    @MainActor func testNativeSteeringTargetsRunningTurnAndPreservesReceiptAcrossRestart() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "steering")
+        let app = fixture.app, root = fixture.root
+        app.launchArguments += ["-followUpBehavior", "queue"]
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
+        let project = root.appendingPathComponent("Native Steering", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let readme = project.appendingPathComponent("README.md"), original = Data("Native steering leaves workspace files unchanged\n".utf8)
+        try original.write(to: readme)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Native steering fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "steering-git-\(arguments[0])")
+        }
+        let originalHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "steering-original-head")
+        let firstPrompt = "Keep this native turn running until its explicit steering input"
+        let literal = "Literal steering: café λ 👩🏽‍💻 '$(not executed)' \\n stays text"
+        let queuedPrompt = "Keep this temporary input queued until I explicitly remove it"
+        let state = root.appendingPathComponent("steering-peer.json"), wire = root.appendingPathComponent("steering-peer-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "firstPrompt": firstPrompt, "steeringPrompt": literal]).write(to: state)
+        let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_steering_ui", withExtension: "py"))
+        let peer = root.appendingPathComponent("codex_steering_ui.py")
+        try Data(contentsOf: bundledPeer).write(to: peer)
+        let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
+        for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        let executable = bin.appendingPathComponent("codex")
+        try ("#!/bin/sh\nexec " + [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ") + "\n")
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["CODEX_HOME"] = home.path
+        addTeardownBlock { @MainActor [weak self] in
+            for (path, name) in [(wire, "steering-offline-provider-wire"), (state, "steering-offline-provider-state")] {
+                if let data = try? Data(contentsOf: path), let text = String(data: data, encoding: .utf8) {
+                    let receipt = XCTAttachment(string: text); receipt.name = name; receipt.lifetime = .keepAlways; self?.add(receipt)
+                }
+            }
+        }
+        // The same strict wrapper initialize preflight applies to every offline provider workflow.
+        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: "steering")
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"], send = app.buttons["composer-send"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let threadIdentifier = try selectedThreadIdentifier(in: app)
+        composer.click(); composer.typeText(firstPrompt)
+        XCTAssertTrue(waitForValue(composer, value: firstPrompt, timeout: 5))
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["Offline steering turn is running"].waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 5))
+        XCTAssertTrue(send.waitForExistence(timeout: 5)); XCTAssertEqual(send.label, "Queue message")
+
+        // Plain Return retains the default queue behavior while the original native turn is held.
+        composer.click(); composer.typeText(queuedPrompt)
+        XCTAssertTrue(waitForValue(composer, value: queuedPrompt, timeout: 5))
+        app.typeKey(.return, modifierFlags: [])
+        let removeQueued = app.buttons["Remove queued message"]
+        XCTAssertTrue(removeQueued.waitForExistence(timeout: 10))
+        let queued = try waitForPrivateWorkspace(root, timeout: 10) { snapshot in
+            guard let thread = (snapshot["threads"] as? [[String: Any]])?.first else { return false }
+            return (thread["queuedTurns"] as? [[String: Any]])?.first?["text"] as? String == queuedPrompt
+        }
+        let queuedThread = try XCTUnwrap((queued["threads"] as? [[String: Any]])?.first)
+        XCTAssertEqual((queuedThread["queuedTurns"] as? [[String: Any]])?.count, 1)
+        XCTAssertEqual((queuedThread["runHistory"] as? [[String: Any]])?.count, 1)
+        XCTAssertEqual(try historyWire(wire).filter { $0["method"] as? String == "turn/start" }.count, 1)
+        XCTAssertEqual(try historyWire(wire).filter { $0["method"] as? String == "turn/steer" }.count, 0)
+        capture(app, name: "steering-default-return-retains-queued-input")
+        XCTAssertTrue(removeQueued.isEnabled && removeQueued.isHittable); removeQueued.click()
+        XCTAssertTrue(waitForAbsence(removeQueued, timeout: 5))
+        _ = try waitForPrivateWorkspace(root, timeout: 5) { snapshot in
+            ((snapshot["threads"] as? [[String: Any]])?.first?["queuedTurns"] as? [[String: Any]])?.isEmpty == true
+        }
+
+        // Paste preserves literal Unicode; only the disposable hosted runner's clipboard is used.
+        NSPasteboard.general.clearContents(); XCTAssertTrue(NSPasteboard.general.setString(literal, forType: .string))
+        defer { if NSPasteboard.general.string(forType: .string) == literal { NSPasteboard.general.clearContents() } }
+        composer.click(); composer.typeKey("v", modifierFlags: .command)
+        XCTAssertTrue(waitForValue(composer, value: literal, timeout: 5))
+        let delivery = app.descendants(matching: .any).matching(identifier: "composer-delivery").firstMatch
+        XCTAssertTrue(delivery.waitForExistence(timeout: 5)); XCTAssertTrue(delivery.isHittable); delivery.click()
+        let steer = app.menuItems["Steer Current Turn"], queue = app.menuItems["Queue Message"]
+        let canSteer = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: steer)
+        XCTAssertEqual(XCTWaiter.wait(for: [canSteer], timeout: 10), .completed)
+        XCTAssertTrue(queue.exists && queue.isEnabled)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(send.label, "Queue message", "The alternate shortcut must not change the saved Queue preference.")
+        composer.click(); app.typeKey(.return, modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["Offline steering acknowledged the literal follow-up"].waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
+        XCTAssertFalse(removeQueued.exists)
+        let transcript = app.scrollViews.containing(.staticText, identifier: "Offline steering acknowledged the literal follow-up").firstMatch
+        XCTAssertTrue(transcript.exists)
+        for prompt in [firstPrompt, literal] {
+            XCTAssertEqual(transcript.staticTexts.matching(NSPredicate(format: "label == %@", prompt)).count, 1)
+        }
+        XCTAssertFalse(transcript.staticTexts.matching(NSPredicate(format: "label == %@", queuedPrompt)).firstMatch.exists)
+        let completed = try waitForPrivateWorkspace(root, timeout: 20) { snapshot in
+            guard let thread = (snapshot["threads"] as? [[String: Any]])?.first,
+                  let run = (thread["runHistory"] as? [[String: Any]])?.first,
+                  let checkpoint = run["checkpoints"] as? [String: Any],
+                  let post = checkpoint["postRun"] as? [String: Any] else { return false }
+            return run["status"] as? String == "completed" && post["phase"] as? String == "ready"
+                && (snapshot["promptSteerings"] as? [[String: Any]])?.first?["phase"] as? String == "delivered"
+        }
+        let operationID = try assertSteeringSnapshot(completed, firstPrompt: firstPrompt, literal: literal, name: "steering-delivered-private-snapshot")
+        let frames = try historyWire(wire)
+        try assertSteeringWire(frames, literal: literal, snapshot: completed)
+        let mutationFrames = frames.filter { ["thread/start", "turn/start", "turn/steer"].contains($0["method"] as? String ?? "") }
+        let latestDraft = "Retain this unsent draft after steering and restart"
+        composer.click(); composer.typeText(latestDraft)
+        XCTAssertTrue(waitForValue(composer, value: latestDraft, timeout: 5))
+        capture(app, name: "steering-one-completed-turn-two-user-inputs")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: latestDraft, timeout: 10))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadIdentifier)
+        XCTAssertTrue(app.staticTexts["Offline steering acknowledged the literal follow-up"].exists)
+        let reopened = try privateWorkspaceSnapshot(root)
+        XCTAssertEqual(try assertSteeringSnapshot(reopened, firstPrompt: firstPrompt, literal: literal, name: "steering-reopened-private-snapshot"), operationID)
+        try assertSteeringWire(historyWire(wire), literal: literal, snapshot: reopened)
+        let reopenedMutations = try historyWire(wire).filter { ["thread/start", "turn/start", "turn/steer"].contains($0["method"] as? String ?? "") }
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: reopenedMutations, options: .sortedKeys),
+                       try JSONSerialization.data(withJSONObject: mutationFrames, options: .sortedKeys), "Reopening must not repeat or synthesize a native input RPC.")
+        XCTAssertEqual(try Data(contentsOf: readme), original)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "steering-reopened-head"), originalHead)
+        capture(app, name: "steering-reopened-receipt-and-unsent-draft")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
 
     @MainActor func testLightAppearanceFileMenuProjectWorkflow() throws {
         try exerciseProjectWorkflow(appearance: "light", useKeyboard: false)
@@ -1502,6 +1632,111 @@ final class CoincideDesktopUITests: XCTestCase {
         let owners = candidates.filter { $0.sheets.containing(.button, identifier: identifier).count == 0 }
         XCTAssertEqual(owners.count, 1, "The control must belong to one innermost native sheet: \(identifier).")
         return try XCTUnwrap(owners.first)
+    }
+
+    /// Read only the canonical projection in this test's isolated database, including its WAL.
+    /// This does not seed or mutate production state and does not require app-only test hooks.
+    private func privateWorkspaceSnapshot(_ root: URL) throws -> [String: Any] {
+        let database = root.appendingPathComponent("workspace.sqlite")
+        guard root.lastPathComponent.hasPrefix("coincide-ui-testing-"), root.path.hasPrefix("/"),
+              try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isDirectory == true,
+              try root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true,
+              try database.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]).isRegularFile == true,
+              try database.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+            throw NSError(domain: "CoincideDesktopUITests.PrivateSnapshot", code: 1)
+        }
+        var handle: OpaquePointer?
+        let opened = sqlite3_open_v2(database.path, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        defer { if let handle { sqlite3_close(handle) } }
+        guard opened == SQLITE_OK, let handle else { throw NSError(domain: "CoincideDesktopUITests.PrivateSnapshot", code: 2) }
+        sqlite3_busy_timeout(handle, 250)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, "SELECT payload FROM workspace WHERE id=1", -1, &statement, nil) == SQLITE_OK else {
+            throw NSError(domain: "CoincideDesktopUITests.PrivateSnapshot", code: 3)
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else {
+            throw NSError(domain: "CoincideDesktopUITests.PrivateSnapshot", code: 4)
+        }
+        let length = Int(sqlite3_column_bytes(statement, 0))
+        guard length > 0, length <= 4_194_304,
+              let snapshot = try JSONSerialization.jsonObject(with: Data(bytes: bytes, count: length)) as? [String: Any] else {
+            throw NSError(domain: "CoincideDesktopUITests.PrivateSnapshot", code: 5)
+        }
+        return snapshot
+    }
+
+    @MainActor private func waitForPrivateWorkspace(_ root: URL, timeout: TimeInterval,
+                                                   matching predicate: @escaping ([String: Any]) -> Bool) throws -> [String: Any] {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+            guard let snapshot = try? privateWorkspaceSnapshot(root) else { return false }
+            return predicate(snapshot)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: timeout), .completed, "The private canonical workspace must reach the exact asserted boundary.")
+        return try privateWorkspaceSnapshot(root)
+    }
+
+    @MainActor private func assertSteeringSnapshot(_ snapshot: [String: Any], firstPrompt: String,
+                                                  literal: String, name: String) throws -> String {
+        let threads = try XCTUnwrap(snapshot["threads"] as? [[String: Any]])
+        XCTAssertEqual(threads.count, 1)
+        let thread = try XCTUnwrap(threads.first)
+        XCTAssertNil(thread["activeRun"] as? [String: Any])
+        XCTAssertEqual((thread["queuedTurns"] as? [[String: Any]])?.count, 0)
+        let users = try XCTUnwrap(thread["messages"] as? [[String: Any]]).filter { $0["role"] as? String == "user" }
+        XCTAssertEqual(users.compactMap { $0["text"] as? String }, [firstPrompt, literal], "Queued-and-removed input must not become a transcript row.")
+        let runs = try XCTUnwrap(thread["runHistory"] as? [[String: Any]])
+        XCTAssertEqual(runs.count, 1)
+        let run = try XCTUnwrap(runs.first), runID = try XCTUnwrap(run["id"] as? String)
+        XCTAssertEqual(run["status"] as? String, "completed")
+        XCTAssertEqual(run["providerThreadID"] as? String, "ui-native-steering-thread")
+        XCTAssertEqual(run["turnIDs"] as? [String], ["ui-native-steering-turn"])
+        let operations = try XCTUnwrap(snapshot["promptSteerings"] as? [[String: Any]])
+        XCTAssertEqual(operations.count, 1)
+        let operation = try XCTUnwrap(operations.first), id = try XCTUnwrap(operation["id"] as? String)
+        XCTAssertNotNil(UUID(uuidString: id)); XCTAssertNotNil(UUID(uuidString: try XCTUnwrap(operation["sourceIncarnation"] as? String)))
+        XCTAssertEqual(operation["phase"] as? String, "delivered")
+        XCTAssertEqual(operation["threadID"] as? String, thread["id"] as? String)
+        XCTAssertEqual(operation["runID"] as? String, runID)
+        XCTAssertEqual(operation["nativeThreadID"] as? String, "ui-native-steering-thread")
+        XCTAssertEqual(operation["nativeTurnID"] as? String, "ui-native-steering-turn")
+        XCTAssertEqual((operation["input"] as? [String: Any])?["text"] as? String, literal)
+        let receipt = try XCTUnwrap(operation["receipt"] as? [String: Any])
+        XCTAssertEqual(receipt["turnID"] as? String, "ui-native-steering-turn")
+        XCTAssertEqual(receipt["delivery"] as? String, "acknowledged")
+        let row = try XCTUnwrap(users.last)
+        XCTAssertEqual(row["id"] as? String, operation["messageID"] as? String)
+        XCTAssertEqual(row["promptSteeringID"] as? String, id)
+        for user in users {
+            XCTAssertEqual((user["runReference"] as? [String: Any])?["runID"] as? String, runID)
+            XCTAssertNil(user["submissionError"] as? String)
+        }
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: XCTUnwrap(operation["configuration"]), options: .sortedKeys),
+                       try JSONSerialization.data(withJSONObject: XCTUnwrap(run["configuration"]), options: .sortedKeys), "Steering must retain the original run's immutable configuration.")
+        let data = try JSONSerialization.data(withJSONObject: snapshot, options: [.prettyPrinted, .sortedKeys])
+        let audit = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        audit.name = name; audit.lifetime = .keepAlways; add(audit)
+        return id
+    }
+
+    @MainActor private func assertSteeringWire(_ frames: [[String: Any]], literal: String,
+                                              snapshot: [String: Any]) throws {
+        XCTAssertEqual(frames.filter { $0["method"] as? String == "thread/start" }.count, 1)
+        XCTAssertEqual(frames.filter { $0["method"] as? String == "turn/start" }.count, 1)
+        let calls = frames.filter { $0["method"] as? String == "turn/steer" }
+        XCTAssertEqual(calls.count, 1)
+        let params = try XCTUnwrap(calls.first?["params"] as? [String: Any])
+        XCTAssertEqual(Set(params.keys), ["threadId", "expectedTurnId", "input", "clientUserMessageId"])
+        XCTAssertEqual(params["threadId"] as? String, "ui-native-steering-thread")
+        XCTAssertEqual(params["expectedTurnId"] as? String, "ui-native-steering-turn")
+        let items = try XCTUnwrap(params["input"] as? [[String: Any]])
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?["text"] as? String, literal)
+        XCTAssertEqual(items.first?["type"] as? String, "text")
+        XCTAssertEqual((items.first?["text_elements"] as? [Any])?.count, 0)
+        let operation = try XCTUnwrap((snapshot["promptSteerings"] as? [[String: Any]])?.first)
+        XCTAssertEqual(params["clientUserMessageId"] as? String, operation["messageID"] as? String)
+        XCTAssertFalse(frames.contains { ["thread/fork", "thread/revert", "turn/interrupt"].contains($0["method"] as? String ?? "") })
     }
 
     private func historyWire(_ path: URL) throws -> [[String: Any]] {

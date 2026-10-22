@@ -1,6 +1,7 @@
 import CoincideCore
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 struct ComposerView: View {
     @Binding var text: String
@@ -11,15 +12,24 @@ struct ComposerView: View {
     let submitting: Bool
     let hasAttachments: Bool
     var historyLocked = false
+    var followUpBehavior = ComposerFollowUpBehavior.queue
+    var steeringAvailable = false
+    var steeringExplanation: String? = nil
+    var steer: (() -> Void)? = nil
     let attach: () -> Void
     var referenceFile: (() -> Void)? = nil
     let importProviders: ([NSItemProvider]) -> Void
     let setPermission: (PermissionMode) -> Void
     let send: () -> Void
     let stop: () -> Void
+    var reportGeometry: ((String, CGRect) -> Void)? = nil
     @FocusState private var editorFocused: Bool
     @State private var dropTargeted = false
     private var canSend: Bool { !historyLocked && !submitting && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+    private var canSteer: Bool { steeringAvailable && steer != nil }
+    private var delivery: ComposerDelivery {
+        .resolve(running: busy, preference: followUpBehavior, alternate: false, canSteer: canSteer)
+    }
     private var height: CGFloat { min(150, max(40, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -33,46 +43,28 @@ struct ComposerView: View {
                     .onKeyPress(keys: [.return], phases: .down) { event in
                         guard !event.modifiers.contains(.shift), !event.modifiers.contains(.option) else { return .ignored }
                         guard canSend else { return .ignored }
-                        send(); return .handled
+                        activate(alternate: event.modifiers.contains(.command) || event.modifiers.contains(.control))
+                        return .handled
                     }
                     .onPasteCommand(of: [UTType.fileURL, UTType.image]) { importProviders($0) }
             }
-            HStack {
-                Button(action: attach) { Image(systemName: "plus").frame(width: 24, height: 24) }
-                    .buttonStyle(.plain).help("Attach files").accessibilityLabel("Attach files").disabled(submitting)
-                if let referenceFile {
-                    Button(action: referenceFile) { Image(systemName: "at").frame(width: 24, height: 24) }
-                        .buttonStyle(.plain).help("Reference a workspace file or folder").accessibilityLabel("Reference workspace file")
-                        .accessibilityIdentifier("composer-reference-file").disabled(submitting)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    attachmentControls
+                    permissionControl
+                    Spacer(minLength: 8)
+                    if !busy { newlineHint }
+                    deliveryControls
                 }
-                if provider == .acp {
-                    Label("Agent permissions", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
-                        .help("The agent enforces its own sandbox. Coincide shows the permission requests it sends.")
-                } else { Menu {
-                    ForEach(PermissionMode.allCases) { mode in
-                        Button { setPermission(mode) } label: {
-                            if mode == permission { Label(mode.title, systemImage: "checkmark") } else { Text(mode.title) }
-                        }
-                    }
-                } label: { Label(permission.title, systemImage: "slider.horizontal.3").font(.caption) }
-                .menuStyle(.borderlessButton).fixedSize()
-                .disabled(historyLocked)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack { attachmentControls; permissionControl; Spacer(minLength: 0) }
+                    HStack { newlineHint; Spacer(minLength: 8); deliveryControls }
                 }
-                Spacer()
-                Text("⇧ Return for a new line").font(.caption2).foregroundStyle(.tertiary)
-                if busy {
-                    Button(action: stop) { Image(systemName: "stop.fill").frame(width: 30, height: 30) }
-                        .buttonStyle(.plain).help("Stop turn").accessibilityLabel("Stop turn")
-                }
-                Button(action: send) {
-                    Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color(nsColor: .controlBackgroundColor))
-                        .frame(width: 30, height: 30).background(Color.primary, in: Circle())
-                }
-                .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command)
-                .accessibilityLabel(busy ? "Queue message" : "Send message")
-                .help(busy ? "Send after the current turn" : "Send message")
-                .disabled(!canSend)
+            }
+            if busy, let steeringExplanation {
+                Text(steeringExplanation).font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("composer-steering-explanation")
             }
         }
         .padding(14)
@@ -80,5 +72,75 @@ struct ComposerView: View {
         .overlay { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1) }
         .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $dropTargeted) { providers in importProviders(providers); return true }
         .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false) } }
+        .background { geometry("bounds") }
+        .coordinateSpace(name: "composer-layout")
+    }
+    @ViewBuilder private var attachmentControls: some View {
+        Button(action: attach) { Image(systemName: "plus").frame(width: 24, height: 24) }
+            .buttonStyle(.plain).help("Attach files").accessibilityLabel("Attach files").disabled(submitting)
+        if let referenceFile {
+            Button(action: referenceFile) { Image(systemName: "at").frame(width: 24, height: 24) }
+                .buttonStyle(.plain).help("Reference a workspace file or folder").accessibilityLabel("Reference workspace file")
+                .accessibilityIdentifier("composer-reference-file").disabled(submitting)
+        }
+    }
+    @ViewBuilder private var permissionControl: some View {
+        if provider == .acp {
+            Label("Agent permissions", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
+                .help("The agent enforces its own sandbox. Coincide shows the permission requests it sends.")
+        } else {
+            Menu {
+                ForEach(PermissionMode.allCases) { mode in
+                    Button { setPermission(mode) } label: {
+                        if mode == permission { Label(mode.title, systemImage: "checkmark") } else { Text(mode.title) }
+                    }
+                }
+            } label: { Label(permission.title, systemImage: "slider.horizontal.3").font(.caption) }
+            .menuStyle(.borderlessButton).fixedSize()
+            .disabled(historyLocked)
+        }
+    }
+    private var newlineHint: some View {
+        Text("⇧ Return for a new line").font(.caption2).foregroundStyle(.tertiary)
+    }
+    @ViewBuilder private var deliveryControls: some View {
+        if busy {
+            Menu {
+                Button("Queue Message", action: send).disabled(!canSend)
+                Button("Steer Current Turn") { steer?() }.disabled(!canSend || !canSteer)
+                if let steeringExplanation { Text(steeringExplanation) }
+            } label: { Image(systemName: "chevron.down") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .accessibilityLabel("Message delivery").accessibilityIdentifier("composer-delivery")
+            .help("Choose Queue or Steer. Command-Return uses the alternate delivery when steering is available.")
+            Button(action: stop) { Image(systemName: "stop.fill").frame(width: 30, height: 30) }
+                .buttonStyle(.plain).help("Stop turn").accessibilityLabel("Stop turn")
+        }
+        Button {
+            activate(alternate: NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.control))
+        } label: {
+            Image(systemName: delivery == .steer ? "arrow.turn.up.right" : "arrow.up").font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .controlBackgroundColor))
+                .frame(width: 30, height: 30).background(Color.primary, in: Circle())
+        }
+        .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command)
+        .accessibilityLabel(delivery.label)
+        .accessibilityIdentifier("composer-send")
+        .help(delivery == .steer ? "Send into the running turn using its current settings" : busy ? "Send after the current turn" : "Send message")
+        .disabled(!canSend)
+        .background { geometry("send") }
+    }
+    func activate(alternate: Bool) {
+        guard canSend else { return }
+        if ComposerDelivery.resolve(running: busy, preference: followUpBehavior, alternate: alternate, canSteer: canSteer) == .steer {
+            steer?()
+        } else { send() }
+    }
+    private func geometry(_ region: String) -> some View {
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .named("composer-layout"))
+            Color.clear.onAppear { reportGeometry?(region, frame) }
+                .onChange(of: frame) { _, value in reportGeometry?(region, value) }
+        }
     }
 }

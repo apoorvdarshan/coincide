@@ -247,7 +247,7 @@ extension WorkspaceDecision {
         guard !threadIDs.contains(where: { snapshot.isCheckpointRestoreLocked(threadID: $0) }) else { throw WorkspaceCommandError("Inspect the pending restoration or explicitly keep the current files before changing this workspace.") }
     }
     mutating func acceptCheckpointRestore(_ review: RunCheckpointRestoreReview, now: Date) throws {
-        guard !snapshot.pullRequestCheckoutReservedIDs.contains(review.id) else { throw WorkspaceCommandError("This restoration identity is reserved by a pull request checkout.") }
+        guard !snapshot.pullRequestCheckoutReservedIDs.union(snapshot.promptSteeringReservedIDs).contains(review.id) else { throw WorkspaceCommandError("This restoration identity is reserved by a pull request checkout.") }
         guard snapshot.checkpointRestoreOperation(review.id) == nil else { throw WorkspaceCommandError("This restoration identity was already used. Review again.") }
         try snapshot.validateCheckpointRestoreSource(review)
         let operation = RunCheckpointRestoreOperation(review: review, updatedAt: now); try operation.validate()

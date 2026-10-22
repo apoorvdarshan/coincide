@@ -50,6 +50,7 @@ public struct ChatMessage: Codable, Identifiable, Sendable, Equatable {
     public var attachments: [ChatAttachment]?
     public var providerEntity: ProviderEntity?
     public var submissionError: String?
+    public var promptSteeringID: UUID?
     public var runReference: TranscriptRunReference?
     public var removedByHistoryOperationID: UUID?
     public init(id: String = UUID().uuidString, role: MessageRole, text: String, attachments: [ChatAttachment]? = nil) {
@@ -86,6 +87,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var forkedFromHistoryOperationID: UUID?
     public var pullRequestCheckoutOperationID: UUID?
     public var runtimeID: UUID?
+    public var steeringCapabilityRevision: UInt64?
     public var runtimeRequests: [RuntimeRequest]
     public var isPinned: Bool
     public var isArchived: Bool
@@ -99,7 +101,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, pullRequestCheckoutOperationID, runtimeID, runtimeRequests, workspacePreparation, settlement
+        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
         case draftAttachments
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
@@ -134,6 +136,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         forkedFromHistoryOperationID = try values.decodeIfPresent(UUID.self, forKey: .forkedFromHistoryOperationID)
         pullRequestCheckoutOperationID = try values.decodeIfPresent(UUID.self, forKey: .pullRequestCheckoutOperationID)
         runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
+        steeringCapabilityRevision = try values.decodeIfPresent(UInt64.self, forKey: .steeringCapabilityRevision)
         runtimeRequests = try values.decodeIfPresent([RuntimeRequest].self, forKey: .runtimeRequests) ?? []
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
         isArchived = try values.decode(Bool.self, forKey: .isArchived)
@@ -153,9 +156,10 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var conversationHistoryOperations: [ConversationHistoryOperation]?
     public var pullRequestCreations: [PullRequestCreationOperation]?
     public var pullRequestCheckouts: [PullRequestCheckoutOperation]?
+    public var promptSteerings: [PromptSteeringOperation]?
     public var checkpointRestoreOperations: [RunCheckpointRestoreOperation]?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -166,10 +170,26 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         conversationHistoryOperations = try values.decodeIfPresent([ConversationHistoryOperation].self, forKey: .conversationHistoryOperations)
         pullRequestCreations = try values.decodeIfPresent([PullRequestCreationOperation].self, forKey: .pullRequestCreations)
         pullRequestCheckouts = try values.decodeIfPresent([PullRequestCheckoutOperation].self, forKey: .pullRequestCheckouts)
+        promptSteerings = try values.decodeIfPresent([PromptSteeringOperation].self, forKey: .promptSteerings)
         checkpointRestoreOperations = try values.decodeIfPresent([RunCheckpointRestoreOperation].self, forKey: .checkpointRestoreOperations)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        for i in (promptSteerings ?? []).indices {
+            guard var operation = promptSteerings?[i] else { continue }
+            if operation.isWorking {
+                operation.fallbackAllowed = false
+                operation.phase = operation.phase == .accepted ? .failed : .unconfirmed
+                operation.error = operation.phase == .failed ? PromptSteeringOperation.failureMessage : PromptSteeringOperation.unconfirmedMessage
+                operation.updatedAt = Date()
+                if let t = threads.firstIndex(where: { $0.id == operation.threadID }),
+                   let m = threads[t].messages.firstIndex(where: { $0.id == operation.messageID }) {
+                    threads[t].messages[m].submissionError = operation.error
+                    if operation.isUnconfirmed { threads[t].queuePaused = true }
+                }
+            }
+            promptSteerings?[i] = operation
+        }
         for i in (pullRequestCheckouts ?? []).indices {
             guard let phase = pullRequestCheckouts?[i].phase, phase == .accepted || phase == .dispatching else { continue }
             let failed = phase == .accepted || pullRequestCheckouts?[i].review.plan.isReadOnly == true

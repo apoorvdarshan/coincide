@@ -8,6 +8,125 @@ public struct WorkspaceUpdate: Sendable {
 }
 
 extension WorkspaceEngine {
+    public func promptSteeringAvailability(threadID: UUID, queuedID: UUID? = nil) async -> PromptSteeringAvailability {
+        do { _ = try await load() } catch { return .init(unavailableReason: "The workspace is unavailable.") }
+        guard !closing, !stoppingEffects, fatalError == nil else { return .init(unavailableReason: "The workspace is closing.") }
+        if let reason = revision.snapshot.promptSteeringTargetReason(threadID: threadID, queuedID: queuedID) { return .init(unavailableReason: reason) }
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), let run = thread.activeRun,
+              let runtime = runtimes[threadID], runtime.id == thread.runtimeID else { return .init(unavailableReason: "Wait for the active provider connection.") }
+        let incarnation = threadIncarnations[threadID]
+        let capabilities = await runtime.session.steeringCapabilities()
+        guard !closing, !stoppingEffects, threadIncarnations[threadID] == incarnation,
+              runtimes[threadID]?.id == runtime.id,
+              revision.snapshot.threads.first(where: { $0.id == threadID })?.activeRun == run,
+              revision.snapshot.promptSteeringTargetReason(threadID: threadID, queuedID: queuedID) == nil else {
+            return .init(unavailableReason: "The active turn changed. Choose its current delivery action again.")
+        }
+        return .init(canSteer: capabilities.supportsActiveSteering, runID: run.id, configuration: run.configuration,
+                     interruptsTools: capabilities.interruptsTools,
+                     unavailableReason: capabilities.supportsActiveSteering ? nil : capabilities.unavailableReason ?? "This provider does not support active steering.")
+    }
+
+    @discardableResult public func steerPrompt(threadID: UUID, text: String, expectedRunID: UUID, queuedID: UUID? = nil) async throws -> WorkspaceCommandReceipt {
+        let availability = await promptSteeringAvailability(threadID: threadID, queuedID: queuedID)
+        guard availability.canSteer, availability.runID == expectedRunID,
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), let run = thread.activeRun,
+              run.id == expectedRunID, let turnID = run.nativeTurnID, let nativeID = thread.providerThreadID,
+              let incarnation = threadIncarnations[threadID], let runtime = runtimes[threadID], runtime.id == thread.runtimeID else {
+            throw WorkspaceCommandError(availability.unavailableReason ?? "The exact active turn is no longer available for steering.")
+        }
+        let input: QueuedTurn
+        if let queuedID {
+            guard let queued = thread.queuedTurns.first(where: { $0.id == queuedID }) else { throw WorkspaceCommandError("The selected queued input changed.") }
+            input = queued
+        } else {
+            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard value.utf16.count <= 120_000, !value.isEmpty || !thread.draftAttachments.isEmpty else { throw WorkspaceCommandError("Enter a message or attach a file before steering.") }
+            input = .init(id: UUID(), text: value, configuration: run.configuration, createdAt: Date(),
+                          attachments: thread.draftAttachments.isEmpty ? nil : thread.draftAttachments, checkpointPolicy: thread.effectiveCheckpointPolicy)
+        }
+        let operation = PromptSteeringOperation(threadID: threadID, projectID: thread.projectID, sourceIncarnation: incarnation,
+            runtimeID: runtime.id, runID: run.id, nativeThreadID: nativeID, nativeTurnID: turnID, input: input,
+            messageID: "user-\(input.id.uuidString)", queuedID: queuedID, configuration: run.configuration)
+        let receipt = try await enqueue(.promptSteeringAccepted(operation))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+
+    private func ownsPromptSteeringEvent(_ command: EngineCommand) -> Bool {
+        switch command {
+        case .promptSteeringAccepted(let operation): return threadIncarnations[operation.threadID] == operation.sourceIncarnation
+        case .promptSteeringDispatching(let id, let incarnation):
+            guard let operation = revision.snapshot.promptSteering(id) else { return false }
+            return threadIncarnations[operation.threadID] == incarnation
+        case .promptSteeringEffectResult(let request, _, let incarnation): return request.threadID.map { threadIncarnations[$0] == incarnation } ?? false
+        default: return true
+        }
+    }
+    private func steeringTargetIsActive(_ operation: PromptSteeringOperation) -> Bool {
+        guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[operation.threadID] == operation.sourceIncarnation,
+              let thread = revision.snapshot.threads.first(where: { $0.id == operation.threadID }), !thread.isArchived,
+              thread.runtimeRequests.isEmpty, thread.settlement == nil, revision.snapshot.workspaceReady(for: thread),
+              !revision.snapshot.isConversationHistoryLocked(threadID: thread.id), !revision.snapshot.isCheckpointRestoreLocked(threadID: thread.id),
+              !revision.snapshot.isPullRequestCreationLocked(threadID: thread.id), !revision.snapshot.isPullRequestCheckoutLocked(threadID: thread.id),
+              let current = revision.snapshot.promptSteering(operation.id), current.isWorking, current.fallbackAllowed,
+              thread.activeRun?.id == operation.runID, thread.activeRun?.nativeTurnID == operation.nativeTurnID,
+              thread.activeRun?.stopRequested == false, thread.activeRun?.configuration == operation.configuration,
+              thread.providerThreadID == operation.nativeThreadID, thread.runtimeID == operation.runtimeID,
+              runtimes[thread.id]?.id == operation.runtimeID else { return false }
+        return true
+    }
+    private func steeringUnsentResult(_ operation: PromptSteeringOperation) -> EffectResult {
+        guard !closing, !stoppingEffects, threadIncarnations[operation.threadID] == operation.sourceIncarnation,
+              revision.snapshot.promptSteering(operation.id)?.fallbackAllowed == true,
+              let thread = revision.snapshot.threads.first(where: { $0.id == operation.threadID }), !thread.isArchived,
+              !thread.queuePaused, thread.activeRun == nil,
+              thread.runHistory?.contains(where: { $0.id == operation.runID && $0.status == .completed && !$0.stopRequested }) == true else { return .failed(PromptSteeringOperation.failureMessage) }
+        return .promptSteeringUnsentCompleted
+    }
+    private func performPromptSteering(_ request: WorkspaceEffectRequest) async -> EffectResult {
+        guard case .promptSteering(let threadID, let id) = request,
+              let operation = revision.snapshot.promptSteering(id), operation.phase == .accepted,
+              threadIncarnations[threadID] == operation.sourceIncarnation else { return .cancelled }
+        guard steeringTargetIsActive(operation) else { return steeringUnsentResult(operation) }
+        guard let runtime = runtimes[threadID] else { return .failed(PromptSteeringOperation.failureMessage) }
+        do {
+            let input = try await attachments.prepare(text: operation.input.text, attachments: operation.input.attachments ?? [])
+            guard steeringTargetIsActive(operation) else { return steeringUnsentResult(operation) }
+            let capabilities = await runtime.session.steeringCapabilities()
+            guard steeringTargetIsActive(operation) else { return steeringUnsentResult(operation) }
+            guard capabilities.supportsActiveSteering else { return .failed(PromptSteeringOperation.failureMessage) }
+            try Task.checkCancellation()
+            let receipt = try await enqueue(.promptSteeringDispatching(operationID: id, incarnation: operation.sourceIncarnation))
+            guard receipt.rejection == nil else { return steeringUnsentResult(operation) }
+            guard steeringTargetIsActive(operation), var thread = revision.snapshot.threads.first(where: { $0.id == threadID }) else { return steeringUnsentResult(operation) }
+            try Task.checkCancellation() // Still proven unsent; the durable marker is conservative after a crash.
+            let configuration = operation.configuration
+            thread.provider = configuration.provider; thread.workspacePath = configuration.workspacePath
+            thread.model = configuration.model; thread.permission = configuration.permission
+            thread.agentModeID = configuration.agentModeID; thread.agentConfigValues = configuration.agentConfigValues
+            thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent
+            thread.providerThreadID = operation.nativeThreadID
+            do {
+                let result = try await runtime.session.steer(input: input, thread: thread, expectedTurnID: operation.nativeTurnID, clientMessageID: operation.messageID)
+                try result.validate()
+                guard result.turnID == operation.nativeTurnID else { return .promptSteeringUnconfirmed }
+                return .promptSteeringDelivered(result)
+            } catch let error as ProviderSteeringError {
+                if error.mayHaveBeenDelivered { return .promptSteeringUnconfirmed }
+                if error.kind == .noActiveTurn || error.kind == .staleTarget {
+                    // Only the adapter's proven pre-write refusal plus an observed
+                    // exact parent completion can authorize one normal follow-up.
+                    await drainCommands()
+                    return steeringUnsentResult(operation)
+                }
+                return .failed(PromptSteeringOperation.failureMessage)
+            } catch { return .promptSteeringUnconfirmed }
+        } catch { return .failed(PromptSteeringOperation.failureMessage) }
+    }
+}
+
+extension WorkspaceEngine {
     public func reviewCheckpointRestore(threadID: UUID, runID: UUID, stage: RunCheckpointStage, expectedAttemptID: UUID) async throws -> RunCheckpointRestoreReview {
         _ = try await load()
         if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
@@ -240,7 +359,8 @@ extension WorkspaceEngine {
             throw WorkspaceCommandError("Finish this conversation's work and select a run with verified provider history before continuing.")
         }
         let fingerprint = try revision.snapshot.historySourceFingerprint(threadID: threadID)
-        let prefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
+        let rawPrefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
+        let prefix = kind == .forkAfterRun ? try revision.snapshot.verifiedForkPrefix(rawPrefix) : rawPrefix
         let native = try await readHistory(thread: thread) { session in
             try await Self.readReviewedNativeHistory(session: session, thread: thread, runID: runID, kind: kind)
         }
@@ -1343,6 +1463,10 @@ public actor WorkspaceEngine {
                 if let fatalError { throw CoincideError(fatalError) }
                 let decision: WorkspaceDecision
                 do {
+                    if case .promptSteeringAccepted(let operation) = envelope.command,
+                       threadIncarnations[operation.threadID] != operation.sourceIncarnation {
+                        throw WorkspaceCommandError("The active provider turn changed before steering was accepted.")
+                    }
                     if case .pullRequestCheckoutAccepted(let operation) = envelope.command,
                        projectIncarnations[operation.projectID] != operation.review.sourceIncarnation {
                         throw WorkspaceCommandError("This project changed. Review the pull request checkout again.")
@@ -1363,7 +1487,7 @@ public actor WorkspaceEngine {
                        (threadIncarnations[threadID] != incarnation || request.destinationRoot != worktreesRoot.path) {
                         throw WorkspaceCommandError("This conversation changed. Choose the worktree again in its current workspace.")
                     }
-                    if !ownsPullRequestCheckoutEvent(envelope.command) || !ownsPullRequestCreationEvent(envelope.command) || !ownsCheckpointRestoreEvent(envelope.command) || !ownsHistoryEvent(envelope.command) || !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
+                    if !ownsPromptSteeringEvent(envelope.command) || !ownsPullRequestCheckoutEvent(envelope.command) || !ownsPullRequestCreationEvent(envelope.command) || !ownsCheckpointRestoreEvent(envelope.command) || !ownsHistoryEvent(envelope.command) || !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else if case .worktreeRecovered(let threadID, let attemptID, let incarnation, _) = envelope.command,
                        !ownsWorktree(threadID: threadID, attemptID: attemptID, incarnation: incarnation) {
@@ -1660,6 +1784,7 @@ public actor WorkspaceEngine {
         } catch { await infrastructureFailed(error.localizedDescription) }
     }
     private func execute(_ effect: WorkspaceEffect) async {
+        let steeringIncarnation = effect.request.promptSteeringOperationID == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
         let scriptIncarnation = effect.request.projectScriptRunID == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
         let checkpointIncarnation = effect.request.checkpointOwner == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
         let historyIncarnation: UUID?
@@ -1700,12 +1825,14 @@ public actor WorkspaceEngine {
             do {
                 let owned: Bool
                 switch result {
-                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed, .pullRequestCheckoutCompleted, .pullRequestCheckoutUnconfirmed: owned = try await database.settleEffect(effect.id, workerID: workerID)
+                case .promptSteeringDelivered, .promptSteeringUnconfirmed, .promptSteeringUnsentCompleted, .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed, .pullRequestCheckoutCompleted, .pullRequestCheckoutUnconfirmed: owned = try await database.settleEffect(effect.id, workerID: workerID)
                 case .failed(let message): owned = try await database.settleEffect(effect.id, workerID: workerID, error: message)
                 case .cancelled: owned = try await database.cancelEffect(effect.id, workerID: workerID, reason: "The targeted run or request is no longer active.")
                 }
                 guard owned else { await infrastructureFailed("Provider execution lost its workspace lease."); return }
-                if let checkoutIncarnation {
+                if let steeringIncarnation {
+                    if !retiringEffects.contains(effect.id) { _ = try await enqueue(.promptSteeringEffectResult(effect.request, result, incarnation: steeringIncarnation)) }
+                } else if let checkoutIncarnation {
                     if !retiringEffects.contains(effect.id) { _ = try await enqueue(.pullRequestCheckoutEffectResult(effect.request, result, incarnation: checkoutIncarnation)) }
                 } else if let pullRequestIncarnation {
                     if !retiringEffects.contains(effect.id) { _ = try await enqueue(.pullRequestCreationEffectResult(effect.request, result, incarnation: pullRequestIncarnation)) }
@@ -1752,6 +1879,7 @@ public actor WorkspaceEngine {
         guard !stoppingEffects, fatalError == nil else { throw CancellationError() }
         if await waitForRemovalCommit(threadID: request.threadID, projectID: request.projectID) { return .cancelled }
         try Task.checkCancellation()
+        if case .promptSteering = request { return await performPromptSteering(request) }
         if case .pullRequestCreation = request { return try await performPullRequestCreation(request) }
         if case .pullRequestCheckout = request { return try await performPullRequestCheckout(request) }
         if case .checkpointRestore = request { return try await performCheckpointRestore(request) }
@@ -1781,7 +1909,7 @@ public actor WorkspaceEngine {
         }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
-        case .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
+        case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
             await awaitCheckpointDrains(threadID: thread.id)

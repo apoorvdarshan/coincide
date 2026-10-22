@@ -6,6 +6,7 @@ struct ChatView: View {
     let threadID: UUID
     var onSettle: ((CodingThread) -> Void)? = nil
     @State private var sending = false
+    @AppStorage("followUpBehavior") private var followUpBehavior = ComposerFollowUpBehavior.queue.rawValue
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
     @State private var runHistorySheet = false
@@ -21,6 +22,9 @@ struct ChatView: View {
     }
     func submitCurrentDraft() -> Task<Bool, Never> {
         store.submit(store.thread(threadID)?.draft ?? "", threadID: threadID)
+    }
+    func steerCurrentDraft() -> Task<Bool, Never> {
+        store.steer(store.thread(threadID)?.draft ?? "", threadID: threadID)
     }
     var body: some View {
         if let thread {
@@ -131,6 +135,7 @@ struct ChatView: View {
                             .accessibilityIdentifier("conversation-pull-request-hold")
                     }
                     PullRequestCheckoutBanner(store: store, thread: thread)
+                    PromptSteeringBanner(store: store, threadID: threadID)
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },
@@ -140,9 +145,17 @@ struct ChatView: View {
                     if !thread.draftAttachments.isEmpty { AttachmentShelf(store: store, attachments: thread.draftAttachments, remove: { store.removeAttachment($0, threadID: threadID) }) }
                     if store.isImportingAttachments(threadID) { HStack { ProgressView().controlSize(.small); Text("Adding attachments…").font(.caption).foregroundStyle(.secondary); Spacer() } }
                     ComposerView(text: draft, provider: thread.provider, providerName: thread.providerName, permission: thread.permission,
-                                 busy: store.isBusy(threadID), submitting: sending || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
+                                 busy: store.isBusy(threadID), submitting: sending || store.isAcceptingPromptSteering(threadID) || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
                                  hasAttachments: !thread.draftAttachments.isEmpty,
                                  historyLocked: actionsLocked,
+                                 followUpBehavior: .init(rawValue: followUpBehavior) ?? .queue,
+                                 steeringAvailable: store.steeringAvailability(threadID: threadID)?.canSteer == true,
+                                 steeringExplanation: store.steeringExplanation(threadID: threadID),
+                                 steer: {
+                                     guard !sending else { return }; sending = true
+                                     let submitted = steerCurrentDraft()
+                                     Task { _ = await submitted.value; sending = false }
+                                 },
                                  attach: { store.chooseAttachments(threadID: threadID) },
                                  referenceFile: store.canAccessWorkspaceFiles(thread.workspacePath) ? { referenceFileSheet = true } : nil,
                                  importProviders: { store.importAttachments(providers: $0, threadID: threadID) },
@@ -160,6 +173,9 @@ struct ChatView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity)
             .navigationTitle("Coincide")
+            .task(id: store.promptSteeringKey(threadID: threadID)) {
+                await store.refreshPromptSteeringAvailability(threadID: threadID)
+            }
             .sheet(isPresented: $runHistorySheet) { RunHistorySheet(store: store, threadID: threadID) }
             .sheet(isPresented: $referenceFileSheet) {
                 WorkspaceFilePicker(workspace: store, path: thread.workspacePath) { path in

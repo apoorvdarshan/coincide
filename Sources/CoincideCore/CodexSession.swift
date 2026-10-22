@@ -19,6 +19,8 @@ public actor CodexSession: ProviderSession {
     private var working = false
     private var shuttingDown = false
     private var eventRunID: UUID?
+    private var activeConfiguration: ProviderConfiguration?
+    private var steeringTask: ProviderSteeringTask?
 
     public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"]) throws {
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
@@ -142,6 +144,7 @@ public actor CodexSession: ProviderSession {
         sendGeneration += 1
         let generation = sendGeneration, submittedRunID = thread.activeRun?.id
         eventRunID = submittedRunID
+        activeConfiguration = .init(thread: thread)
         do {
             try await connect()
             if threadID == nil {
@@ -177,6 +180,54 @@ public actor CodexSession: ProviderSession {
             if generation == sendGeneration, !completedTurnIDs.contains(id) { turnID = id; emit(.turn(id), runID: submittedRunID) }
         } catch { if generation == sendGeneration { working = false }; throw error }
     }
+    public func steeringCapabilities() async -> ProviderSteeringCapabilities {
+        guard initialized, CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile,
+              !shuttingDown, !historyMutationInFlight, !historyMutationUncertain else {
+            return .init(unavailableReason: ProviderSteeringError(.unsupported).localizedDescription)
+        }
+        guard working, turnID != nil, threadID != nil, eventRunID != nil, activeConfiguration != nil else {
+            return .init(unavailableReason: ProviderSteeringError(.noActiveTurn).localizedDescription)
+        }
+        return .init(supportsActiveSteering: true)
+    }
+    public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try Task.checkCancellation()
+        try ProviderSteeringValidation.id(expectedTurnID); try ProviderSteeringValidation.id(clientMessageID)
+        try ProviderSteeringValidation.input(input)
+        // Keep frame writes owned even if the caller cancels. Cancelling a
+        // partially written RPC frame would terminate the existing provider.
+        while let previous = steeringTask {
+            _ = try? await previous.task.value
+            if steeringTask?.id == previous.id { steeringTask = nil }
+            try Task.checkCancellation()
+        }
+        guard initialized, CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile,
+              !shuttingDown, !historyMutationInFlight, !historyMutationUncertain else { throw ProviderSteeringError(.unsupported) }
+        guard working else { throw ProviderSteeringError(.noActiveTurn) }
+        try ProviderSteeringValidation.target(thread, provider: .codex, configuration: activeConfiguration,
+            runID: eventRunID, nativeThreadID: threadID, turnID: turnID, expectedTurnID: expectedTurnID)
+        var items: [JSONValue] = input.text.isEmpty ? [] : [.object(["type": .string("text"), "text": .string(input.text), "text_elements": .array([])])]
+        items += input.images.map { .object(["type": .string("image"), "url": .string("data:\($0.mimeType);base64,\($0.data.base64EncodedString())")]) }
+        let params: JSONValue = .object(["threadId": .string(threadID!), "expectedTurnId": .string(expectedTurnID),
+            "clientUserMessageId": .string(clientMessageID), "input": .array(items)])
+        try ProviderSteeringValidation.frame(params); try Task.checkCancellation()
+        let rpc = rpc, id = UUID()
+        let task = Task {
+            do {
+                let response = try await rpc.request("turn/steer", params: params, timeout: .seconds(10))
+                guard response["turnId"].string == expectedTurnID else { throw ProviderSteeringError(.outcomeUncertain) }
+                return try ProviderSteeringReceipt(turnID: expectedTurnID)
+            } catch let error as JSONRPCRemoteError where error.code == -32601 { throw ProviderSteeringError(.unsupported) }
+            catch let error as JSONRPCRemoteError where error.code == -32602 { throw ProviderSteeringError(.rejected) }
+            catch let error as ProviderSteeringError { throw error }
+            catch { throw ProviderSteeringError(.outcomeUncertain) }
+        }
+        steeringTask = .init(id: id, task: task)
+        defer { if steeringTask?.id == id { steeringTask = nil } }
+        // An acknowledgement remains useful evidence if completion or caller
+        // cancellation wins the race. It never reinstalls an active turn.
+        return try await task.value
+    }
     public func interrupt() async throws {
         guard let threadID, let turnID else { throw CoincideError("There is no active turn to stop.") }
         _ = try await rpc.request("turn/interrupt", params: .object(["threadId": .string(threadID), "turnId": .string(turnID)]))
@@ -194,6 +245,7 @@ public actor CodexSession: ProviderSession {
     }
     public func close() async {
         shuttingDown = true; let connecting = connectionTask; connecting?.cancel(); await rpc.close()
+        _ = try? await steeringTask?.task.value; steeringTask = nil
         await connecting?.value; connectionTask = nil
         eventTask?.cancel(); eventTask = nil; continuation.finish()
     }
@@ -202,6 +254,7 @@ public actor CodexSession: ProviderSession {
         case .callback(let work): await work()
         case .barrier(let complete): complete()
         case .disconnected(let reason):
+            working = false
             if !shuttingDown { continuation.yield(.connectionClosed(reason)) }
             continuation.finish()
         case .request(let id, let method, let params):

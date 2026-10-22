@@ -52,8 +52,36 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 22 protects these fields
+  hold it for explicit resumption. Database storage version 23 protects these fields
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
+- Direct steering durably accepts one authored input into the active local run,
+  preserving its captured settings, exact runtime/native thread/turn, attachments,
+  message identity and leased outbox effect. The dispatch marker commits before
+  external handoff. Codex 0.163.x uses `turn/steer` with `expectedTurnId`; a valid
+  same-turn receipt acknowledges acceptance without creating a new run or turn.
+  Claude sends a `priority: now` envelope on the existing query. Its transport
+  write is recorded as submitted, not native acknowledgement; an exact observed
+  echo can establish acknowledgement. No receipt proves model consumption.
+  Claude has no wire-level expected-turn compare-and-swap, and observed foreground
+  Agent/Task ownership keeps steering unavailable until release. Semantic ownership
+  events refresh availability without querying on each streamed token.
+- The composer defaults to Queue while running, with Command/Control-Return using
+  the alternate available action. Settings and an explicit delivery menu offer
+  Queue or Steer. Direct steering uses the active run's settings even if the
+  future-turn header changes. Promotion removes only the selected queued identity
+  and preserves the current draft; incompatible captured settings remain queued.
+  Pending questions/approvals and unsupported adapters keep steering unavailable.
+  Interrupt-and-restart, configuration-changing promotion and broader provider
+  steering are still unfinished.
+- Pending steering holds future starts in that conversation while the current
+  provider stream, Stop and drafting continue. A valid late receipt remains tied
+  to the original run. A proven-unsent input whose exact parent normally completed
+  can become one captured follow-up with the same authored row; Stop/removal/restart
+  suppress delayed fallback. Unknown delivery keeps its audit and holds the queue
+  without replay. Acknowledgement releases that hold without inventing a provider
+  receipt or repeating input. Restart distinguishes undispatched from possibly
+  dispatched work. History cannot retain unknown/submitted-only steering as a
+  verified native prefix; a rewind before its owning run retains hidden audit.
 - Each newly started run retains its captured settings, user-message reference
   or explicit agent/legacy origin, observed adapter turn references, stop intent,
   and terminal outcome in the journal. Queue advancement closes one record before
@@ -373,7 +401,7 @@ must each be mapped and verified before declaring parity.
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind, standalone restoration and combined provider-then-files intents with retained audit, explicit partial outcomes, inspect-only recovery and one-time latest-draft recall, legacy migration | Complete provider recovery, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |
-| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, steering |
+| Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, direct Codex/Claude same-turn steering with Queue/Steer preference and exact compatible queued promotion, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, restart/configuration-changing steering and other-provider delivery |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
 | Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates, reviewed settle roles with drain-before-resume, automatic workspace observations in private refs with isolated staging and verified scratch cleanup, reviewed standalone and combined rewind checkpoint restoration with owned recovery data, bounded native GitHub PR list/detail/checks and exact reviewed creation, local PR checkout and concurrent managed/reused PR worktrees with captured blank conversations, busy read-only reuse, actual-head warnings and durable inspect-only recovery | AI PR content generation, compound commit/push/create, reviews/merge/stacks/other hosts, large-workspace restoration and recovery-storage management, worktree removal, automatic pull policies, broader credential and network failure coverage |
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
@@ -391,6 +419,7 @@ swift test --no-parallel
 ./script/build_and_run.sh --verify
 COINCIDE_LIVE_CODEX=1 swift test --filter installedCodexHandshakeAndModelDiscovery
 COINCIDE_LIVE_CODEX_HISTORY=1 swift test --no-parallel --filter installedCodexNativeHistoryForkAndRewindThroughEngine
+COINCIDE_LIVE_CODEX_STEERING=1 swift test --no-parallel --filter installedCodexNativePromptSteeringThroughEngineKeepsOneRunAndNativeTurn
 COINCIDE_LIVE_CLAUDE=1 swift test --filter installedClaudeHandshakeAndModelDiscovery
 COINCIDE_LIVE_ATTACHMENTS=1 swift test --filter installedProvidersReadAnImageAndFileThroughTheNativeEngine
 COINCIDE_LIVE_ACP=1 swift test --filter installedOpenCodeACPHandshakeAndModelDiscovery
@@ -419,6 +448,15 @@ completed archive/local cleanup. A separate held-descriptor regression checks
 that cleanup excludes the test's own handles but preserves a directory while a
 foreign process holds it. These results do not establish hosted GUI verification,
 other provider versions, or full provider parity.
+
+The separate installed-Codex steering smoke is also off by default. It submits
+one generated counting prompt, then one generated steering marker as soon as the
+actual native turn becomes available. It requires a same-turn acknowledgement,
+one local run, two correctly attributed user inputs, automatic checkpoints and
+unchanged staged/working/untracked bytes and HEAD. An opening turn that ends too
+soon fails honestly without retrying or resending. Unexpected tools and approvals
+fail the check. Its private evidence and exact-ID native archive/local cleanup
+follow the same restrictions as the history smoke.
 
 The deterministic provider fixture contacts no external service
 and does not exercise real provider authentication or prove full provider parity.

@@ -31,6 +31,7 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     case providerInterrupt(threadID: UUID, runID: UUID)
     case providerRespond(threadID: UUID, runID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case providerSessionRespond(threadID: UUID, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
+    case promptSteering(threadID: UUID, operationID: UUID)
     case projectClone(projectID: UUID, plan: GitClonePlan)
     case resolveWorktree(threadID: UUID, request: GitWorktreeRequest)
     case prepareWorktree(threadID: UUID, plan: GitWorktreePlan)
@@ -48,7 +49,7 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     public var threadID: UUID? {
         switch self {
         case .projectClone, .pullRequestCreation, .pullRequestCheckout: nil
-        case .conversationHistory(let id, _), .checkpointRestore(let id, _), .conversationHistoryFiles(let id, _, _): id
+        case .promptSteering(let id, _), .conversationHistory(let id, _), .checkpointRestore(let id, _), .conversationHistoryFiles(let id, _, _): id
         case .resolveRunCheckpoint(let id, _, _, _), .captureRunCheckpoint(let id, _, _, _), .resolveThreadScript(let id, _, _), .startThreadScript(let id, _, _), .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }
@@ -73,6 +74,7 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
         }
     }
     var pullRequestCreationOperationID: UUID? { if case .pullRequestCreation(_, let id, _) = self { id } else { nil } }
+    var promptSteeringOperationID: UUID? { if case .promptSteering(_, let id) = self { id } else { nil } }
     var pullRequestCheckoutOperationID: UUID? { if case .pullRequestCheckout(_, let id, _) = self { id } else { nil } }
     var conversationHistoryOperationID: UUID? { if case .conversationHistory(_, let id) = self { id } else { nil } }
     var conversationHistoryFilesOperationID: UUID? { if case .conversationHistoryFiles(_, let id, _) = self { id } else { nil } }
@@ -81,7 +83,7 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     public var targetID: UUID {
         switch self {
         case .projectClone(let id, _), .pullRequestCreation(let id, _, _), .pullRequestCheckout(let id, _, _): id
-        case .conversationHistory(let id, _), .checkpointRestore(let id, _), .conversationHistoryFiles(let id, _, _): id
+        case .promptSteering(let id, _), .conversationHistory(let id, _), .checkpointRestore(let id, _), .conversationHistoryFiles(let id, _, _): id
         case .resolveRunCheckpoint(let id, _, _, _), .captureRunCheckpoint(let id, _, _, _), .resolveThreadScript(let id, _, _), .startThreadScript(let id, _, _), .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }

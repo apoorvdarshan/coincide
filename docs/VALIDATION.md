@@ -1,5 +1,74 @@
 # Validation record
 
+## 2026-10-22 — durable native steering and full-suite handoff
+
+- Native Queue/Steer preference, explicit delivery menu and alternate
+  Command/Control-Return target the existing run. Compatible queued promotion
+  captures the exact selected input and leaves the current draft alone. A saved
+  Chat action reads the latest editor text, persists it before acceptance and
+  cannot resurrect an older debounced draft. Later edits survive delivery.
+- Codex uses the reviewed native `turn/steer` contract with the exact expected
+  turn and authored message ID, without changing model/permissions or starting a
+  new turn. Claude uses `priority: now`; a transport submission remains distinct
+  from native acknowledgement. Foreground Agent/Task ownership gates steering,
+  and semantic ownership events refresh the UI without per-token queries.
+  Claude's controlled three-result Stop race now produces one root completion.
+- SQLite accepts the authored row, captured input, exact run/runtime/native
+  target and owned outbox together, then commits the dispatch marker before RPC.
+  Late receipts retain their original run. A proven-unsent completed parent can
+  create one follow-up using the same row; Stop/removal/restart suppress delayed
+  fallback. Unknown delivery pauses FIFO; acknowledgement only releases its
+  delivery hold, and Resume Queue is a separate action. Restart never resends.
+- History rejects working and unverified retained steering, preserves failed
+  input only in source audit, and retains inherited acknowledged provenance after
+  fork/source removal. Its optional delivery proof preserves legacy fingerprints
+  when no steering exists. Lost history acknowledgements remain inspectable after
+  restart. Provider echoes cannot forge or overwrite local authored ownership.
+  Storage version 23 protects the new durable ledger from older binaries.
+- The focused run passes seven native declarations (including one existing
+  history regression) in 4.643 seconds and 27 Core declarations in 0.878 seconds.
+  Twenty offscreen composer/recovery captures cover 320/680-point widths in both
+  appearances; narrow Steer, wide Queue and unknown-recovery layouts were inspected.
+- The full suite passes all 727 Swift declarations: 600 Core in 248.470 seconds,
+  108 native view/store in 46.643 seconds, six terminal in 1.388 seconds and
+  thirteen Markdown in 0.136 seconds. Opt-in live checks remain off in that suite;
+  deterministic protocol fixtures do not establish real provider execution.
+- The separate installed-Codex engine smoke passes in 9.738 seconds: exactly one
+  provider start, one steering call, one native thread/turn and an acknowledged
+  receipt, the exact generated final marker, two attributed user inputs and
+  preserved unrelated draft/checkpoints/files/index/HEAD. No unexpected tool or
+  approval occurs. The opening counting marker had not yet appeared before
+  steering; this verifies an active-turn handoff, not mid-tool interruption.
+  Its one generated native thread was archived, private local cleanup passed
+  and bounded process inspection was clear. Evidence is mode 600. This does not
+  establish installed-Claude steering or broader provider versions.
+- The repository-owned app packages and runs at its exact bundle path; deep/strict
+  app/helper signatures and native math-resource rendering pass. A fresh private
+  SQLite backup after graceful shutdown precedes storage 22 to 23. The complete
+  canonical workspace remains identical: three conversations, 25 messages,
+  integrity `ok`. No system installation or public binary release was changed.
+- All fourteen Python harness checks pass. The actual strict-thirteen desktop
+  runner compiles locally without running GUI tests. Its new workflow verifies
+  default Return queueing, removal of that queued input, literal Unicode steering,
+  one native run/turn, exact durable receipt/row/configuration linkage and restart
+  without another input RPC. The peer accepts the provider's opaque message IDs,
+  including the production `user-<UUID>` shape. Actual hosted proof is pending.
+- Exact `1be63d13` [run 39731469631](https://github.com/apoorvdarshan/coincide/actions/runs/39731469631)
+  passes all 694 production tests in 591.757 seconds. Its actual twelve GUI
+  workflows pass eight, fail four and skip zero in 775.165 seconds; Files/editor
+  passes in 90.827 seconds. The same three old combined preflight catches produce
+  EPERM before app launch, and the old PR card identifier still hides its child
+  control identifier. These results do not determine the precise failing launch
+  statement or verify the already-pushed diagnostic/identifier fixes.
+- Exact `60b2231f` [run 39732271528](https://github.com/apoorvdarshan/coincide/actions/runs/39732271528)
+  passes all 694 tests in 699.495 seconds, packaging, signatures and native
+  resources. Its fifteen-minute production deadline interrupts archiving before
+  artifact upload, so GUI does not run. The production budget is now twenty
+  minutes. The GUI budget is thirty minutes: the previous twelve-workflow run
+  already took 775 seconds with three provider workflows failing preflight,
+  and the new gate requires thirteen complete workflows. No individual assertion,
+  test wait, coverage or zero-skip requirement was relaxed.
+
 ## 2026-10-22 — hosted twelve-workflow result and precise launch diagnostics
 
 - Exact `e1184d13` [run 39729008478](https://github.com/apoorvdarshan/coincide/actions/runs/39729008478)

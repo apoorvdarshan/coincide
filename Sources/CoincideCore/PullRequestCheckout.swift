@@ -184,8 +184,8 @@ extension WorkspaceSnapshot {
         let operations = pullRequestCheckouts ?? []
         let ids = operations.flatMap { [$0.id, $0.effectID, $0.targetThreadID, $0.review.plan.request.id] }
         guard Set(ids).count == ids.count else { throw CoincideError("Pull request checkout identities must be uniquely reserved.") }
-        var reserved = Set(projects.map(\.id) + (pullRequestCreations ?? []).flatMap { [$0.id, $0.effectID] } +
-            (checkpointRestoreOperations ?? []).map(\.id) + (conversationHistoryOperations ?? []).flatMap { [$0.id] + ($0.review.targetThreadID.map { [$0] } ?? []) + ($0.review.files.map { [$0.id] } ?? []) })
+        var reserved = promptSteeringReservedIDs.union(Set(projects.map(\.id) + (pullRequestCreations ?? []).flatMap { [$0.id, $0.effectID] } +
+            (checkpointRestoreOperations ?? []).map(\.id) + (conversationHistoryOperations ?? []).flatMap { [$0.id] + ($0.review.targetThreadID.map { [$0] } ?? []) + ($0.review.files.map { [$0.id] } ?? []) }))
         for project in projects { if let clone = project.clone { reserved.formUnion((clone.previousPlans + [clone.plan]).map(\.id)) } }
         for thread in threads {
             if let origin = thread.pullRequestCheckoutOperationID {

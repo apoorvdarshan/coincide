@@ -21,6 +21,17 @@ struct QueuedTurnsView: View {
                                 if !queued.text.isEmpty { Text(queued.text).font(.caption).lineLimit(2) }
                                 if let files = queued.attachments, !files.isEmpty { Label("\(files.count) attachment\(files.count == 1 ? "" : "s")", systemImage: "paperclip").font(.caption2).foregroundStyle(.secondary) }
                             }.frame(maxWidth: .infinity, alignment: .leading)
+                            if thread.activeRun != nil {
+                                Button {
+                                    _ = store.steerQueued(queued.id, threadID: thread.id)
+                                } label: { Image(systemName: "arrow.turn.up.right") }
+                                    .help(store.canSteerQueued(queued, threadID: thread.id)
+                                        ? "Send this queued message into the running turn"
+                                        : "Keep this message queued to use its captured settings, or wait until the running turn can be steered")
+                                    .accessibilityLabel("Steer queued message")
+                                    .accessibilityIdentifier("steer-queued-\(queued.id.uuidString)")
+                                    .disabled(!store.canSteerQueued(queued, threadID: thread.id))
+                            }
                             Button { store.editQueued(queued.id, threadID: thread.id) } label: { Image(systemName: "pencil") }
                                 .help("Edit queued message").accessibilityLabel("Edit queued message")
                             Button { store.removeQueued(queued.id, threadID: thread.id) } label: { Image(systemName: "xmark") }

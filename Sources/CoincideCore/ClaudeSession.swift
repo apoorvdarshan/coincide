@@ -18,6 +18,15 @@ public actor ClaudeSession: ProviderSession {
     private var initialization = JSONValue.null
     private var pendingApprovals: [JSONValue: ApprovalRequest] = [:]
     private var emittedAssistant = false
+    private var activeTurnID: String?
+    private var activeNativeThreadID: String?
+    private var activeConfiguration: ProviderConfiguration?
+    private var turnGeneration = 0
+    private var steeringTask: ProviderSteeringTask?
+    private var steeringSubmitted = false
+    private var activeRootSubagentTools: Set<String> = []
+    private var activeSubagentTasks: [String: String] = [:]
+    private var steerEchoes: [String] = []
 
     public init(executable: URL, cwd: URL, resumeID: String? = nil, arguments: [String]? = nil) throws {
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
@@ -67,11 +76,16 @@ public actor ClaudeSession: ProviderSession {
         guard !working else { throw CoincideError("A turn is already running in this thread.") }
         eventRunID = submittedRunID
         working = true; requestedInterrupt = false; emittedAssistant = false
+        turnGeneration += 1
+        let generation = turnGeneration
+        activeConfiguration = .init(thread: thread); activeNativeThreadID = thread.providerThreadID
+        activeTurnID = nil; steeringSubmitted = false; clearRootSubagents(); activeSubagentTasks = [:]
         do {
             try await connect()
             _ = try await rpc.request("set_permission_mode", params: .object(["mode": .string(Self.permissionMode(thread.permission))]))
             _ = try await rpc.request("set_model", params: .object(["model": thread.model.isEmpty ? .null : .string(thread.model)]))
             let promptID = UUID().uuidString
+            activeTurnID = promptID
             var images: [JSONValue] = input.images.map { image in
                 .object(["type": .string("image"), "source": .object(["type": .string("base64"),
                     "media_type": .string(image.mimeType), "data": .string(image.data.base64EncodedString())])])
@@ -81,7 +95,65 @@ public actor ClaudeSession: ProviderSession {
             try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(promptID),
                 "message": .object(["role": .string("user"), "content": content]), "parent_tool_use_id": .null]))
             emit(.turn(promptID), runID: submittedRunID)
-        } catch { working = false; throw error }
+        } catch { if generation == turnGeneration { working = false; activeTurnID = nil }; throw error }
+    }
+    public func steeringCapabilities() async -> ProviderSteeringCapabilities {
+        guard initialized, !shuttingDown else { return .init(unavailableReason: ProviderSteeringError(.unsupported).localizedDescription) }
+        guard working, !requestedInterrupt, activeTurnID != nil, activeNativeThreadID != nil, eventRunID != nil else {
+            return .init(unavailableReason: ProviderSteeringError(.noActiveTurn).localizedDescription)
+        }
+        guard activeRootSubagentTools.isEmpty else {
+            return .init(interruptsTools: true, unavailableReason: "This turn has active agents that this connection cannot safely move to the background. Queue the message instead.")
+        }
+        return .init(supportsActiveSteering: true, interruptsTools: true)
+    }
+    public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try Task.checkCancellation()
+        try ProviderSteeringValidation.id(expectedTurnID); try ProviderSteeringValidation.id(clientMessageID)
+        try ProviderSteeringValidation.input(input)
+        while let previous = steeringTask {
+            _ = try? await previous.task.value
+            if steeringTask?.id == previous.id { steeringTask = nil }
+            try Task.checkCancellation()
+        }
+        guard initialized, !shuttingDown else { throw ProviderSteeringError(.unsupported) }
+        guard working, !requestedInterrupt else { throw ProviderSteeringError(.noActiveTurn) }
+        guard activeRootSubagentTools.isEmpty else { throw ProviderSteeringError(.unsupported) }
+        try ProviderSteeringValidation.target(thread, provider: .claude, configuration: activeConfiguration,
+            runID: eventRunID, nativeThreadID: activeNativeThreadID, turnID: activeTurnID, expectedTurnID: expectedTurnID)
+        var content: [JSONValue] = input.images.map { image in
+            .object(["type": .string("image"), "source": .object(["type": .string("base64"),
+                "media_type": .string(image.mimeType), "data": .string(image.data.base64EncodedString())])])
+        }
+        if !input.text.isEmpty { content.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+        // Fresh transport UUIDs avoid mistaking an old CLI transcript echo for
+        // this delivery. The app's durable message ID is not an idempotency key.
+        let promptID = UUID().uuidString, id = UUID()
+        let frame: JSONValue = .object(["type": .string("user"), "uuid": .string(promptID), "priority": .string("now"),
+            "message": .object(["role": .string("user"), "content": input.images.isEmpty ? .string(input.text) : .array(content)]),
+            "parent_tool_use_id": .null])
+        try ProviderSteeringValidation.frame(frame); try Task.checkCancellation()
+        let task = Task {
+            try await self.submitSteeringFrame(frame, thread: thread, expectedTurnID: expectedTurnID)
+        }
+        steeringTask = .init(id: id, task: task)
+        defer { if steeringTask?.id == id { steeringTask = nil } }
+        let receipt = try await task.value
+        if steerEchoes.contains(promptID) { return try .init(turnID: expectedTurnID) }
+        return receipt
+    }
+    private func submitSteeringFrame(_ frame: JSONValue, thread: CodingThread, expectedTurnID: String) async throws -> ProviderSteeringReceipt {
+        // The task can start after another actor event. Repeat the exact owner
+        // check immediately before handing this frame to the live transport.
+        guard working, !requestedInterrupt, !shuttingDown else { throw ProviderSteeringError(.noActiveTurn) }
+        guard activeRootSubagentTools.isEmpty else { throw ProviderSteeringError(.unsupported) }
+        try ProviderSteeringValidation.target(thread, provider: .claude, configuration: activeConfiguration,
+            runID: eventRunID, nativeThreadID: activeNativeThreadID, turnID: activeTurnID, expectedTurnID: expectedTurnID)
+        steeringSubmitted = true
+        do {
+            try await rpc.sendFrame(frame)
+            return try ProviderSteeringReceipt(turnID: expectedTurnID, delivery: .submitted)
+        } catch { throw ProviderSteeringError(.outcomeUncertain) }
     }
     public func interrupt() async throws {
         guard working else { throw CoincideError("There is no active Claude turn to stop.") }
@@ -105,7 +177,8 @@ public actor ClaudeSession: ProviderSession {
         pendingApprovals.removeValue(forKey: request.id)
     }
     public func close() async {
-        shuttingDown = true; await rpc.close(); reader?.cancel(); reader = nil; continuation.finish()
+        shuttingDown = true; await rpc.close(); _ = try? await steeringTask?.task.value; steeringTask = nil
+        reader?.cancel(); reader = nil; continuation.finish()
     }
     private func consume(_ event: RPCEvent) async {
         switch event {
@@ -123,21 +196,45 @@ public actor ClaudeSession: ProviderSession {
                 emit(.message(.init(role: .system, text: "Unsupported Claude control request: \(method).")))
             }
         case .notification(let method, let frame):
-            if let id = frame["session_id"].string { emit(.thread(id)) }
+            let isRoot = frame["parent_tool_use_id"] == .null
+            if let id = frame["session_id"].string {
+                if isRoot, working, activeNativeThreadID == nil { activeNativeThreadID = id }
+                emit(.thread(id))
+            }
             switch method {
             case "control_cancel_request":
                 let id = frame["request_id"]
                 pendingApprovals.removeValue(forKey: id); emit(.approvalDismissed(id))
-            case "stream_event": consumeStream(frame["event"])
-            case "assistant": consumeAssistant(frame["message"])
+            case "stream_event": consumeStream(frame["event"], isRoot: isRoot)
+            case "assistant": consumeAssistant(frame["message"], isRoot: isRoot)
             case "user":
+                if isRoot, let uuid = frame["uuid"].string {
+                    steerEchoes.append(uuid); if steerEchoes.count > 128 { steerEchoes.removeFirst() }
+                }
                 for block in frame["message"]["content"].array ?? [] where block["type"].string == "tool_result" {
                     let id = block["tool_use_id"].string ?? UUID().uuidString
+                    if isRoot { removeRootSubagent(id) }
                     let text = block["content"].string ?? (block["content"].array ?? []).compactMap { $0["text"].string }.joined(separator: "\n")
                     emit(.message(.init(id: "result-\(id)", role: .tool, text: text)))
                 }
+            case "system":
+                if isRoot, frame["subtype"] == .string("task_started"), let taskID = frame["task_id"].string {
+                    let toolID = frame["tool_use_id"].string ?? "task:" + taskID
+                    activeSubagentTasks[taskID] = toolID; insertRootSubagent(toolID)
+                } else if frame["subtype"] == .string("task_notification"), let taskID = frame["task_id"].string,
+                          ["completed", "failed", "stopped"].contains(frame["status"].string ?? ""),
+                          let toolID = activeSubagentTasks.removeValue(forKey: taskID) {
+                    removeRootSubagent(toolID)
+                }
             case "result":
+                // Steering can leave several aborted query segments queued
+                // ahead of a Stop result. Completion is one fact for the live
+                // root query; late segments and child results cannot repeat it.
+                guard isRoot, working else { return }
+                if steeringSubmitted, !requestedInterrupt,
+                   ["aborted_tools", "aborted_streaming"].contains(frame["terminal_reason"].string ?? "") { return }
                 working = false; pendingApprovals.removeAll()
+                activeTurnID = nil; steeringSubmitted = false; clearRootSubagents(); activeSubagentTasks = [:]
                 if requestedInterrupt { emit(.completed(.interrupted)) }
                 else if frame["is_error"] == .bool(true) {
                     let errors = (frame["errors"].array ?? []).compactMap(\.string).joined(separator: "\n")
@@ -152,13 +249,14 @@ public actor ClaudeSession: ProviderSession {
             }
         }
     }
-    private func consumeStream(_ event: JSONValue) {
+    private func consumeStream(_ event: JSONValue, isRoot: Bool) {
         switch event["type"].string {
         case "message_start": messageID = event["message"]["id"].string ?? UUID().uuidString
         case "content_block_start":
             let block = event["content_block"], id = blockID(index: event["index"])
             if block["type"].string == "tool_use" {
                 let toolID = block["id"].string ?? id
+                observeRootSubagent(block, id: toolID, isRoot: isRoot)
                 emit(.message(.init(id: toolID, role: .tool, text: block["name"].string ?? "Tool")))
             } else if let text = block["text"].string, !text.isEmpty {
                 emittedAssistant = true; emit(.delta(id: id, role: .assistant, text: text))
@@ -170,7 +268,7 @@ public actor ClaudeSession: ProviderSession {
         default: break
         }
     }
-    private func consumeAssistant(_ message: JSONValue) {
+    private func consumeAssistant(_ message: JSONValue, isRoot: Bool) {
         let id = message["id"].string ?? UUID().uuidString
         for (index, block) in (message["content"].array ?? []).enumerated() {
             switch block["type"].string {
@@ -179,11 +277,26 @@ public actor ClaudeSession: ProviderSession {
                 emit(.message(.init(id: "\(id)-\(index)", role: .assistant, text: block["text"].string ?? "")))
             case "thinking": emit(.message(.init(id: "\(id)-\(index)", role: .reasoning, text: block["thinking"].string ?? "")))
             case "tool_use":
+                observeRootSubagent(block, id: block["id"].string ?? "\(id)-\(index)", isRoot: isRoot)
                 emit(.message(.init(id: block["id"].string ?? "\(id)-\(index)", role: .tool,
                     text: "\(block["name"].string ?? "Tool")\n\(block["input"].pretty)")))
             default: break
             }
         }
+    }
+    private func observeRootSubagent(_ block: JSONValue, id: String, isRoot: Bool) {
+        guard isRoot, working, ["agent", "task"].contains(block["name"].string?.lowercased() ?? "") else { return }
+        insertRootSubagent(id)
+    }
+    private func insertRootSubagent(_ id: String) {
+        if activeRootSubagentTools.insert(id).inserted { emit(.steeringCapabilitiesChanged) }
+    }
+    private func removeRootSubagent(_ id: String) {
+        if activeRootSubagentTools.remove(id) != nil { emit(.steeringCapabilitiesChanged) }
+    }
+    private func clearRootSubagents() {
+        guard !activeRootSubagentTools.isEmpty else { return }
+        activeRootSubagentTools.removeAll(); emit(.steeringCapabilitiesChanged)
     }
     private func blockID(index: JSONValue) -> String {
         if case .number(let index) = index { return "\(messageID)-\(Int(index))" }

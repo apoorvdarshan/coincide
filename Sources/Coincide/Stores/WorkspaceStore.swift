@@ -106,6 +106,8 @@ final class WorkspaceStore {
     private var loadingTask: Task<Void, Never>?
     private var updatesTask: Task<Void, Never>?
     private var commandTail: Task<Void, Never>?
+    private var promptSteeringAvailability: [UUID: (NativePromptSteeringKey, PromptSteeringAvailability)] = [:]
+    private var acceptingPromptSteering: Set<UUID> = []
     private var draftSaveTask: Task<Void, Never>?
     private var draftOverrides: [UUID: String] = [:]
     private var pendingDrafts: [UUID: String] = [:]
@@ -751,6 +753,7 @@ final class WorkspaceStore {
     private func reconcileRemovedResources(threadIDs: Set<UUID>, projectIDs: Set<UUID>) {
         for id in threadIDs {
             pendingDrafts.removeValue(forKey: id); draftOverrides.removeValue(forKey: id); acpModels.removeValue(forKey: id)
+            promptSteeringAvailability.removeValue(forKey: id)
         }
         let imports = attachmentImportTasks.compactMap { key, task in attachmentImportOwners[key].map { threadIDs.contains($0) } == true ? task : nil }
         let worktrees = worktreeTasks.filter { threadIDs.contains($0.key) }.map(\.value)
@@ -1099,6 +1102,112 @@ final class WorkspaceStore {
                 errorMessage = error.localizedDescription; return false
             }
         }
+    }
+    func promptSteeringKey(threadID: UUID) -> NativePromptSteeringKey? {
+        guard let thread = thread(threadID) else { return nil }
+        return .init(runtimeID: thread.runtimeID, run: thread.activeRun, nativeThreadID: thread.providerThreadID,
+            capabilityRevision: thread.steeringCapabilityRevision,
+            state: thread.state, requests: thread.runtimeRequests, workspaceReady: workspaceReady(for: thread),
+            historyLocked: snapshot.isConversationHistoryLocked(threadID: threadID),
+            accepting: acceptingPromptSteering.contains(threadID),
+            operations: (snapshot.promptSteerings ?? []).filter { $0.threadID == threadID }.map {
+                .init(id: $0.id, phase: $0.phase.rawValue, acknowledgedAt: $0.acknowledgedAt)
+            })
+    }
+    func refreshPromptSteeringAvailability(threadID: UUID) async {
+        guard !terminating, let engine, let key = promptSteeringKey(threadID: threadID) else { return }
+        let value = await engine.promptSteeringAvailability(threadID: threadID)
+        guard !terminating, !Task.isCancelled, promptSteeringKey(threadID: threadID) == key else { return }
+        promptSteeringAvailability[threadID] = (key, value)
+    }
+    func steeringAvailability(threadID: UUID) -> PromptSteeringAvailability? {
+        guard let cached = promptSteeringAvailability[threadID], cached.0 == promptSteeringKey(threadID: threadID),
+              !acceptingPromptSteering.contains(threadID) else { return nil }
+        return cached.1
+    }
+    func isAcceptingPromptSteering(_ threadID: UUID) -> Bool { acceptingPromptSteering.contains(threadID) }
+    func steeringExplanation(threadID: UUID) -> String? {
+        guard let thread = thread(threadID), thread.isBusy else { return nil }
+        guard let availability = steeringAvailability(threadID: threadID), availability.canSteer,
+              let configuration = availability.configuration else {
+            return steeringAvailability(threadID: threadID)?.unavailableReason
+                ?? String(localized: "Queue this message while the current turn becomes available for steering.")
+        }
+        let name = configuration.provider == .acp ? configuration.acpAgent?.name ?? configuration.provider.name : configuration.provider.name
+        let model = configuration.model.isEmpty ? String(localized: "its current model") : configuration.model
+        if availability.interruptsTools {
+            return String(localized: "Steer sends to \(name) with \(model) and interrupts its current tools. Future-turn settings stay separate.")
+        }
+        return String(localized: "Steer sends to \(name) with \(model), using the running turn's settings.")
+    }
+    func canSteerQueued(_ queued: QueuedTurn, threadID: UUID) -> Bool {
+        guard let availability = steeringAvailability(threadID: threadID), availability.canSteer,
+              var running = availability.configuration else { return false }
+        var captured = queued.configuration
+        running.nativeThreadID = nil; captured.nativeThreadID = nil
+        return running == captured
+    }
+    func steer(_ text: String, threadID id: UUID, queuedID: UUID? = nil) -> Task<Bool, Never> {
+        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !terminating, let engine, let thread = thread(id), !isImportingAttachments(id),
+              !isPreparingWorkspace(id), !actionsPreventPromptSteering(threadID: id),
+              let availability = steeringAvailability(threadID: id), availability.canSteer,
+              let runID = availability.runID, thread.activeRun?.id == runID,
+              queuedID != nil || !prompt.isEmpty || !thread.draftAttachments.isEmpty,
+              !acceptingPromptSteering.contains(id) else { return Task { false } }
+        if let queuedID {
+            guard let queued = thread.queuedTurns.first(where: { $0.id == queuedID }), canSteerQueued(queued, threadID: id) else {
+                return Task { false }
+            }
+        } else {
+            pendingDrafts.removeValue(forKey: id)
+            draftOverrides[id] = ""
+        }
+        acceptingPromptSteering.insert(id)
+        let previous = commandTail
+        let task = Task {
+            await previous?.value
+            guard !self.terminating, !self.actionsPreventPromptSteering(threadID: id),
+                  self.thread(id)?.activeRun?.id == runID else { throw CancellationError() }
+            if queuedID == nil {
+                // The editor can be ahead of its debounced save. Persist this
+                // captured input before acceptance so clearing it cannot expose
+                // an older saved draft. Later edits keep their live overlay and
+                // their saves remain ordered behind this command.
+                let draftReceipt = try await engine.dispatch(.editThread(id, .draft(text)))
+                if let rejection = draftReceipt.rejection { throw WorkspaceCommandError(rejection) }
+            }
+            let receipt = try await engine.steerPrompt(threadID: id, text: prompt, expectedRunID: runID, queuedID: queuedID)
+            self.apply(await engine.current())
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+            return receipt
+        }
+        commandTail = Task { _ = await task.result }
+        return Task {
+            defer { acceptingPromptSteering.remove(id) }
+            do {
+                _ = try await task.value
+                if queuedID == nil, draftOverrides[id] == "" { draftOverrides.removeValue(forKey: id) }
+                return true
+            } catch {
+                apply(await engine.current())
+                if queuedID == nil, self.thread(id) != nil, (draftOverrides[id] ?? "").isEmpty { setDraft(text, id: id) }
+                if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription }
+                return false
+            }
+        }
+    }
+    private func actionsPreventPromptSteering(threadID: UUID) -> Bool {
+        snapshot.isConversationHistoryLocked(threadID: threadID) || isCheckpointRestoreLocked(threadID: threadID) ||
+            isPullRequestCreationLocked(threadID: threadID) || isPullRequestCheckoutLocked(threadID: threadID)
+    }
+    func steerQueued(_ queuedID: UUID, threadID: UUID) -> Task<Bool, Never> {
+        steer("", threadID: threadID, queuedID: queuedID)
+    }
+    func acknowledgePromptSteering(_ operationID: UUID) async {
+        let task = enqueue(.acknowledgePromptSteering(operationID: operationID))
+        do { _ = try await task.value }
+        catch { if !terminating { errorMessage = error.localizedDescription } }
     }
     func interrupt(_ id: UUID) async {
         let task = enqueue(.interrupt(threadID: id))

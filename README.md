@@ -34,6 +34,19 @@ Push use your existing Git credentials. A folder without Git can initialize a
 repository; staging and unstaging also work before its first commit. A new thread
 can choose a Git worktree before its first message.
 
+While a turn runs, Return queues the next message by default. Command-Return uses
+the alternate **Steer** action when the live provider supports it. The delivery
+menu offers both actions, and Settings changes which one is the default. Steer
+sends to the current run with its captured model and permissions. Codex uses the
+reviewed 0.163.x native active-turn contract; Claude can interrupt its current
+tools, and steering is unavailable while foreground agents retain ownership. A queued
+message also has a Steer action when its captured settings match the active run.
+
+If delivery is unconfirmed, the input stays in the conversation and is not
+automatically repeated. **Continue Without Repeating** releases the delivery
+hold; a paused queue still needs **Resume Queue**. Direct steering does not
+change the running model or implement an interrupt-and-restart workflow.
+
 Save or discard file edits and close that conversation's terminal tabs in every
 window before changing its checkout. Running commands remain open until you close them.
 Choose **Choose Worktree…** from the conversation's workspace menu. Create a new

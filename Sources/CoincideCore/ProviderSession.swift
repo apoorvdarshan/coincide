@@ -25,6 +25,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     case sessionApproval(ApprovalRequest)
     case sessionApprovalDismissed(JSONValue)
     case submissionFailed(clientMessageID: String, reason: String)
+    case steeringCapabilitiesChanged
     indirect case context(runID: UUID, event: ProviderEvent)
 }
 
@@ -34,6 +35,8 @@ public protocol ProviderSession: Actor {
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
     func interrupt() async throws
+    func steeringCapabilities() async -> ProviderSteeringCapabilities
+    func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt
     func respond(_ request: ApprovalRequest, allow: Bool) async throws
     func answer(_ request: ApprovalRequest, answers: [String: String]) async throws
     func choose(_ request: ApprovalRequest, optionID: String) async throws
@@ -46,6 +49,8 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func steeringCapabilities() async -> ProviderSteeringCapabilities { .init(unavailableReason: ProviderSteeringError(.unsupported).localizedDescription) }
+    public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt { throw ProviderSteeringError(.unsupported) }
     public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities { throw ProviderHistoryError(.unsupported) }
     public func conversationSnapshot(threadID: String) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
     public func historyPage(threadID: String, cursor: String? = nil, limit: Int = 100) async throws -> ProviderHistoryPage { throw ProviderHistoryError(.unsupported) }
