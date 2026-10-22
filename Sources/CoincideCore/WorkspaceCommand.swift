@@ -157,72 +157,54 @@ struct WorkspaceDecision: Sendable {
     var cancelCloneAttempt: UUID?
     var cancelWorktreeAttempt: UUID?
 
-    @inline(never)
-    static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
-        if case .conversationHistoryAccepted(let review, let title) = command {
-            return try makeConversationHistoryAcceptance(review, title: title, snapshot: snapshot, now: now)
-        }
-        return try makeGeneral(command, id: id, snapshot: snapshot, now: now)
+    private struct GeneralReduction {
+        let decision: WorkspaceDecision
+        let requiresFinalization: Bool
     }
 
-    // Acceptance validates and encodes retained checkpoint evidence. Keep that
-    // call chain outside the general switch's unconditional temporary buffers.
+    /// Full ledger validation may encode retained checkpoint receipts. It must
+    /// run after the general mutation switch releases its temporary buffers.
     @inline(never)
-    private static func makeConversationHistoryAcceptance(_ review: ConversationHistoryReview, title: String?,
-                                                          snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
-        var decision = Self(snapshot: snapshot)
-        try decision.acceptConversationHistory(review, title: title, now: now)
+    static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        let reduced: GeneralReduction
+        switch command {
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult,
+             .conversationHistoryReconciled, .client(.recallConversationHistoryPrompt):
+            reduced = .init(decision: try reduceConversationHistory(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
+             .client(.acknowledgeConversationHistoryFiles), .client(.dismissConversationHistoryRecall):
+            reduced = .init(decision: try reduceConversationHistoryFiles(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
+             .checkpointRestoreInspected, .client(.acknowledgeCheckpointRestore):
+            reduced = .init(decision: try reduceCheckpointRestore(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .client(.addProjectWithThread), .client(.startProjectClone):
+            reduced = .init(decision: try reduceProjectRegistration(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .projectScriptStarted(let thread, let attempt, let run, let token):
+            return try make(.threadScriptStarted(threadID: thread, owner: .setup(attemptID: attempt), runID: run, incarnation: token), id: id, snapshot: snapshot, now: now)
+        case .projectScriptExited(let thread, let attempt, let run, let token, let result):
+            return try make(.threadScriptExited(threadID: thread, owner: .setup(attemptID: attempt), runID: run, incarnation: token, result: result), id: id, snapshot: snapshot, now: now)
+        case .projectScriptStopped(let thread, let attempt, let run, let token):
+            return try make(.threadScriptStopped(threadID: thread, owner: .setup(attemptID: attempt), runID: run, incarnation: token), id: id, snapshot: snapshot, now: now)
+        default:
+            reduced = try makeGeneral(command, id: id, snapshot: snapshot, now: now)
+        }
+        guard reduced.requiresFinalization else { return reduced.decision }
+        return try finalized(reduced.decision)
+    }
+
+    @inline(never)
+    private static func finalized(_ value: Self) throws -> Self {
+        var decision = value
         decision.snapshot.reconcileGroupingPreferences()
         try WorkspaceJournal.validate(decision.snapshot)
         return decision
     }
 
     @inline(never)
-    private static func makeGeneral(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+    private static func reduceConversationHistory(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
-        if case .provider(let threadID, _, _) = command, snapshot.isCheckpointRestoreLocked(threadID: threadID) || snapshot.isPullRequestCreationLocked(threadID: threadID) || snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return decision }
         switch command {
-        case .promptSteeringAccepted(let operation): try decision.acceptPromptSteering(operation)
-        case .promptSteeringDispatching(let operation, let incarnation): try decision.dispatchPromptSteering(operationID: operation, incarnation: incarnation, now: now)
-        case .promptSteeringEffectResult(let request, let result, let incarnation): try decision.finishPromptSteering(request, result: result, incarnation: incarnation, now: now)
-        case .client(.acknowledgePromptSteering(let operation)): try decision.acknowledgePromptSteering(operationID: operation, now: now)
-        case .pullRequestCheckoutAccepted(let operation): try decision.acceptPullRequestCheckout(operation)
-        case .pullRequestCheckoutDispatching(let project, let operation, let incarnation): try decision.dispatchPullRequestCheckout(projectID: project, operationID: operation, incarnation: incarnation, now: now)
-        case .pullRequestCheckoutEffectResult(let request, let result, let incarnation): try decision.finishPullRequestCheckout(request, result: result, incarnation: incarnation, now: now)
-        case .pullRequestCheckoutInspected(let operation, _, let result): try decision.inspectPullRequestCheckout(operationID: operation, result: result, now: now)
-        case .pullRequestCheckoutCancel(let operation): try decision.cancelPullRequestCheckout(operationID: operation, now: now)
-        case .client(.acknowledgePullRequestCheckout(let operation)): try decision.acknowledgePullRequestCheckout(operationID: operation, now: now)
-        case .conversationHistoryFilesDispatching(let threadID, let operationID, let incarnation):
-            try decision.dispatchConversationHistoryFiles(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
-        case .conversationHistoryFilesEffectResult(let request, let result, let incarnation):
-            decision.finishConversationHistoryFiles(request, result: result, incarnation: incarnation, now: now)
-        case .conversationHistoryFilesInspected(let operationID, _, let result):
-            try decision.inspectConversationHistoryFiles(operationID: operationID, result: result, now: now)
-        case .client(.acknowledgeConversationHistoryFiles(let operationID)):
-            try decision.acknowledgeConversationHistoryFiles(operationID: operationID, now: now)
-        case .client(.dismissConversationHistoryRecall(let operationID)):
-            try decision.dismissConversationHistoryRecall(operationID: operationID, now: now)
-        case .pullRequestCreationAccepted(let operation):
-            try decision.acceptPullRequestCreation(operation)
-        case .pullRequestCreationDispatching(let projectID, let operationID, let incarnation):
-            try decision.dispatchPullRequestCreation(projectID: projectID, operationID: operationID, incarnation: incarnation, now: now)
-        case .pullRequestCreationEffectResult(let request, let result, let incarnation):
-            decision.finishPullRequestCreation(request, result: result, incarnation: incarnation, now: now)
-        case .pullRequestCreationReconciled(let operationID, _, let result):
-            try decision.reconcilePullRequestCreation(operationID: operationID, result: result, now: now)
-        case .client(.acknowledgePullRequestCreation(let operationID)):
-            try decision.acknowledgePullRequestCreation(operationID: operationID, now: now)
-        case .checkpointRestoreAccepted(let review):
-            try decision.acceptCheckpointRestore(review, now: now)
-        case .checkpointRestoreDispatching(let threadID, let operationID, let incarnation):
-            try decision.dispatchCheckpointRestore(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
-        case .checkpointRestoreEffectResult(let request, let result, let incarnation):
-            decision.finishCheckpointRestore(request, result: result, incarnation: incarnation, now: now)
-        case .checkpointRestoreInspected(let operationID, let incarnation, let result):
-            try decision.inspectCheckpointRestore(operationID: operationID, incarnation: incarnation, result: result, now: now)
-        case .client(.acknowledgeCheckpointRestore(let operationID)):
-            try decision.acknowledgeCheckpointRestore(operationID: operationID, now: now)
         case .conversationHistoryAccepted(let review, let title):
             try decision.acceptConversationHistory(review, title: title, now: now)
         case .conversationHistoryDispatching(let threadID, let operationID, let incarnation):
@@ -233,6 +215,119 @@ struct WorkspaceDecision: Sendable {
             try decision.reconcileConversationHistory(operationID: operationID, result: result, now: now)
         case .client(.recallConversationHistoryPrompt(let operationID)):
             try decision.recallConversationHistoryPrompt(operationID: operationID, now: now)
+        default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
+        }
+        return decision
+    }
+
+    @inline(never)
+    private static func reduceConversationHistoryFiles(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
+        switch command {
+        case .conversationHistoryFilesDispatching(let threadID, let operationID, let incarnation):
+            try decision.dispatchConversationHistoryFiles(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
+        case .conversationHistoryFilesEffectResult(let request, let result, let incarnation):
+            decision.finishConversationHistoryFiles(request, result: result, incarnation: incarnation, now: now)
+        case .conversationHistoryFilesInspected(let operationID, _, let result):
+            try decision.inspectConversationHistoryFiles(operationID: operationID, result: result, now: now)
+        case .client(.acknowledgeConversationHistoryFiles(let operationID)):
+            try decision.acknowledgeConversationHistoryFiles(operationID: operationID, now: now)
+        case .client(.dismissConversationHistoryRecall(let operationID)):
+            try decision.dismissConversationHistoryRecall(operationID: operationID, now: now)
+        default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
+        }
+        return decision
+    }
+
+    @inline(never)
+    private static func reduceCheckpointRestore(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
+        switch command {
+        case .checkpointRestoreAccepted(let review):
+            try decision.acceptCheckpointRestore(review, now: now)
+        case .checkpointRestoreDispatching(let threadID, let operationID, let incarnation):
+            try decision.dispatchCheckpointRestore(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
+        case .checkpointRestoreEffectResult(let request, let result, let incarnation):
+            decision.finishCheckpointRestore(request, result: result, incarnation: incarnation, now: now)
+        case .checkpointRestoreInspected(let operationID, let incarnation, let result):
+            try decision.inspectCheckpointRestore(operationID: operationID, incarnation: incarnation, result: result, now: now)
+        case .client(.acknowledgeCheckpointRestore(let operationID)):
+            try decision.acknowledgeCheckpointRestore(operationID: operationID, now: now)
+        default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
+        }
+        return decision
+    }
+
+    @inline(never)
+    private static func reduceProjectRegistration(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
+        switch command {
+        case .client(.addProjectWithThread(let project, let thread)):
+            guard project.clone == nil, thread.projectID == project.id, thread.workspacePath == project.path,
+                  !decision.snapshot.projects.contains(where: { $0.id == project.id || $0.path == project.path }) else {
+                throw WorkspaceCommandError("This project is already open, or its first conversation uses another workspace.")
+            }
+            decision.snapshot.projects.append(project)
+            try decision.prepareClientCommand(.createThread(thread), commandID: id, now: now)
+            try decision.insertNewThread(thread)
+            decision.snapshot.reconcileGroupingPreferences()
+            try WorkspaceJournal.validate(decision.snapshot)
+        case .client(.startProjectClone(var project, let thread)):
+            guard let submitted = project.clone else { throw WorkspaceCommandError("Choose a repository to clone.") }
+            do { try submitted.plan.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
+            guard submitted.plan.destinationPath == project.path, thread.projectID == project.id, thread.workspacePath == project.path,
+                  !decision.snapshot.projects.contains(where: { $0.id == project.id || $0.path == project.path }),
+                  !decision.snapshot.cloneAttemptIDs.contains(submitted.plan.id) else { throw WorkspaceCommandError("This project or clone destination is already in use.") }
+            project.clone = .init(plan: submitted.plan, now: now)
+            decision.snapshot.projects.append(project)
+            try decision.prepareClientCommand(.createThread(thread), commandID: id, now: now)
+            try decision.insertNewThread(thread)
+            decision.snapshot.reconcileGroupingPreferences()
+            try WorkspaceJournal.validate(decision.snapshot)
+            decision.effects.append(.init(id: submitted.plan.id, request: .projectClone(projectID: project.id, plan: submitted.plan)))
+        default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
+        }
+        return decision
+    }
+
+    @inline(never)
+    private static func makeGeneral(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> GeneralReduction {
+        var decision = Self(snapshot: snapshot)
+        if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
+        if case .provider(let threadID, _, _) = command, snapshot.isCheckpointRestoreLocked(threadID: threadID) || snapshot.isPullRequestCreationLocked(threadID: threadID) || snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return .init(decision: decision, requiresFinalization: false) }
+        switch command {
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult,
+             .conversationHistoryReconciled, .client(.recallConversationHistoryPrompt),
+             .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
+             .client(.acknowledgeConversationHistoryFiles), .client(.dismissConversationHistoryRecall),
+             .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
+             .checkpointRestoreInspected, .client(.acknowledgeCheckpointRestore),
+             .client(.addProjectWithThread), .client(.startProjectClone),
+             .projectScriptStarted, .projectScriptExited, .projectScriptStopped:
+            return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
+        case .promptSteeringAccepted(let operation): try decision.acceptPromptSteering(operation)
+        case .promptSteeringDispatching(let operation, let incarnation): try decision.dispatchPromptSteering(operationID: operation, incarnation: incarnation, now: now)
+        case .promptSteeringEffectResult(let request, let result, let incarnation): try decision.finishPromptSteering(request, result: result, incarnation: incarnation, now: now)
+        case .client(.acknowledgePromptSteering(let operation)): try decision.acknowledgePromptSteering(operationID: operation, now: now)
+        case .pullRequestCheckoutAccepted(let operation): try decision.acceptPullRequestCheckout(operation)
+        case .pullRequestCheckoutDispatching(let project, let operation, let incarnation): try decision.dispatchPullRequestCheckout(projectID: project, operationID: operation, incarnation: incarnation, now: now)
+        case .pullRequestCheckoutEffectResult(let request, let result, let incarnation): try decision.finishPullRequestCheckout(request, result: result, incarnation: incarnation, now: now)
+        case .pullRequestCheckoutInspected(let operation, _, let result): try decision.inspectPullRequestCheckout(operationID: operation, result: result, now: now)
+        case .pullRequestCheckoutCancel(let operation): try decision.cancelPullRequestCheckout(operationID: operation, now: now)
+        case .client(.acknowledgePullRequestCheckout(let operation)): try decision.acknowledgePullRequestCheckout(operationID: operation, now: now)
+        case .pullRequestCreationAccepted(let operation):
+            try decision.acceptPullRequestCreation(operation)
+        case .pullRequestCreationDispatching(let projectID, let operationID, let incarnation):
+            try decision.dispatchPullRequestCreation(projectID: projectID, operationID: operationID, incarnation: incarnation, now: now)
+        case .pullRequestCreationEffectResult(let request, let result, let incarnation):
+            decision.finishPullRequestCreation(request, result: result, incarnation: incarnation, now: now)
+        case .pullRequestCreationReconciled(let operationID, _, let result):
+            try decision.reconcilePullRequestCreation(operationID: operationID, result: result, now: now)
+        case .client(.acknowledgePullRequestCreation(let operationID)):
+            try decision.acknowledgePullRequestCreation(operationID: operationID, now: now)
         case .client(.retryPostRunCheckpoint(let threadID, let runID, let expected)):
             try decision.changePostRunCheckpoint(threadID: threadID, runID: runID, expectedAttemptID: expected, retry: true, now: now)
         case .client(.continueAfterPostRunCheckpoint(let threadID, let runID, let expected)):
@@ -296,7 +391,7 @@ struct WorkspaceDecision: Sendable {
                   decision.snapshot.threads[i].workspacePath == expectedPath, !decision.snapshot.threads[i].isArchived else {
                 throw WorkspaceCommandError("This conversation changed. Settle it in its current workspace.")
             }
-            if decision.snapshot.threads[i].settlement != nil { return decision }
+            if decision.snapshot.threads[i].settlement != nil { return .init(decision: decision, requiresFinalization: false) }
             guard decision.snapshot.canSettle(threadID: threadID) else {
                 throw WorkspaceCommandError("Finish or stop the current turn, clear queued messages and questions, and finish workspace setup before settling.")
             }
@@ -352,12 +447,6 @@ struct WorkspaceDecision: Sendable {
             run.phase = .stopping; run.pendingAction = action; run.updatedAt = now
             if run.commandExit != .exited(0) { decision.snapshot.threads[i].queuePaused = true }
             decision.snapshot.threads[i].setProjectScript(run, owner: owner)
-        case .projectScriptStarted(let thread, let attempt, let run, let token):
-            return try make(.threadScriptStarted(threadID: thread, owner: .setup(attemptID: attempt), runID: run, incarnation: token), id: id, snapshot: snapshot, now: now)
-        case .projectScriptExited(let thread, let attempt, let run, let token, let result):
-            return try make(.threadScriptExited(threadID: thread, owner: .setup(attemptID: attempt), runID: run, incarnation: token, result: result), id: id, snapshot: snapshot, now: now)
-        case .projectScriptStopped(let thread, let attempt, let run, let token):
-            return try make(.threadScriptStopped(threadID: thread, owner: .setup(attemptID: attempt), runID: run, incarnation: token), id: id, snapshot: snapshot, now: now)
         case .threadScriptStarted(let threadID, let owner, let runID, _):
             if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
                var run = decision.snapshot.threads[i].projectScript(owner: owner), run.id == runID, run.phase == .starting {
@@ -514,29 +603,6 @@ struct WorkspaceDecision: Sendable {
             }) else { throw WorkspaceCommandError("The project groups changed. Review the current groups and try moving again.") }
             guard order.count == expected.count, Set(order) == Set(expected) else { throw WorkspaceCommandError("Move only the projects currently shown in Manual order.") }
             decision.reorderProjects(order)
-        case .client(.addProjectWithThread(let project, let thread)):
-            guard project.clone == nil, thread.projectID == project.id, thread.workspacePath == project.path,
-                  !decision.snapshot.projects.contains(where: { $0.id == project.id || $0.path == project.path }) else {
-                throw WorkspaceCommandError("This project is already open, or its first conversation uses another workspace.")
-            }
-            decision.snapshot.projects.append(project)
-            try decision.prepareClientCommand(.createThread(thread), commandID: id, now: now)
-            try decision.insertNewThread(thread)
-            decision.snapshot.reconcileGroupingPreferences()
-            try WorkspaceJournal.validate(decision.snapshot)
-        case .client(.startProjectClone(var project, let thread)):
-            guard let submitted = project.clone else { throw WorkspaceCommandError("Choose a repository to clone.") }
-            do { try submitted.plan.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
-            guard submitted.plan.destinationPath == project.path, thread.projectID == project.id, thread.workspacePath == project.path,
-                  !decision.snapshot.projects.contains(where: { $0.id == project.id || $0.path == project.path }),
-                  !decision.snapshot.cloneAttemptIDs.contains(submitted.plan.id) else { throw WorkspaceCommandError("This project or clone destination is already in use.") }
-            project.clone = .init(plan: submitted.plan, now: now)
-            decision.snapshot.projects.append(project)
-            try decision.prepareClientCommand(.createThread(thread), commandID: id, now: now)
-            try decision.insertNewThread(thread)
-            decision.snapshot.reconcileGroupingPreferences()
-            try WorkspaceJournal.validate(decision.snapshot)
-            decision.effects.append(.init(id: submitted.plan.id, request: .projectClone(projectID: project.id, plan: submitted.plan)))
         case .client(.cancelProjectClone(let projectID)):
             guard let i = decision.snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = decision.snapshot.projects[i].clone else { throw WorkspaceCommandError("This project has no clone to cancel.") }
             if clone.isRunning, !clone.cancelRequested {
@@ -558,7 +624,7 @@ struct WorkspaceDecision: Sendable {
         case .client(.removeACPAgent(let id)): decision.snapshot.acpAgents.removeAll { $0.id == id }
         case .client(.addProject(let project)):
             guard project.clone == nil else { throw WorkspaceCommandError("Use Clone Repository to create a cloning project.") }
-            if decision.snapshot.projects.contains(where: { $0.path == project.path }) { return decision }
+            if decision.snapshot.projects.contains(where: { $0.path == project.path }) { return .init(decision: decision, requiresFinalization: false) }
             guard !decision.snapshot.projects.contains(where: { $0.id == project.id }) else { throw WorkspaceCommandError("This project identity is already in use.") }
             decision.snapshot.projects.append(project)
         case .client(.createThread(let thread)):
@@ -961,9 +1027,7 @@ struct WorkspaceDecision: Sendable {
                 clone.progress = progress; clone.updatedAt = now; decision.snapshot.projects[i].clone = clone
             }
         }
-        decision.snapshot.reconcileGroupingPreferences()
-        try WorkspaceJournal.validate(decision.snapshot)
-        return decision
+        return .init(decision: decision, requiresFinalization: true)
     }
     private mutating func prepareClientCommand(_ action: WorkspaceCommand, commandID: UUID, now: Date) throws {
         preventDelayedPromptSteering(action, now: now)
