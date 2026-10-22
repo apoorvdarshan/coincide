@@ -111,7 +111,7 @@ final class CoincideDesktopUITests: XCTestCase {
 
     @MainActor private func assertNativeReadOnlyCodexAccount(in app: XCUIApplication, wire: URL) throws {
         app.typeKey(",", modifierFlags: .command)
-        let settings = app.windows.containing(.checkBox, identifier: "codex-account-reveal-email").firstMatch
+        let settings = app.windows.containing(.any, identifier: "codex-account-reveal-email").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         let kind = settings.descendants(matching: .any).matching(NSPredicate(
             format: "identifier == %@ AND (label == %@ OR value == %@)", "codex-account-kind", "ChatGPT", "ChatGPT")).firstMatch
@@ -121,7 +121,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let email = settings.descendants(matching: .any).matching(NSPredicate(
             format: "identifier == %@ AND (label == %@ OR value == %@)", "codex-account-email", "Hidden", "Hidden")).firstMatch
         XCTAssertTrue(email.waitForExistence(timeout: 5))
-        let reveal = settings.checkBoxes["codex-account-reveal-email"]
+        let reveal = settings.descendants(matching: .any).matching(identifier: "codex-account-reveal-email").firstMatch
         XCTAssertTrue(reveal.exists)
         XCTAssertTrue((reveal.value as? String) == "0" || (reveal.value as? NSNumber)?.intValue == 0)
         XCTAssertFalse(settings.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "native-ui@example.invalid", "native-ui@example.invalid")).firstMatch.exists)
@@ -1519,9 +1519,9 @@ final class CoincideDesktopUITests: XCTestCase {
         let view = sheet.buttons["pull-request-view-result"]
         XCTAssertTrue(view.waitForExistence(timeout: 20)); XCTAssertTrue(view.isEnabled && view.isHittable); view.click()
         XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "pull-request-description").firstMatch.waitForExistence(timeout: 10))
-        let renderedDescription = sheet.descendants(matching: .any).matching(identifier: "pull-request-description").firstMatch
         for paragraph in ["Keep this exact description.", "Native reviewed request"] {
-            XCTAssertTrue(renderedDescription.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", paragraph, paragraph)).firstMatch.waitForExistence(timeout: 5))
+            // Native Markdown exposes each paragraph itself with the description identifier.
+            XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "identifier == %@ AND (label == %@ OR value == %@)", "pull-request-description", paragraph, paragraph)).firstMatch.waitForExistence(timeout: 5))
         }
         capture(app, name: "pull-request-read-only-inspection-finds-exact-result")
         sheet.buttons["pull-requests-back"].click()
@@ -1682,8 +1682,10 @@ final class CoincideDesktopUITests: XCTestCase {
         selectThread(targetIdentifier, in: app)
         app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
         app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        // Foreground activation can precede the persisted workspace and sidebar selection loading.
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
         XCTAssertEqual(try selectedThreadIdentifier(in: app), targetIdentifier)
-        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10)); assertConversationWorkspace(app, path: destination.path)
+        assertConversationWorkspace(app, path: destination.path)
         assertWorkspaceReady(in: app); XCTAssertTrue(app.staticTexts["What are we building?"].exists)
         selectThread(sourceIdentifier, in: app)
         XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10)); assertConversationWorkspace(app, path: project.path)
@@ -1758,8 +1760,20 @@ final class CoincideDesktopUITests: XCTestCase {
         let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "run-history-record-"))
         let scroll = app.scrollViews["run-history-records"]
         XCTAssertTrue(scroll.exists); scroll.scroll(byDeltaX: 0, deltaY: 10_000)
+        var matchedIDs: [String] = []
         for _ in 0..<5 {
-            if let row = rows.allElementsBoundByIndex.first(where: { $0.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch.exists }) {
+            let matches = rows.allElementsBoundByAccessibilityElement.filter {
+                $0.children(matching: .staticText).matching(NSPredicate(
+                    format: "label == %@ OR value == %@", prompt, prompt)).count == 1
+            }
+            matchedIDs = matches.map(\.identifier)
+            guard matches.count <= 1 else {
+                let diagnostic = XCTAttachment(string: "Requested prompt: \(prompt)\nMatching record IDs: \(matchedIDs)\n\(app.debugDescription)")
+                diagnostic.name = "history-ambiguous-run-accessibility-tree"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+                XCTFail("The native Run History must associate the exact prompt with one owned run.")
+                throw NSError(domain: "CoincideDesktopUITests", code: 1)
+            }
+            if let row = matches.first {
                 let id = String(row.identifier.dropFirst("run-history-record-".count))
                 let actions = app.menuButtons["run-history-actions-\(id)"]
                 let frame = actions.frame
@@ -1769,7 +1783,7 @@ final class CoincideDesktopUITests: XCTestCase {
             }
             XCTAssertTrue(scroll.exists); scroll.scroll(byDeltaX: 0, deltaY: -150)
         }
-        let tree = XCTAttachment(string: app.debugDescription); tree.name = "history-missing-run-accessibility-tree"; tree.lifetime = .keepAlways; add(tree)
+        let tree = XCTAttachment(string: "Requested prompt: \(prompt)\nMatching record IDs: \(matchedIDs)\n\(app.debugDescription)"); tree.name = "history-missing-run-accessibility-tree"; tree.lifetime = .keepAlways; add(tree)
         XCTFail("The native Run History must expose the owned run for \(prompt).")
         throw NSError(domain: "CoincideDesktopUITests", code: 1)
     }

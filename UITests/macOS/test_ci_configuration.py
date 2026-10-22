@@ -1,4 +1,9 @@
-"""Configuration checks run without launching a native app or touching user state."""
+"""Configuration checks run without launching a native app or touching user state.
+
+The native job has a 45-minute whole-suite budget after the fourteen-workflow
+run used 29m59s with five paths still failing early. Individual test/command
+deadlines, all fourteen scenarios and the zero-skip result gate stay unchanged.
+"""
 import copy
 import importlib.util
 from pathlib import Path

@@ -40,6 +40,36 @@
   migration. SQLite integrity and canonical workspace content remain unchanged:
   three conversations and 25 messages. No installed-provider turn was sent.
 
+## 2026-10-22 — native GUI workflow follow-through
+
+- Exact head `8e37db3` passed hosted production (907 test declarations plus
+  packaging, signatures and resource verification) in run `39759690418`. Its
+  complete native suite executed all 14 scenarios: ten passed, four failed and
+  zero skipped in 1658.404 seconds. The full checkpoint restore workflow now
+  passes, including cancel, actual Git replacement, preserved conversation/draft
+  and source state, restart and restore audit. Steering and Files/editor also pass.
+- Two remaining failures were existing harness assumptions: the email Toggle is
+  a native Switch, and indexed history-query handles repeatedly resolved to the
+  first row. Exact identifiers now locate the Toggle independently of its native
+  type; history uses stable element-bound handles and one exact direct prompt
+  child, rejects ambiguity, and retains distinct-run/action/wire assertions.
+- The other two failed farther into pull-request workflows. Exact hosted AX
+  attachments expose description paragraphs as siblings carrying their own
+  identifier, so the assertion now matches those exact paragraph values within
+  the sheet. After checkout restart, foreground activation preceded saved sidebar
+  selection; the existing ten-second blank-composer readiness check now runs
+  before asserting the exact selected target. Both original text assertions and
+  their deadlines remain. No product change was inferred from those observations.
+- The whole native job budget is 45 minutes, providing room for all completed
+  workflow paths and artifacts after the earlier `9b100dd` job used 29m59s with
+  five paths still failing early. All 14 scenarios, individual deadlines, wire and
+  state checks, and the zero-skip gate remain unchanged. Main/release runs are not
+  cancelled and no retry was added.
+- All 19 Python harness/configuration checks passed in 2.164 seconds. The final
+  native GUI runner and immutable helper compiled and passed offline checks.
+  No GUI automation test was run locally. These are compile/component checks;
+  the newly pushed head still requires its own complete hosted GUI result.
+
 ## 2026-10-22 — native operation control follow-through
 
 - Removed three additional unused outer identifiers from pull-request creation

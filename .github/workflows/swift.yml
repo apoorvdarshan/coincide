@@ -65,9 +65,9 @@ jobs:
     needs: [test, changes]
     if: needs.changes.outputs.macos_ui == 'true'
     runs-on: macos-26
-    # The twelve-workflow run took 775s even with three preflight failures.
-    # Leave room for those full workflows and the new thirteenth steering case.
-    timeout-minutes: 30
+    # All fourteen workflows used 29m59s with five paths still failing early.
+    # Budget the complete suite and artifacts; individual deadlines stay fixed.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
