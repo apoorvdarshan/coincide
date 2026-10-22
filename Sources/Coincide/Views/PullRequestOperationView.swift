@@ -77,7 +77,6 @@ struct PullRequestOperationContent: View {
             }
         }.padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .coincideSurface(cornerRadius: 10)
-            .accessibilityIdentifier("pull-request-creation-operation")
     }
     private var result: GitHubPullRequestSummary? {
         switch operation.result {

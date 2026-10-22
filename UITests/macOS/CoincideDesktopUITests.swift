@@ -1161,7 +1161,7 @@ final class CoincideDesktopUITests: XCTestCase {
         capture(app, name: "history-native-rewind-review-keeps-files-and-draft")
         confirm.click()
         let rewound = app.staticTexts.matching(identifier: "conversation-history-operation-status")
-            .matching(NSPredicate(format: "label == %@", "Conversation rewound")).firstMatch
+            .matching(NSPredicate(format: "label == %@ OR value == %@", "Conversation rewound", "Conversation rewound")).firstMatch
         XCTAssertTrue(rewound.waitForExistence(timeout: 20))
         XCTAssertTrue(close.isEnabled && close.isHittable); close.click()
         for (run, prompt) in [(thirdRun, prompts[2]), (secondRun, prompts[1]), (firstRun, prompts[0])] {
@@ -1318,9 +1318,11 @@ final class CoincideDesktopUITests: XCTestCase {
         restoreTarget.click()
         var review = try nativeRestoreReview(in: app)
         let warning = review.staticTexts["checkpoint-restore-loss-warning"]
-        XCTAssertTrue(warning.label.contains("Working edits and staging will be lost"))
-        XCTAssertTrue(warning.label.contains("New files that are not ignored may be deleted"))
-        XCTAssertEqual(review.staticTexts["checkpoint-restore-workspace"].label, checkout.path)
+        let warningText = warning.value as? String ?? warning.label
+        XCTAssertTrue(warningText.contains("Working edits and staging will be lost"))
+        XCTAssertTrue(warningText.contains("New files that are not ignored may be deleted"))
+        let reviewedWorkspace = review.staticTexts["checkpoint-restore-workspace"]
+        XCTAssertEqual(reviewedWorkspace.value as? String ?? reviewedWorkspace.label, checkout.path)
         let display = CGDisplayBounds(CGMainDisplayID())
         XCTAssertTrue(display.contains(review.frame), "The native destructive review must fit the hosted screen.")
         for control in [review.buttons["checkpoint-restore-confirm"], review.buttons["checkpoint-restore-close"]] {
@@ -1342,7 +1344,7 @@ final class CoincideDesktopUITests: XCTestCase {
         review = try nativeRestoreReview(in: app)
         review.buttons["checkpoint-restore-confirm"].click()
         let status = review.staticTexts["checkpoint-restore-status"]
-        let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", "Workspace files restored"), object: status)
+        let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Workspace files restored", "Workspace files restored"), object: status)
         XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 30), .completed)
         capture(app, name: "restore-real-git-applied-with-preserved-conversation")
         review.buttons["checkpoint-restore-close"].click()

@@ -1,5 +1,27 @@
 # Validation record
 
+## 2026-10-22 — native operation control follow-through
+
+- Removed three additional unused outer identifiers from pull-request creation
+  and checkout operation cards. These had the same nonsemantic-container pattern
+  as the observed form/history collision; status, inspection, acknowledgement,
+  result and Open Conversation controls keep their own identifiers. This is a
+  source-audit follow-up, not a newly observed hosted failure.
+- History/restore GUI checks accept the same exact success text in either native
+  AX label or value. Destructive-review assertions still require both loss
+  warnings and the exact checkout path. All 14 scenarios, wire/state assertions,
+  original deadlines and the zero-skip result gate remain unchanged.
+- After these view changes, all 130 native view/store tests passed again in
+  48.475 seconds. Nineteen Python harness checks and native GUI runner/helper
+  compilation passed. Packaging, strict/deep signatures and bundled math passed;
+  canonical workspace content and integrity remain unchanged.
+- Exact head `9b100dd` passed hosted production in run `39753904177`. Its native
+  14-scenario job was still executing when this follow-up was recorded. The
+  preceding `e09a5ce` run executed all 14 with eight passes, six failures and zero
+  skips (1424.069 seconds), reproducing the same old control/text failures.
+  Neither those results nor component tests establish hosted success for these
+  subsequent changes; the next pushed head requires its own full GUI evidence.
+
 ## 2026-10-22 — native OpenCode HTTP/SSE foundation
 
 - Added native Swift generation/version types, runtime-only header credentials,

@@ -28,7 +28,7 @@ struct PullRequestCheckoutOperationView: View {
                 if let error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
                 if let message = model.actionError { Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
-        }.accessibilityIdentifier("pull-request-checkout-operation-\(operationID?.uuidString ?? operation?.id.uuidString ?? "none")")
+        }
         .alert(confirmation?.review.plan.isReadOnly == true
                 ? String(localized: "Close unconfirmed checkout inspection?") : String(localized: "Keep the current checkout files?"), isPresented: $confirmingAcknowledgement) {
             Button("Cancel", role: .cancel) { }.keyboardShortcut(.defaultAction)
@@ -136,7 +136,6 @@ struct PullRequestCheckoutOperationContent: View {
             }
         }.font(.callout).padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .coincideSurface(cornerRadius: 10)
-            .accessibilityIdentifier("pull-request-checkout-operation")
     }
     @ViewBuilder private var recoveryButtons: some View {
         Button("Inspect Checkout State", action: inspect).disabled(acting)
