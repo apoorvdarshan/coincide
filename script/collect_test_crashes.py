@@ -22,6 +22,31 @@ MAX_THREADS = 16
 MAX_FRAMES_PER_THREAD = 64
 MAX_TOTAL_FRAMES = 256
 MAX_IMAGES = 128
+MAX_WAIT_SECONDS = 30
+MAX_POLL_INTERVAL = 5
+MAX_DIRECTORIES = 4
+MAX_SUMMARY_BYTES = 4096
+
+REJECTION_REASONS = ("directoryUnavailable", "nonRegular", "stale", "future", "oversized", "inputRead",
+                     "malformedJSON", "unrelatedProcess", "invalidCaptureTime", "captureWindow", "invalidStack",
+                     "outputLimit", "outputWrite", "candidateLimit", "directoryEntryLimit", "directoryLimit")
+
+
+class CollectionState:
+    def __init__(self):
+        self.rejections = dict.fromkeys(REJECTION_REASONS, 0)
+        self.seen = set()
+        self.unavailable_directories = set()
+        self.limited_directories = set()
+        self.written = 0
+        self.total_bytes = 0
+        self.inspected = 0
+        self.scans = 0
+
+    def summary(self, waited_seconds):
+        return {"schemaVersion": 1, "reportsWritten": self.written, "scanAttempts": self.scans,
+                "inspectedCandidates": self.inspected, "waitedSeconds": round(waited_seconds, 3),
+                "rejectionCounts": dict(self.rejections)}
 
 
 def _integer(value, maximum=1_000_000):
@@ -187,57 +212,153 @@ def sanitize_report(header, payload, since, now):
     return report
 
 
-def collect_reports(directories, output, since, now=None):
+def collect_reports(directories, output, since, now=None, state=None):
     now = time.time() if now is None else now
     if not math.isfinite(since) or not now - 3 * 3600 <= since <= now + 60:
         raise ValueError("Invalid diagnostic window")
+    state = CollectionState() if state is None else state
+    state.scans += 1
+    output = Path(output)
+    if output.is_symlink():
+        raise ValueError("Invalid output directory")
+    output.mkdir(mode=0o700, parents=True, exist_ok=True)
     candidates = []
-    for directory in directories:
+    directories = list(directories)
+    if state.scans == 1:
+        state.rejections["directoryLimit"] = max(0, len(directories) - MAX_DIRECTORIES)
+    for directory in directories[:MAX_DIRECTORIES]:
         directory = Path(directory)
         if directory.is_symlink():
+            if directory not in state.unavailable_directories:
+                state.rejections["directoryUnavailable"] += 1
+                state.unavailable_directories.add(directory)
             continue
         try:
             with os.scandir(directory) as entries:
                 for count, entry in enumerate(entries):
                     if count >= MAX_DIRECTORY_ENTRIES:
+                        if directory not in state.limited_directories:
+                            state.rejections["directoryEntryLimit"] += 1
+                            state.limited_directories.add(directory)
                         break
-                    if not entry.name.endswith(".ips") or not any(entry.name.startswith(name + "-") or entry.name.startswith(name + "_") for name in TEST_PROCESSES):
+                    # Report filenames are not a reliable executable identity.
+                    # Inspect bounded recent reports, then enforce the payload allowlist.
+                    if not entry.name.endswith(".ips"):
                         continue
-                    info = entry.stat(follow_symlinks=False)
-                    if stat.S_ISREG(info.st_mode) and since <= info.st_mtime <= now + 60 and info.st_size <= MAX_INPUT_BYTES:
-                        candidates.append((info.st_mtime, Path(entry.path)))
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        state.rejections["inputRead"] += 1
+                        continue
+                    revision = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                    if revision in state.seen:
+                        continue
+                    reason = ("nonRegular" if not stat.S_ISREG(info.st_mode) else
+                              "stale" if info.st_mtime < since else
+                              "future" if info.st_mtime > now + 60 else
+                              "oversized" if info.st_size > MAX_INPUT_BYTES else None)
+                    if reason:
+                        state.seen.add(revision)
+                        state.rejections[reason] += 1
+                    else:
+                        candidates.append((info.st_mtime, Path(entry.path), revision))
         except OSError:
+            if directory not in state.unavailable_directories:
+                state.rejections["directoryUnavailable"] += 1
+                state.unavailable_directories.add(directory)
             continue
     candidates.sort(key=lambda item: item[0], reverse=True)
-    output = Path(output)
-    if output.is_symlink():
-        raise ValueError("Invalid output directory")
-    output.mkdir(mode=0o700, parents=True, exist_ok=True)
-    written, total = 0, 0
-    for _, path in candidates[:MAX_CANDIDATES]:
-        if written >= MAX_REPORTS:
+    remaining = max(0, MAX_CANDIDATES - state.inspected)
+    for _, _, revision in candidates[remaining:]:
+        state.seen.add(revision)
+        state.rejections["candidateLimit"] += 1
+    for _, path, revision in candidates[:remaining]:
+        if state.written >= MAX_REPORTS:
             break
+        state.seen.add(revision)
+        state.inspected += 1
         try:
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(descriptor, "rb") as handle:
                 info = os.fstat(handle.fileno())
-                if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_INPUT_BYTES or info.st_mtime < since:
+                if not stat.S_ISREG(info.st_mode) or not since <= info.st_mtime <= now + 60:
+                    state.rejections["inputRead"] += 1
+                    continue
+                if info.st_size > MAX_INPUT_BYTES:
+                    state.rejections["oversized"] += 1
                     continue
                 data = handle.read(MAX_INPUT_BYTES + 1)
-            report = sanitize_report(*decode_report(data), since=since, now=now)
+        except OSError:
+            state.rejections["inputRead"] += 1
+            continue
+        if len(data) > MAX_INPUT_BYTES:
+            state.rejections["oversized"] += 1
+            continue
+        try:
+            header, payload = decode_report(data)
+        except (ValueError, UnicodeError, RecursionError, OverflowError):
+            state.rejections["malformedJSON"] += 1
+            continue
+        process = payload.get("procName", header.get("app_name"))
+        if not isinstance(process, str) or process not in TEST_PROCESSES:
+            state.rejections["unrelatedProcess"] += 1
+            continue
+        try:
+            captured = _timestamp(header, payload)
+        except (ValueError, TypeError, OverflowError):
+            state.rejections["invalidCaptureTime"] += 1
+            continue
+        if not since <= captured <= now + 60:
+            state.rejections["captureWindow"] += 1
+            continue
+        try:
+            report = sanitize_report(header, payload, since=since, now=now)
             encoded = (json.dumps(report, sort_keys=True, indent=2) + "\n").encode()
-            if len(encoded) > MAX_REPORT_BYTES or total + len(encoded) > MAX_TOTAL_BYTES:
-                continue
-            destination = output / ("test-crash-%02d.json" % (written + 1))
+        except (ValueError, TypeError, RecursionError, OverflowError):
+            state.rejections["invalidStack"] += 1
+            continue
+        if len(encoded) > MAX_REPORT_BYTES or state.total_bytes + len(encoded) > MAX_TOTAL_BYTES - MAX_SUMMARY_BYTES:
+            state.rejections["outputLimit"] += 1
+            continue
+        try:
+            destination = output / ("test-crash-%02d.json" % (state.written + 1))
             descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(encoded)
-            total += len(encoded)
-            written += 1
-        except (OSError, ValueError, UnicodeError, RecursionError, OverflowError):
-            # Never print raw input, report paths, exception payloads, or parser errors.
+            state.total_bytes += len(encoded)
+            state.written += 1
+        except OSError:
+            state.rejections["outputWrite"] += 1
             continue
-    return written
+    return state.written
+
+
+def poll_reports(directories, output, since, wait_seconds=MAX_WAIT_SECONDS, wall_clock=None, monotonic=None, sleeper=None):
+    if not isinstance(wait_seconds, (int, float)) or not math.isfinite(wait_seconds) or not 0 <= wait_seconds <= MAX_WAIT_SECONDS:
+        raise ValueError("Invalid arrival wait")
+    wall_clock = time.time if wall_clock is None else wall_clock
+    monotonic = time.monotonic if monotonic is None else monotonic
+    sleeper = time.sleep if sleeper is None else sleeper
+    state = CollectionState()
+    deadline = monotonic() + wait_seconds
+    waited = 0
+    while True:
+        collect_reports(directories, output, since, now=wall_clock(), state=state)
+        remaining = deadline - monotonic()
+        if state.written or state.inspected >= MAX_CANDIDATES or remaining <= 0:
+            break
+        interval = min(MAX_POLL_INTERVAL, remaining)
+        sleeper(interval)
+        waited += interval
+    summary = state.summary(waited)
+    encoded = (json.dumps(summary, sort_keys=True, indent=2) + "\n").encode()
+    if len(encoded) > MAX_SUMMARY_BYTES or state.total_bytes + len(encoded) > MAX_TOTAL_BYTES:
+        raise ValueError("Summary exceeds output budget")
+    destination = Path(output) / "collection-summary.json"
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(encoded)
+    return summary
 
 
 def main():
@@ -245,15 +366,17 @@ def main():
     parser.add_argument("--since-file", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--directory", action="append")
+    parser.add_argument("--wait-seconds", type=float, default=MAX_WAIT_SECONDS)
     arguments = parser.parse_args()
     try:
         marker = Path(arguments.since_file)
         if marker.is_symlink() or marker.stat().st_size > 64:
             raise ValueError("Invalid diagnostic marker")
         since = float(marker.read_text(encoding="ascii"))
-        directories = arguments.directory or [Path.home() / "Library/Logs/DiagnosticReports", Path("/Library/Logs/DiagnosticReports")]
-        count = collect_reports(directories, arguments.output, since)
-        print("Sanitized test crash reports written: %d." % count)
+        roots = [Path.home() / "Library/Logs/DiagnosticReports", Path("/Library/Logs/DiagnosticReports")]
+        directories = arguments.directory or [path for root in roots for path in (root, root / "Retired")]
+        summary = poll_reports(directories, arguments.output, since, wait_seconds=arguments.wait_seconds)
+        print("Sanitized test crash collection: " + json.dumps(summary, sort_keys=True))
     except Exception:
         # Diagnostics must not replace or obscure the original test result.
         print("Sanitized test crash collection was unavailable; original test failure is unchanged.")

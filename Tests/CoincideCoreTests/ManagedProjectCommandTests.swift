@@ -79,27 +79,45 @@ private func waitManagedCommand(_ condition: () async throws -> Bool) async thro
 }
 
 @Test(.timeLimit(.minutes(1))) func managedProjectRegistrationPersistsFullTitleAndStarterTogetherWithoutStartingProvider() async throws {
+    FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration begin\n".utf8))
     try await withManagedCommands { f in
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration fixture-ready\n".utf8))
         let title = "Café & 日本 — A complete project display title"
         let project = try f.preparedProject("cafe-japan", title: title)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration project-prepared\n".utf8))
         var thread = CodingThread(project: project); thread.draft = "Keep this unsent starter draft"
         let starter = thread, commandID = UUID(), before = await f.engine.current()
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration before-dispatch\n".utf8))
         let receipt = try await f.engine.dispatch(.addProjectWithThread(project: project, thread: starter), id: commandID)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration after-dispatch\n".utf8))
         let after = await f.engine.current().snapshot
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration snapshot-read\n".utf8))
         #expect(after.projects == [project] && after.threads == [starter])
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration snapshot-comparison-finished\n".utf8))
         #expect(after.projects[0].name == title && after.threads[0].workspacePath == project.path)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration metadata-check-finished\n".utf8))
         #expect(after.workspaceReady(for: starter) && after.threads[0].messages.isEmpty && after.threads[0].activeRun == nil)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration readiness-check-finished\n".utf8))
         #expect(f.harness.count == 0)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration memory-checks-finished\n".utf8))
         let database = try WorkspaceDatabase(url: f.databaseURL)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration database-open\n".utf8))
         #expect(try await database.receipt(commandID) == receipt)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration receipt-read\n".utf8))
         #expect(try await database.effects(commandID: commandID).isEmpty)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration effects-read\n".utf8))
         let records = try await database.journal(after: before.sequence)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration journal-read\n".utf8))
         #expect(!records.isEmpty && records.allSatisfy { $0.commandID == commandID })
         #expect(records.contains { if case .projectUpserted(let value) = $0.event { value == project } else { false } })
         #expect(records.contains { if case .threadMetadataUpserted(let value) = $0.event { value.id == starter.id && value.projectID == project.id } else { false } })
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration before-rebuild\n".utf8))
         #expect(try await database.rebuildProjection().snapshot == after)
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration after-rebuild\n".utf8))
         #expect(try String(contentsOf: URL(fileURLWithPath: project.path).appendingPathComponent("README.md"), encoding: .utf8).contains(title))
+        FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration body-finished\n".utf8))
     }
+    FileHandle.standardError.write(Data("COINCIDE_TEST_PHASE managedProjectRegistration cleanup-finished\n".utf8))
 }
 
 @Test(.timeLimit(.minutes(1))) func managedProjectRegistrationSurvivesRestartWithoutRecreatingFolderOrFirstConversation() async throws {

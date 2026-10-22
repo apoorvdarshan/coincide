@@ -3,6 +3,8 @@
 The native job has a 45-minute whole-suite budget after the fourteen-workflow
 run used 29m59s with five paths still failing early. Individual test/command
 deadlines, all fourteen scenarios and the zero-skip result gate stay unchanged.
+After a failed production suite, diagnostic-only report arrival polling is
+capped at thirty seconds; it never reruns tests or changes their result.
 """
 import copy
 import importlib.util

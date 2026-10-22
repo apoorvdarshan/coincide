@@ -35,6 +35,131 @@ def fixture(now):
 
 
 class CrashCollectionTests(unittest.TestCase):
+    def test_delayed_report_with_unrelated_filename_is_collected_without_repeating_tests(self):
+        now = time.time()
+        header, payload = fixture(now)
+        data = json.dumps(header) + "\n" + json.dumps(payload)
+        with tempfile.TemporaryDirectory(prefix="coincide-crash-delay-") as temporary:
+            root = Path(temporary)
+            source, output = root / "reports", root / "sanitized"
+            source.mkdir()
+            elapsed, waits = [0], []
+
+            def arrival(interval):
+                waits.append(interval); elapsed[0] += interval
+                report = source / "Unexpected-system-report-name.ips"
+                report.write_text(data); os.utime(report, (now + elapsed[0], now + elapsed[0]))
+
+            summary = crashes.poll_reports([source], output, now - 60, wall_clock=lambda: now + elapsed[0],
+                                          monotonic=lambda: elapsed[0], sleeper=arrival)
+            self.assertEqual(summary["reportsWritten"], 1)
+            self.assertEqual(summary["scanAttempts"], 2)
+            self.assertEqual(summary["inspectedCandidates"], 1)
+            self.assertEqual(waits, [5])
+            report = json.loads((output / "test-crash-01.json").read_text())
+            self.assertEqual(report["exception"]["signal"], "SIGBUS")
+            self.assertNotIn("Unexpected-system-report-name", json.dumps(summary))
+
+    def test_arrival_poll_deadline_and_individual_waits_are_bounded_and_zero_report_summary_survives(self):
+        now = time.time()
+        with tempfile.TemporaryDirectory(prefix="coincide-crash-no-report-") as temporary:
+            root = Path(temporary)
+            source, output = root / "reports", root / "sanitized"
+            source.mkdir()
+            elapsed, waits = [0], []
+
+            def advance(interval):
+                waits.append(interval); elapsed[0] += interval
+
+            summary = crashes.poll_reports([source], output, now - 60, wait_seconds=30,
+                                          wall_clock=lambda: now + elapsed[0], monotonic=lambda: elapsed[0], sleeper=advance)
+            self.assertEqual(summary["reportsWritten"], 0)
+            self.assertEqual(summary["scanAttempts"], 7)
+            self.assertEqual(sum(waits), 30)
+            self.assertTrue(all(0 < wait <= 5 for wait in waits))
+            self.assertEqual(summary["waitedSeconds"], 30)
+            self.assertEqual(json.loads((output / "collection-summary.json").read_text()), summary)
+            self.assertLessEqual(sum(path.stat().st_size for path in output.iterdir()), crashes.MAX_TOTAL_BYTES)
+            for invalid in (-1, 30.01, float("inf"), float("nan"), "30"):
+                with self.assertRaises(ValueError):
+                    crashes.poll_reports([source], root / "unused", now - 60, wait_seconds=invalid)
+
+    def test_revised_partial_report_is_reconsidered_after_arrival_without_recounting_unchanged_rejections(self):
+        now = time.time()
+        header, payload = fixture(now)
+        with tempfile.TemporaryDirectory(prefix="coincide-crash-partial-") as temporary:
+            root = Path(temporary)
+            source, output = root / "reports", root / "sanitized"
+            source.mkdir()
+            partial = source / "Crash-report.ips"
+            partial.write_text("PRIVATE_PARTIAL_PAYLOAD"); os.utime(partial, (now, now))
+            foreign = source / "Foreign.ips"
+            foreign.write_text(json.dumps(dict(payload, procName="PRIVATE_FOREIGN_PROCESS")))
+            elapsed = [0]
+
+            def complete(interval):
+                elapsed[0] += interval
+                if elapsed[0] >= 10:
+                    partial.write_text(json.dumps(header) + "\n" + json.dumps(payload))
+                    os.utime(partial, (now + elapsed[0], now + elapsed[0]))
+
+            summary = crashes.poll_reports([source], output, now - 60, wall_clock=lambda: now + elapsed[0],
+                                          monotonic=lambda: elapsed[0], sleeper=complete)
+            self.assertEqual(summary["scanAttempts"], 3)
+            self.assertEqual(summary["inspectedCandidates"], 3)
+            self.assertEqual(summary["rejectionCounts"]["malformedJSON"], 1)
+            self.assertEqual(summary["rejectionCounts"]["unrelatedProcess"], 1)
+            self.assertEqual(summary["reportsWritten"], 1)
+            self.assertNotIn("PRIVATE_", json.dumps(summary))
+
+    def test_rejection_counts_distinguish_filters_without_exporting_names_or_payloads(self):
+        now = time.time()
+        header, payload = fixture(now)
+        with tempfile.TemporaryDirectory(prefix="coincide-crash-rejections-") as temporary:
+            root = Path(temporary)
+            source, output = root / "reports", root / "sanitized"
+            source.mkdir()
+
+            def report(name, body, modified=now):
+                path = source / (name + "_PRIVATE_FILENAME.ips")
+                path.write_text(json.dumps(body) if isinstance(body, dict) else body)
+                os.utime(path, (modified, modified))
+                return path
+
+            report("foreign", dict(payload, procName="PRIVATE_PROCESS_NAME"))
+            report("malformed", "PRIVATE_MALFORMED_PAYLOAD")
+            report("timestamp", dict(payload, captureTime="PRIVATE_INVALID_TIMESTAMP"))
+            report("capture", dict(payload, captureTime=datetime.fromtimestamp(now - 1000, timezone.utc).isoformat()))
+            report("stack", dict(payload, threads="PRIVATE_INVALID_STACK"))
+            report("stale", payload, now - 1000)
+            report("future", payload, now + 1000)
+            report("oversized", "x" * 8193)
+            (source / "PRIVATE_SYMLINK.ips").symlink_to(source / "foreign_PRIVATE_FILENAME.ips")
+            with patch.object(crashes, "MAX_INPUT_BYTES", 8192):
+                summary = crashes.poll_reports([source], output, now - 60, wait_seconds=0, wall_clock=lambda: now)
+            for reason in ("unrelatedProcess", "malformedJSON", "invalidCaptureTime", "captureWindow", "invalidStack", "stale", "future", "oversized", "nonRegular"):
+                self.assertEqual(summary["rejectionCounts"][reason], 1, reason)
+            self.assertEqual(summary["reportsWritten"], 0)
+            self.assertNotIn("PRIVATE_", (output / "collection-summary.json").read_text())
+
+    def test_candidate_budget_is_shared_across_all_poll_scans_and_summary_has_only_fixed_keys(self):
+        now = time.time()
+        _, payload = fixture(now)
+        with tempfile.TemporaryDirectory(prefix="coincide-crash-candidates-") as temporary:
+            root = Path(temporary)
+            source, output = root / "reports", root / "sanitized"
+            source.mkdir()
+            for index in range(5):
+                (source / ("Unrelated-%d.ips" % index)).write_text(json.dumps(dict(payload, procName="PRIVATE_PROCESS")))
+            with patch.object(crashes, "MAX_CANDIDATES", 2):
+                summary = crashes.poll_reports([source], output, now - 60, wall_clock=lambda: now,
+                                              sleeper=lambda _: self.fail("An exhausted candidate budget cannot poll again."))
+            self.assertEqual(summary["scanAttempts"], 1)
+            self.assertEqual(summary["inspectedCandidates"], 2)
+            self.assertEqual(summary["rejectionCounts"]["candidateLimit"], 3)
+            self.assertEqual(set(summary["rejectionCounts"]), set(crashes.REJECTION_REASONS))
+            self.assertEqual(set(summary), {"schemaVersion", "reportsWritten", "scanAttempts", "inspectedCandidates", "waitedSeconds", "rejectionCounts"})
+
     def test_two_object_ips_exports_only_allowlisted_stack_and_stable_fingerprint(self):
         now = time.time()
         header, payload = fixture(now)
@@ -162,6 +287,7 @@ class CrashCollectionTests(unittest.TestCase):
         self.assertEqual(collector.count("continue-on-error: true"), 2)
         self.assertIn("coincide-test-crashes/*.json", collector)
         self.assertIn("if-no-files-found: ignore", collector)
+        self.assertIn("--wait-seconds 30", collector)
         self.assertIn("swift test --no-parallel", workflow)
         self.assertIn("timeout-minutes: 35", workflow)
         self.assertIn("timeout-minutes: 45", workflow)

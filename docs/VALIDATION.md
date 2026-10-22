@@ -1,5 +1,27 @@
 # Validation record
 
+## 2026-10-22 — delayed hosted crash reports and phase evidence
+
+- Exact `2ec0a087`, run `39772129599`, reproduced the production test process's
+  Darwin signal 10 after a successful build. There was no assertion or completed
+  summary; the dependent native GUI job again executed zero of 14 scenarios.
+  Its collector ran less than a second after the failure and captured no report.
+- Diagnostic collection now waits at most 30 seconds, in intervals no longer
+  than five seconds. Bounded recent files are filtered by their exact process
+  payload rather than filename prefix. A fixed-key summary records aggregate
+  rejection counts even when no stack is available. Existing input, stack,
+  privacy and total-output bounds remain; raw paths and errors are not exported.
+- Fixed direct-stderr markers identify phases of the repeatedly last-buffered
+  managed-project registration test. Removing those markers restores its
+  previous source exactly; every assertion and deadline remains. Markers do not
+  establish a cause or make an interrupted test pass.
+- The subsequent local working-tree run also exited with signal 10. Its markers
+  reached `before-dispatch` but not `after-dispatch`, narrowing the interrupted
+  interval to the awaited atomic registration command. This is not an immutable
+  baseline result or a stack identifying the underlying fault.
+- All 33 Python configuration/peer/diagnostic checks passed (1.967 seconds).
+  Delayed capture and phase attribution still require the next hosted run.
+
 ## 2026-10-22 — native OpenCode 1 and Grok ACP flows
 
 - Added a separate native OpenCode 1 HTTP/SSE conversation actor, preserving its
