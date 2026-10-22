@@ -65,7 +65,9 @@ struct ConversationHistoryOperationView: View {
             }
             recallState
             if let error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
-        }.accessibilityIdentifier("conversation-history-operation-\(operation.id)")
+        }
+            // A parent identifier replaces child control identifiers in native AX.
+            // Keep the status and action identifiers on their semantic leaves.
             .onChange(of: operation.updatedAt) { error = nil }
             .alert("Keep the current workspace files?", isPresented: $confirmingKeepFiles) {
                 Button("Cancel", role: .cancel) { }.keyboardShortcut(.defaultAction)

@@ -1,5 +1,23 @@
 # Validation record
 
+## 2026-10-22 — history status accessibility identity
+
+- Hosted run `39777011810` at `3645f869` finishes all 14 native GUI scenarios:
+  13 pass, one fails and none skip (1609.096 seconds). Files/editor/inspector,
+  checkpoint restore, model/reasoning/account controls, pull-request checkout,
+  pull-request creation/inspection and steering all pass. Production remains
+  green at that immutable head with all 1034 test declarations completed.
+- The sole failure is the history workflow's status lookup. Its final native
+  accessibility artifact contains both `Conversation rewound` and the recalled
+  input, but the ancestor operation identifier replaces the leaf status ID.
+  Wire evidence records one fork, one revert and three prompts; no history
+  mutation was replayed. Removing the unused ancestor identifier retains the
+  semantic status and action identifiers. Assertions and deadlines are unchanged.
+- All 60 focused history declarations pass locally after the change: six native
+  view/store declarations (1.305 seconds) and 54 Core declarations
+  (15.963 seconds). The build finishes in 3.89 seconds. These checks do not
+  replace the next hosted native accessibility run, which remains pending.
+
 ## 2026-10-22 — initial native Muse Session Protocol
 
 - Added a dedicated native MSP transport and session actor using the pinned
