@@ -44,6 +44,10 @@ must each be mapped and verified before declaring parity.
   resources ship inside the app and have a separate runtime-loading CI check.
 - Codex and Claude run as installed CLI processes over stdio. Coincide uses existing
   provider authentication; no API key is embedded or copied into the workspace.
+- Native Codex Settings reads existing CLI account/plan and subscription allowance
+  with identity consistency, sparse update and stale/unsupported handling. Email
+  is hidden by default and observations stay outside persistence. Native sign-in,
+  managed account profiles and broader usage telemetry still remain.
 - Custom installed ACP agents use a native JSON-RPC 2.0 adapter. Saved named
   invocations pass literal arguments and are captured in each conversation/queue.
   Config options take precedence over legacy model/mode fields. Permissions keep

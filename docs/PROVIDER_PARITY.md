@@ -44,7 +44,7 @@ Evidence labels mean:
 
 | Integration / pinned driver | Pinned T3 implementation | Coincide evidence and current boundary | Work required for parity |
 | --- | --- | --- | --- |
-| Codex / `codex` | App-server protocol, local and managed runtime paths, dynamic catalog and options, approvals/questions, native history, steering, skills/commands, account and usage controls. | **Installed:** native turns, resume, images/files, exact reviewed fork/rewind, and acknowledged same-turn steering. **Fixture/source:** bounded catalog, advertised reasoning options, captured turn effort, and cwd-aware CLI-default selection. History and inferred CLI model defaults have explicit reviewed-version boundaries. | Account/auth/setup and usage UI; broader protocol/tool/subagent coverage; skills, slash commands and MCP/configuration controls; session browsing/import; broader history compatibility and recovery. |
+| Codex / `codex` | App-server protocol, local and managed runtime paths, dynamic catalog and options, approvals/questions, native history, steering, skills/commands, account and usage controls. | **Installed:** native turns, resume, images/files, exact reviewed fork/rewind, and acknowledged same-turn steering. **Native:** read-only CLI account/allowance Settings, private email presentation, bounded identity checks and stale/unsupported handling. **Fixture/source:** bounded catalog, advertised reasoning options, captured turn effort, and cwd-aware CLI-default selection. History and inferred CLI model defaults have explicit reviewed-version boundaries. | Native sign-in/logout/setup and managed account profiles; turn/historical usage telemetry; broader protocol/tool/subagent coverage; skills, slash commands and MCP/configuration controls; session browsing/import; broader history compatibility and recovery. |
 | Claude / `claudeAgent` | Claude Agent SDK and bidirectional query stream, native controls, approvals/questions, subagent ownership, steering, fork and rollback. | **Installed:** native conversations, resume and image/file turns. **Fixture:** `priority: now` steering, interruption and root-task ownership restrictions. This does not claim a new installed-Claude steering or history verification. | Native fork/rollback and session browsing/import; complete model/effort/control/configuration behavior; richer questions, hooks, skills, usage/auth/setup and subagent metadata. |
 | OpenCode / `opencode` | Dedicated, generation-selected OpenCode 1 and 2 HTTP adapters, provider/model configuration, permissions/questions, commands/skills, steering, fork/revert, sessions and usage. | **Installed:** OpenCode ACP v1 model discovery and marker turns through the native engine. **Preset:** `opencode acp`. Experimental ACP v2 negotiation selected v1 on that installed provider; that is not a live v2-server result. | Native OpenCode HTTP generation detection and complete controls, provider authentication/configuration, session import/history/fork/revert, direct steering, command/skill discovery, subagent events and usage. Preserve the working ACP path while adding the dedicated surface. |
 | Cursor / `cursor` | `@cursor/sdk` 1.0.35, browser/API-key authentication, settings sources, models, tool/plan/subagent events and account usage. | **Missing:** no named Cursor preset, provider-specific adapter, or installed native verification. A manually entered ACP invocation has only generic capability support. | Named discovery/onboarding and native transport; auth/status/catalog/settings and complete tool/plan/subagent mapping; usage and applicable recovery. Official Cursor ACP is a possible native starting transport, but it is not automatically equivalent to the pinned SDK. |
@@ -162,6 +162,17 @@ transient probe failures: unsupported clears windows, while a failed refresh can
 retain stale last-good windows. Sparse updates merge by stable identity. A reset
 timer is not proof that provider work may resume. Credit redemption, logout,
 credential replacement and sending account emails are mutations, not probes.
+
+Coincide's native Codex account panel now reads the existing CLI identity and
+subscription allowance on an owned metadata connection. It does not reuse or
+close an active conversation transport. Identity is read before and after limits;
+an account-change notice discards the observation, with one retry on the same
+connection inside the original deadline for startup notices. Ordered sparse
+updates preserve other buckets and missing window fields; a changed interval
+does not retain another interval's reset timestamp. Account observations have no
+persistence conformance and never enter the workspace journal. This read-only
+panel does not complete native authentication, managed account switching,
+turn-token telemetry or historical usage/cost reporting.
 
 ## Official current protocol checks
 

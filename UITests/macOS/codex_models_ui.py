@@ -51,8 +51,22 @@ for line in sys.stdin:
                     or Path(params["cwd"]).resolve(strict=True) != checkout.resolve(strict=True)):
                 raise ValueError("CLI defaults must be read only for this exact private checkout.")
             result = dict(config=dict(model="future-cwd-model", model_reasoning_effort="deep", model_provider="openai"))
+        elif method == "account/read":
+            if (not isinstance(frame.get("params"), dict) or set(params) != {"refreshToken"}
+                    or params["refreshToken"] is not False):
+                raise ValueError("The offline account check forbids credential refresh and accepts only refreshToken:false.")
+            result = dict(account=dict(type="chatgpt", email="native-ui@example.invalid", planType="Offline Hosted Plus"),
+                requiresOpenaiAuth=True, workspaceRouting=dict(chatgptAccountId="offline-native-model-account"))
+        elif method == "account/rateLimits/read":
+            if not isinstance(frame.get("params"), dict) or params:
+                raise ValueError("The offline usage check accepts only an empty read request.")
+            result = dict(rateLimits=dict(limitId="codex", limitName="Offline Hosted Allowance",
+                primary=dict(usedPercent=25, windowDurationMins=300, resetsAt=4102444800),
+                secondary=dict(usedPercent=40, windowDurationMins=10080, resetsAt=4103049600),
+                credits=dict(hasCredits=True, unlimited=False, balance="12")),
+                ordinaryUsageAllowed=True, accountId="offline-native-model-account")
         else:
-            raise ValueError("The offline metadata peer forbids provider input and configuration mutations.")
+            raise ValueError("The offline metadata peer forbids provider input, sign-in, sign-out and configuration mutations.")
     except (KeyError, ValueError, TypeError, OSError) as error:
         reply = dict(id=frame["id"], error=dict(code=-32602, message=str(error)))
     else:

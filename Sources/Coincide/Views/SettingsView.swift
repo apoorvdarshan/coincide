@@ -15,6 +15,9 @@ struct SettingsView: View {
                 Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)
                 Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels(provider: provider) } }.disabled(store.isRefreshingModels)
                 LabeledContent("Available models", value: "\(store.models(for: provider).count)")
+                if provider == .codex {
+                    CodexAccountSection(account: store.codexAccount) { await store.refreshCodexAccount() }
+                }
                 Section("ACP Agents") {
                     ForEach(store.snapshot.acpAgents) { agent in
                         HStack {
@@ -55,6 +58,9 @@ struct SettingsView: View {
                 Text("Coincide is an independent Swift port. T3 Code source is copyright © 2026 T3 Tools Inc., distributed under the MIT license.").font(.caption).foregroundStyle(.secondary)
             }.formStyle(.grouped).tabItem { Label("General", systemImage: "gear") }
         }.padding().frame(width: 650, height: 520)
+            .task(id: provider) {
+                if provider == .codex { await store.refreshCodexAccount() }
+            }
             .sheet(item: $editingAgent) { agent in ACPAgentEditor(agent: agent, save: { try await store.saveACPAgent($0); editingAgent = nil }, cancel: { editingAgent = nil }) }
     }
 }

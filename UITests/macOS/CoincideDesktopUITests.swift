@@ -83,9 +83,13 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue((selected["queuedTurns"] as? [[String: Any]] ?? []).isEmpty)
         XCTAssertTrue((selected["runHistory"] as? [[String: Any]] ?? []).isEmpty)
         XCTAssertEqual(composer.value as? String, draft)
+        try assertNativeReadOnlyCodexAccount(in: app, wire: wire)
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
         let beforeRestart = try historyWire(wire)
         XCTAssertTrue(beforeRestart.filter { $0["method"] as? String == "config/read" }.count >= 2, "CLI defaults require a stable cwd-config observation before and after the catalog read.")
         XCTAssertFalse(beforeRestart.contains { ($0["method"] as? String ?? "").hasPrefix("turn/") || ($0["method"] as? String ?? "").hasPrefix("thread/") })
+        let allowedReads: Set<String> = ["initialize", "model/list", "config/read", "account/read", "account/rateLimits/read"]
+        XCTAssertTrue(beforeRestart.allSatisfy { allowedReads.contains($0["method"] as? String ?? "") }, "The model and account panels must never sign in, sign out, refresh credentials, write configuration, or submit input.")
         capture(app, name: "models-cwd-cli-default-preserves-unsent-draft")
         app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
         app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
@@ -99,6 +103,62 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "models-reopened-head"), originalHead)
         capture(app, name: "models-reopened-concrete-reasoning-and-draft")
         app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
+    @MainActor private func assertNativeReadOnlyCodexAccount(in app: XCUIApplication, wire: URL) throws {
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows.containing(.checkBox, identifier: "codex-account-reveal-email").firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        let kind = settings.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ AND (label == %@ OR value == %@)", "codex-account-kind", "ChatGPT", "ChatGPT")).firstMatch
+        XCTAssertTrue(kind.waitForExistence(timeout: 10))
+        let plan = settings.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Offline Hosted Plus", "Offline Hosted Plus")).firstMatch
+        XCTAssertTrue(plan.waitForExistence(timeout: 5))
+        let email = settings.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ AND (label == %@ OR value == %@)", "codex-account-email", "Hidden", "Hidden")).firstMatch
+        XCTAssertTrue(email.waitForExistence(timeout: 5))
+        let reveal = settings.checkBoxes["codex-account-reveal-email"]
+        XCTAssertTrue(reveal.exists)
+        XCTAssertTrue((reveal.value as? String) == "0" || (reveal.value as? NSNumber)?.intValue == 0)
+        XCTAssertFalse(settings.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "native-ui@example.invalid", "native-ui@example.invalid")).firstMatch.exists)
+        let remaining = settings.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "75% remaining", "75% remaining")).firstMatch
+        let refresh = settings.buttons["codex-account-refresh"]
+        // Native grouped Forms can flatten their scroll container out of AX.
+        // Keep the actual control visible within its owning window in that case.
+        let area = settings.scrollViews.firstMatch
+        let scroll = area.exists ? area : settings
+        for _ in 0..<8 {
+            if remaining.exists && refresh.exists && refresh.isHittable && scroll.frame.contains(refresh.frame) { break }
+            scroll.scroll(byDeltaX: 0, deltaY: -150)
+        }
+        XCTAssertTrue(remaining.exists, "The primary allowance must show 75% remaining from the synthetic 25%-used response.")
+        XCTAssertTrue(refresh.exists && refresh.isEnabled && refresh.isHittable && scroll.frame.contains(refresh.frame), "Refresh Account must remain reachable in the native Settings form.")
+        let before = try historyWire(wire)
+        let accountReads = before.filter { $0["method"] as? String == "account/read" }.count
+        let usageReads = before.filter { $0["method"] as? String == "account/rateLimits/read" }.count
+        XCTAssertGreaterThanOrEqual(accountReads, 2); XCTAssertGreaterThanOrEqual(usageReads, 1)
+        refresh.click()
+        let observed = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+            guard let frames = try? historyWire(wire) else { return false }
+            return frames.filter { $0["method"] as? String == "account/read" }.count >= accountReads + 2
+                && frames.filter { $0["method"] as? String == "account/rateLimits/read" }.count >= usageReads + 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [observed], timeout: 10), .completed)
+        XCTAssertTrue(remaining.exists)
+        let frames = try historyWire(wire)
+        for frame in frames where frame["method"] as? String == "account/read" {
+            let params = try XCTUnwrap(frame["params"] as? [String: Any])
+            XCTAssertEqual(Set(params.keys), ["refreshToken"])
+            XCTAssertEqual(params["refreshToken"] as? Bool, false)
+        }
+        for frame in frames where frame["method"] as? String == "account/rateLimits/read" {
+            XCTAssertTrue(try XCTUnwrap(frame["params"] as? [String: Any]).isEmpty)
+        }
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(settings.frame))
+        let screenshot = XCTAttachment(screenshot: settings.screenshot())
+        screenshot.name = "models-read-only-account-hidden-email-and-remaining-allowance"; screenshot.lifetime = .keepAlways; add(screenshot)
+        settings.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(waitForAbsence(settings, timeout: 5))
     }
 
     @MainActor private func openNativeProviderMenu(in app: XCUIApplication) {

@@ -2222,6 +2222,13 @@ public actor WorkspaceEngine {
         var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path)); thread.provider = provider
         return try await queryModels(thread: thread, owned: false)
     }
+    /// Provider-level CLI account metadata is deliberately never published in a
+    /// workspace snapshot, command journal, transcript, or database.
+    public func codexAccountSnapshot() async throws -> CodexAccountSnapshot {
+        var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path))
+        thread.provider = .codex
+        return try await queryProviderMetadata(thread: thread, owned: false) { try await $0.codexAccountSnapshot() }
+    }
     public func models(thread: CodingThread) async throws -> [ProviderModel] {
         _ = try await load()
         guard !closing, !stoppingEffects,
@@ -2234,6 +2241,10 @@ public actor WorkspaceEngine {
         return try await queryModels(thread: current, owned: true)
     }
     private func queryModels(thread: CodingThread, owned: Bool) async throws -> [ProviderModel] {
+        try await queryProviderMetadata(thread: thread, owned: owned) { try await $0.models() }
+    }
+    private func queryProviderMetadata<Value: Sendable>(thread: CodingThread, owned: Bool,
+                                                       operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
         if owned {
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
             guard let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
@@ -2245,11 +2256,15 @@ public actor WorkspaceEngine {
         metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: owned ? thread.id : nil,
                                      projectID: owned ? thread.projectID : nil, configuration: owned ? .init(thread: thread) : nil)
         do {
-            let result = try await session.models()
+            let result = try await withTaskCancellationHandler { try await operation(session) } onCancel: {
+                Task { [weak self] in await self?.cancelOwnedHistoryRead(id) }
+            }
+            try Task.checkCancellation()
             if owned, await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
             guard let metadata = metadataSessions[id], metadataOwnerIsCurrent(metadata) else { throw CancellationError() }
             if let task = beginMetadataClose(id) { await task.value }
             if owned, await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
+            try Task.checkCancellation()
             guard let metadata = metadataSessions[id], metadataOwnerIsCurrent(metadata) else { throw CancellationError() }
             metadataSessions.removeValue(forKey: id); return result
         } catch {
@@ -2260,6 +2275,7 @@ public actor WorkspaceEngine {
             let stillOwned = metadataSessions[id].map(metadataOwnerIsCurrent) == true
             metadataSessions.removeValue(forKey: id)
             if !ownerIsCurrent || !stillOwned || closing || stoppingEffects { throw CancellationError() }
+            try Task.checkCancellation()
             throw error
         }
     }

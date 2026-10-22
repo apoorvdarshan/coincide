@@ -105,6 +105,7 @@ final class WorkspaceStore {
     var acpModels: [UUID: [ProviderModel]] = [:]
     var isLoading = true
     var isRefreshingModels = false
+    let codexAccount = CodexAccountStore()
     var inspectorVisible = false
     var fileNavigation: FileNavigation?
     private var engine: WorkspaceEngine?
@@ -1350,6 +1351,10 @@ final class WorkspaceStore {
         } catch is CancellationError { }
         catch { if !terminating { errorMessage = error.localizedDescription } }
     }
+    func refreshCodexAccount() async {
+        guard !terminating, let engine else { return }
+        await codexAccount.refresh { try await engine.codexAccountSnapshot() }
+    }
     /// Completed worktree assignments share the UI command order with confirmations and drafts.
     func setWorkspacePath(_ path: String, threadID: UUID) -> Task<WorkspaceCommandReceipt, any Error> {
         enqueue(.editThread(threadID, .workspacePath(path)))
@@ -1957,6 +1962,7 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        await codexAccount.cancel()
         let modelReads = codexModelDefaultsReads.values.map(\.task); codexModelDefaultsReads.removeAll()
         for task in modelReads { task.cancel() }; for task in modelReads { _ = await task.value }
         let recalls = Array(automaticHistoryRecallTasks.values)

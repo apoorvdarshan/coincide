@@ -29,9 +29,9 @@ jobs:
         run: python3 script/macos_ui_ci.py changes
   test:
     runs-on: macos-26
-    # The full 694-test run passed but the 15-minute budget expired during
-    # archiving. Preserve the complete suite plus packaging/artifact handoff.
-    timeout-minutes: 20
+    # A cold hosted Swift build took 12m49s before the full test suite started.
+    # Keep every check and allow the build, tests and signed archive to finish.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

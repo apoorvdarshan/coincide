@@ -47,6 +47,13 @@ current checkout's CLI configuration and captures its concrete default model,
 keeping any saved reasoning preference for it. These choices apply to future
 turns. Active and queued turns retain the settings they already captured.
 
+**Settings → Providers → Codex Account** reads the existing CLI sign-in, plan,
+and available allowance windows. Email stays hidden until revealed. Refresh
+checks account identity before and after reading usage; switching accounts clears
+old allowance bars, while failed usage checks mark retained information as stale.
+Account observations stay in memory. Percentages and reset times never grant
+permission to send, and the account panel does not change the CLI sign-in.
+
 While a turn runs, Return queues the next message by default. Command-Return uses
 the alternate **Steer** action when the live provider supports it. The delivery
 menu offers both actions, and Settings changes which one is the default. Steer

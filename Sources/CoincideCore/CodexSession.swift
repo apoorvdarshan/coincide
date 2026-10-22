@@ -22,6 +22,9 @@ public actor CodexSession: ProviderSession {
     private var eventRunID: UUID?
     private var activeConfiguration: ProviderConfiguration?
     private var steeringTask: ProviderSteeringTask?
+    private var accountRevision = UUID()
+    private var accountReadID: UUID?
+    private var accountUsageProjection: (value: CodexUsageSnapshot?, invalidated: Bool)?
 
     public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"]) throws {
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
@@ -124,6 +127,90 @@ public actor CodexSession: ProviderSession {
     }
     public func models() async throws -> [ProviderModel] {
         try await readModelCatalog(deadline: ContinuousClock.now + .seconds(30))
+    }
+    public func codexAccountSnapshot() async throws -> CodexAccountSnapshot {
+        try await readCodexAccountSnapshot(timeout: .seconds(30))
+    }
+    func readCodexAccountSnapshot(timeout: Duration) async throws -> CodexAccountSnapshot {
+        try Task.checkCancellation()
+        guard accountReadID == nil else { throw Self.accountReadFailure() }
+        let id = UUID(), deadline = ContinuousClock.now + timeout
+        accountReadID = id
+        defer { if accountReadID == id { accountReadID = nil; accountUsageProjection = nil } }
+        do {
+            try await connect()
+            // Startup can announce the CLI's existing account after initialize.
+            // Retry one discarded observation on this same owned connection,
+            // within the original deadline; never accept a continually changing
+            // identity or treat a notice itself as a complete account.
+            for _ in 0..<2 {
+                accountUsageProjection = nil
+                // Account notifications invalidate the entire observation. A usage
+                // response must never be attributed to an identity read before a
+                // concurrent sign-in/account switch.
+                await rpc.flushEvents()
+                let revision = accountRevision
+                let initial = try CodexAccountParser.account(try await readAccountRPC(deadline: deadline))
+                var usage: CodexAccountUsage = .unsupported
+                if initial.kind == .chatgpt {
+                    accountUsageProjection = (nil, false)
+                    do {
+                        try requireAccountRead(deadline: deadline)
+                        _ = try await rpc.request("account/rateLimits/read", params: .object([:]),
+                            timeout: ContinuousClock.now.duration(to: deadline), onResponse: { [weak self] result in
+                                await self?.acceptAccountUsageResponse(result, readID: id)
+                            })
+                        await rpc.flushEvents()
+                        if let projection = accountUsageProjection, !projection.invalidated, let value = projection.value {
+                            usage = .available(value)
+                        } else { usage = .probeFailed(previous: nil) }
+                    } catch is CancellationError { throw CancellationError() }
+                    catch let error as JSONRPCRemoteError where error.code == -32601 || error.code == -32602 {
+                        usage = .unsupported
+                    } catch { usage = .probeFailed(previous: nil) }
+                }
+                let final = try CodexAccountParser.account(try await readAccountRPC(deadline: deadline))
+                await rpc.flushEvents()
+                try requireAccountRead(deadline: deadline)
+                guard initial == final, accountRevision == revision else { continue }
+                if case .available = usage {
+                    // Apply only notifications ordered after the full limits reply.
+                    // Sparse patches keep other buckets and absent window fields.
+                    if let projection = accountUsageProjection, !projection.invalidated, let value = projection.value {
+                        guard initial.accountID == nil || value.accountID == nil || initial.accountID == value.accountID else {
+                            throw Self.accountReadFailure()
+                        }
+                        usage = .available(value)
+                    } else { usage = .probeFailed(previous: nil) }
+                }
+                return .init(identity: final, usage: usage, checkedAt: .now)
+            }
+            throw Self.accountReadFailure()
+        } catch {
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            // Never display raw RPC errors or provider-supplied account data.
+            throw Self.accountReadFailure()
+        }
+    }
+    private static func accountReadFailure() -> CoincideError {
+        CoincideError("The Codex account could not be refreshed. Check the CLI sign-in and try again.")
+    }
+    private func requireAccountRead(deadline: ContinuousClock.Instant) throws {
+        try Task.checkCancellation()
+        guard !shuttingDown, ContinuousClock.now < deadline else { throw Self.accountReadFailure() }
+    }
+    private func readAccountRPC(deadline: ContinuousClock.Instant) async throws -> JSONValue {
+        try requireAccountRead(deadline: deadline)
+        let response = try await rpc.request("account/read", params: .object(["refreshToken": .bool(false)]),
+                                             timeout: ContinuousClock.now.duration(to: deadline))
+        try requireAccountRead(deadline: deadline)
+        return response
+    }
+    private func acceptAccountUsageResponse(_ result: Result<JSONValue, any Error>, readID: UUID) {
+        guard accountReadID == readID else { return }
+        if case .success(let value) = result, let parsed = try? CodexAccountParser.usage(value) {
+            accountUsageProjection = (parsed, false)
+        } else { accountUsageProjection = (nil, true) }
     }
     private func readModelCatalog(deadline: ContinuousClock.Instant) async throws -> [ProviderModel] {
         do {
@@ -361,6 +448,23 @@ public actor CodexSession: ProviderSession {
                 emit(.message(.init(role: .system, text: "Unsupported provider request: \(method). The request was declined.")))
             }
         case .notification(let method, let params):
+            if method == "account/updated" {
+                // Even a malformed account-change notice invalidates a pending
+                // read. It is not a complete identity and is never persisted.
+                accountRevision = UUID(); accountUsageProjection = (nil, true)
+                return
+            }
+            if method == "account/rateLimits/updated" {
+                if let projection = accountUsageProjection, let current = projection.value {
+                    do {
+                        guard case .rateLimitsUpdated(let update) = try CodexAccountParser.notification(method: method, params: params) else {
+                            accountUsageProjection = (nil, true); return
+                        }
+                        accountUsageProjection = (try CodexAccountParser.merging(update, into: current), projection.invalidated)
+                    } catch { accountUsageProjection = (nil, true) }
+                }
+                return
+            }
             if let id = params["threadId"].string, let threadID, id != threadID { return }
             switch method {
             case "serverRequest/resolved": emit(.approvalDismissed(params["requestId"]))

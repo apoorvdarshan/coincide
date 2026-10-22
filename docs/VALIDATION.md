@@ -1,5 +1,53 @@
 # Validation record
 
+## 2026-10-22 — native Codex account and allowance status
+
+- Settings now reads the existing CLI account/plan and allowance windows on an
+  independently owned metadata connection. Email is hidden until explicitly
+  revealed. Account details, opaque routing IDs and usage observations never
+  enter workspace persistence or conversation events. This implements status,
+  not native sign-in/logout, managed account profiles or usage history.
+- The account reader checks identity before and after usage, correlates backend
+  account IDs when supplied and rejects changing identities. The installed CLI
+  emits an account-change notice during normal startup; one discarded observation
+  can retry on the same connection inside the original 30-second deadline.
+  Repeated changes still fail. Limits replies and sparse notifications are
+  processed in wire order, preserving unrelated buckets and omitted window fields.
+  Unsupported usage clears bars; failed reads may retain explicitly stale bars
+  only for the same identity, without retaining quota authorization.
+- All 792 Swift tests passed: 651 core (248.809 seconds), 122 native view/store
+  (46.647 seconds), six terminal and 13 Markdown. The 29 focused account tests
+  also passed after final presentation changes. Coverage includes startup notices,
+  account switches, sparse updates, finite budgets, malformed/private responses,
+  cancellation during reads and during both successful/failed metadata cleanup,
+  exact session retirement, stale native-store ownership and SQLite non-persistence.
+- A real installed-Codex status read passed in 3.818 seconds with a fresh usage
+  bucket. It sent no model turn, login/logout or configuration mutation, and
+  printed no email, account ID or credentials. Packaging, strict/deep signatures
+  and native math resource verification passed. Cua captures of the actual
+  Settings window showed the hidden-email account and readable allowance bar.
+  Existing storage-24 workspace integrity and canonical content remained unchanged
+  (three conversations, 25 messages).
+- Nineteen Python fixture/configuration checks passed. The existing hosted model
+  workflow now checks the synthetic account/plan, hidden email, remaining allowance
+  and an explicitly read-only refresh before preserving its original restart
+  assertions. All 14 scenario methods remain. The runner compiled and the actual
+  embedded immutable helper passed initialize/GitHub and descriptor validation
+  without launching GUI tests locally. Hosted execution remains pending below.
+- Hosted run `39739331188` at `01fb90f` passed production but executed 14 GUI
+  scenarios with eight passes, six failures and zero skips. Five provider
+  preflights still used sandbox-created executable fixtures and failed with
+  `Process.run` EPERM. The PR sheet inherited its outer accessibility ID onto
+  child controls. Both source/harness fixes are in `fb45a729`.
+- Hosted run `39742007509` at `fb45a729` then hit GitHub's 20-minute production
+  job deadline. Compilation passed in 768.58 seconds, but tests had only about
+  380 seconds before cutoff; the previous successful hosted suite took 728.7
+  seconds. No assertion failure was logged before cancellation. Packaging and
+  all 14 GUI scenarios were skipped, so the immutable launcher still needs hosted
+  sandbox proof. The production budget is now 35 minutes with every check kept;
+  the native GUI job remains 30 minutes. Local success is not full T3 parity or
+  proof of the pending hosted GUI workflows.
+
 ## 2026-10-22 — model controls and default native Liquid Glass
 
 - Commit `01fb90f` adds bounded, paginated Codex discovery, native advertised

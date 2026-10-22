@@ -33,6 +33,7 @@ public protocol ProviderSession: Actor {
     nonisolated var events: AsyncStream<ProviderEvent> { get }
     func models() async throws -> [ProviderModel]
     func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection
+    func codexAccountSnapshot() async throws -> CodexAccountSnapshot
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
     func interrupt() async throws
@@ -50,6 +51,9 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func codexAccountSnapshot() async throws -> CodexAccountSnapshot {
+        throw CoincideError("This provider does not expose a Codex account.")
+    }
     public func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection {
         throw CoincideError("This provider does not expose Codex model defaults.")
     }

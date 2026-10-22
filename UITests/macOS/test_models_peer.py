@@ -46,6 +46,44 @@ class NativeModelsPeerTests(unittest.TestCase):
                 input=json.dumps(dict(id=1, method="initialize")) + "\n", text=True, capture_output=True, timeout=5)
             self.assertNotEqual(process.returncode, 0); self.assertEqual(process.stdout, "")
 
+    def test_account_and_usage_reads_are_synthetic_read_only_and_independent_of_process_cwd(self):
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-testing-models-") as scratch:
+            root = Path(scratch).resolve(); checkout = root / "Checkout"; checkout.mkdir()
+            state, wire = root / "models.json", root / "wire.jsonl"
+            original = dict(cwd=str(checkout), generation=2)
+            state.write_text(json.dumps(original))
+            rows = self.exchange(state, wire, [("account/read", dict(refreshToken=False)),
+                ("account/rateLimits/read", {}), ("account/read", dict(refreshToken=False))])
+            account, usage = rows[0]["result"], rows[1]["result"]
+            self.assertEqual(rows[2]["result"], account)
+            self.assertEqual(account["account"], dict(type="chatgpt", email="native-ui@example.invalid", planType="Offline Hosted Plus"))
+            self.assertTrue(account["requiresOpenaiAuth"])
+            self.assertEqual(account["workspaceRouting"]["chatgptAccountId"], usage["accountId"])
+            self.assertEqual(usage["rateLimits"]["primary"]["usedPercent"], 25)
+            self.assertEqual(usage["rateLimits"]["secondary"]["usedPercent"], 40)
+            self.assertEqual(usage["rateLimits"]["primary"]["windowDurationMins"], 300)
+            self.assertEqual(usage["rateLimits"]["credits"]["balance"], "12")
+            self.assertTrue(usage["ordinaryUsageAllowed"])
+            self.assertEqual(json.loads(state.read_text()), original)
+            self.assertEqual([json.loads(line)["method"] for line in wire.read_text().splitlines()],
+                ["account/read", "account/rateLimits/read", "account/read"])
+
+    def test_account_credentials_mutations_and_non_readonly_probe_shapes_are_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-testing-models-") as scratch:
+            root = Path(scratch).resolve(); checkout = root / "Checkout"; checkout.mkdir()
+            state, wire = root / "models.json", root / "wire.jsonl"
+            original = dict(cwd=str(checkout), generation=1)
+            state.write_text(json.dumps(original))
+            calls = [(method, {}) for method in ["account/login/start", "account/login/cancel", "account/logout",
+                "account/credits/reset", "config/value/write", "turn/start", "turn/steer", "thread/start"]]
+            calls += [("account/read", dict(refreshToken=True)), ("account/read", {}),
+                ("account/read", dict(refreshToken=0)), ("account/read", dict(refreshToken=False, extra=True)),
+                ("account/rateLimits/read", dict(refresh=True)), ("account/rateLimits/read", [])]
+            rows = self.exchange(state, wire, calls)
+            self.assertEqual(len(rows), len(calls))
+            self.assertTrue(all(row["error"]["code"] == -32602 for row in rows))
+            self.assertEqual(json.loads(state.read_text()), original)
+
 
 if __name__ == "__main__":
     unittest.main()
