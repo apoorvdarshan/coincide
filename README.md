@@ -131,7 +131,14 @@ observation, removes new nonignored files, and clears staging against the curren
 HEAD. Ignored files and nested repositories are preserved according to Git's
 restore/clean rules; HEAD and branches do not move. Your current draft, settings
 and conversation history remain. This file action is available independently of
-the provider; combined provider rewind and file restoration is still pending.
+the provider. Codex rewinds also offer **Revert and Keep Changes** or
+**Revert Files Too…**. The latter reviews the previous visible run's saved
+after-run files, or the original first run's pre-provider baseline. It requires
+the same isolated-worktree checks. After all requested stages succeed, the
+original prompt and attachments append to your latest draft without sending it.
+Provider history changes first; a later file failure is shown as a partial
+result and keeps work paused for inspection or explicit **Keep Current Files…**.
+Neither stage is automatically repeated after interruption.
 
 Other conversations sharing the checkout, active work, unsaved editors and open
 workspace terminals prevent restoration. Coincide drains its owned provider

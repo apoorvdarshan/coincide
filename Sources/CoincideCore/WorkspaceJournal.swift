@@ -92,6 +92,7 @@ public enum WorkspaceJournal {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
         try snapshot.validateConversationHistory()
+        try snapshot.validateConversationHistoryFilesLedger()
         try snapshot.validateCheckpointRestores()
         var cloneIDs: Set<UUID> = []
         for project in snapshot.projects {

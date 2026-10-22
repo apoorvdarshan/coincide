@@ -110,8 +110,10 @@ offline Codex 0.163 protocol peer. It reviews and cancels Fork and Rewind withou
 mutating provider history, then confirms each exact second-run boundary. The
 fork must open a new conversation with the reviewed prefix and leave the source
 draft unchanged. Rewind must keep all audit rows while removing the suffix from
-the current transcript. Explicit Recall Prompt appends to the latest draft only
-once, and graceful relaunch must retain both conversations and the removed-run
+the current transcript. The explicit Revert and Keep Changes choice automatically
+returns the original input to the latest draft only after confirmed completion;
+the exact append must occur once and its Recall action must stay consumed after
+graceful relaunch. Relaunch must retain both conversations and the removed-run
 audit. Source README, HEAD bytes and Git commit stay unchanged.
 The peer runs only from a private PATH entry with a private CODEX_HOME. Its
 bounded state and wire log live under the test-owned workspace; flock plus

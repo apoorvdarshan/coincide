@@ -52,7 +52,7 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 17 protects these fields
+  hold it for explicit resumption. Database storage version 19 protects these fields
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
 - Each newly started run retains its captured settings, user-message reference
   or explicit agent/legacy origin, observed adapter turn references, stop intent,
@@ -103,7 +103,7 @@ must each be mapped and verified before declaring parity.
   audit rows. Recall Prompt explicitly appends the original prompt to the latest
   draft, merges attachments within limits, and records one-time application; it
   never submits the prompt.
-- History actions never restore files, reset Git or delete conversations. A known
+- History-only actions leave files and staging unchanged. A known
   pre-mutation rejection is a visible failure. An uncertain dispatched rewind,
   including a lost acknowledgment, holds provider work until read-only inspection finds
   the original or expected resulting head; an unrelated head remains unresolved.
@@ -161,9 +161,26 @@ must each be mapped and verified before declaring parity.
   restore. Conversation audit, settings and latest draft remain unchanged. Current
   bounds are 100,000 entries, 4 MiB of path names and 512 MiB of copied regular
   bytes, including ignored files. These do not cap transient Git materialization,
-  conversion expansion or retained recovery data. Full large-workspace support,
-  recovery-storage management and combined provider rewind plus file restoration
-  remain open.
+  conversion expansion or retained recovery data. Full large-workspace support
+  and recovery-storage management remain open.
+- Combined Codex rewind offers Keep Changes or a separately reviewed Revert Files
+  Too choice. The exact target is the preceding visible local run's latest ready
+  after-run observation, or the original first run's ready pre-provider baseline.
+  It never substitutes the selected run's later baseline for the previous result.
+  Missing, ambiguous, inherited or incompatible boundaries remain unavailable.
+  The single durable operation holds the source and overlapping workspace across
+  provider and file stages. Provider history is verified first; its success,
+  retained removal audit, a new source fingerprint and the distinct file outbox
+  intent commit together. Owned connections drain before file dispatch. These
+  external operations are not atomic: file failure preserves confirmed provider
+  success and holds further work for read-only inspection or explicit Keep
+  Current Files. Unknown provider outcomes never start delayed file writes,
+  including after inspection. Restart never replays either stage. After complete
+  success, a durable recall hold allows the desktop to append the original input
+  and attachments to the latest draft exactly once, or explicitly keep the
+  current draft. Nothing is submitted automatically. Older saved history actions
+  retain manual recall behavior. This remains limited to the verified Codex
+  history contract and the standalone restoration compatibility limits above.
 - Background clones are project-owned outbox actions. The project and conversation
   appear as soon as their intent is saved; submitted messages retain their captured
   configuration and attachments while waiting for a checkout. A completed clone
@@ -307,10 +324,10 @@ must each be mapped and verified before declaring parity.
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt, reviewed same-workspace native fork and history-only rewind on the 0.163.x profile | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, broader history contracts and cross-workspace transfer, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |
-| Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind and standalone file-restore intents with retained audit and inspect-only uncertain-outcome recovery, legacy migration | Complete provider recovery, combined rewind and file restoration, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |
+| Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind, standalone restoration and combined provider-then-files intents with retained audit, explicit partial outcomes, inspect-only recovery and one-time latest-draft recall, legacy migration | Complete provider recovery, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
-| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates, reviewed settle roles with drain-before-resume, automatic workspace observations in private refs with isolated staging and verified scratch cleanup, reviewed standalone checkpoint restoration with owned recovery data | PRs/stacks/host integrations, combined rewind and restoration, large-workspace restoration and recovery-storage management, worktree removal, automatic pull policies, broader credential and network failure coverage |
+| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates, reviewed settle roles with drain-before-resume, automatic workspace observations in private refs with isolated staging and verified scratch cleanup, reviewed standalone and combined rewind checkpoint restoration with owned recovery data | PRs/stacks/host integrations, large-workspace restoration and recovery-storage management, worktree removal, automatic pull policies, broader credential and network failure coverage |
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup, bounded t3.json script discovery with explicit native selection and dedicated command tabs/cwd/environment/exit status, app-owned setup and settle jobs with shared output and separate command/background lifetime | Preview behavior, project-script settings/editing, durable terminal restart restoration, remote attachment/replay, search/settings, activity/idle detection and idle-tab closure, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |

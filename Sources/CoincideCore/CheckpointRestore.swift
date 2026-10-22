@@ -93,17 +93,22 @@ extension CodingThread {
 
 extension WorkspaceSnapshot {
     public func checkpointRestoreOperation(_ id: UUID) -> RunCheckpointRestoreOperation? { checkpointRestoreOperations?.first { $0.id == id } }
-    public func isCheckpointRestoreLocked(path: String) -> Bool {
+    public func isCheckpointRestoreLocked(path: String, excludingOperationID: UUID? = nil) -> Bool {
         (checkpointRestoreOperations ?? []).contains { operation in
-            operation.locksSource && Self.checkpointRestorePathsOverlap(path, operation.review.gitReview.currentPlan.repositoryPath)
+            operation.id != excludingOperationID && operation.locksSource && Self.checkpointRestorePathsOverlap(path, operation.review.gitReview.currentPlan.repositoryPath)
+        } || (conversationHistoryOperations ?? []).contains { operation in
+            operation.id != excludingOperationID && operation.locksFiles && operation.files.map { Self.checkpointRestorePathsOverlap(path, $0.review.gitReview.currentPlan.repositoryPath) } == true
         }
     }
-    public func isCheckpointRestoreLocked(threadID: UUID) -> Bool {
+    public func isCheckpointRestoreLocked(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }) else { return false }
         return (checkpointRestoreOperations ?? []).contains { operation in
-            operation.locksSource && (operation.review.threadID == threadID || thread.checkpointRestoreScopePaths.contains {
+            operation.id != excludingOperationID && operation.locksSource && (operation.review.threadID == threadID || thread.checkpointRestoreScopePaths.contains {
                 Self.checkpointRestorePathsOverlap($0, operation.review.gitReview.currentPlan.repositoryPath)
             })
+        } || (conversationHistoryOperations ?? []).contains { operation in
+            guard operation.id != excludingOperationID, operation.locksFiles, let files = operation.files else { return false }
+            return operation.review.sourceThreadID == threadID || thread.checkpointRestoreScopePaths.contains { Self.checkpointRestorePathsOverlap($0, files.review.gitReview.currentPlan.repositoryPath) }
         }
     }
     static func checkpointRestorePathsOverlap(_ first: String, _ second: String) -> Bool {
@@ -114,7 +119,8 @@ extension WorkspaceSnapshot {
     public func canReviewCheckpointRestore(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty,
-              thread.settlement == nil, workspaceReady(for: thread), !isConversationHistoryLocked(threadID: threadID),
+              thread.settlement == nil, workspaceReady(for: thread), !isConversationHistoryLocked(threadID: threadID, excludingOperationID: excludingOperationID),
+              !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !(checkpointRestoreOperations ?? []).contains(where: { $0.id != excludingOperationID && $0.locksSource &&
                   (Self.checkpointRestorePathsOverlap(thread.workspacePath, $0.review.gitReview.currentPlan.repositoryPath) || $0.review.threadID == threadID) }),
               let project = projects.first(where: { $0.id == thread.projectID }),
@@ -169,7 +175,7 @@ extension WorkspaceSnapshot {
     }
     func validateCheckpointRestores() throws {
         let operations = checkpointRestoreOperations ?? []
-        var reserved = Set(threads.map(\.id) + projects.map(\.id) + (conversationHistoryOperations ?? []).flatMap { [$0.id] + ($0.review.targetThreadID.map { [$0] } ?? []) })
+        var reserved = Set(threads.map(\.id) + projects.map(\.id) + (conversationHistoryOperations ?? []).flatMap { [$0.id] + ($0.review.targetThreadID.map { [$0] } ?? []) + ($0.review.files.map { [$0.id] } ?? []) })
         for project in projects { if let clone = project.clone { reserved.formUnion((clone.previousPlans + [clone.plan]).map(\.id)) } }
         for thread in threads {
             reserved.formUnion(thread.queuedTurns.map(\.id)); if let run = thread.activeRun { reserved.insert(run.id) }
@@ -209,11 +215,11 @@ extension WorkspaceDecision {
     func validateCheckpointRestoreLocks(_ command: WorkspaceCommand) throws {
         let created: CodingThread?
         switch command { case .createThread(let thread), .addProjectWithThread(_, let thread), .startProjectClone(_, let thread): created = thread; default: created = nil }
-        if let created, (snapshot.checkpointRestoreOperations ?? []).contains(where: { $0.id == created.id }) { throw WorkspaceCommandError("This identity is reserved by a checkpoint restoration.") }
+        if let created, (snapshot.checkpointRestoreOperations ?? []).contains(where: { $0.id == created.id }) || (snapshot.conversationHistoryOperations ?? []).contains(where: { $0.review.files?.id == created.id }) { throw WorkspaceCommandError("This identity is reserved by a checkpoint restoration.") }
         if let created, created.checkpointRestoreScopePaths.contains(where: { snapshot.isCheckpointRestoreLocked(path: $0) }) { throw WorkspaceCommandError("This workspace is locked by a checkpoint restoration.") }
         switch command {
         case .addProject(let project), .addProjectWithThread(let project, _), .startProjectClone(let project, _):
-            guard !snapshot.isCheckpointRestoreLocked(path: project.path), !(snapshot.checkpointRestoreOperations ?? []).contains(where: { $0.id == project.id }) else { throw WorkspaceCommandError("This project overlaps a pending checkpoint restoration.") }
+            guard !snapshot.isCheckpointRestoreLocked(path: project.path), !(snapshot.checkpointRestoreOperations ?? []).contains(where: { $0.id == project.id }), !(snapshot.conversationHistoryOperations ?? []).contains(where: { $0.review.files?.id == project.id }) else { throw WorkspaceCommandError("This project overlaps a pending checkpoint restoration.") }
         case .editThread(let id, let edit):
             switch edit {
             case .draft, .pinned, .title: return

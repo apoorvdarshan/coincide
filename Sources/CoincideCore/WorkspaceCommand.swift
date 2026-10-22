@@ -75,6 +75,8 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case continueAfterPostRunCheckpoint(threadID: UUID, runID: UUID, expectedAttemptID: UUID)
     case recallConversationHistoryPrompt(operationID: UUID)
     case acknowledgeCheckpointRestore(operationID: UUID)
+    case acknowledgeConversationHistoryFiles(operationID: UUID)
+    case dismissConversationHistoryRecall(operationID: UUID)
 }
 
 enum EngineCommand: Codable, Sendable {
@@ -103,6 +105,9 @@ enum EngineCommand: Codable, Sendable {
     case conversationHistoryDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case conversationHistoryEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryReconciled(operationID: UUID, incarnation: UUID, result: ConversationHistoryReconciliation)
+    case conversationHistoryFilesDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
+    case conversationHistoryFilesEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
+    case conversationHistoryFilesInspected(operationID: UUID, incarnation: UUID, result: GitCheckpointRestoreInspection)
     case checkpointRestoreAccepted(review: RunCheckpointRestoreReview)
     case checkpointRestoreDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case checkpointRestoreEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
@@ -129,6 +134,16 @@ struct WorkspaceDecision: Sendable {
         if case .client(let action) = command { try decision.validateConversationHistoryLocks(action); try decision.validateCheckpointRestoreLocks(action) }
         if case .provider(let threadID, _, _) = command, snapshot.isCheckpointRestoreLocked(threadID: threadID) { return decision }
         switch command {
+        case .conversationHistoryFilesDispatching(let threadID, let operationID, let incarnation):
+            try decision.dispatchConversationHistoryFiles(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
+        case .conversationHistoryFilesEffectResult(let request, let result, let incarnation):
+            decision.finishConversationHistoryFiles(request, result: result, incarnation: incarnation, now: now)
+        case .conversationHistoryFilesInspected(let operationID, _, let result):
+            try decision.inspectConversationHistoryFiles(operationID: operationID, result: result, now: now)
+        case .client(.acknowledgeConversationHistoryFiles(let operationID)):
+            try decision.acknowledgeConversationHistoryFiles(operationID: operationID, now: now)
+        case .client(.dismissConversationHistoryRecall(let operationID)):
+            try decision.dismissConversationHistoryRecall(operationID: operationID, now: now)
         case .checkpointRestoreAccepted(let review):
             try decision.acceptCheckpointRestore(review, now: now)
         case .checkpointRestoreDispatching(let threadID, let operationID, let incarnation):
@@ -609,7 +624,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
+            case .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -825,7 +840,7 @@ struct WorkspaceDecision: Sendable {
         snapshot.threads[index] = thread
     }
     private mutating func finished(_ request: WorkspaceEffectRequest, result: EffectResult, now: Date) {
-        if request.conversationHistoryOperationID != nil || request.checkpointRestoreOperationID != nil { return }
+        if request.conversationHistoryOperationID != nil || request.checkpointRestoreOperationID != nil || request.conversationHistoryFilesOperationID != nil { return }
         if request.checkpointOwner != nil { finishCheckpoint(request, result: result, now: now); return }
         if case .projectClone(let projectID, let plan) = request {
             guard let i = snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = snapshot.projects[i].clone,
@@ -897,7 +912,7 @@ struct WorkspaceDecision: Sendable {
             snapshot.threads[index] = thread; return
         }
         switch request {
-        case .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
+        case .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
             if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
@@ -939,7 +954,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
+        case .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
         case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

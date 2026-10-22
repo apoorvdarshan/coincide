@@ -138,6 +138,10 @@ final class WorkspaceStore {
     private var historyNavigationRequests: [UUID: UUID] = [:]
     private var historyInspections: [UUID: ConversationHistoryInspection] = [:]
     private var recallingHistoryPrompts: Set<UUID> = []
+    private var automaticHistoryRecallTasks: [UUID: Task<Void, Never>] = [:]
+    private var automaticHistoryRecallErrors: [UUID: String] = [:]
+    private var historyRecallDraftOwners: [UUID: UUID] = [:]
+    private var historyRecallDrainWaiters: [CheckedContinuation<Void, Never>] = []
     private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
     private var lastSequence: Int64 = -1
     private var terminating = false
@@ -502,6 +506,7 @@ final class WorkspaceStore {
         if let error = update.error, !terminating { errorMessage = error }
         reconcileCheckpointRestoreLocks()
         openAppliedHistoryForks()
+        processAutomaticHistoryRecalls()
     }
     private func reconcileRemovedResources(threadIDs: Set<UUID>, projectIDs: Set<UUID>) {
         for id in threadIDs {
@@ -512,6 +517,9 @@ final class WorkspaceStore {
         let worktreeReads = worktreeOptionsReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let historyReads = historyReviewReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let historyChecks = historyInspections.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
+        let automaticRecalls = automaticHistoryRecallTasks.filter { key, _ in
+            conversationHistoryOperation(key).map { threadIDs.contains($0.review.sourceThreadID) } ?? true
+        }.map(\.value)
         let restoreReads = checkpointRestoreReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let restoreChecks = checkpointRestoreInspections.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let scriptReads = projectScriptService?.invalidate(threadIDs: threadIDs) ?? []
@@ -520,6 +528,7 @@ final class WorkspaceStore {
         for task in worktreeReads { task.cancel() }
         for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }
         for task in restoreReads { task.cancel() }; for task in restoreChecks { task.cancel() }
+        for task in automaticRecalls { task.cancel() }
         let terminals = terminalStores.values.compactMap(\.value)
         terminalStores = terminalStores.filter { $0.value.value != nil }
         let closingTerminals = terminals.flatMap { $0.remove(threadIDs: threadIDs) }
@@ -545,6 +554,7 @@ final class WorkspaceStore {
             for task in worktreeReads { _ = await task.result }
             for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
             for task in restoreReads { _ = await task.result }; for task in restoreChecks { _ = await task.result }
+            for task in automaticRecalls { await task.value }
             for task in scriptReads { await task.value }
             for task in retries { await task.value }
             for terminal in closingTerminals { await terminal.waitForClose() }
@@ -705,7 +715,10 @@ final class WorkspaceStore {
         catch { if !terminating, self.thread(threadID) != nil { errorMessage = error.localizedDescription } }
     }
     private func flushDrafts() {
-        let values = pendingDrafts; pendingDrafts = [:]
+        // A later plain-text save must not land behind a successful recall and
+        // overwrite its append. Recall releases and flushes that live overlay.
+        let values = pendingDrafts.filter { historyRecallDraftOwners[$0.key] == nil }
+        for id in values.keys { pendingDrafts.removeValue(forKey: id) }
         for (id, text) in values {
             guard thread(id) != nil else { continue }
             let task = enqueue(.editThread(id, .draft(text)))
@@ -1097,13 +1110,20 @@ final class WorkspaceStore {
         for (root, inspector) in gitInspectors where Self.pathsOverlap(root, path) { inspector.suspendForWorkspaceMutation() }
     }
     private func reconcileCheckpointRestoreLocks() {
+        var durable: [UUID: String] = [:]
         for operation in snapshot.checkpointRestoreOperations ?? [] where operation.locksSource {
-            if checkpointRestoreLocks[operation.id] == nil {
-                let path = Self.canonicalPath(operation.review.gitReview.currentPlan.repositoryPath)
-                checkpointRestoreLocks[operation.id] = path; suspendCheckpointCaches(path: path)
+            durable[operation.id] = operation.review.gitReview.currentPlan.repositoryPath
+        }
+        for operation in snapshot.conversationHistoryOperations ?? [] where operation.locksFiles {
+            if let files = operation.files { durable[operation.id] = files.review.gitReview.currentPlan.repositoryPath }
+        }
+        for (id, root) in durable {
+            if checkpointRestoreLocks[id] == nil {
+                let path = Self.canonicalPath(root)
+                checkpointRestoreLocks[id] = path; suspendCheckpointCaches(path: path)
             }
         }
-        for (id, path) in Array(checkpointRestoreLocks) where !acceptingCheckpointRestores.contains(id) && snapshot.checkpointRestoreOperation(id)?.locksSource != true {
+        for (id, path) in Array(checkpointRestoreLocks) where !acceptingCheckpointRestores.contains(id) && durable[id] == nil {
             checkpointRestoreLocks.removeValue(forKey: id)
             guard !terminating else { continue }
             let browsers = fileBrowsers.filter { Self.pathsOverlap($0.key, path) }.map(\.value)
@@ -1138,17 +1158,36 @@ final class WorkspaceStore {
         }
         return snapshot.conversationHistoryUnavailableReason(threadID: threadID, runID: runID, kind: kind)
     }
-    func reviewConversationHistory(threadID: UUID, runID: UUID, kind: ConversationHistoryKind) async throws -> ConversationHistoryReview {
+    func reviewConversationHistory(threadID: UUID, runID: UUID, kind: ConversationHistoryKind, recallPromptOnSuccess: Bool = false) async throws -> ConversationHistoryReview {
         guard !terminating, let engine, let captured = thread(threadID),
-              conversationHistoryUnavailableReason(threadID: threadID, runID: runID, kind: kind) == nil else { throw CancellationError() }
+              conversationHistoryUnavailableReason(threadID: threadID, runID: runID, kind: kind) == nil,
+              !recallPromptOnSuccess || !isImportingAttachments(threadID) else { throw CancellationError() }
         let requestID = UUID()
-        let task = Task { try await engine.reviewConversationHistory(threadID: threadID, runID: runID, kind: kind) }
+        let task = Task { try await engine.reviewConversationHistory(threadID: threadID, runID: runID, kind: kind, recallPromptOnSuccess: recallPromptOnSuccess) }
         historyReviewReads[requestID] = .init(threadID: threadID, task: task)
         defer { historyReviewReads.removeValue(forKey: requestID) }
         let review = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
         guard !Task.isCancelled, !terminating, let current = thread(threadID), current.projectID == captured.projectID,
               current.workspacePath == captured.workspacePath, canEditWorkspace(current.workspacePath),
               !snapshot.isConversationHistoryLocked(threadID: threadID) else {
+            await engine.discardConversationHistoryReview(reviewID: review.id)
+            throw CancellationError()
+        }
+        return review
+    }
+    func reviewConversationHistoryRestoringFiles(_ keepReview: ConversationHistoryReview) async throws -> ConversationHistoryReview {
+        let id = keepReview.sourceThreadID
+        guard !terminating, let engine, let captured = thread(id), keepReview.kind == .rewindBeforeRun,
+              conversationHistoryUnavailableReason(threadID: id, runID: keepReview.runID, kind: .rewindBeforeRun) == nil,
+              canEditWorkspace(captured.workspacePath), checkpointRestoreActivityReason(path: captured.workspacePath) == nil else { throw CancellationError() }
+        let requestID = UUID()
+        let task = Task { try await engine.reviewConversationHistoryRestoringFiles(keepReview) }
+        historyReviewReads[requestID] = .init(threadID: id, task: task)
+        defer { historyReviewReads.removeValue(forKey: requestID) }
+        let review = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !Task.isCancelled, !terminating, let current = thread(id), current.projectID == captured.projectID,
+              current.workspacePath == captured.workspacePath, canEditWorkspace(current.workspacePath),
+              let files = review.files, checkpointRestoreActivityReason(path: files.gitReview.currentPlan.repositoryPath) == nil else {
             await engine.discardConversationHistoryReview(reviewID: review.id)
             throw CancellationError()
         }
@@ -1162,15 +1201,25 @@ final class WorkspaceStore {
         let id = review.sourceThreadID
         guard !terminating, let engine, let captured = thread(id),
               conversationHistoryUnavailableReason(threadID: id, runID: review.runID, kind: review.kind) == nil,
+              review.recallPromptOnSuccess != true || !isImportingAttachments(id),
               acceptingHistoryThreads.insert(id).inserted else { throw CancellationError() }
         defer { acceptingHistoryThreads.remove(id) }
+        if let files = review.files {
+            let path = Self.canonicalPath(files.gitReview.currentPlan.repositoryPath)
+            guard canEditWorkspace(path), checkpointRestoreActivityReason(path: path) == nil else { throw CancellationError() }
+            acceptingCheckpointRestores.insert(review.id); checkpointRestoreLocks[review.id] = path
+            suspendCheckpointCaches(path: path)
+        }
+        defer { acceptingCheckpointRestores.remove(review.id); reconcileCheckpointRestoreLocks() }
         flushDrafts()
         if review.kind == .forkAfterRun, selectedThreadID == id { historyNavigationRequests[review.id] = id }
         let previous = commandTail
         let task = Task {
             await previous?.value
             guard !self.terminating, let current = self.thread(id), current.projectID == captured.projectID,
-                  current.workspacePath == captured.workspacePath, self.canEditWorkspace(current.workspacePath),
+                  current.workspacePath == captured.workspacePath,
+                  review.recallPromptOnSuccess != true || !self.isImportingAttachments(id),
+                  self.canAcceptConversationHistoryWorkspace(review),
                   !self.snapshot.isConversationHistoryLocked(threadID: id) else { throw CancellationError() }
             let receipt = try await engine.beginConversationHistory(review, title: title)
             self.apply(await engine.current())
@@ -1178,7 +1227,15 @@ final class WorkspaceStore {
         }
         commandTail = Task { _ = await task.result }
         do { try await task.value }
-        catch { historyNavigationRequests.removeValue(forKey: review.id); throw error }
+        catch { historyNavigationRequests.removeValue(forKey: review.id); apply(await engine.current()); throw error }
+    }
+    private func canAcceptConversationHistoryWorkspace(_ review: ConversationHistoryReview) -> Bool {
+        guard let files = review.files else { return canEditWorkspace(review.sourceConfiguration.workspacePath) }
+        let path = files.gitReview.currentPlan.repositoryPath
+        return !snapshot.isCheckpointRestoreLocked(path: path) && checkpointRestoreActivityReason(path: path) == nil &&
+            !checkpointRestoreLocks.contains(where: { $0.key != review.id && Self.pathsOverlap(path, $0.value) }) &&
+            !removalEditorLocks.values.contains(where: { $0.contains(where: { Self.pathsOverlap(path, $0) }) }) &&
+            !workspaceTransitionLocks.values.contains(where: { $0.contains(where: { Self.pathsOverlap(path, $0) }) })
     }
     private func openAppliedHistoryForks() {
         for (id, source) in Array(historyNavigationRequests) {
@@ -1194,7 +1251,8 @@ final class WorkspaceStore {
     func reconcileConversationHistory(_ id: UUID) async throws {
         guard !terminating, let engine, let operation = conversationHistoryOperation(id), operation.phase == .unconfirmed,
               operation.review.kind == .rewindBeforeRun, historyInspections[id] == nil,
-              let source = thread(operation.review.sourceThreadID), canEditWorkspace(source.workspacePath) else { throw CancellationError() }
+              let source = thread(operation.review.sourceThreadID),
+              operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
         let task = Task { try await engine.reconcileConversationHistory(operationID: id) }
         historyInspections[id] = .init(threadID: source.id, task: task)
         defer { historyInspections.removeValue(forKey: id) }
@@ -1205,36 +1263,106 @@ final class WorkspaceStore {
     }
     func canRecallConversationHistoryPrompt(_ operation: ConversationHistoryOperation) -> Bool {
         guard operation.phase == .applied, operation.review.kind == .rewindBeforeRun, operation.recalledAt == nil,
-              !snapshot.isConversationHistoryLocked(threadID: operation.review.sourceThreadID),
+              operation.allExternalWorkSucceeded, operation.recallDismissedAt == nil,
+              historyRecallDraftOwners[operation.review.sourceThreadID].map({ $0 == operation.id }) ?? true,
+              !snapshot.isCheckpointRestoreLocked(threadID: operation.review.sourceThreadID),
+              !snapshot.isConversationHistoryLocked(threadID: operation.review.sourceThreadID, excludingOperationID: operation.needsPromptRecall ? operation.id : nil),
               let thread = thread(operation.review.sourceThreadID),
               let run = thread.runHistory?.first(where: { $0.id == operation.review.runID }), run.origin == .user,
               let message = thread.messages.first(where: {
                   $0.id == run.userMessageID && $0.role == .user &&
                   $0.runReference == .init(threadID: operation.review.sourceThreadID, runID: run.id)
               }) else { return false }
-        return !message.text.isEmpty || message.attachments?.isEmpty == false
+        return operation.needsPromptRecall || !message.text.isEmpty || message.attachments?.isEmpty == false
     }
-    func isRecallingConversationHistoryPrompt(_ id: UUID) -> Bool { recallingHistoryPrompts.contains(id) }
+    func isRecallingConversationHistoryPrompt(_ id: UUID) -> Bool { recallingHistoryPrompts.contains(id) || automaticHistoryRecallTasks[id] != nil }
+    func conversationHistoryRecallError(_ id: UUID) -> String? { automaticHistoryRecallErrors[id] }
+    private func processAutomaticHistoryRecalls() {
+        for operation in snapshot.conversationHistoryOperations ?? [] {
+            if !operation.needsPromptRecall { automaticHistoryRecallErrors.removeValue(forKey: operation.id); continue }
+            guard !terminating, automaticHistoryRecallTasks[operation.id] == nil,
+                  !recallingHistoryPrompts.contains(operation.id), automaticHistoryRecallErrors[operation.id] == nil else { continue }
+            automaticHistoryRecallTasks[operation.id] = Task { [weak self] in
+                guard let self else { return }
+                defer { self.automaticHistoryRecallTasks.removeValue(forKey: operation.id) }
+                do { try await self.recallConversationHistoryPrompt(operation.id) }
+                catch is CancellationError {
+                    if !self.terminating, self.conversationHistoryOperation(operation.id)?.needsPromptRecall == true {
+                        self.automaticHistoryRecallErrors[operation.id] = String(localized: "Rewind completed. The original input could not be recalled. Review the latest draft and attachments, then recall it or keep your current draft.")
+                    }
+                } catch {
+                    if !self.terminating, self.conversationHistoryOperation(operation.id)?.needsPromptRecall == true {
+                        self.automaticHistoryRecallErrors[operation.id] = String(localized: "Rewind completed. The original input could not be recalled. Review the latest draft and attachments, then recall it or keep your current draft.")
+                    }
+                }
+            }
+        }
+    }
     func recallConversationHistoryPrompt(_ id: UUID) async throws {
         guard !terminating, let operation = conversationHistoryOperation(id), canRecallConversationHistoryPrompt(operation),
               recallingHistoryPrompts.insert(id).inserted else { throw CancellationError() }
         defer { recallingHistoryPrompts.remove(id) }
+        automaticHistoryRecallErrors.removeValue(forKey: id)
         let threadID = operation.review.sourceThreadID
         guard let current = thread(threadID), let run = current.runHistory?.first(where: { $0.id == operation.review.runID }),
               let message = current.messages.first(where: { $0.id == run.userMessageID }) else { throw CancellationError() }
         flushDrafts()
+        historyRecallDraftOwners[threadID] = id
+        defer {
+            historyRecallDraftOwners.removeValue(forKey: threadID)
+            flushDrafts()
+            if historyRecallDraftOwners.isEmpty {
+                let waiters = historyRecallDrainWaiters; historyRecallDrainWaiters = []
+                for waiter in waiters { waiter.resume() }
+            }
+        }
         let task = enqueue(.recallConversationHistoryPrompt(operationID: id)) { [weak self] in
             guard let self, !self.terminating, let latest = self.conversationHistoryOperation(id),
                   self.canRecallConversationHistoryPrompt(latest), let thread = self.thread(threadID),
                   self.canEditWorkspace(thread.workspacePath) else { throw CancellationError() }
         }
-        let receipt = try await task.value
-        if let rejection = receipt.rejection { throw CoincideError(rejection) }
-        // A newer local edit can arrive while the atomic Core command is awaiting
-        // acknowledgment. Append to that live edit rather than restoring an old draft.
-        if let latest = draftOverrides[threadID], !message.text.isEmpty {
-            setDraft(latest.isEmpty ? message.text : latest + "\n\n" + message.text, id: threadID)
+        do {
+            let receipt = try await task.value
+            if let rejection = receipt.rejection { throw CoincideError(rejection) }
+            // A newer local edit can arrive while the atomic Core command is awaiting
+            // acknowledgment. Append to that live edit rather than restoring an old draft.
+            if let latest = pendingDrafts[threadID] ?? draftOverrides[threadID], !message.text.isEmpty {
+                let merged = latest.isEmpty ? message.text : latest + "\n\n" + message.text
+                // Finishing an already accepted recall remains necessary during
+                // shutdown; setDraft intentionally rejects new edits then.
+                draftOverrides[threadID] = merged; pendingDrafts[threadID] = merged
+            }
+        } catch {
+            if !terminating, conversationHistoryOperation(id)?.needsPromptRecall == true {
+                automaticHistoryRecallErrors[id] = String(localized: "Rewind completed. The original input could not be recalled. Review the latest draft and attachments, then recall it or keep your current draft.")
+            }
+            throw error
         }
+    }
+    func dismissConversationHistoryRecall(_ id: UUID) async throws {
+        guard !terminating, let operation = conversationHistoryOperation(id), operation.needsPromptRecall,
+              !isRecallingConversationHistoryPrompt(id) else { throw CancellationError() }
+        flushDrafts()
+        let receipt = try await enqueue(.dismissConversationHistoryRecall(operationID: id)).value
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
+    func inspectConversationHistoryFiles(_ id: UUID) async throws {
+        guard !terminating, let engine, let operation = conversationHistoryOperation(id), operation.phase == .applied,
+              operation.files?.phase == .unconfirmed, operation.files?.acknowledgedAt == nil, historyInspections[id] == nil else { throw CancellationError() }
+        let task = Task { try await engine.inspectConversationHistoryFiles(operationID: id) }
+        historyInspections[id] = .init(threadID: operation.review.sourceThreadID, task: task)
+        defer { historyInspections.removeValue(forKey: id) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
+    func acknowledgeConversationHistoryFiles(_ id: UUID) async throws {
+        guard !terminating, let operation = conversationHistoryOperation(id), operation.phase == .applied,
+              let files = operation.files, [.failed, .unconfirmed].contains(files.phase), files.acknowledgedAt == nil,
+              historyInspections[id] == nil else { throw CancellationError() }
+        let receipt = try await enqueue(.acknowledgeConversationHistoryFiles(operationID: id)).value
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
     }
     func canSettle(_ thread: CodingThread) -> Bool {
         !terminating && snapshot.canSettle(threadID: thread.id) && canEditWorkspace(thread.workspacePath)
@@ -1352,6 +1480,11 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        let recalls = Array(automaticHistoryRecallTasks.values)
+        for task in recalls { task.cancel() }; for task in recalls { await task.value }
+        while !historyRecallDraftOwners.isEmpty {
+            await withCheckedContinuation { historyRecallDrainWaiters.append($0) }
+        }
         let restoreReads = checkpointRestoreReads.values.map(\.task)
         let restoreChecks = checkpointRestoreInspections.values.map(\.task)
         for task in restoreReads { task.cancel() }; for task in restoreChecks { task.cancel() }

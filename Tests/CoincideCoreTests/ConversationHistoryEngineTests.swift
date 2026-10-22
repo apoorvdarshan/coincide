@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-private actor HistoryEngineGate {
+actor HistoryEngineGate {
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var released = false
     private(set) var entered = false
@@ -14,7 +14,7 @@ private actor HistoryEngineGate {
     func release() { released = true; let pending = waiters; waiters = []; for waiter in pending { waiter.resume() } }
 }
 
-private actor HistoryEnginePeer {
+actor HistoryEnginePeer {
     enum Reply: Sendable, Equatable { case confirmed, lostAfterMutation, lostBeforeMutation }
     struct Mutation: Sendable {
         let kind: ConversationHistoryKind
@@ -83,7 +83,7 @@ private actor HistoryEnginePeer {
     func addExternalTurn() { histories["native-source", default: []].append("external-unreviewed-turn") }
 }
 
-private actor HistoryEngineSession: ProviderSession {
+actor HistoryEngineSession: ProviderSession {
     nonisolated let events: AsyncStream<ProviderEvent>
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let peer: HistoryEnginePeer
@@ -158,7 +158,7 @@ private struct HistoryEngineFixture {
     func finish() async { await engine.shutdown(); try? FileManager.default.removeItem(at: root) }
 }
 
-private func historyEngineEventually(_ condition: () async throws -> Bool) async throws {
+func historyEngineEventually(_ condition: () async throws -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(8)
     while true {
         if try await condition() { return }

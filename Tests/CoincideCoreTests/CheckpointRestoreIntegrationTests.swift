@@ -2,12 +2,12 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-private actor RealRestoreProbe {
+actor RealRestoreProbe {
     private(set) var writes: [UUID] = []
     func record(_ id: UUID) { writes.append(id) }
 }
 
-private struct RealRestoreSession: RunCheckpointSession {
+struct RealRestoreSession: RunCheckpointSession {
     let service: GitCheckpointService
     let probe: RealRestoreProbe
     func prepare(id: UUID) async throws -> GitCheckpointPlan { try await service.prepare(id: id) }

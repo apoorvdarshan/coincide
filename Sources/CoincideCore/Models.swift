@@ -171,10 +171,21 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             checkpointRestoreOperations?[i].updatedAt = Date()
         }
         for i in (conversationHistoryOperations ?? []).indices {
-            guard let phase = conversationHistoryOperations?[i].phase, phase == .accepted || phase == .dispatching else { continue }
-            conversationHistoryOperations?[i].phase = phase == .accepted ? .failed : .unconfirmed
-            conversationHistoryOperations?[i].error = phase == .accepted ? ConversationHistoryOperation.failureMessage : ConversationHistoryOperation.unconfirmedMessage
-            conversationHistoryOperations?[i].updatedAt = Date()
+            guard var operation = conversationHistoryOperations?[i] else { continue }
+            if operation.phase == .accepted || operation.phase == .dispatching {
+                let accepted = operation.phase == .accepted
+                operation.phase = accepted ? .failed : .unconfirmed
+                operation.error = accepted ? ConversationHistoryOperation.failureMessage : ConversationHistoryOperation.unconfirmedMessage
+                operation.updatedAt = Date()
+            }
+            if operation.phase == .applied, var files = operation.files,
+               files.phase == .accepted || files.phase == .dispatching {
+                let accepted = files.phase == .accepted
+                files.phase = accepted ? .failed : .unconfirmed
+                files.error = accepted ? ConversationHistoryFilesState.notStartedMessage : ConversationHistoryFilesState.unconfirmedMessage
+                files.updatedAt = Date(); operation.files = files; operation.updatedAt = files.updatedAt
+            }
+            conversationHistoryOperations?[i] = operation
         }
         for i in projects.indices {
             guard var clone = projects[i].clone, clone.isRunning else { continue }

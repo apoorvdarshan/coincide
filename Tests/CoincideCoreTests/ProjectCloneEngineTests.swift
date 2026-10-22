@@ -161,8 +161,19 @@ private func waitCloneEngine(_ condition: () async throws -> Bool) async throws 
         #expect(second.input.text.hasPrefix("second prompt") && second.input.text.contains("queued.png"))
         #expect(second.model == "second-model" && second.permission == .autoAcceptEdits)
         #expect(second.input.images.count == 1)
+        let secondRunID = try #require(await f.engine.current().snapshot.threads[0].activeRun?.id)
         await provider.finish()
-        try await waitCloneEngine { await f.engine.current().snapshot.threads[0].state == .idle }
+        // Provider idle precedes the automatic post-run observation's durable
+        // result. Compare the projection only after this exact run has settled.
+        try await waitCloneEngine {
+            let snapshot = await f.engine.current().snapshot
+            let current = snapshot.threads[0]
+            let record = current.runHistory?.first { $0.id == secondRunID }
+            return current.state == .idle && current.activeRun == nil && current.queuedTurns.isEmpty &&
+                snapshot.providerReady(for: current) && record?.status == .completed &&
+                record?.checkpoints?.postRun?.phase == .unavailable &&
+                record?.checkpoints?.postRun?.unavailableReason == .notRepository
+        }
         let ready = await f.engine.current().snapshot
         #expect(ready.workspaceReady(for: ready.threads[0]) && ready.threads[0].queuedTurns.isEmpty)
         #expect(ready.threads[0].draft == "Unsent composer text")

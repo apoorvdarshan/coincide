@@ -1,5 +1,69 @@
 # Validation record
 
+## 2026-10-22 — combined native rewind and checkpoint restoration
+
+- Rewind now offers Cancel, Revert and Keep Changes, and a separately prepared
+  Revert Files Too review. The destructive choice shows the exact observation's
+  time, scope, affected paths, bounded preview and loss warning. Fork remains a
+  separate history-only action. The first input targets its original pre-provider
+  baseline; later inputs target the preceding visible local run's latest ready
+  post-run observation. A later baseline with intervening user edits is not
+  substituted. Missing or ambiguous evidence disables file restoration.
+- One durable parent owns provider and file stages with continuous source/path
+  locks and a distinct file outbox identity. Confirmed provider history and local
+  retained removal audit commit with the file intent before restoration starts.
+  The Git writer runs only after owned provider/model connections have drained.
+  Partial file outcomes retain provider success and hold work for read-only
+  inspection or explicit Keep Current Files. Unknown provider outcomes never
+  schedule delayed restoration, even when later inspection confirms the rewind.
+  Restart never repeats either external mutation. Storage version 19 protects
+  these new holds from older binaries.
+- New rewind reviews recall the original prompt and attachments only after all
+  requested external stages succeed. A durable hold prevents sending between
+  completion and one-time latest-draft append. Merged attachment capacity is
+  checked before acceptance and again at recall. A late capacity failure keeps
+  the current draft and offers explicit Keep Current Draft. Legacy reviews retain
+  manual recall. No prompt is automatically submitted.
+- Real production Git through the durable engine verifies provider-before-files
+  ordering, durable dispatch markers, the preceding post-run target with
+  deliberately different selected-baseline bytes, exact restored working files,
+  staging reset, ignored-file preservation and unchanged HEAD/branches/main
+  checkout. The latest draft and complete run/message audit survive journal
+  rebuild and reopen. Duplicate acceptance/recall and reopen do not repeat either
+  mutation. Stale reviewed Git files prevent even the native provider mutation.
+  Lost native acknowledgments before and after mutation retain untouched files
+  across reopen and read-only reconciliation.
+- Exact previous commit `c4df517` [run 39720191412](https://github.com/apoorvdarshan/coincide/actions/runs/39720191412)
+  executed 575 production tests and failed one clone FIFO projection assertion;
+  its GUI job was skipped. The fixture now waits for the exact second completed
+  run's final post-checkpoint, provider readiness and empty queue before comparing
+  projections. Existing checkpoint behavior and FIFO/configuration/attachment
+  assertions remain enabled. Its focused local regression passes.
+- The hosted runner still requires all ten workflows and zero skips. The history
+  workflow now checks automatic prompt append, consumed recall, unchanged provider
+  send count and one-time persistence across reopen. Seven GUI-free harness tests
+  pass, and the updated native runner compiles. No interactive GUI test ran
+  locally. Actual hosted verification of the native inspector and combined
+  provider/files UI remains pending. Offscreen 320/680-point three-choice, file
+  review and partial-outcome controls fit in both appearances.
+- The complete local run passes 611 tests: 509 Core, 83 native UI/Store, six
+  terminal and 13 Markdown. A subsequent App-only correction protects late draft
+  saves across the 350 ms debounce and Quit while recall awaits SQLite. The
+  complete final native UI/Store target passes 84 tests in 36.114 seconds,
+  including held-write debounce, shutdown and identical-late-edit cases. Current
+  source therefore has 612 passing tests across these runs; unchanged Core
+  completes in 135.282 seconds. No compiler warnings were reported.
+- The repository-owned app packages and launches; deep/strict app/helper
+  signatures and native math-resource rendering pass. A fresh private SQLite
+  backup taken after graceful shutdown verifies storage 18 to 19 preserves the
+  entire canonical workspace: three conversations and 25 messages. No system
+  install, public binary release or live combined-provider smoke was performed.
+
+Full provider recovery, broader history contracts, large-workspace restoration,
+recovery-storage management, remote environments and the other gaps in
+`PORTING.md` remain unfinished. These checks do not establish full T3 parity or
+live-provider verification of the combined file path.
+
 ## 2026-10-22 — reviewed native checkpoint file restoration
 
 - Ready baseline, post-run and retained earlier observations now offer explicit

@@ -30,12 +30,14 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
     public let sourceFingerprint: String
     public let targetThreadID: UUID?
     public let suggestedTitle: String
+    public let files: ConversationHistoryFilesReview?
+    public let recallPromptOnSuccess: Bool?
     public init(id: UUID = UUID(), kind: ConversationHistoryKind, reviewedAt: Date = Date(), sourceThreadID: UUID,
                 projectID: UUID, runID: UUID, sourceIncarnation: UUID, sourceConfiguration: ProviderConfiguration,
                 targetConfiguration: ProviderConfiguration, sourceReference: ProviderConversationReference,
                 reviewedHeadTurnID: String, boundary: ProviderHistoryBoundary, expectedResultHeadTurnID: String?,
                 prefix: [ChatMessage], removedRunIDs: [UUID], removedMessageIDs: [String], sourceFingerprint: String,
-                targetThreadID: UUID?, suggestedTitle: String) throws {
+                targetThreadID: UUID?, suggestedTitle: String, files: ConversationHistoryFilesReview? = nil, recallPromptOnSuccess: Bool? = nil) throws {
         self.id = id; self.kind = kind; self.reviewedAt = reviewedAt; self.sourceThreadID = sourceThreadID
         self.projectID = projectID; self.runID = runID; self.sourceIncarnation = sourceIncarnation
         self.sourceConfiguration = sourceConfiguration; self.targetConfiguration = targetConfiguration
@@ -43,6 +45,7 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
         self.expectedResultHeadTurnID = expectedResultHeadTurnID; self.prefix = prefix; self.removedRunIDs = removedRunIDs
         self.removedMessageIDs = removedMessageIDs; self.sourceFingerprint = sourceFingerprint
         self.targetThreadID = targetThreadID; self.suggestedTitle = suggestedTitle
+        self.files = files; self.recallPromptOnSuccess = recallPromptOnSuccess
         try validate()
     }
     public func validate() throws {
@@ -68,6 +71,20 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
             guard targetThreadID == nil, removedRunIDs.contains(runID), !removedMessageIDs.isEmpty else { throw CoincideError("The rewind review has no exact retained transcript suffix.") }
         default: throw CoincideError("The conversation history action does not match its reviewed boundary.")
         }
+        guard kind == .rewindBeforeRun || (files == nil && recallPromptOnSuccess != true) else { throw CoincideError("Only a rewind can restore files or recall its opening input.") }
+        if let files {
+            try files.validate()
+            guard files.id != id, files.target.selectedRunID == runID,
+                  files.gitReview.currentPlan.workspacePath == sourceConfiguration.workspacePath else { throw CoincideError("The rewind file review belongs to another boundary or workspace.") }
+        }
+    }
+    public func validateResult(_ result: ProviderConversationSnapshot) throws {
+        try result.validate()
+        let referenceMatches = kind == .forkAfterRun ? result.reference != sourceReference : result.reference == sourceReference
+        guard referenceMatches, result.reference.provider == sourceReference.provider, result.historyMode == .paginated,
+              result.workspacePath == targetConfiguration.workspacePath, result.headTurnID == expectedResultHeadTurnID else {
+            throw CoincideError("The conversation history result does not match its reviewed provider boundary.")
+        }
     }
 }
 
@@ -79,31 +96,40 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
     public var result: ProviderConversationSnapshot?
     public var error: String?
     public var recalledAt: Date?
+    public var files: ConversationHistoryFilesState?
+    public var recallDismissedAt: Date?
     public var id: UUID { review.id }
     public init(review: ConversationHistoryReview, phase: ConversationHistoryPhase = .accepted, updatedAt: Date? = nil,
-                targetTitle: String? = nil, result: ProviderConversationSnapshot? = nil, error: String? = nil, recalledAt: Date? = nil) {
+                targetTitle: String? = nil, result: ProviderConversationSnapshot? = nil, error: String? = nil, recalledAt: Date? = nil,
+                files: ConversationHistoryFilesState? = nil, recallDismissedAt: Date? = nil) {
         self.review = review; self.phase = phase; self.updatedAt = updatedAt ?? review.reviewedAt
         self.targetTitle = targetTitle; self.result = result; self.error = error; self.recalledAt = recalledAt
+        self.files = files ?? review.files.map { .init(review: $0, updatedAt: updatedAt ?? review.reviewedAt) }
+        self.recallDismissedAt = recallDismissedAt
     }
     public static let failureMessage = "The conversation history action was not completed. No provider work was replayed."
     public static let unconfirmedMessage = "The provider history outcome could not be confirmed. Inspect it before continuing; the action was not repeated."
     public static let unchangedMessage = "Provider history is unchanged. Review again before retrying."
     public var isPending: Bool { phase == .accepted || phase == .dispatching }
-    public var locksSource: Bool { isPending || (phase == .unconfirmed && review.kind == .rewindBeforeRun) }
+    public var isWorking: Bool { isPending || files?.isWorking == true }
+    public var allExternalWorkSucceeded: Bool { phase == .applied && (files == nil || files?.phase == .applied) }
+    public var needsPromptRecall: Bool { review.recallPromptOnSuccess == true && allExternalWorkSucceeded && recalledAt == nil && recallDismissedAt == nil }
+    public var locksFiles: Bool {
+        guard let files else { return false }
+        if isPending || phase == .unconfirmed { return true }
+        return phase == .applied && files.phase != .applied && files.acknowledgedAt == nil
+    }
+    public var locksSource: Bool { isPending || (phase == .unconfirmed && review.kind == .rewindBeforeRun) || locksFiles || needsPromptRecall }
     public func validate() throws {
         try review.validate()
+        guard files?.review == review.files, recallDismissedAt.map({ $0.timeIntervalSince1970.isFinite && allExternalWorkSucceeded && review.recallPromptOnSuccess == true && recalledAt == nil }) ?? true,
+              recalledAt == nil || allExternalWorkSucceeded else { throw CoincideError("The combined rewind's file or recall evidence is inconsistent.") }
+        try files?.validate(providerPhase: phase)
         guard updatedAt.timeIntervalSince1970.isFinite,
               error == nil || [Self.failureMessage, Self.unconfirmedMessage, Self.unchangedMessage].contains(error!),
               (phase == .applied) == (result != nil), recalledAt == nil || (phase == .applied && review.kind == .rewindBeforeRun && recalledAt!.timeIntervalSince1970.isFinite),
               targetTitle.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 4_096 && !$0.contains("\0") }) ?? true else { throw CoincideError("The conversation history operation has inconsistent state.") }
-        if let result {
-            try result.validate()
-            let referenceMatches = review.kind == .forkAfterRun ? result.reference != review.sourceReference : result.reference == review.sourceReference
-            guard referenceMatches, result.reference.provider == review.sourceReference.provider, result.historyMode == .paginated,
-                  result.workspacePath == review.targetConfiguration.workspacePath, result.headTurnID == review.expectedResultHeadTurnID else {
-                throw CoincideError("The conversation history result does not match its reviewed provider boundary.")
-            }
-        }
+        if let result { try review.validateResult(result) }
     }
 }
 
@@ -114,13 +140,13 @@ extension CodingThread {
 
 extension WorkspaceSnapshot {
     public func conversationHistoryOperation(_ id: UUID) -> ConversationHistoryOperation? { conversationHistoryOperations?.first { $0.id == id } }
-    public func isConversationHistoryLocked(threadID: UUID) -> Bool {
-        (conversationHistoryOperations ?? []).contains { $0.review.sourceThreadID == threadID && $0.locksSource }
+    public func isConversationHistoryLocked(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
+        (conversationHistoryOperations ?? []).contains { $0.id != excludingOperationID && $0.review.sourceThreadID == threadID && $0.locksSource }
     }
     public func canReviewConversationHistory(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty, thread.heldPostRunCheckpoint == nil,
-              thread.settlement == nil, workspaceReady(for: thread), !isCheckpointRestoreLocked(threadID: threadID),
+              thread.settlement == nil, workspaceReady(for: thread), !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !(conversationHistoryOperations ?? []).contains(where: { $0.id != excludingOperationID && $0.review.sourceThreadID == threadID && $0.locksSource }) else { return false }
         return thread.workspacePreparation?.setup.map { [.succeeded, .skipped].contains($0.phase) } ?? true
     }
@@ -185,6 +211,7 @@ extension WorkspaceSnapshot {
             let removedMessages = thread.visibleMessages.filter { !prefixIDs.contains($0.id) }.map(\.id)
             guard review.removedRunIDs == removedRuns, review.removedMessageIDs == removedMessages else { throw WorkspaceCommandError("The conversation suffix changed. Review the rewind again.") }
         }
+        try validateConversationHistoryFilesReview(review, excludingOperationID: excludingOperationID)
     }
 
     func validateConversationHistory() throws {
@@ -241,7 +268,7 @@ extension WorkspaceDecision {
         case .createThread(let thread), .addProjectWithThread(_, let thread), .startProjectClone(_, let thread): created = thread
         default: created = nil
         }
-        if let created, (snapshot.conversationHistoryOperations ?? []).contains(where: { $0.id == created.id || $0.review.targetThreadID == created.id }) {
+        if let created, (snapshot.conversationHistoryOperations ?? []).contains(where: { $0.id == created.id || $0.review.targetThreadID == created.id || $0.review.files?.id == created.id }) {
             throw WorkspaceCommandError("This conversation identity is reserved by a history action. Create a fresh conversation instead.")
         }
         let locked = Set(snapshot.threads.filter { snapshot.isConversationHistoryLocked(threadID: $0.id) }.map(\.id))
@@ -266,14 +293,30 @@ extension WorkspaceDecision {
     mutating func acceptConversationHistory(_ review: ConversationHistoryReview, title: String?, now: Date) throws {
         guard snapshot.conversationHistoryOperation(review.id) == nil,
               !snapshot.threads.contains(where: { $0.id == review.id }),
+              !(snapshot.checkpointRestoreOperations ?? []).contains(where: { $0.id == review.id || $0.id == review.targetThreadID }),
+              !(snapshot.conversationHistoryOperations ?? []).contains(where: { $0.review.files?.id == review.id || ($0.review.files?.id != nil && $0.review.files?.id == review.targetThreadID) }),
               review.targetThreadID.map({ target in !snapshot.threads.contains { $0.id == target } && !(snapshot.conversationHistoryOperations ?? []).contains { $0.review.targetThreadID == target || $0.id == target } }) ?? true else {
             throw WorkspaceCommandError("This conversation history action or target identity is already in use. Review again.")
         }
         try snapshot.validateConversationHistorySource(review)
+        if review.recallPromptOnSuccess == true {
+            guard let source = snapshot.threads.first(where: { $0.id == review.sourceThreadID }),
+                  let record = source.runHistory?.first(where: { $0.id == review.runID }), record.origin == .user,
+                  let opening = source.messages.first(where: { $0.id == record.userMessageID && $0.role == .user && $0.runReference == .init(threadID: source.id, runID: record.id) }) else {
+                throw WorkspaceCommandError("The original input is unavailable for automatic draft recall.")
+            }
+            var attachments = source.draftAttachments, ids = Set(source.draftAttachments.map(\.id))
+            for attachment in opening.attachments ?? [] where ids.insert(attachment.id).inserted { attachments.append(attachment) }
+            do { try AttachmentLimits.validate(attachments) }
+            catch { throw WorkspaceCommandError("The recalled attachments exceed the draft limit. Remove some attachments before rewinding.") }
+        }
         let operation = ConversationHistoryOperation(review: review, updatedAt: now, targetTitle: title)
         do { try operation.validate() } catch { throw WorkspaceCommandError("Choose a valid conversation title and reviewed history boundary.") }
         if snapshot.conversationHistoryOperations == nil { snapshot.conversationHistoryOperations = [] }
+        let original = snapshot
         snapshot.conversationHistoryOperations!.append(operation)
+        do { try snapshot.validateConversationHistoryFilesLedger(); try snapshot.validateCheckpointRestores() }
+        catch { snapshot = original; throw WorkspaceCommandError("This history action uses an identity already reserved by another workspace action.") }
         effects.append(.init(id: review.id, request: .conversationHistory(threadID: review.sourceThreadID, operationID: review.id)))
     }
 
@@ -289,7 +332,7 @@ extension WorkspaceDecision {
     mutating func finishConversationHistory(_ request: WorkspaceEffectRequest, result: EffectResult, incarnation: UUID, now: Date) {
         guard case .conversationHistory(let threadID, let operationID) = request,
               let i = snapshot.conversationHistoryOperations?.firstIndex(where: { $0.id == operationID }),
-              var operation = snapshot.conversationHistoryOperations?[i], operation.isPending,
+              var operation = snapshot.conversationHistoryOperations?[i], [.accepted, .dispatching].contains(operation.phase),
               operation.review.sourceThreadID == threadID, operation.review.sourceIncarnation == incarnation else { return }
         switch result {
         case .conversationHistoryConfirmed(let result):
@@ -297,8 +340,16 @@ extension WorkspaceDecision {
             do {
                 try snapshot.validateConversationHistorySource(operation.review, excludingOperationID: operationID)
                 operation.phase = .applied; operation.result = result; operation.error = nil; operation.updatedAt = now
+                try operation.review.validateResult(result)
+                var applied = self
+                try applied.applyConversationHistory(operation, now: now)
+                if var files = operation.files {
+                    files.phase = .accepted; files.postHistorySourceFingerprint = try applied.snapshot.checkpointRestoreSourceFingerprint(threadID: threadID)
+                    files.updatedAt = now; operation.files = files
+                    applied.effects.append(.init(id: files.review.id, request: .conversationHistoryFiles(threadID: threadID, operationID: operation.id, fileAttemptID: files.review.id)))
+                }
                 try operation.validate()
-                try applyConversationHistory(operation, now: now)
+                self = applied
             } catch {
                 operation.phase = .unconfirmed; operation.result = nil; operation.error = ConversationHistoryOperation.unconfirmedMessage; operation.updatedAt = now
             }
@@ -321,7 +372,12 @@ extension WorkspaceDecision {
         switch result {
         case .applied(let result):
             operation.phase = .applied; operation.result = result; operation.error = nil; operation.updatedAt = now
-            try operation.validate(); try applyConversationHistory(operation, now: now)
+            try operation.review.validateResult(result); try applyConversationHistory(operation, now: now)
+            if var files = operation.files {
+                files.phase = .failed; files.error = ConversationHistoryFilesState.notStartedMessage
+                files.postHistorySourceFingerprint = try snapshot.checkpointRestoreSourceFingerprint(threadID: operation.review.sourceThreadID)
+                files.updatedAt = now; operation.files = files
+            }
         case .unchanged:
             operation.phase = .failed; operation.error = ConversationHistoryOperation.unchangedMessage; operation.updatedAt = now
         }
@@ -363,7 +419,9 @@ extension WorkspaceDecision {
               let operation = snapshot.conversationHistoryOperations?[operationIndex], operation.phase == .applied,
               operation.review.kind == .rewindBeforeRun else { throw WorkspaceCommandError("Recall requires an applied conversation rewind.") }
         guard operation.recalledAt == nil else { return }
-        guard !snapshot.isConversationHistoryLocked(threadID: operation.review.sourceThreadID),
+        guard operation.allExternalWorkSucceeded, operation.recallDismissedAt == nil,
+              !snapshot.isConversationHistoryLocked(threadID: operation.review.sourceThreadID, excludingOperationID: operation.needsPromptRecall ? operation.id : nil),
+              !snapshot.isCheckpointRestoreLocked(threadID: operation.review.sourceThreadID),
               let sourceIndex = snapshot.threads.firstIndex(where: { $0.id == operation.review.sourceThreadID }),
               let record = snapshot.threads[sourceIndex].runHistory?.first(where: { $0.id == operation.review.runID }), record.origin == .user,
               let message = snapshot.threads[sourceIndex].messages.first(where: { $0.id == record.userMessageID && $0.role == .user && $0.runReference == .init(threadID: operation.review.sourceThreadID, runID: record.id) }) else { throw WorkspaceCommandError("The original prompt is unavailable or another history action is pending.") }

@@ -837,7 +837,10 @@ final class CoincideDesktopUITests: XCTestCase {
         _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
         reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "rewind", in: app)
         confirm = reviewOwner.buttons["conversation-history-confirm"]; close = reviewOwner.buttons["conversation-history-close"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 10)); XCTAssertTrue(close.isEnabled); close.click()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        XCTAssertEqual(confirm.label, "Revert and Keep Changes")
+        XCTAssertTrue(reviewOwner.buttons["conversation-history-revert-files"].exists)
+        XCTAssertTrue(close.isEnabled); close.click()
         XCTAssertEqual(try historyWire(wire).filter { $0["method"] as? String == "thread/revert" }.count, 0)
         try nativeHistoryDone(in: app).click()
         let newerDraft = "Newer source draft before explicit rewind"
@@ -864,20 +867,19 @@ final class CoincideDesktopUITests: XCTestCase {
         capture(app, name: "history-rewind-retains-removed-run-audit")
         try nativeHistoryDone(in: app).click()
         XCTAssertEqual(try selectedThreadIdentifier(in: app), sourceIdentifier)
-        XCTAssertTrue(waitForValue(composer, value: newerDraft, timeout: 5))
+        let recalledDraft = newerDraft + "\n\n" + prompts[1]
+        XCTAssertTrue(waitForValue(composer, value: recalledDraft, timeout: 10), "A confirmed keep-files rewind automatically appends the original input to the latest draft.")
         XCTAssertTrue(app.staticTexts["Offline history reply 1"].exists)
         XCTAssertFalse(app.staticTexts["Offline history reply 2"].exists)
         XCTAssertFalse(app.staticTexts["Offline history reply 3"].exists)
         let recall = app.buttons["conversation-history-recall"]
-        XCTAssertTrue(recall.waitForExistence(timeout: 5)); XCTAssertTrue(recall.isEnabled && recall.isHittable); recall.click()
-        let recalledDraft = newerDraft + "\n\n" + prompts[1]
-        XCTAssertTrue(waitForValue(composer, value: recalledDraft, timeout: 10))
         XCTAssertTrue(waitForAbsence(recall, timeout: 5))
-        capture(app, name: "history-explicit-recall-appends-to-latest-composer")
+        capture(app, name: "history-automatic-recall-appends-to-latest-composer")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15)); app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(waitForValue(composer, value: recalledDraft, timeout: 10))
+        XCTAssertTrue(waitForAbsence(recall, timeout: 5), "A consumed recall cannot append again after relaunch.")
         XCTAssertEqual(try selectedThreadIdentifier(in: app), sourceIdentifier)
         XCTAssertTrue(app.staticTexts["Offline history reply 1"].exists)
         XCTAssertFalse(app.staticTexts["Offline history reply 2"].exists)

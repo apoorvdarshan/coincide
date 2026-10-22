@@ -175,17 +175,7 @@ extension WorkspaceEngine {
             guard restoreRuntimeScopeIsolated(thread: thread, path: review.gitReview.currentPlan.repositoryPath) else { throw WorkspaceCommandError("This workspace has another live owner.") }
             // All owned provider connections must finish closing before files can
             // change. The durable source lock prevents a new connection meanwhile.
-            await closeRuntime(threadID)
-            let metadata = metadataSessions.filter { $0.value.threadID == threadID }.map(\.key)
-            for id in metadata {
-                if let task = beginMetadataClose(id) { await task.value }
-                metadataSessions.removeValue(forKey: id)
-            }
-            await awaitCheckpointDrains(threadID: threadID)
-            let scripts = thread.projectScripts.compactMap { scriptClosures[$0.1.id] }
-            for task in scripts { await task.value }
-            let cleanups = cleanupTasks.values.filter { $0.threadIDs.contains(threadID) }.map(\.task)
-            for task in cleanups { await task.value }
+            await drainCheckpointRestoreOwners(thread)
             try Task.checkCancellation()
             guard ownsCheckpointRestoreSource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
                   restoreRuntimeScopeIsolated(thread: thread, path: review.gitReview.currentPlan.repositoryPath) else { throw CancellationError() }
@@ -208,6 +198,19 @@ extension WorkspaceEngine {
             return dispatched ? .checkpointRestoreUnconfirmed : .failed(RunCheckpointRestoreOperation.failureMessage)
         }
     }
+    private func drainCheckpointRestoreOwners(_ thread: CodingThread) async {
+        await closeRuntime(thread.id)
+        let metadata = metadataSessions.filter { $0.value.threadID == thread.id }.map(\.key)
+        for id in metadata {
+            if let task = beginMetadataClose(id) { await task.value }
+            metadataSessions.removeValue(forKey: id)
+        }
+        await awaitCheckpointDrains(threadID: thread.id)
+        let scripts = thread.projectScripts.compactMap { scriptClosures[$0.1.id] }
+        for task in scripts { await task.value }
+        let cleanups = cleanupTasks.values.filter { $0.threadIDs.contains(thread.id) }.map(\.task)
+        for task in cleanups { await task.value }
+    }
 }
 
 extension WorkspaceEngine {
@@ -219,7 +222,8 @@ extension WorkspaceEngine {
 
     /// A review performs only reads. Its ephemeral token is bound to this engine
     /// incarnation and to the complete returned value, not just a caller's UUID.
-    public func reviewConversationHistory(threadID: UUID, runID: UUID, kind: ConversationHistoryKind) async throws -> ConversationHistoryReview {
+    public func reviewConversationHistory(threadID: UUID, runID: UUID, kind: ConversationHistoryKind,
+                                          recallPromptOnSuccess: Bool = false) async throws -> ConversationHistoryReview {
         _ = try await load()
         if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
         if let reason = revision.snapshot.conversationHistoryUnavailableReason(threadID: threadID, runID: runID, kind: kind) {
@@ -251,12 +255,64 @@ extension WorkspaceEngine {
             prefix: prefix, removedRunIDs: kind == .rewindBeforeRun ? activeRecords[index...].map(\.id) : [],
             removedMessageIDs: kind == .rewindBeforeRun ? thread.visibleMessages.dropFirst(prefix.count).map(\.id) : [],
             sourceFingerprint: fingerprint, targetThreadID: kind == .forkAfterRun ? UUID() : nil,
-            suggestedTitle: String((thread.title + " — Fork").prefix(200)))
-        historyReviews[review.id] = try historyReviewDigest(review)
+            suggestedTitle: String((thread.title + " — Fork").prefix(200)),
+            recallPromptOnSuccess: kind == .rewindBeforeRun && recallPromptOnSuccess ? true : nil)
+        historyReviews[review.id] = .init(review: review, digest: try historyReviewDigest(review))
         return review
     }
 
-    public func discardConversationHistoryReview(reviewID: UUID) { historyReviews.removeValue(forKey: reviewID) }
+    /// Preparing the destructive choice creates its own immutable action. The
+    /// independently reviewed keep-files choice remains available until accepted.
+    public func reviewConversationHistoryRestoringFiles(_ keepReview: ConversationHistoryReview) async throws -> ConversationHistoryReview {
+        _ = try await load(); try Task.checkCancellation(); try keepReview.validate()
+        guard keepReview.kind == .rewindBeforeRun, keepReview.files == nil,
+              historyReviews[keepReview.id]?.digest == (try historyReviewDigest(keepReview)),
+              ownsHistorySource(threadID: keepReview.sourceThreadID, incarnation: keepReview.sourceIncarnation, fingerprint: keepReview.sourceFingerprint) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        let fresh = try await reviewConversationHistory(threadID: keepReview.sourceThreadID, runID: keepReview.runID,
+            kind: .rewindBeforeRun, recallPromptOnSuccess: keepReview.recallPromptOnSuccess == true)
+        var prepared: GitCheckpointRestoreReview?
+        do {
+            guard fresh.boundary == keepReview.boundary, fresh.reviewedHeadTurnID == keepReview.reviewedHeadTurnID,
+                  let thread = revision.snapshot.threads.first(where: { $0.id == fresh.sourceThreadID }),
+                  revision.snapshot.canReviewCheckpointRestore(threadID: thread.id),
+                  case .available(let target) = thread.conversationHistoryFileTarget(beforeRunID: fresh.runID),
+                  restoreRuntimeScopeIsolated(thread: thread, path: target.receipt.plan.repositoryPath) else {
+                throw WorkspaceCommandError("This boundary has no verified checkpoint in an isolated workspace. Rewind and keep files instead.")
+            }
+            let fingerprint = try revision.snapshot.checkpointRestoreSourceFingerprint(threadID: thread.id), fileID = UUID()
+            let git = try await readCheckpointRestore(thread: thread, onRejected: { session, value in
+                let cleanup = Task { _ = try? await session.discardRestoreReview(value) }; await cleanup.value
+            }) { try await $0.reviewRestore(target: target.receipt, id: fileID) }
+            prepared = git
+            let files = try ConversationHistoryFilesReview(id: fileID, target: target, sourceFingerprint: fingerprint, gitReview: git)
+            let review = try ConversationHistoryReview(id: fresh.id, kind: fresh.kind, reviewedAt: fresh.reviewedAt,
+                sourceThreadID: fresh.sourceThreadID, projectID: fresh.projectID, runID: fresh.runID,
+                sourceIncarnation: fresh.sourceIncarnation, sourceConfiguration: fresh.sourceConfiguration,
+                targetConfiguration: fresh.targetConfiguration, sourceReference: fresh.sourceReference,
+                reviewedHeadTurnID: fresh.reviewedHeadTurnID, boundary: fresh.boundary,
+                expectedResultHeadTurnID: fresh.expectedResultHeadTurnID, prefix: fresh.prefix,
+                removedRunIDs: fresh.removedRunIDs, removedMessageIDs: fresh.removedMessageIDs,
+                sourceFingerprint: fresh.sourceFingerprint, targetThreadID: fresh.targetThreadID,
+                suggestedTitle: fresh.suggestedTitle, files: files, recallPromptOnSuccess: fresh.recallPromptOnSuccess)
+            guard ownsHistorySource(threadID: review.sourceThreadID, incarnation: review.sourceIncarnation, fingerprint: review.sourceFingerprint),
+                  restoreRuntimeScopeIsolated(thread: thread, path: git.currentPlan.repositoryPath) else { throw CancellationError() }
+            try revision.snapshot.validateConversationHistoryFilesReview(review)
+            historyReviews[review.id] = .init(review: review, digest: try historyReviewDigest(review))
+            return review
+        } catch {
+            historyReviews.removeValue(forKey: fresh.id)
+            if let prepared { await discardCheckpointRestoreScratch(prepared, threadID: fresh.sourceThreadID, projectID: fresh.projectID) }
+            throw error
+        }
+    }
+
+    public func discardConversationHistoryReview(reviewID: UUID) async {
+        guard !acceptingHistoryReviews.contains(reviewID), let prepared = historyReviews.removeValue(forKey: reviewID),
+              revision.snapshot.conversationHistoryOperation(reviewID) == nil, let files = prepared.review.files else { return }
+        await discardCheckpointRestoreScratch(files.gitReview, threadID: prepared.review.sourceThreadID, projectID: prepared.review.projectID)
+    }
 
     @discardableResult public func beginConversationHistory(_ review: ConversationHistoryReview, title: String? = nil) async throws -> WorkspaceCommandReceipt {
         _ = try await load(); try Task.checkCancellation(); try review.validate()
@@ -265,13 +321,26 @@ extension WorkspaceEngine {
             guard existing.review == review, let receipt = try await database.receipt(review.id) else { throw ProviderHistoryError(.historyChanged) }
             return receipt // A repeated acceptance observes the one durable action.
         }
-        guard historyReviews[review.id] == (try historyReviewDigest(review)),
+        guard historyReviews[review.id]?.digest == (try historyReviewDigest(review)),
               ownsHistorySource(threadID: review.sourceThreadID, incarnation: review.sourceIncarnation, fingerprint: review.sourceFingerprint),
               revision.snapshot.canReviewConversationHistory(threadID: review.sourceThreadID) else { throw ProviderHistoryError(.historyChanged) }
-        defer { historyReviews.removeValue(forKey: review.id) }
-        let receipt = try await enqueue(.conversationHistoryAccepted(review: review, title: title), id: review.id)
-        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
-        return receipt
+        if let files = review.files {
+            try revision.snapshot.validateConversationHistoryFilesReview(review)
+            guard let thread = revision.snapshot.threads.first(where: { $0.id == review.sourceThreadID }),
+                  restoreRuntimeScopeIsolated(thread: thread, path: files.gitReview.currentPlan.repositoryPath) else { throw ProviderHistoryError(.notIdle) }
+        }
+        acceptingHistoryReviews.insert(review.id)
+        defer { acceptingHistoryReviews.remove(review.id); historyReviews.removeValue(forKey: review.id) }
+        do {
+            let receipt = try await enqueue(.conversationHistoryAccepted(review: review, title: title), id: review.id)
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+            return receipt
+        } catch {
+            if revision.snapshot.conversationHistoryOperation(review.id) == nil, let files = review.files {
+                await discardCheckpointRestoreScratch(files.gitReview, threadID: review.sourceThreadID, projectID: review.projectID)
+            }
+            throw error
+        }
     }
 
     /// Inspect an uncertain rewind without repeating it. A third head remains
@@ -303,7 +372,74 @@ extension WorkspaceEngine {
         else { throw ProviderHistoryError(.historyChanged) }
         let receipt = try await enqueue(.conversationHistoryReconciled(operationID: operationID, incarnation: incarnation, result: result))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        if case .unchanged = result, let files = expected.files {
+            await discardCheckpointRestoreScratch(files.gitReview, threadID: thread.id, projectID: thread.projectID)
+        }
         return receipt
+    }
+
+    /// Reads the exact file-stage evidence without repeating either external
+    /// action. A confirmed provider rewind remains retained on every outcome.
+    @discardableResult public func inspectConversationHistoryFiles(operationID: UUID) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let operation = revision.snapshot.conversationHistoryOperation(operationID), operation.phase == .applied,
+              let files = operation.files, files.phase == .unconfirmed, files.acknowledgedAt == nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == operation.review.sourceThreadID }),
+              let incarnation = threadIncarnations[thread.id],
+              restoreRuntimeScopeIsolated(thread: thread, path: files.review.gitReview.currentPlan.repositoryPath) else {
+            throw WorkspaceCommandError("The rewind or workspace changed. Check the current files before continuing.")
+        }
+        try revision.snapshot.validateConversationHistoryFilesSource(operation)
+        let result = try await readCheckpointRestore(thread: thread) { try await $0.inspectRestore(review: files.review.gitReview) }
+        guard ownsHistoryFilesSource(threadID: thread.id, operationID: operationID, incarnation: incarnation),
+              revision.snapshot.conversationHistoryOperation(operationID) == operation else { throw CancellationError() }
+        let receipt = try await enqueue(.conversationHistoryFilesInspected(operationID: operationID, incarnation: incarnation, result: result))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+
+    private func ownsHistoryFilesSource(threadID: UUID, operationID: UUID, incarnation: UUID) -> Bool {
+        guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[threadID] == incarnation,
+              let operation = revision.snapshot.conversationHistoryOperation(operationID), operation.phase == .applied,
+              operation.review.sourceThreadID == threadID, let files = operation.files,
+              let fingerprint = files.postHistorySourceFingerprint else { return false }
+        return (try? revision.snapshot.checkpointRestoreSourceFingerprint(threadID: threadID)) == fingerprint
+    }
+
+    private func performConversationHistoryFiles(_ request: WorkspaceEffectRequest) async throws -> EffectResult {
+        guard case .conversationHistoryFiles(let threadID, let operationID, let fileID) = request,
+              let operation = revision.snapshot.conversationHistoryOperation(operationID), operation.phase == .applied,
+              let files = operation.files, files.phase == .accepted, files.review.id == fileID,
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              let incarnation = threadIncarnations[threadID],
+              ownsHistoryFilesSource(threadID: threadID, operationID: operationID, incarnation: incarnation) else { return .cancelled }
+        var dispatched = false
+        do {
+            try revision.snapshot.validateConversationHistoryFilesSource(operation)
+            guard restoreRuntimeScopeIsolated(thread: thread, path: files.review.gitReview.currentPlan.repositoryPath) else {
+                throw WorkspaceCommandError("The workspace has another live owner.")
+            }
+            await drainCheckpointRestoreOwners(thread)
+            try Task.checkCancellation()
+            guard ownsHistoryFilesSource(threadID: threadID, operationID: operationID, incarnation: incarnation),
+                  restoreRuntimeScopeIsolated(thread: thread, path: files.review.gitReview.currentPlan.repositoryPath) else { throw CancellationError() }
+            let session = try checkpointFactory(URL(fileURLWithPath: thread.workspacePath))
+            let receipt = try await enqueue(.conversationHistoryFilesDispatching(threadID: threadID, operationID: operationID, incarnation: incarnation))
+            guard receipt.rejection == nil, revision.snapshot.conversationHistoryOperation(operationID)?.files?.phase == .dispatching,
+                  ownsHistoryFilesSource(threadID: threadID, operationID: operationID, incarnation: incarnation),
+                  restoreRuntimeScopeIsolated(thread: thread, path: files.review.gitReview.currentPlan.repositoryPath) else { throw CancellationError() }
+            try Task.checkCancellation(); dispatched = true
+            let result = try await session.restore(review: files.review.gitReview)
+            try result.validate()
+            guard result.review == files.review.gitReview,
+                  ownsHistoryFilesSource(threadID: threadID, operationID: operationID, incarnation: incarnation) else { return .checkpointRestoreUnconfirmed }
+            return .checkpointRestoreConfirmed(result)
+        } catch let error as GitCheckpointRestoreError {
+            return error.mayHaveMutated ? .checkpointRestoreUnconfirmed : .failed(ConversationHistoryFilesState.failureMessage)
+        } catch {
+            return dispatched ? .checkpointRestoreUnconfirmed : .failed(ConversationHistoryFilesState.failureMessage)
+        }
     }
 
     private func historyReviewDigest(_ review: ConversationHistoryReview) throws -> String {
@@ -321,6 +457,11 @@ extension WorkspaceEngine {
         case .conversationHistoryEffectResult(let request, _, let incarnation): return request.threadID.map { threadIncarnations[$0] == incarnation } ?? false
         case .conversationHistoryReconciled(let id, let incarnation, _):
             guard let operation = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == id }) else { return false }
+            return threadIncarnations[operation.review.sourceThreadID] == incarnation
+        case .conversationHistoryFilesDispatching(let thread, _, let incarnation): return threadIncarnations[thread] == incarnation
+        case .conversationHistoryFilesEffectResult(let request, _, let incarnation): return request.threadID.map { threadIncarnations[$0] == incarnation } ?? false
+        case .conversationHistoryFilesInspected(let id, let incarnation, _):
+            guard let operation = revision.snapshot.conversationHistoryOperation(id) else { return false }
             return threadIncarnations[operation.review.sourceThreadID] == incarnation
         default: return true
         }
@@ -412,6 +553,16 @@ extension WorkspaceEngine {
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
               ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint) else { return .cancelled }
         let review = operation.review
+        if let files = review.files {
+            do {
+                try revision.snapshot.validateConversationHistoryFilesReview(review, excludingOperationID: operationID)
+                guard restoreRuntimeScopeIsolated(thread: thread, path: files.gitReview.currentPlan.repositoryPath) else { throw ProviderHistoryError(.notIdle) }
+                let inspection = try await readCheckpointRestore(thread: thread) { try await $0.inspectRestore(review: files.gitReview) }
+                guard inspection == .notStarted,
+                      ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                      restoreRuntimeScopeIsolated(thread: thread, path: files.gitReview.currentPlan.repositoryPath) else { throw ProviderHistoryError(.historyChanged) }
+            } catch { return .failed(ConversationHistoryOperation.failureMessage) }
+        }
         let metadataID: UUID?, session: any ProviderSession
         if review.kind == .rewindBeforeRun, let runtime = runtimes[threadID], runtime.id == thread.runtimeID,
            runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent {
@@ -437,6 +588,10 @@ extension WorkspaceEngine {
             guard receipt.rejection == nil,
                   revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == operationID })?.phase == .dispatching,
                   ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint) else { throw ProviderHistoryError(.historyChanged) }
+            if let files = review.files {
+                try revision.snapshot.validateConversationHistoryFilesReview(review, excludingOperationID: operationID)
+                guard restoreRuntimeScopeIsolated(thread: thread, path: files.gitReview.currentPlan.repositoryPath) else { throw ProviderHistoryError(.notIdle) }
+            }
             try Task.checkCancellation(); dispatched = true
             let snapshot: ProviderConversationSnapshot
             if review.kind == .forkAfterRun { snapshot = try await session.forkConversation(source: review.sourceReference, boundary: review.boundary, configuration: review.targetConfiguration) }
@@ -446,7 +601,7 @@ extension WorkspaceEngine {
             }
             try Task.checkCancellation()
             guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint) else { throw CancellationError() }
-            var confirmed = operation; confirmed.phase = .applied; confirmed.result = snapshot; try confirmed.validate()
+            try review.validateResult(snapshot)
             result = .conversationHistoryConfirmed(snapshot)
         } catch {
             if dispatched, error is CancellationError || (error as? ProviderHistoryError)?.kind == .outcomeUncertain {
@@ -874,7 +1029,12 @@ public actor WorkspaceEngine {
         let cancel: @Sendable () -> Void
     }
     private var historyReads: [UUID: HistoryRead] = [:]
-    private var historyReviews: [UUID: String] = [:]
+    private struct PreparedHistoryReview: Sendable {
+        let review: ConversationHistoryReview
+        let digest: String
+    }
+    private var historyReviews: [UUID: PreparedHistoryReview] = [:]
+    private var acceptingHistoryReviews: Set<UUID> = []
     private struct PreparedCheckpointRestore: Sendable {
         let review: RunCheckpointRestoreReview
         let digest: String
@@ -1475,6 +1635,9 @@ public actor WorkspaceEngine {
         let historyIncarnation: UUID?
         if case .conversationHistory = effect.request { historyIncarnation = effect.request.threadID.flatMap { threadIncarnations[$0] } }
         else { historyIncarnation = nil }
+        let historyFilesIncarnation: UUID?
+        if case .conversationHistoryFiles = effect.request { historyFilesIncarnation = effect.request.threadID.flatMap { threadIncarnations[$0] } }
+        else { historyFilesIncarnation = nil }
         let restoreIncarnation = effect.request.checkpointRestoreOperationID == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
         defer {
             effects.removeValue(forKey: effect.id); effectRequests.removeValue(forKey: effect.id)
@@ -1497,7 +1660,7 @@ public actor WorkspaceEngine {
         }
         catch is CancellationError { result = .cancelled }
         catch {
-            let message = restoreIncarnation != nil ? RunCheckpointRestoreOperation.failureMessage : historyIncarnation != nil ? ConversationHistoryOperation.failureMessage : effect.request.checkpointOwner != nil ? ThreadRunCheckpointAttempt.failureMessage : effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError(for: effect.request.projectScriptOwner?.role ?? .setup) : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
+            let message = historyFilesIncarnation != nil ? ConversationHistoryFilesState.failureMessage : restoreIncarnation != nil ? RunCheckpointRestoreOperation.failureMessage : historyIncarnation != nil ? ConversationHistoryOperation.failureMessage : effect.request.checkpointOwner != nil ? ThreadRunCheckpointAttempt.failureMessage : effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError(for: effect.request.projectScriptOwner?.role ?? .setup) : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
             result = .failed(message)
         }
         heartbeat.cancel()
@@ -1510,10 +1673,26 @@ public actor WorkspaceEngine {
                 case .cancelled: owned = try await database.cancelEffect(effect.id, workerID: workerID, reason: "The targeted run or request is no longer active.")
                 }
                 guard owned else { await infrastructureFailed("Provider execution lost its workspace lease."); return }
-                if let restoreIncarnation {
+                if let historyFilesIncarnation {
+                    if !retiringEffects.contains(effect.id) {
+                        _ = try await enqueue(.conversationHistoryFilesEffectResult(effect.request, result, incarnation: historyFilesIncarnation))
+                        if case .conversationHistoryFiles(_, let operationID, _) = effect.request,
+                           let operation = revision.snapshot.conversationHistoryOperation(operationID), let files = operation.files,
+                           files.phase == .failed {
+                            await discardCheckpointRestoreScratch(files.review.gitReview, threadID: operation.review.sourceThreadID, projectID: operation.review.projectID)
+                        }
+                    }
+                } else if let restoreIncarnation {
                     if !retiringEffects.contains(effect.id) { _ = try await enqueue(.checkpointRestoreEffectResult(effect.request, result, incarnation: restoreIncarnation)) }
                 } else if let historyIncarnation {
-                    if !retiringEffects.contains(effect.id) { _ = try await enqueue(.conversationHistoryEffectResult(effect.request, result, incarnation: historyIncarnation)) }
+                    if !retiringEffects.contains(effect.id) {
+                        _ = try await enqueue(.conversationHistoryEffectResult(effect.request, result, incarnation: historyIncarnation))
+                        if case .conversationHistory(_, let operationID) = effect.request,
+                           let operation = revision.snapshot.conversationHistoryOperation(operationID), let files = operation.review.files,
+                           operation.phase == .failed || operation.phase == .unconfirmed {
+                            await discardCheckpointRestoreScratch(files.gitReview, threadID: operation.review.sourceThreadID, projectID: operation.review.projectID)
+                        }
+                    }
                 } else if effect.request.checkpointOwner != nil {
                     if !retiringEffects.contains(effect.id), let checkpointIncarnation { _ = try await enqueue(.runCheckpointEffectResult(effect.request, result, incarnation: checkpointIncarnation)) }
                 } else if effect.request.projectScriptRunID != nil {
@@ -1538,6 +1717,7 @@ public actor WorkspaceEngine {
         if await waitForRemovalCommit(threadID: request.threadID, projectID: request.projectID) { return .cancelled }
         try Task.checkCancellation()
         if case .checkpointRestore = request { return try await performCheckpointRestore(request) }
+        if case .conversationHistoryFiles = request { return try await performConversationHistoryFiles(request) }
         if case .conversationHistory = request { return try await performConversationHistory(request) }
         if request.checkpointOwner != nil { return try await performRunCheckpoint(request) }
         if request.projectScriptRunID != nil { return try await performProjectScript(request) }
@@ -1563,7 +1743,7 @@ public actor WorkspaceEngine {
         }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
-        case .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
+        case .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
             await awaitCheckpointDrains(threadID: thread.id)
@@ -1867,6 +2047,7 @@ public actor WorkspaceEngine {
         closing = true
         let history = Array(historyReads.values); historyReads = [:]
         for read in history { read.cancel() }
+        let unusedHistoryReviews = Array(historyReviews.values)
         historyReviews = [:]
         let unusedRestoreReviews = Array(checkpointRestoreReviews.values)
         checkpointRestoreReviews = [:]
@@ -1890,6 +2071,11 @@ public actor WorkspaceEngine {
         }
         for prepared in unusedRestoreReviews where revision.snapshot.checkpointRestoreOperation(prepared.review.id) == nil {
             _ = try? await checkpointFactory(URL(fileURLWithPath: prepared.review.workspacePath)).discardRestoreReview(prepared.review.gitReview)
+        }
+        for prepared in unusedHistoryReviews where revision.snapshot.conversationHistoryOperation(prepared.review.id) == nil {
+            if let files = prepared.review.files {
+                _ = try? await checkpointFactory(URL(fileURLWithPath: prepared.review.sourceConfiguration.workspacePath)).discardRestoreReview(files.gitReview)
+            }
         }
         await drainCommands()
         if loaded {
