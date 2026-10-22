@@ -23,6 +23,8 @@ struct ComposerView: View {
     let send: () -> Void
     let stop: () -> Void
     var reportGeometry: ((String, CGRect) -> Void)? = nil
+    var grokRuntimeMode: GrokACPRuntimeMode? = nil
+    var setGrokRuntimeMode: (GrokACPRuntimeMode) -> Void = { _ in }
     @FocusState private var editorFocused: Bool
     @State private var dropTargeted = false
     private var canSend: Bool { !historyLocked && !submitting && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
@@ -84,7 +86,18 @@ struct ComposerView: View {
         }
     }
     @ViewBuilder private var permissionControl: some View {
-        if provider == .acp {
+        if let grokRuntimeMode {
+            Menu {
+                ForEach(GrokACPRuntimeMode.allCases) { mode in
+                    Button { setGrokRuntimeMode(mode) } label: {
+                        if mode == grokRuntimeMode { Label(mode.name, systemImage: "checkmark") } else { Text(mode.name) }
+                    }
+                }
+            } label: { Label(grokRuntimeMode.name, systemImage: "slider.horizontal.3").font(.caption) }
+                .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
+                .accessibilityIdentifier("grok-runtime-mode-menu")
+                .help("Grok's native launch policy applies to future inputs. Active and queued inputs retain their captured policy.")
+        } else if provider == .acp {
             Label("Agent permissions", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
                 .help("The agent enforces its own sandbox. Coincide shows the permission requests it sends.")
         } else {

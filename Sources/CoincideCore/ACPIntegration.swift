@@ -3,14 +3,15 @@ import Foundation
 /// An explicit protocol flavor captured with an invocation, never inferred from
 /// an agent's mutable display name or an untrusted server implementation name.
 public enum ACPIntegration: String, Codable, CaseIterable, Sendable, Identifiable {
-    case cursor, copilot
+    case cursor, copilot, grok
     public var id: String { rawValue }
-    public var name: String { self == .cursor ? "Cursor" : "GitHub Copilot" }
-    public var executable: String { self == .cursor ? "agent" : "copilot" }
-    public var arguments: [String] { self == .cursor ? ["acp"] : ["--acp", "--stdio"] }
-    public var signInCommand: String { self == .cursor ? "agent login" : "copilot" }
+    public var name: String { switch self { case .cursor: "Cursor"; case .copilot: "GitHub Copilot"; case .grok: "Grok" } }
+    public var executable: String { switch self { case .cursor: "agent"; case .copilot: "copilot"; case .grok: "grok" } }
+    public var arguments: [String] { switch self { case .cursor: ["acp"]; case .copilot: ["--acp", "--stdio"]; case .grok: GrokACP.arguments(runtimeMode: .approvalRequired) } }
+    public var signInCommand: String { switch self { case .cursor: "agent login"; case .copilot: "copilot"; case .grok: "grok login" } }
     public var documentationURL: URL {
-        URL(string: self == .cursor ? "https://cursor.com/docs/cli/acp" : "https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server")!
+        let address: String = switch self { case .cursor: "https://cursor.com/docs/cli/acp"; case .copilot: "https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server"; case .grok: "https://docs.x.ai/build/cli/reference" }
+        return URL(string: address)!
     }
     public func configuration(id: UUID = UUID()) -> ACPAgentConfiguration {
         var configuration = ACPAgentConfiguration(id: id, name: name, executable: executable, arguments: arguments)

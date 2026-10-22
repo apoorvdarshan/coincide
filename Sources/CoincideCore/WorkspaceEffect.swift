@@ -4,6 +4,7 @@ public enum ProviderApprovalResponse: Codable, Sendable, Equatable {
     case decision(Bool)
     case answers([String: String])
     case selections([String: [String]])
+    case selectionsWithNotes(selections: [String: [String]], notes: [String: String])
     case option(String)
 }
 

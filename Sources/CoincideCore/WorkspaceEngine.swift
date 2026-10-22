@@ -649,7 +649,7 @@ extension WorkspaceEngine {
         guard !closing, !stoppingEffects, fatalError == nil, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
         let token = UUID(), metadataID: UUID?, session: any ProviderSession
         if !forceOwnedMetadata, let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
-           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity {
+           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode {
             metadataID = nil; session = runtime.session
         } else {
             var configured = thread
@@ -758,7 +758,7 @@ extension WorkspaceEngine {
         }
         let metadataID: UUID?, session: any ProviderSession
         if review.kind == .rewindBeforeRun, let runtime = runtimes[threadID], runtime.id == thread.runtimeID,
-           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity {
+           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode {
             metadataID = nil; session = runtime.session
         } else {
             var configured = thread
@@ -1296,6 +1296,7 @@ public actor WorkspaceEngine {
         var path: String
         var acpAgent: ACPAgentConfiguration?
         var openCodeIdentity: OpenCodeRuntimeIdentity?
+        var grokRuntimeMode: GrokACPRuntimeMode?
         var reader: Task<Void, Never>?
     }
     private struct MetadataRuntime: Sendable {
@@ -2030,6 +2031,7 @@ public actor WorkspaceEngine {
             case .decision(let allow): try await runtime.session.respond(request, allow: allow)
             case .answers(let answers): try await runtime.session.answer(request, answers: answers)
             case .selections(let selections): try await runtime.session.selectAnswers(request, selections: selections)
+            case .selectionsWithNotes(let selections, let notes): try await runtime.session.selectAnswers(request, selections: selections, notes: notes)
             }
             return .succeeded
         case .providerSessionRespond(_, let runtimeID, let request, let response):
@@ -2040,6 +2042,7 @@ public actor WorkspaceEngine {
             case .decision(let allow): try await runtime.session.respond(request, allow: allow)
             case .answers(let answers): try await runtime.session.answer(request, answers: answers)
             case .selections(let selections): try await runtime.session.selectAnswers(request, selections: selections)
+            case .selectionsWithNotes(let selections, let notes): try await runtime.session.selectAnswers(request, selections: selections, notes: notes)
             }
             return .succeeded
         }
@@ -2158,14 +2161,14 @@ public actor WorkspaceEngine {
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
-        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity { return existing }
+        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode { return existing }
         await closeRuntime(thread.id)
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         // Closing the previous process is an await: removal may have committed during that I/O.
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
         let id = UUID(), session = try factory(thread)
-        var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity)
+        var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode)
         runtimes[thread.id] = runtime
         _ = try await enqueue(.runtimeOpened(threadID: thread.id, runID: runID, runtimeID: id))
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID), runtimes[thread.id]?.id == id else {
@@ -2243,7 +2246,7 @@ public actor WorkspaceEngine {
         guard !closing, !stoppingEffects,
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
-              current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity else { throw CancellationError() }
+              current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode else { throw CancellationError() }
         if !revision.snapshot.providerReady(for: current) {
             throw CoincideError("Wait for the workspace to finish preparing before refreshing this agent's models.")
         }
@@ -2254,7 +2257,7 @@ public actor WorkspaceEngine {
         guard !closing, !stoppingEffects, thread.provider == .opencode,
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               current.provider == .opencode, current.workspacePath == thread.workspacePath,
-              current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity,
+              current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode,
               revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         return try await queryProviderMetadata(thread: current, owned: true) { try await $0.openCodeInventory() }
     }
@@ -2266,7 +2269,7 @@ public actor WorkspaceEngine {
         if owned {
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
             guard let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
-                  current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity,
+                  current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode,
                   revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         }
         guard !closing, !stoppingEffects, !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else { throw CancellationError() }
@@ -2303,7 +2306,7 @@ public actor WorkspaceEngine {
         guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.projectID == metadata.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
               let configuration = metadata.configuration,
-              thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent, thread.openCodeConfiguration?.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity,
+              thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent, thread.openCodeConfiguration?.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode == configuration.effectiveGrokRuntimeMode,
               revision.snapshot.providerReady(for: thread) else { return false }
         return true
     }

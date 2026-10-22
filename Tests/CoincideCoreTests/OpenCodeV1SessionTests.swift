@@ -1,0 +1,573 @@
+import Foundation
+import Testing
+@testable import CoincideCore
+
+@Test func openCodeV1CatalogSharesOneConnectionWithoutCreatingAConversation() async throws {
+    try await withV1Session { f in
+        async let models = f.session.models()
+        async let inventory = f.session.openCodeInventory()
+        let (rows, observed) = try await (models, inventory)
+        #expect(rows.first?.openCodeSelection == f.model)
+        #expect(rows.first?.openCodeVariants == ["balanced", "fast"])
+        #expect(observed.server.generation == .v1)
+        let connects = await f.peer.connects, calls = await f.peer.calls
+        #expect(connects == 1)
+        #expect(calls.isEmpty)
+    }
+}
+
+@Test func openCodeV1HTTPAdmissionAndAssistantCompletionDoNotCompleteBeforeIdle() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Exact input", thread: f.thread())
+        try await f.peer.begin()
+        try await f.peer.text("first 🌍")
+        try await f.peer.delta(" + next", part: "part_text")
+        try await f.peer.assistant(completed: true)
+        try await v1Eventually { await f.record.text.contains("first 🌍 + next") }
+        let before = await f.record.completions
+        #expect(before.isEmpty)
+        try await f.peer.idle()
+        try await v1Eventually { await f.record.completions == [.idle] }
+        try await f.peer.idle()
+        let final = await f.record.completions
+        #expect(final == [.idle])
+        let calls = await f.peer.calls
+        let prompt = try #require(calls.first { $0.path.last == "prompt_async" }?.body)
+        #expect(prompt["messageID"].string?.hasPrefix("msg_") == true)
+        #expect(prompt["parts"].array?.first?["text"] == .string("Exact input"))
+        #expect(prompt["model"]["modelID"] == .string(f.model.id))
+        #expect(prompt["id"] == .null)
+    }
+}
+
+@Test func openCodeV1EarlyIdleAndUnrelatedUserCannotReleaseTheNewRun() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Owned input", thread: f.thread())
+        try await f.peer.idle()
+        try await f.peer.user(id: "msg_stale_other_user")
+        try await f.peer.assistant(id: "msg_unowned", parent: "msg_stale_other_user", completed: true)
+        try await f.peer.text("must not appear", assistant: "msg_unowned")
+        try await f.peer.begin()
+        try await v1Eventually { await f.record.turns.count == 1 }
+        let before = await f.record.completions, text = await f.record.text
+        #expect(before.isEmpty)
+        #expect(!text.contains("must not appear"))
+        try await f.peer.text("owned")
+        try await f.peer.idle()
+        try await v1Eventually { await f.record.completions == [.idle] }
+    }
+}
+
+@Test func openCodeV1CapturedDefaultOmitsModelAndVariantInsteadOfGuessingAProviderDefault() async throws {
+    try await withV1Session { f in
+        var thread = f.thread()
+        thread.openCodeConfiguration = f.configuration.selecting(model: nil); thread.model = ""
+        thread.activeRun = .init(id: UUID(), configuration: .init(thread: thread), startedAt: Date())
+        // A future explicit header choice must not replace the captured native default.
+        thread.openCodeConfiguration = f.configuration; thread.model = f.model.catalogID
+        try await f.session.send(text: "Native default", thread: thread)
+        let calls = await f.peer.calls
+        let prompt = try #require(calls.first { $0.path.last == "prompt_async" }?.body)
+        #expect(prompt["model"] == .null && prompt["variant"] == .null)
+        #expect(prompt["agent"] == .string("build"))
+        try await f.peer.begin(); try await f.peer.idle()
+        try await v1Eventually { await f.record.completions == [.idle] }
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV1ObservedCompletionBeforeHeldHTTPAckPreservesSuccessor(_ lost: Bool) async throws {
+    try await withV1Session(mode: lost ? .heldLostAck : .heldAck) { f in
+        let first = f.thread()
+        let send = Task { try await f.session.send(text: "First", thread: first) }
+        do {
+            try await v1Eventually { await f.peer.promptCount == 1 }
+            try await f.peer.begin()
+            try await f.peer.assistant(completed: true)
+            try await f.peer.idle()
+            try await v1Eventually { await f.record.completions == [.idle] }
+            await f.peer.setMode(.manual)
+            try await f.session.send(text: "Second", thread: f.thread(nativeID: "ses_root"))
+            try await f.peer.begin(assistant: "msg_second")
+            await f.peer.release()
+            try await send.value
+            try await f.peer.text("successor", assistant: "msg_second")
+            try await f.peer.idle()
+            try await v1Eventually { await f.record.completions == [.idle, .idle] }
+            let failures = await f.record.failures, starts = await f.peer.promptCount
+            #expect(failures == 0)
+            #expect(starts == 2)
+        } catch { await f.peer.release(); _ = await send.result; throw error }
+    }
+}
+
+@Test func openCodeV1CapturedControlsAndExactResumeDoNotCreateANewSession() async throws {
+    try await withV1Session { f in
+        var thread = f.thread()
+        thread.openCodeConfiguration = f.configuration.selecting(model: .init(providerID: f.model.providerID, id: f.model.id, variant: "fast"))
+        thread.permission = .fullAccess
+        try await f.session.send(text: "Captured", thread: thread)
+        try await f.peer.begin(); try await f.peer.idle()
+        try await v1Eventually { await f.record.completions.count == 1 }
+        var next = f.thread(nativeID: "ses_root")
+        next.openCodeConfiguration = thread.openCodeConfiguration; next.permission = .fullAccess
+        next.activeRun = .init(id: UUID(), configuration: .init(thread: next), startedAt: Date())
+        try await f.session.send(text: "Future captured", thread: next)
+        let calls = await f.peer.calls
+        let prompts = calls.filter { $0.path.last == "prompt_async" }
+        #expect(prompts[0].body?["variant"] == .string("balanced"))
+        #expect(prompts[1].body?["variant"] == .string("fast"))
+        let create = calls.filter { $0.method == "POST" && $0.path == ["session"] }
+        #expect(create.count == 1)
+        #expect(create.first?.body?["title"] == .null)
+        #expect(create.first?.body?["id"] == .null)
+        let patches = calls.filter { $0.method == "PATCH" }
+        #expect(patches[0].body?["permission"].array?.contains(.object(["permission": .string("bash"), "pattern": .string("*"), "action": .string("ask")])) == true)
+        #expect(patches.last?.body?["permission"].array?.first?["action"] == .string("allow"))
+    }
+}
+
+@Test(arguments: ["missing", "wrong-cwd", "child", "reverted"])
+func openCodeV1ResumeNeverCreatesOrMovesAnUnverifiedConversation(_ fault: String) async throws {
+    try await withV1Session { f in
+        await f.peer.seed(fault: fault)
+        do {
+            try await f.session.send(text: "Not a fallback", thread: f.thread(nativeID: "ses_existing"))
+            Issue.record("An unverified native conversation was resumed.")
+        } catch { }
+        let calls = await f.peer.calls
+        #expect(calls.allSatisfy { $0.method != "POST" || $0.path != ["session"] })
+        #expect(calls.allSatisfy { $0.path.last != "prompt_async" })
+    }
+}
+
+@Test(arguments: [PermissionMode.supervised, .fullAccess])
+func openCodeV1PlanRulesKeepLastMatchingDenyAndNarrowAllowAcrossFutureHeader(_ permission: PermissionMode) async throws {
+    try await withV1Session { f in
+        await f.peer.setAgentRules([
+            .init(permission: "edit", pattern: "/plans/*", action: "allow"),
+            .init(permission: "external_directory", pattern: "/plans/*", action: "allow"),
+            .init(permission: "bash", pattern: "git *", action: "allow"),
+            .init(permission: "task", pattern: "*", action: "deny")
+        ])
+        var captured = f.thread()
+        captured.permission = permission
+        captured.openCodeConfiguration = f.configuration.selecting(agentID: "plan")
+        captured.activeRun = .init(id: UUID(), configuration: .init(thread: captured), startedAt: Date())
+        // A future header edit must not remove this accepted plan's restrictions.
+        captured.openCodeConfiguration = f.configuration
+        captured.permission = permission == .supervised ? .fullAccess : .supervised
+        try await f.session.send(text: "Captured planning controls", thread: captured)
+        let firstCalls = await f.peer.calls
+        let firstPatch = try #require(firstCalls.first { $0.method == "PATCH" }?.body?["permission"].array)
+        func action(_ rules: [JSONValue], permission: String, path: String) -> String? {
+            rules.last {
+                ($0["permission"] == .string(permission) || $0["permission"] == .string("*")) &&
+                ($0["pattern"] == .string("*") || ($0["pattern"] == .string("/plans/*") && path.hasPrefix("/plans/")))
+            }?["action"].string
+        }
+        #expect(action(firstPatch, permission: "edit", path: "/repository/source.swift") == "deny")
+        #expect(action(firstPatch, permission: "edit", path: "/plans/approved.md") == "allow")
+        #expect(action(firstPatch, permission: "external_directory", path: "/plans/approved.md") == "allow")
+        #expect(!firstPatch.contains(.object(["permission": .string("bash"), "pattern": .string("git *"), "action": .string("allow")])))
+        try await f.peer.begin(); try await f.peer.idle()
+        try await v1Eventually { await f.record.completions == [.idle] }
+        var next = f.thread(nativeID: "ses_root")
+        next.permission = permission; next.openCodeConfiguration = f.configuration.selecting(agentID: "plan")
+        next.activeRun = .init(id: UUID(), configuration: .init(thread: next), startedAt: Date())
+        try await f.session.send(text: "A newly captured plan", thread: next)
+        let laterCalls = await f.peer.calls
+        let lastPatch = try #require(laterCalls.last { $0.method == "PATCH" }?.body?["permission"].array)
+        #expect(action(lastPatch, permission: "edit", path: "/repository/source.swift") == "deny")
+        #expect(action(lastPatch, permission: "edit", path: "/plans/approved.md") == "allow")
+    }
+}
+
+@Test(arguments: [V1Fault.lostCreate, .lostPrompt, .rejectedPrompt])
+func openCodeV1LostMutationIsNotRetriedOrMistakenForKnownRejection(_ mode: V1Fault) async throws {
+    try await withV1Session(mode: mode) { f in
+        var observed: OpenCodeV1SessionError?
+        do { try await f.session.send(text: "Once", thread: f.thread()) }
+        catch { observed = error as? OpenCodeV1SessionError }
+        #expect(observed == (mode == .rejectedPrompt ? .rejected : .uncertainDelivery))
+        let calls = await f.peer.calls
+        #expect(calls.filter { $0.method == "POST" && $0.path == ["session"] }.count == 1)
+        #expect(calls.filter { $0.path.last == "prompt_async" }.count == (mode == .lostCreate ? 0 : 1))
+        #expect(calls.allSatisfy { $0.path != ["session", "ses_guessed"] })
+    }
+}
+
+@Test func openCodeV1StopDuringHeldConfigurationPreventsEveryLatePrompt() async throws {
+    try await withV1Session(mode: .heldConfiguration) { f in
+        let send = Task { try await f.session.send(text: "Must stay unsent", thread: f.thread()) }
+        do {
+            try await v1Eventually { await f.peer.configurationHeld }
+            try await f.session.interrupt()
+            await f.peer.release()
+            let result = await send.result
+            if case .success = result { Issue.record("A stopped preparation submitted native input.") }
+            let count = await f.peer.promptCount
+            #expect(count == 0)
+        } catch { await f.peer.release(); _ = await send.result; throw error }
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV1StopOfUnobservedPOSTIsUncertainAndDrainsItsOwner(_ acknowledged: Bool) async throws {
+    try await withV1Session(mode: acknowledged ? .manual : .heldAck) { f in
+        let send = Task { try await f.session.send(text: "Unknown delivery", thread: f.thread()) }
+        do {
+            try await v1Eventually { await f.peer.promptCount == 1 }
+            if acknowledged { try await send.value }
+            var failure: OpenCodeV1SessionError?
+            do { try await f.session.interrupt() } catch { failure = error as? OpenCodeV1SessionError }
+            let result = await send.result
+            #expect(failure == .uncertainDelivery)
+            if !acknowledged, case .success = result { Issue.record("An unknown POST was reported as successful Stop.") }
+            let closed = await f.peer.closeCount
+            #expect(closed == 1)
+            let completions = await f.record.completions
+            #expect(completions.isEmpty)
+        } catch { await f.peer.release(); _ = await send.result; throw error }
+    }
+}
+
+@Test func openCodeV1PermissionRepliesUseExactIDsAndWaitForNativeSettlement() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Permission owner", thread: f.thread()); try await f.peer.begin()
+        try await f.peer.permission(id: "perm_one")
+        try await v1Eventually { await f.record.approvals.count == 1 }
+        let saved = await f.record.approvals
+        let approval = try #require(saved.first)
+        try await f.session.choose(approval, optionID: "conversation")
+        do { try await f.session.respond(approval, allow: true); Issue.record("The answered request was submitted twice.") } catch { }
+        let before = await f.record.dismissals
+        #expect(before == 0)
+        try await f.peer.emit("permission.replied", fields: ["requestID": .string("perm_one"), "reply": .string("once")])
+        try await v1Eventually { await f.record.dismissals == 1 }
+        let calls = await f.peer.calls
+        let reply = calls.filter { $0.path == ["permission", "perm_one", "reply"] }
+        #expect(reply.count == 1)
+        #expect(reply.first?.body?["reply"] == .string("once"))
+        let grantPatch = calls.last { $0.method == "PATCH" }
+        #expect(grantPatch?.body?["permission"].array?.contains(.object(["permission": .string("bash"), "pattern": .string("echo safe"), "action": .string("allow")])) == true)
+        try await f.peer.permission(id: "perm_workspace")
+        try await v1Eventually { await f.record.approvals.count == 2 }
+        let later = await f.record.approvals
+        let workspace = try #require(later.last)
+        try await f.session.choose(workspace, optionID: "always")
+        let laterCalls = await f.peer.calls
+        #expect(laterCalls.last?.path == ["permission", "perm_workspace", "reply"])
+        #expect(laterCalls.last?.body?["reply"] == .string("always"))
+    }
+}
+
+@Test func openCodeV1QuestionsPreserveOrderedSelectionsCustomAnswersAndNativeCancel() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Question owner", thread: f.thread()); try await f.peer.begin()
+        try await f.peer.question(id: "question_one")
+        try await v1Eventually { await f.record.approvals.count == 1 }
+        let requests = await f.record.approvals
+        let request = try #require(requests.first)
+        try await f.session.selectAnswers(request, selections: ["question-0": ["Tea", "Water"], "question-1": ["My exact value"]])
+        let calls = await f.peer.calls
+        #expect(calls.last?.path == ["question", "question_one", "reply"])
+        #expect(calls.last?.body?["answers"] == .array([.array([.string("Tea"), .string("Water")]), .array([.string("My exact value")])]))
+        try await f.peer.emit("question.replied", fields: ["requestID": .string("question_one")])
+        try await f.peer.question(id: "question_cancel")
+        try await v1Eventually { await f.record.approvals.count == 2 }
+        let later = await f.record.approvals
+        let cancel = try #require(later.last)
+        try await f.session.respond(cancel, allow: false)
+        let finalCalls = await f.peer.calls
+        #expect(finalCalls.last?.path == ["question", "question_cancel", "reject"])
+        #expect(finalCalls.filter { $0.path.last == "abort" }.isEmpty)
+    }
+}
+
+@Test func openCodeV1EarlyChildKeepsOriginalRunAndSurvivesRootIdleAndFailure() async throws {
+    try await withV1Session { f in
+        let first = f.thread()
+        let actualOwner = try #require(first.activeRun?.id)
+        try await f.session.send(text: "Parent", thread: first); try await f.peer.begin()
+        try await f.peer.childCreated(extraRules: [
+            .init(permission: "bash", pattern: "git *", action: "allow"),
+            .init(permission: "edit", pattern: "/plans/*", action: "allow")
+        ])
+        try await f.peer.user(id: "msg_child_user", session: "ses_child")
+        try await f.peer.assistant(id: "msg_child_assistant", parent: "msg_child_user", session: "ses_child")
+        try await f.peer.text("early child 🌍", assistant: "msg_child_assistant", session: "ses_child")
+        try await f.peer.taskChild()
+        try await v1Eventually { await f.record.childText.contains("early child") }
+        try await f.peer.emit("session.error", fields: ["error": .object(["name": .string("UnknownError")])])
+        try await v1Eventually { await f.record.completions == [.failed] }
+        try await f.peer.delta(" after parent", part: "part_text", assistant: "msg_child_assistant", session: "ses_child")
+        try await v1Eventually { await f.record.childText.contains("after parent") }
+        let owners = await f.record.backgroundOwners
+        #expect(owners == [actualOwner])
+        let failures = await f.record.failures
+        #expect(failures == 0)
+        try await f.peer.idle(session: "ses_child")
+        let calls = await f.peer.calls
+        let childPatch = calls.first { $0.method == "PATCH" && $0.path == ["session", "ses_child"] }
+        #expect(childPatch?.body?["permission"].array?.contains(.object(["permission": .string("task"), "pattern": .string("*"), "action": .string("deny")])) == true)
+        let childRules = try #require(childPatch?.body?["permission"].array)
+        let bash = childRules.last {
+            ($0["permission"] == .string("bash") || $0["permission"] == .string("*")) &&
+            ($0["pattern"] == .string("*") || $0["pattern"] == .string("git *"))
+        }?["action"].string
+        let planEdit = childRules.last {
+            ($0["permission"] == .string("edit") || $0["permission"] == .string("*")) &&
+            ($0["pattern"] == .string("*") || $0["pattern"] == .string("/plans/*"))
+        }?["action"].string
+        #expect(bash == "ask")
+        #expect(planEdit == "allow")
+    }
+}
+
+@Test func openCodeV1ObservedStopAbortsRootAndOnlyVerifiedDescendants() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Stop owned work", thread: f.thread()); try await f.peer.begin()
+        try await f.peer.childCreated(); try await f.peer.taskChild()
+        try await v1Eventually { await f.peer.childPatched }
+        try await f.session.interrupt()
+        let calls = await f.peer.calls
+        #expect(calls.filter { $0.path.last == "abort" }.map(\.path) == [["session", "ses_root", "abort"], ["session", "ses_child", "abort"]])
+        try await f.peer.emit("session.error", fields: ["error": .object(["name": .string("MessageAbortedError")])])
+        try await v1Eventually { await f.record.completions == [.interrupted] }
+    }
+}
+
+@Test func openCodeV1ExactAssistantParentProvesInputWithoutAUserEcho() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Native parent proof", thread: f.thread())
+        // No user echo was emitted. The exact assistant.parentID is the authored
+        // native message ID, which is enough to prove this request was admitted.
+        try await f.peer.assistant()
+        try await v1Eventually { await f.record.turns.count == 1 }
+        try await f.session.interrupt()
+        try await f.peer.emit("session.error", fields: ["error": .object(["name": .string("MessageAbortedError")])])
+        try await v1Eventually { await f.record.completions == [.interrupted] }
+        let failures = await f.record.failures
+        #expect(failures == 0)
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV1MalformedTerminalAndUnexpectedEOFPauseInsteadOfCompleting(_ eof: Bool) async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Keep truthful failure", thread: f.thread()); try await f.peer.begin()
+        if eof { await f.peer.disconnect() }
+        else { await f.peer.raw("{\"type\":\"session.idle\",\"properties\":{}}") }
+        try await v1Eventually { await f.record.failures == 1 }
+        let completions = await f.record.completions
+        #expect(completions.isEmpty)
+    }
+}
+
+enum V1Fault: Sendable, Equatable { case manual, lostCreate, lostPrompt, rejectedPrompt, heldAck, heldLostAck, heldConfiguration }
+private struct V1Call: Sendable { let method: String; let path: [String]; let body: JSONValue? }
+private actor V1Gate {
+    private var open = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func wait() async { if open { return }; await withCheckedContinuation { waiters.append($0) } }
+    func release() { open = true; let saved = waiters; waiters = []; for waiter in saved { waiter.resume() } }
+}
+private actor V1Record {
+    private var events: [ProviderEvent] = []
+    private var entities: [ProviderEntityKey: ProviderEntity] = [:]
+    func append(_ event: ProviderEvent) {
+        events.append(event)
+        let inner = Self.inner(event)
+        if case .entity(let update) = inner { entities[update.key] = try? update.apply(to: entities[update.key]) }
+        if case .runEntity(_, let update) = inner { entities[update.key] = try? update.apply(to: entities[update.key]) }
+    }
+    var turns: [String] { events.compactMap { if case .turn(let value) = Self.inner($0) { value } else { nil } } }
+    var completions: [ThreadState] { events.compactMap { if case .completed(let value) = Self.inner($0) { value } else { nil } } }
+    var failures: Int { events.filter { if case .connectionClosed = Self.inner($0) { true } else { false } }.count }
+    var approvals: [ApprovalRequest] { events.compactMap { if case .sessionApproval(let value) = Self.inner($0) { value } else { nil } } }
+    var dismissals: Int { events.filter { if case .sessionApprovalDismissed = Self.inner($0) { true } else { false } }.count }
+    var text: String { entities.values.filter { $0.role == .assistant && !$0.key.sessionID.contains("ses_child") }.map(\.text).sorted().joined() }
+    var childText: String { entities.values.filter { $0.role == .assistant && $0.key.sessionID.contains("ses_child") }.map(\.text).sorted().joined() }
+    var backgroundOwners: Set<UUID> { Set(events.compactMap { if case .runEntity(let id, _) = $0 { id } else { nil } }) }
+    private static func inner(_ event: ProviderEvent) -> ProviderEvent { if case .context(_, let value) = event { value } else { event } }
+}
+private struct V1Fixture: Sendable {
+    let root: URL
+    let model: OpenCodeModelSelection
+    let configuration: OpenCodeConfiguration
+    let peer: V1Peer
+    let session: OpenCodeV1Session
+    let record: V1Record
+    func thread(nativeID: String? = nil) -> CodingThread {
+        var thread = CodingThread(project: .init(path: root.path))
+        thread.provider = .opencode; thread.openCodeConfiguration = configuration
+        thread.model = configuration.model?.catalogID ?? ""; thread.providerThreadID = nativeID
+        thread.checkpointPolicy = .disabled
+        thread.activeRun = .init(id: UUID(), configuration: .init(thread: thread), startedAt: Date())
+        return thread
+    }
+}
+private func withV1Session(mode: V1Fault = .manual, body: (V1Fixture) async throws -> Void) async throws {
+    let root = try temporaryWorkspace()
+    let model = OpenCodeModelSelection(providerID: "fixture-provider", id: "model/with/slashes")
+    let config = OpenCodeConfiguration(generation: .v1, model: .init(providerID: model.providerID, id: model.id, variant: "balanced"))
+    let peer = V1Peer(directory: root.path, model: model, mode: mode)
+    let session = OpenCodeV1Session(cwd: root, configuration: config, transport: peer)
+    let record = V1Record(), consumer = Task { for await event in session.events { await record.append(event) } }
+    do { try await body(.init(root: root, model: model, configuration: config, peer: peer, session: session, record: record)) }
+    catch { await session.close(); await consumer.value; try? FileManager.default.removeItem(at: root); throw error }
+    await session.close(); await consumer.value; try FileManager.default.removeItem(at: root)
+}
+private func v1Eventually(_ predicate: @escaping @Sendable () async throws -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !(try await predicate()) {
+        guard ContinuousClock.now < deadline else { throw CoincideError("The private OpenCode 1 fixture did not reach its expected boundary.") }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+}
+
+private actor V1Peer: OpenCodeV1SessionTransport {
+    private let directory: String
+    private let model: OpenCodeModelSelection
+    private var mode: V1Fault
+    private let stream: AsyncThrowingStream<OpenCodeSSEEvent, any Error>
+    private let continuation: AsyncThrowingStream<OpenCodeSSEEvent, any Error>.Continuation
+    private let gate = V1Gate()
+    private var closed = false
+    private var sessions: [String: JSONValue] = [:]
+    private var busy = false
+    private var inputID: String?
+    private var agentRules: [OpenCodeV1PermissionRule] = []
+    var calls: [V1Call] = []
+    var connects = 0
+    var closeCount = 0
+    var configurationHeld = false
+    var childPatched = false
+    var promptCount: Int { calls.filter { $0.path.last == "prompt_async" }.count }
+    init(directory: String, model: OpenCodeModelSelection, mode: V1Fault) {
+        self.directory = directory; self.model = model; self.mode = mode
+        let pair = AsyncThrowingStream<OpenCodeSSEEvent, any Error>.makeStream()
+        stream = pair.stream; continuation = pair.continuation
+    }
+    func connect() async throws -> AsyncThrowingStream<OpenCodeSSEEvent, any Error> { connects += 1; return stream }
+    func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot {
+        .init(server: .init(generation: .v1, version: .init(major: 1, minor: 14, patch: 19), processIdentifier: nil), directory: directory.path,
+            models: [.init(selection: model, name: "Private Fixture", variants: ["balanced", "fast"], enabled: true, input: ["text", "image"], output: ["text"], tools: true)],
+            agents: [.init(id: "build", name: "Build", description: nil, mode: .primary, hidden: false),
+                     .init(id: "plan", name: "Plan", description: nil, mode: .primary, hidden: false)], defaults: [model])
+    }
+    func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule] { agentRules }
+    func setAgentRules(_ rules: [OpenCodeV1PermissionRule]) { agentRules = rules }
+    func setMode(_ value: V1Fault) { mode = value }
+    func release() async { await gate.release() }
+    func close() async { guard !closed else { return }; closed = true; closeCount += 1; continuation.finish(); await gate.release() }
+    func disconnect() { continuation.finish() }
+    func raw(_ text: String) { continuation.yield(.init(event: "message", data: text, id: nil, retryMilliseconds: nil)) }
+    func seed(fault: String) {
+        if fault == "missing" { return }
+        var fields = info(id: "ses_existing").object ?? [:]
+        if fault == "wrong-cwd" { fields["directory"] = .string(directory + "/other") }
+        if fault == "child" { fields["parentID"] = .string("ses_other") }
+        if fault == "reverted" { fields["revert"] = .object(["messageID": .string("msg_hidden")]) }
+        sessions["ses_existing"] = .object(fields)
+    }
+    func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
+        guard !closed else { throw CancellationError() }
+        calls.append(.init(method: method, path: path, body: body))
+        if path == ["session", "status"] { return try response(.object(busy ? ["ses_root": .object(["type": .string("busy")])] : [:])) }
+        if method == "POST", path == ["session"] {
+            sessions["ses_root"] = info(id: "ses_root", rules: body?["permission"] ?? .array([]))
+            if mode == .lostCreate { throw OpenCodeHTTPError.transportFailure }
+            return try response(sessions["ses_root"]!)
+        }
+        if method == "GET", path.count == 2 { return try response(sessions[path[1]] ?? .object([:]), status: sessions[path[1]] == nil ? 404 : 200) }
+        if method == "GET", path.last == "message" { return try response(.array([])) }
+        if method == "PATCH", path.count == 2 {
+            if mode == .heldConfiguration { configurationHeld = true; await gate.wait() }
+            guard !closed else { throw CancellationError() }
+            var fields = sessions[path[1]]?.object ?? [:]; fields["permission"] = body?["permission"] ?? .array([])
+            sessions[path[1]] = .object(fields)
+            if path[1] == "ses_child" { childPatched = true }
+            return try response(.object(fields))
+        }
+        if path.last == "prompt_async" {
+            inputID = body?["messageID"].string
+            let fault = mode
+            if fault == .heldAck || fault == .heldLostAck { await gate.wait() }
+            guard !closed else { throw CancellationError() }
+            if fault == .lostPrompt || fault == .heldLostAck { throw OpenCodeHTTPError.transportFailure }
+            if fault == .rejectedPrompt { return try response(.object([:]), status: 400) }
+            return .init(status: 204, headers: [:], body: Data())
+        }
+        if path.last == "children" {
+            let children = sessions.values.filter { $0["parentID"] == .string(path[1]) }
+            return try response(.array(children))
+        }
+        if path.last == "abort" || path.last == "reply" || path.last == "reject" { return try response(.bool(true)) }
+        throw CoincideError("The private OpenCode 1 peer received an unexpected route.")
+    }
+    func begin(assistant: String = "msg_assistant") throws {
+        guard let inputID else { throw CoincideError("The private peer has no input.") }
+        busy = true
+        try user(id: inputID); try self.assistant(id: assistant, parent: inputID)
+        try emit("session.status", fields: ["status": .object(["type": .string("busy")])])
+    }
+    func user(id: String, session: String = "ses_root") throws {
+        try emit("message.updated", session: session, fields: ["info": message(id: id, role: "user", session: session)])
+    }
+    func assistant(id: String = "msg_assistant", parent: String? = nil, completed: Bool = false, session: String = "ses_root") throws {
+        try emit("message.updated", session: session, fields: ["info": message(id: id, role: "assistant", session: session,
+            parent: parent ?? inputID ?? "msg_missing", completed: completed)])
+    }
+    func text(_ text: String, assistant: String = "msg_assistant", session: String = "ses_root") throws {
+        try emit("message.part.updated", session: session, fields: ["part": .object(["id": .string("part_text"), "sessionID": .string(session),
+            "messageID": .string(assistant), "type": .string("text"), "text": .string(text)])])
+    }
+    func delta(_ text: String, part: String, assistant: String = "msg_assistant", session: String = "ses_root") throws {
+        try emit("message.part.delta", session: session, fields: ["messageID": .string(assistant), "partID": .string(part), "field": .string("text"), "delta": .string(text)])
+    }
+    func idle(session: String = "ses_root") throws {
+        if session == "ses_root" { busy = false }
+        try emit("session.idle", session: session)
+    }
+    func childCreated(extraRules: [OpenCodeV1PermissionRule] = []) throws {
+        let restricted = OpenCodeV1PermissionRule(permission: "task", pattern: "*", action: "deny")
+        sessions["ses_child"] = info(id: "ses_child", parent: "ses_root", rules: .array(([restricted] + extraRules).map(\.json)))
+        try emit("session.created", session: "ses_child", fields: ["info": sessions["ses_child"]!])
+    }
+    func taskChild() throws {
+        try emit("message.part.updated", fields: ["part": .object(["id": .string("part_task"), "sessionID": .string("ses_root"),
+            "messageID": .string("msg_assistant"), "type": .string("tool"), "callID": .string("call_task"), "tool": .string("task"),
+            "state": .object(["status": .string("running"), "input": .object(["description": .string("Private child"), "prompt": .string("Harmless fixture")]),
+                "metadata": .object(["sessionId": .string("ses_child")])])])])
+    }
+    func permission(id: String) throws {
+        try emit("permission.asked", fields: ["id": .string(id), "permission": .string("bash"), "patterns": .array([.string("echo safe")]),
+            "always": .array([.string("echo safe")]), "metadata": .object([:]), "tool": .object(["messageID": .string("msg_assistant"), "callID": .string("call_shell")])])
+    }
+    func question(id: String) throws {
+        try emit("question.asked", fields: ["id": .string(id), "questions": .array([
+            .object(["header": .string("Drinks"), "question": .string("Choose drinks"), "multiple": .bool(true), "custom": .bool(false),
+                "options": .array([.object(["label": .string("Tea"), "description": .string("Tea")]), .object(["label": .string("Water"), "description": .string("Water")])])]),
+            .object(["header": .string("Custom"), "question": .string("Exact value"), "custom": .bool(true), "options": .array([])])])])
+    }
+    func emit(_ type: String, session: String = "ses_root", fields: [String: JSONValue] = [:]) throws {
+        var props = fields; props["sessionID"] = .string(session)
+        let value = JSONValue.object(["type": .string(type), "properties": .object(props)])
+        raw(String(decoding: try JSONEncoder().encode(value), as: UTF8.self))
+    }
+    private func info(id: String, parent: String? = nil, rules: JSONValue = .array([])) -> JSONValue {
+        var fields: [String: JSONValue] = ["id": .string(id), "directory": .string(directory), "permission": rules]
+        if let parent { fields["parentID"] = .string(parent) }; return .object(fields)
+    }
+    private func message(id: String, role: String, session: String, parent: String? = nil, completed: Bool = false) -> JSONValue {
+        var time: [String: JSONValue] = ["created": .number(1)]
+        if completed { time["completed"] = .number(2) }
+        var fields: [String: JSONValue] = ["id": .string(id), "sessionID": .string(session), "role": .string(role), "time": .object(time)]
+        if let parent { fields["parentID"] = .string(parent) }; return .object(fields)
+    }
+    private func response(_ value: JSONValue, status: Int = 200) throws -> OpenCodeHTTPResponse {
+        .init(status: status, headers: ["content-type": "application/json"], body: try JSONEncoder().encode(value))
+    }
+}

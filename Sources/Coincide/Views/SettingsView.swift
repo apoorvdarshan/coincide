@@ -16,7 +16,7 @@ struct SettingsView: View {
                 Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels(provider: provider) } }
                     .disabled(store.isRefreshingModels || (provider == .opencode && store.selectedThread?.provider != .opencode))
                 if provider == .opencode {
-                    Text("Choose OpenCode in a new conversation to use native OpenCode 2 and refresh the models and agents available in that workspace.")
+                    Text("Choose OpenCode in a new conversation, select the installed server generation, and refresh the models and agents available in that workspace.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 LabeledContent("Available models", value: "\(store.models(for: provider).count)")
@@ -44,6 +44,7 @@ struct SettingsView: View {
                     HStack {
                         Button("Add Cursor…") { editingAgent = ACPIntegration.cursor.configuration() }
                         Button("Add GitHub Copilot…") { editingAgent = ACPIntegration.copilot.configuration() }
+                        Button("Add Grok…") { editingAgent = ACPIntegration.grok.configuration() }
                     }
                     HStack {
                         Button("Add Agent…") { editingAgent = .init(name: "", executable: "") }

@@ -46,13 +46,15 @@ must each be mapped and verified before declaring parity.
   provider authentication; no API key is embedded or copied into the workspace.
 - The dedicated [OpenCode HTTP integration](OPENCODE_HTTP.md) has native
   generation-aware identity/catalog reads, an owned loopback subprocess and
-  bounded HTTP/SSE networking. OpenCode 2 now has its own native conversation
-  adapter, captured model/variant/agent configuration, streaming/tool projection,
-  explicit permissions/forms and Stop. Storage 26 preserves captured settings
-  across queued turns and fences older binaries. This has an offline-fixture
-  verification boundary; installed HTTP execution, v1 chat, native history,
-  steering and reconnect reconciliation remain unfinished. Existing OpenCode ACP
-  conversations retain their original path.
+  bounded HTTP/SSE networking. Separate v1/v2 native conversation actors preserve
+  captured model/variant/agent/rules, exact message ownership, text/tool/child
+  projection, permissions, v1 questions, v2 forms and Stop. V1's server-generated
+  session IDs and user-message/assistant-parent/idle admission differ from v2's
+  durable inbox/execution contract. Focused checks include a real loopback v1
+  HTTP/SSE-to-Engine FIFO test; hosted acceptance is pending. Installed 2.1.2
+  metadata is separate evidence, and installed 1.x chat is unverified. Native
+  history, steering and reconnect reconciliation remain unfinished. Existing
+  OpenCode ACP conversations retain their original path.
 - Native Codex Settings reads existing CLI account/plan and subscription allowance
   with identity consistency, sparse update and stale/unsupported handling. Email
   is hidden by default and observations stay outside persistence. Native sign-in,
@@ -62,7 +64,8 @@ must each be mapped and verified before declaring parity.
   Config options take precedence over legacy model/mode fields. Permissions keep
   agent-provided option IDs, and resumed history is drained without duplicating
   the journal transcript. Unsupported capabilities are not advertised. ACP agents
-  enforce their own sandbox; Codex permission settings do not apply to them.
+  enforce their own permissions and sandbox; a shared permission selection does
+  not create a Codex sandbox around an ACP agent.
 - Explicit Cursor and Copilot profiles capture their vendor flavor with the
   invocation. Native Settings offers initialize-only connection observations on
   separately owned transports; a successful observation is not an authentication
@@ -72,9 +75,17 @@ must each be mapped and verified before declaring parity.
   tool execution. Copilot opts into its actual raw event feed and attributes child
   content/lifecycle to the originating run, including background output after the
   parent completes and a new turn starts. Both v1 and experimental v2 preserve
-  these vendor profiles. Storage version 26 retains the captured integration and
-  typed multi-selection effects from older binaries. Native auth and complete
+  these vendor profiles. Native auth and complete
   vendor SDK/control/usage parity remain unfinished.
+- The explicit Grok ACP profile captures launch permissions through the existing
+  `PermissionMode` in each run/queue; it does not keep a second permission source.
+  Ask, Auto and Always approve have provider-specific launch arguments;
+  Auto-accept edits is rejected. Prompt IDs fence xAI completion and background
+  task ownership. Typed plan/questions preserve exact selections and notes through
+  the durable response outbox. Offline checks pass; hosted acceptance and
+  installed Grok execution are pending. Initialize-only status is not an auth or
+  model receipt; normal sessions may use only the CLI's existing noninteractive
+  sign-in. Exact owned-parent shutdown makes no descendant-exit guarantee.
 - Transcript entities retain their session, type, opaque ID, structured fields,
   and chunk annotations. The native reducer applies replacements, null clearing,
   metadata patches, independently decoded terminal bytes, and typed user-message
@@ -108,7 +119,8 @@ must each be mapped and verified before declaring parity.
   unfinished.
 - Queued turns capture their model, reasoning effort, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 26 protects these fields
+  hold it for explicit resumption. Database storage version 27 protects these fields,
+  native generation/profile captures and typed question-with-notes effects
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
 - Direct steering durably accepts one authored input into the active local run,
   preserving its captured settings, exact runtime/native thread/turn, attachments,

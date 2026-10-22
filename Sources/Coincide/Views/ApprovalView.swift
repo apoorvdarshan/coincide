@@ -8,6 +8,7 @@ struct ApprovalView: View {
     let onAnswer: ([String: String]) -> Void
     var onOption: (String) -> Void = { _ in }
     var onSelections: ([String: [String]]) -> Void = { _ in }
+    var onSelectionsWithNotes: ([String: [String]], [String: String]) -> Void = { _, _ in }
     @State private var answers: [String: String] = [:]
     private var questions: [JSONValue] { request.questions }
     var body: some View {
@@ -19,6 +20,22 @@ struct ApprovalView: View {
                 } else {
                     Text("This OpenCode form cannot be displayed safely.")
                     Button("Cancel Form") { onDecision(false) }
+                }
+            } else if request.method == "opencode/question" {
+                if let question = request.openCodeQuestion {
+                    OpenCodeQuestionApprovalView(request: question, isResponding: isResponding,
+                        onSelections: onSelections, onCancel: { onDecision(false) })
+                } else {
+                    Text("These OpenCode questions cannot be displayed safely.")
+                    Button("Cancel Questions") { onDecision(false) }
+                }
+            } else if request.isGrokQuestion {
+                if let question = request.grokQuestion {
+                    GrokQuestionApprovalView(request: question, isResponding: isResponding,
+                        onSubmit: onSelectionsWithNotes, onCancel: { onDecision(false) })
+                } else {
+                    Text("These Grok questions cannot be displayed safely.")
+                    Button("Cancel Questions") { onDecision(false) }
                 }
             } else if let question = request.cursorQuestion {
                 CursorQuestionApprovalView(request: question, isResponding: isResponding,

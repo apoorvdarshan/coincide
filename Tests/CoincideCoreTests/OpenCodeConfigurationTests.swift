@@ -90,11 +90,12 @@ func nativeOpenCodeConfigurationRejectsInvalidInvocationWithoutExposingIt(_ exec
     try f.edit(.provider(.claude)); #expect(f.thread.openCodeConfiguration == nil && f.thread.acpAgent == nil)
 }
 
-@Test func nativeOpenCodeStorage26Migrates25ReopensAndKeepsACPConversationsUnchanged() async throws {
+@Test(arguments: [25, 26])
+func nativeOpenCodeStorage27MigratesPriorVersionsReopensAndKeepsACPConversationsUnchanged(_ priorVersion: Int) async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let url = root.appendingPathComponent("native-configuration.sqlite")
     var raw: OpaquePointer?; #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
-    #expect(sqlite3_exec(raw, "PRAGMA user_version=25", nil, nil, nil) == SQLITE_OK); sqlite3_close(raw)
+    #expect(sqlite3_exec(raw, "PRAGMA user_version=\(priorVersion)", nil, nil, nil) == SQLITE_OK); sqlite3_close(raw)
     var f = try NativeOpenCodeConfigurationFixture(path: root.path); try f.edit(.openCodeModel(nativeOpenCodeModel())); try f.start()
     var acp = CodingThread(project: f.snapshot.projects[0]); acp.provider = .acp
     acp.acpAgent = .init(name: "Existing OpenCode ACP", executable: "opencode", arguments: ["acp"])
@@ -107,7 +108,7 @@ func nativeOpenCodeConfigurationRejectsInvalidInvocationWithoutExposingIt(_ exec
     #expect(try await database.rebuildProjection().snapshot == f.snapshot)
     #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
     var statement: OpaquePointer?; #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 26)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 27)
     sqlite3_finalize(statement); sqlite3_close(raw)
     #expect(try JSONDecoder().decode(CodingThread.self, from: JSONEncoder().encode(acp)).openCodeConfiguration == nil)
 }

@@ -19,9 +19,10 @@ and what still needs implementation and verification.
 Requires macOS 14+, a Swift 6.2+ toolchain, and Xcode Command Line Tools. Codex
 conversations require an installed, authenticated `codex` CLI; Claude conversations
 use the installed, authenticated `claude` CLI.
-Native OpenCode conversations use the installed OpenCode 2 CLI through its HTTP
-interface. This integration currently has offline-fixture verification;
-installed-provider verification and complete OpenCode parity remain unfinished.
+Native OpenCode conversations use the matching installed OpenCode 1 or 2 CLI
+through separate HTTP adapters. Choose **Server Generation** before the first
+message. Both adapters have offline-fixture verification; installed conversation
+verification and complete OpenCode parity remain unfinished.
 ACP v1 agents can use other installed CLIs, such as `opencode acp`.
 
 ```sh
@@ -34,7 +35,7 @@ so macOS can retain file-access consent across local rebuilds. Set
 CI uses ad-hoc signing. Local signing does not notarize or publish the app.
 
 Add a project folder, start a thread, and send a message. Coincide connects directly
-to Codex app-server, Claude's stream-json protocol, or an owned local OpenCode 2
+to Codex app-server, Claude's stream-json protocol, or an owned local OpenCode
 HTTP process using the CLI's existing sign-in and configuration.
 Choose the provider in a new conversation's header. Review requested commands and file
 changes in the conversation. Use the inspector to browse/edit files or inspect,
@@ -56,6 +57,12 @@ variants and primary agents. These choices apply to future inputs; queued turns
 retain their captured model, variant, agent and permissions. Approval controls
 distinguish once, conversation-only and workspace-wide grants. Direct steering
 and native OpenCode history are still unfinished.
+
+**Settings → Providers → Add Grok** saves its native ACP profile. Its composer
+offers **Ask**, **Auto**, and **Always approve**; active and queued inputs retain
+their captured launch policy. Questions submit exact selected choices and notes
+together. The integration can use the CLI's existing sign-in, with offline
+protocol verification so far; installed Grok execution remains unverified.
 
 **Settings → Providers → Codex Account** reads the existing CLI sign-in, plan,
 and available allowance windows. Email stays hidden until revealed. Refresh

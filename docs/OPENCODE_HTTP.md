@@ -1,12 +1,13 @@
 # Native OpenCode HTTP integration
 
-The dedicated native HTTP integration remains **in progress**. OpenCode 2 now
-has a native `ProviderSession` for owned local HTTP conversations, captured model
-and agent selection, streaming, tools, permissions, forms and explicit Stop.
-This is an implementation and offline-fixture boundary; installed HTTP/provider
-compatibility has not yet been established. Existing OpenCode ACP conversations
-retain their original transport and captured configuration. Native OpenCode 1
-chat, history, steering and complete T3 provider parity remain unfinished.
+The dedicated native HTTP integration remains **in progress**. OpenCode 1 and 2
+have separate native `ProviderSession` actors for owned local conversations,
+captured model/variant/agent settings, streaming, tools, permissions and Stop.
+V1 uses native questions; v2 uses typed forms. Focused offline checks, including
+a real loopback HTTP/SSE-to-Engine FIFO test for v1, pass. Hosted acceptance
+is pending. Installed 2.1.2 metadata observation is distinct from a native
+conversation test; installed 1.x execution has not been verified. Existing ACP
+conversations retain their original transport and captured configuration.
 
 ## Generation and connection boundaries
 
@@ -57,9 +58,9 @@ reconciliation. They never complete a provider turn or replay a prompt. An
 unfinished event does not advance the committed cursor. A cursor alone does not
 make OpenCode's global stream durable.
 
-## Native OpenCode 2 conversations
+## Captured native conversation configuration
 
-The native provider choice is separate from ACP. Storage version 26 prevents an
+The native provider choice is separate from ACP. Storage version 27 prevents an
 older binary from reopening unfamiliar native configuration, run or effect
 semantics. Legacy Codex, Claude and ACP payloads still decode without native
 OpenCode settings. The durable value captures instance identity, generation,
@@ -69,6 +70,44 @@ Queued turns and runs retain their own configuration when a future header
 selection changes. Models, variants and primary agents come from the exact
 workspace inventory; menu choices revalidate the current catalog at command
 execution. A model's local menu key is never parsed as a wire model ID.
+
+## Native OpenCode 1 conversations
+
+V1 uses directory-scoped `/session`, `/event`, `/session/status` and
+`/session/{id}/prompt_async` routes with unwrapped responses and `properties`
+event envelopes. Its SDK's `/v2` export still describes the 1.x server; it must
+not be confused with OpenCode 2's `/api` protocol. Session creation returns a
+server-generated ID. A lost create reply is uncertain and never triggers guessed
+adoption, a second create or a replayed prompt. Resume verifies the exact native
+ID, directory and root ownership; missing or reverted history is not silently
+replaced or moved.
+
+Explicit captured model provider/id, variant and agent travel with each prompt; session
+permission rules are applied and reread first. Native agent restrictions and
+narrow plan-file allowances survive without overriding supervised command
+approval. Future header changes do not alter an accepted run. Images use bounded
+native file parts; the actor does not load arbitrary paths.
+An explicit Default Model selection omits model and variant so the native server
+resolves its agent/history/config defaults; per-provider catalog defaults are
+not treated as a proven global choice.
+
+HTTP 204 acknowledges admission, not completion. The native authored message ID
+and an assistant's exact `parentID` prove run ownership. Early idle waits for
+admission and a fenced status read; assistant completion alone does not drain
+the FIFO. Snapshots replace text and deltas append in order. Child `task` links
+retain their original run after parent completion; a launcher completing is not
+child success. Unknown child or assistant frames are never assigned to a later
+run merely because it is active.
+
+Permission replies distinguish once, conversation-rule grants and native
+workspace-wide grants. Questions preserve ordered exact labels, multiple
+selections and custom answers; native reply/rejection events settle local
+requests. Stop before any native input evidence remains uncertain even after a
+204 response, because v1 has no exact inbox cancellation. An observed Stop sends
+native root abort and attempts verified descendants. Close drains the owned
+parent and app-owned I/O; neither operation proves all OS descendants exited.
+
+## Native OpenCode 2 conversations
 
 Each conversation actor owns its loopback process, HTTP client and global event
 subscription. Metadata uses an independent actor/runtime and never creates a
@@ -104,7 +143,7 @@ as native Stop.
 
 ## Remaining integration
 
-Remaining work includes a shared instance lease registry, native v1 chat,
+Remaining work includes a shared instance lease registry,
 bounded reconnect/backfill reconciliation, complete autonomous/early-child
 recovery, native steering and session import/history. V1 and v2 history have distinct
 semantics; files remain under Coincide's reviewed checkpoint service. Native
@@ -112,6 +151,7 @@ setup/authentication, commands, skills, usage and installed-provider verificatio
 also remain required by [the full parity inventory](PROVIDER_PARITY.md).
 
 Sources: [pinned T3 OpenCode implementation](https://github.com/pingdotgg/t3code/tree/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-opencode),
+[official 1.14.19 SDK contract](https://github.com/anomalyco/opencode/tree/v1.14.19/packages/sdk/js/src/v2),
 [official v2 API](https://dev.opencode.ai/v2/docs/api),
 [2.1.2 model routes](https://github.com/anomalyco/opencode/blob/a517687fde98a7329ada3ae644a01a9fc6c4e99e/packages/protocol/src/groups/model.ts),
 [2.1.2 event contract](https://github.com/anomalyco/opencode/blob/a517687fde98a7329ada3ae644a01a9fc6c4e99e/packages/protocol/src/groups/event.ts).

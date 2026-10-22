@@ -109,6 +109,15 @@ struct ProviderMenu: View {
         .help(summary)
     }
     @ViewBuilder private var openCodeOptions: some View {
+        if thread.messages.isEmpty {
+            Menu("Server Generation") {
+                ForEach([OpenCodeGeneration.v1, .v2], id: \.self) { generation in
+                    Button { store.setOpenCodeGeneration(generation, threadID: thread.id) } label: {
+                        choice(generation == .v1 ? "OpenCode 1" : "OpenCode 2", selected: thread.openCodeConfiguration?.generation == generation)
+                    }
+                }
+            }.accessibilityIdentifier("opencode-generation-menu")
+        }
         if let selected = thread.openCodeConfiguration?.model,
            let model = store.models(for: thread).first(where: { $0.id == selected.catalogID }),
            let variants = model.openCodeVariants, !variants.isEmpty {

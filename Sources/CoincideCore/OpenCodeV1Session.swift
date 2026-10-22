@@ -1,0 +1,854 @@
+import Foundation
+
+/// Fixed messages never include native payloads, server URLs or credentials.
+public enum OpenCodeV1SessionError: Error, Sendable, Equatable, LocalizedError {
+    case closed, busy, invalidConfiguration, wrongSession, unsupportedInput
+    case rejected, uncertainDelivery, connectionLost, invalidResponse, staleRequest
+
+    public var errorDescription: String? {
+        switch self {
+        case .closed: "The OpenCode 1 connection is closed."
+        case .busy: "OpenCode has active work. Stop or finish it before sending another message."
+        case .invalidConfiguration: "The captured OpenCode model, agent or permission settings could not be verified."
+        case .wrongSession: "The OpenCode conversation does not match this workspace."
+        case .unsupportedInput: "This input exceeds the native OpenCode request limit or uses an unsupported attachment."
+        case .rejected: "OpenCode rejected this input before accepting it."
+        case .uncertainDelivery: "OpenCode may have accepted this request. The queue is paused; do not resend it automatically."
+        case .connectionLost: "The OpenCode event connection was lost. Inspect native work before continuing."
+        case .invalidResponse: "OpenCode returned a response that could not be verified safely."
+        case .staleRequest: "This OpenCode request is no longer pending on this connection."
+        }
+    }
+}
+
+protocol OpenCodeV1SessionTransport: Sendable {
+    func connect() async throws -> AsyncThrowingStream<OpenCodeSSEEvent, any Error>
+    func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot
+    func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule]
+    func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse
+    func close() async
+}
+
+extension OpenCodeV1SessionTransport {
+    func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule] { [] }
+}
+
+/// Generation 1 has native messages and session-idle signals, not a durable
+/// inbox or execution IDs. A successful POST alone never completes a run.
+public actor OpenCodeV1Session: ProviderSession {
+    public nonisolated let events: AsyncStream<ProviderEvent>
+    private let continuation: AsyncStream<ProviderEvent>.Continuation
+    private let cwd: URL
+    private let configuration: OpenCodeConfiguration
+    private let transport: any OpenCodeV1SessionTransport
+    private var connecting: Task<Void, any Error>?
+    private var reader: Task<Void, Never>?
+    private var connected = false
+    private var closing = false
+    private var closeTask: Task<Void, Never>?
+    private var uncertain = false
+    private var sessionID: String?
+    private var preparing: UUID?
+    private var stoppedPreparations: Set<UUID> = []
+    private var activeRunID: UUID?
+    private var runs: [UUID: OpenCodeV1Run] = [:]
+    private var inFlightSends: Set<UUID> = []
+    private var nativeOwners: [String: UUID] = [:]
+    private var messageOwners: [ProviderEntityKey: UUID] = [:]
+    private var userMessages: Set<ProviderEntityKey> = []
+    private var historicalMessages: Set<ProviderEntityKey> = []
+    private var projectors: [OpenCodeV1ProjectionOwner: OpenCodeV1Projection] = [:]
+    private var earlyParts: [ProviderEntityKey: [OpenCodeV1Event]] = [:]
+    private var earlyPartBytes = 0
+    private var childParents: [String: String] = [:]
+    private var childCalls: [String: OpenCodeV1ChildCall] = [:]
+    private var earlyChildren: [String: [OpenCodeV1Event]] = [:]
+    private var earlyChildBytes = 0
+    private var backgroundActive: Set<String> = []
+    private var pending: [JSONValue: OpenCodeV1PendingRequest] = [:]
+    private var answering: Set<JSONValue> = []
+    private var settledRequests: [ProviderEntityKey] = []
+    private var policies: [String: [OpenCodeV1PermissionRule]] = [:]
+    private var grants: [String: [OpenCodeV1PermissionRule]] = [:]
+    private var requests: [UUID: Task<OpenCodeHTTPResponse, any Error>] = [:]
+    private var reconciliation: [UUID: Task<Void, Never>] = [:]
+    private var lastMessageMillis: UInt64 = 0
+    private var messageCounter: UInt64 = 0
+
+    public init(executable: URL, cwd: URL, configuration: OpenCodeConfiguration) {
+        let pair = AsyncStream<ProviderEvent>.makeStream()
+        events = pair.stream; continuation = pair.continuation
+        self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
+        self.configuration = configuration
+        transport = OpenCodeV1OwnedRuntime(executable: executable, cwd: cwd, configuration: configuration)
+    }
+
+    init(cwd: URL, configuration: OpenCodeConfiguration, transport: any OpenCodeV1SessionTransport) {
+        let pair = AsyncStream<ProviderEvent>.makeStream()
+        events = pair.stream; continuation = pair.continuation
+        self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
+        self.configuration = configuration; self.transport = transport
+    }
+
+    public func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
+        try await connect()
+        let inventory = try await transport.inventory(directory: cwd)
+        guard !closing, inventory.server.generation == .v1 else { throw OpenCodeV1SessionError.invalidConfiguration }
+        return inventory
+    }
+
+    public func models() async throws -> [ProviderModel] {
+        try await openCodeInventory().models.filter(\.enabled).map {
+            .init(id: $0.selection.catalogID, name: $0.name,
+                  openCodeSelection: $0.selection, openCodeVariants: $0.variants)
+        }
+    }
+
+    private func connect() async throws {
+        try Task.checkCancellation()
+        guard !closing else { throw OpenCodeV1SessionError.closed }
+        guard !uncertain else { throw OpenCodeV1SessionError.connectionLost }
+        if connected { return }
+        if let connecting { try await connecting.value; try Task.checkCancellation(); return }
+        try configuration.validate()
+        guard configuration.generation == .v1 else { throw OpenCodeV1SessionError.invalidConfiguration }
+        let task = Task { try await self.initialize() }
+        connecting = task
+        do { try await task.value; connecting = nil; try Task.checkCancellation() }
+        catch { connecting = nil; throw error }
+    }
+
+    private func initialize() async throws {
+        do {
+            let stream = try await transport.connect()
+            guard !closing else { throw CancellationError() }
+            reader = Task { [weak self] in
+                do {
+                    for try await frame in stream {
+                        guard !Task.isCancelled else { return }
+                        await self?.consume(frame)
+                    }
+                } catch { /* Native transport errors may contain private data. */ }
+                await self?.streamEnded()
+            }
+            connected = true
+        } catch {
+            await transport.close()
+            throw error is CancellationError ? CancellationError() : OpenCodeV1SessionError.connectionLost
+        }
+    }
+
+    public func send(text: String, thread: CodingThread) async throws {
+        try await send(input: .init(text: text), thread: thread)
+    }
+
+    public func send(input: ProviderInput, thread: CodingThread) async throws {
+        guard !closing, !uncertain else { throw OpenCodeV1SessionError.closed }
+        guard preparing == nil, activeRunID == nil else { throw OpenCodeV1SessionError.busy }
+        let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
+        guard let selected = captured.openCodeConfiguration,
+              selected.runtimeIdentity == configuration.runtimeIdentity,
+              URL(fileURLWithPath: captured.workspacePath).standardizedFileURL.resolvingSymlinksInPath() == cwd else {
+            throw OpenCodeV1SessionError.invalidConfiguration
+        }
+        try selected.validate()
+        let runID = thread.activeRun?.id ?? UUID(), token = UUID()
+        guard !inFlightSends.contains(runID) else { throw OpenCodeV1SessionError.busy }
+        let inputID = nextMessageID()
+        let parts = try Self.parts(input)
+        preparing = token; inFlightSends.insert(runID)
+        defer {
+            if preparing == token { preparing = nil }
+            stoppedPreparations.remove(token); inFlightSends.remove(runID)
+        }
+        var posted = false
+        do {
+            try await connect(); try requirePreparation(token)
+            let inventory = try await openCodeInventory(); try requirePreparation(token)
+            let model = try Self.resolveModel(selected.model, inventory: inventory)
+            guard inventory.agents.contains(where: { $0.id == selected.agentID && $0.mode != .subagent && !$0.hidden }) else {
+                throw OpenCodeV1SessionError.invalidConfiguration
+            }
+            let agentRules = try await transport.agentPermissionRules(directory: cwd, agentID: selected.agentID)
+            try requirePreparation(token)
+            let rules = Self.permissionRules(captured.permission, agent: selected.agentID, native: agentRules)
+            let nativeID = try await ensureSession(captured: captured, rules: rules, token: token)
+            try requirePreparation(token)
+            let before = try OpenCodeV1Protocol.statuses(try await call(method: "GET", path: ["session", "status"]))
+            try requirePreparation(token)
+            guard before[nativeID] == nil || before[nativeID] == .idle else { throw OpenCodeV1SessionError.busy }
+            let mergedRules = rules + (grants[nativeID] ?? [])
+            let updated = try OpenCodeV1Protocol.session(try await call(method: "PATCH", path: ["session", nativeID],
+                body: .object(["permission": .array(mergedRules.map(\.json))])), expectedID: nativeID, directory: cwd.path)
+            try requirePreparation(token)
+            guard updated.permissions == mergedRules, !updated.hasRevert else { throw OpenCodeV1SessionError.invalidConfiguration }
+            policies[nativeID] = mergedRules
+            let after = try OpenCodeV1Protocol.statuses(try await call(method: "GET", path: ["session", "status"]))
+            try requirePreparation(token)
+            guard after[nativeID] == nil || after[nativeID] == .idle else { throw OpenCodeV1SessionError.busy }
+            var body: [String: JSONValue] = ["messageID": .string(inputID),
+                "agent": .string(selected.agentID), "parts": .array(parts)]
+            if let model {
+                body["model"] = .object(["providerID": .string(model.providerID), "modelID": .string(model.id)])
+                if let variant = model.variant { body["variant"] = .string(variant) }
+            }
+            let prompt = JSONValue.object(body)
+            guard try JSONEncoder().encode(prompt).count <= 4 * 1_024 * 1_024 else { throw OpenCodeV1SessionError.unsupportedInput }
+            trimRuns()
+            guard runs.count < 256 else { throw OpenCodeV1SessionError.invalidResponse }
+            runs[runID] = .init(id: runID, sessionID: nativeID, inputID: inputID, autonomous: false)
+            nativeOwners[nativeID] = runID; activeRunID = runID
+            let inputKey = Self.messageKey(nativeID, inputID)
+            messageOwners[inputKey] = runID; userMessages.insert(inputKey)
+            let key = OpenCodeV1ProjectionOwner(sessionID: nativeID, runID: runID)
+            projectors[key] = .init(instanceID: selected.instanceID, sessionID: nativeID)
+            preparing = nil; posted = true
+            let response = try await call(method: "POST", path: ["session", nativeID, "prompt_async"], body: prompt)
+            guard !closing, !uncertain else { throw CancellationError() }
+            guard response.status == 204 else { throw OpenCodeV1SessionError.invalidResponse }
+            if var run = runs[runID], !run.stopped {
+                run.accepted = true; runs[runID] = run
+                announce(runID); reconcileEarlyIdle(runID)
+            }
+        } catch {
+            if posted {
+                if connected, !closing, !uncertain, let run = runs[runID], run.inputObserved, run.assistantObserved { return }
+                if error is OpenCodeV1RejectedResponse, runs[runID]?.inputObserved != true {
+                    if activeRunID == runID { activeRunID = nil }
+                    runs.removeValue(forKey: runID)
+                    throw OpenCodeV1SessionError.rejected
+                }
+                failConnection(.uncertainDelivery)
+                throw OpenCodeV1SessionError.uncertainDelivery
+            }
+            if error is CancellationError || stoppedPreparations.contains(token) { throw CancellationError() }
+            if let safe = error as? OpenCodeV1SessionError { throw safe }
+            throw OpenCodeV1SessionError.invalidResponse
+        }
+    }
+
+    private func ensureSession(captured: ProviderConfiguration, rules: [OpenCodeV1PermissionRule], token: UUID) async throws -> String {
+        let existing = sessionID ?? captured.nativeThreadID
+        if let cached = sessionID, let requested = captured.nativeThreadID, cached != requested { throw OpenCodeV1SessionError.wrongSession }
+        let info: OpenCodeV1SessionInfo
+        if let existing {
+            try Self.identifier(existing)
+            info = try OpenCodeV1Protocol.session(try await call(method: "GET", path: ["session", existing]), expectedID: existing, directory: cwd.path)
+        } else {
+            // The native ID is generated by the server. A lost response cannot
+            // be recovered by a guessed title/time or a second create request.
+            let response: OpenCodeHTTPResponse
+            do { response = try await call(method: "POST", path: ["session"], body: .object(["permission": .array(rules.map(\.json))])) }
+            catch {
+                if error is OpenCodeV1RejectedResponse { throw OpenCodeV1SessionError.rejected }
+                failConnection(.uncertainDelivery); throw OpenCodeV1SessionError.uncertainDelivery
+            }
+            do { info = try OpenCodeV1Protocol.session(response, directory: cwd.path) }
+            catch { failConnection(.uncertainDelivery); throw OpenCodeV1SessionError.uncertainDelivery }
+        }
+        try requirePreparation(token)
+        guard info.parentID == nil, !info.hasRevert else { throw OpenCodeV1SessionError.wrongSession }
+        if sessionID == nil {
+            let messages = try OpenCodeV1Protocol.messages(try await call(method: "GET", path: ["session", info.id, "message"]), sessionID: info.id)
+            try requirePreparation(token)
+            for message in messages { historicalMessages.insert(Self.messageKey(info.id, message.info.id)) }
+        }
+        sessionID = info.id; continuation.yield(.thread(info.id))
+        return info.id
+    }
+
+    private func requirePreparation(_ token: UUID) throws {
+        try Task.checkCancellation()
+        guard !closing, !uncertain, preparing == token, !stoppedPreparations.contains(token) else { throw CancellationError() }
+    }
+
+    private func call(method: String, path: [String], body: JSONValue? = nil) async throws -> OpenCodeHTTPResponse {
+        try Task.checkCancellation()
+        guard !closing else { throw CancellationError() }
+        let id = UUID(), transport = transport
+        let task = Task { try await transport.request(method: method, path: path, body: body) }
+        requests[id] = task
+        defer { requests.removeValue(forKey: id) }
+        return try await withTaskCancellationHandler {
+            let response = try await task.value
+            try Task.checkCancellation()
+            if [400, 401, 403, 404, 409, 422].contains(response.status) { throw OpenCodeV1RejectedResponse() }
+            return response
+        } onCancel: { task.cancel() }
+    }
+
+    private func consume(_ frame: OpenCodeSSEEvent) async {
+        guard !closing, !uncertain else { return }
+        do {
+            guard let event = try OpenCodeV1Protocol.decode(frame) else { return }
+            try await consume(event)
+        } catch { failConnection(.invalidResponse) }
+    }
+
+    private func consume(_ event: OpenCodeV1Event) async throws {
+        guard !closing, !uncertain else { return }
+        if event.kind == .instanceDisposed || event.kind == .globalDisposed { throw OpenCodeV1SessionError.connectionLost }
+        guard let nativeID = event.sessionID else {
+            if event.kind == .sessionError { throw OpenCodeV1SessionError.connectionLost }
+            return
+        }
+        if let info = event.session, let parent = info.parentID, nativeOwners[parent] != nil {
+            guard childParents.count < 256 || childParents[nativeID] != nil else { throw OpenCodeV1SessionError.invalidResponse }
+            childParents[nativeID] = parent
+        }
+        guard nativeID == sessionID || nativeOwners[nativeID] != nil || childParents[nativeID] != nil else { return }
+        if nativeID != sessionID, nativeOwners[nativeID] == nil {
+            try bufferChild(event, nativeID: nativeID); return
+        }
+        if event.kind == .permissionReplied || event.kind == .questionReplied || event.kind == .questionRejected {
+            if let id = event.requestID { dismiss(nativeID: id, session: nativeID) }
+            return
+        }
+        if let message = event.message {
+            try await receive(message, event: event)
+            return
+        }
+        let messageID = event.part?.messageID ?? event.messageID ?? event.permission?.toolMessageID ?? event.question?.toolMessageID
+        let owner = messageID.flatMap { messageOwners[Self.messageKey(nativeID, $0)] } ?? nativeOwners[nativeID]
+        guard let owner, runs[owner] != nil else { return }
+        if let part = event.part {
+            let key = Self.messageKey(nativeID, part.messageID)
+            if userMessages.contains(key) { return }
+            if messageOwners[key] == nil {
+                if historicalMessages.contains(key) { return }
+                try bufferPart(event, key: key); return
+            }
+        } else if event.kind == .partDelta, let messageID, userMessages.contains(Self.messageKey(nativeID, messageID)) {
+            return
+        } else if event.kind == .partDelta, let messageID, messageOwners[Self.messageKey(nativeID, messageID)] == nil {
+            let key = Self.messageKey(nativeID, messageID)
+            if !historicalMessages.contains(key) { try bufferPart(event, key: key) }
+            return
+        }
+        if let permission = event.permission { try receive(permission, owner: owner); return }
+        if let question = event.question { try receive(question, owner: owner); return }
+        switch event.kind {
+        case .sessionStatus:
+            if event.status == .busy || event.status == .retry { backgroundActive.insert(nativeID) }
+            if event.status == .idle { try endNativeSession(nativeID, owner: owner, failed: false, interrupted: false) }
+        case .sessionIdle: try endNativeSession(nativeID, owner: owner, failed: false, interrupted: false)
+        case .sessionError:
+            try endNativeSession(nativeID, owner: owner, failed: event.errorName != "MessageAbortedError", interrupted: event.errorName == "MessageAbortedError")
+        case .sessionDeleted:
+            backgroundActive.remove(nativeID)
+            if nativeID == sessionID { throw OpenCodeV1SessionError.wrongSession }
+            try endNativeSession(nativeID, owner: owner, failed: false, interrupted: true)
+        default: try await project(event, owner: owner)
+        }
+    }
+
+    private func receive(_ message: OpenCodeV1Message, event: OpenCodeV1Event) async throws {
+        let key = Self.messageKey(message.sessionID, message.id)
+        if historicalMessages.contains(key) { return }
+        guard messageOwners.count < 8_192 || messageOwners[key] != nil else { throw OpenCodeV1SessionError.invalidResponse }
+        if message.role == "user" { userMessages.insert(key) }
+        var owner = messageOwners[key]
+        if message.role == "assistant", let parent = message.parentID,
+           let original = owner, let supplied = messageOwners[Self.messageKey(message.sessionID, parent)], original != supplied {
+            throw OpenCodeV1SessionError.invalidResponse
+        }
+        if message.role == "assistant", owner == nil, let parent = message.parentID {
+            owner = messageOwners[Self.messageKey(message.sessionID, parent)]
+            if let owner { messageOwners[key] = owner }
+        }
+        if message.role == "user", owner == nil, let existing = nativeOwners[message.sessionID], message.sessionID != sessionID {
+            owner = existing; messageOwners[key] = existing
+        }
+        if message.role == "user", owner == nil, message.sessionID == sessionID, activeRunID == nil, preparing == nil {
+            // A real new native user message can prove autonomous work. Merely
+            // seeing busy/idle cannot bind an unsent client input to that work.
+            let id = UUID()
+            runs[id] = .init(id: id, sessionID: message.sessionID, inputID: message.id, autonomous: true,
+                             accepted: true, inputObserved: true)
+            activeRunID = id; nativeOwners[message.sessionID] = id
+            messageOwners[key] = id; owner = id
+            continuation.yield(.activity(.init(id: id, state: .running, finishesRun: false)))
+        }
+        guard let owner, var run = runs[owner] else { return }
+        if message.role == "user", message.id == run.inputID {
+            run.inputObserved = true; runs[owner] = run; announce(owner); reconcileEarlyIdle(owner)
+        }
+        if message.role == "assistant", message.sessionID == run.sessionID {
+            run.assistantObserved = true; run.inputObserved = true
+            if message.completed { run.accepted = true; run.inputObserved = true }
+            runs[owner] = run; announce(owner)
+        }
+        try await project(event, owner: owner)
+        let waiting = earlyParts.removeValue(forKey: key) ?? []
+        earlyPartBytes -= waiting.reduce(0) { $0 + Self.eventBytes($1) }
+        for event in waiting { try await consume(event) }
+    }
+
+    private func project(_ event: OpenCodeV1Event, owner: UUID) async throws {
+        guard let nativeID = event.sessionID else { return }
+        let key = OpenCodeV1ProjectionOwner(sessionID: nativeID, runID: owner)
+        var projector = projectors[key] ?? .init(instanceID: configuration.instanceID, sessionID: nativeID)
+        let updates = try projector.apply(event)
+        projectors[key] = projector
+        for update in updates { publish(update, owner: owner) }
+        if let part = event.part, let tool = part.tool, tool.name == "task", let child = tool.childSessionID,
+           projector.isTaskCall(messageID: part.messageID, callID: tool.callID) {
+            if let old = childCalls[child] {
+                guard old.owner == owner, old.parentID == nativeID,
+                      old.messageID == part.messageID, old.callID == tool.callID else { throw OpenCodeV1SessionError.invalidResponse }
+                return
+            }
+            guard childCalls.count < 256 || childCalls[child] != nil else { throw OpenCodeV1SessionError.invalidResponse }
+            childCalls[child] = .init(parentID: nativeID, owner: owner, messageID: part.messageID, callID: tool.callID)
+            childParents[child] = nativeID; nativeOwners[child] = owner
+            // Install the full parent policy without dropping native task-agent
+            // recursion restrictions inherited by a freshly created child.
+            let info = try OpenCodeV1Protocol.session(try await call(method: "GET", path: ["session", child]), expectedID: child, directory: cwd.path)
+            guard info.parentID == nativeID else { throw OpenCodeV1SessionError.wrongSession }
+            let parentRules = policies[nativeID] ?? []
+            let own = (info.permissions ?? []).filter {
+                !parentRules.contains($0) && ($0.action == "deny" ||
+                    ($0.action == "allow" && $0.pattern != "*" && ["edit", "external_directory"].contains($0.permission)))
+            }
+            let rules = parentRules + own
+            _ = try OpenCodeV1Protocol.session(try await call(method: "PATCH", path: ["session", child], body: .object(["permission": .array(rules.map(\.json))])), expectedID: child, directory: cwd.path)
+            policies[child] = rules
+            let waiting = earlyChildren.removeValue(forKey: child) ?? []
+            earlyChildBytes -= waiting.reduce(0) { $0 + Self.eventBytes($1) }
+            for event in waiting { try await consume(event) }
+        }
+    }
+
+    private func publish(_ update: ProviderEntityUpdate, owner: UUID) {
+        if owner == activeRunID, runs[owner]?.finished == false {
+            continuation.yield(.context(runID: owner, event: .entity(update)))
+        } else { continuation.yield(.runEntity(runID: owner, update: update)) }
+    }
+
+    private func announce(_ id: UUID) {
+        guard var run = runs[id], run.inputObserved, !run.announced, !run.finished else { return }
+        run.announced = true; runs[id] = run
+        continuation.yield(.context(runID: id, event: .turn(run.inputID)))
+    }
+
+    private func endNativeSession(_ nativeID: String, owner: UUID, failed: Bool, interrupted: Bool) throws {
+        backgroundActive.remove(nativeID)
+        if nativeID != runs[owner]?.sessionID {
+            if let link = childCalls[nativeID] {
+                let key = OpenCodeV1ProjectionOwner(sessionID: link.parentID, runID: link.owner)
+                if var projector = projectors[key] {
+                    let updates = try projector.childCompleted(messageID: link.messageID, callID: link.callID,
+                        childSessionID: nativeID, outcome: interrupted ? .interrupted : failed ? .failed : .completed)
+                    projectors[key] = projector
+                    for update in updates { publish(update, owner: link.owner) }
+                }
+            }
+            return
+        }
+        guard var run = runs[owner], !run.finished else { return }
+        if failed || interrupted {
+            guard run.inputObserved else { throw OpenCodeV1SessionError.invalidResponse }
+            finish(owner, state: interrupted || run.stopped ? .interrupted : .failed); return
+        }
+        guard run.accepted, run.inputObserved else {
+            run.idleEarly = true; runs[owner] = run; return
+        }
+        finish(owner, state: run.stopped ? .interrupted : .idle)
+    }
+
+    private func reconcileEarlyIdle(_ id: UUID) {
+        guard let run = runs[id], !run.finished, !run.stopped, run.idleEarly,
+              run.accepted, run.inputObserved, reconciliation[id] == nil else { return }
+        let generation = run.generation
+        reconciliation[id] = Task { [weak self] in await self?.reconcileIdle(id, generation: generation) }
+    }
+
+    private func reconcileIdle(_ id: UUID, generation: Int) async {
+        defer { reconciliation.removeValue(forKey: id) }
+        do {
+            guard let run = runs[id] else { return }
+            let statuses = try OpenCodeV1Protocol.statuses(try await call(method: "GET", path: ["session", "status"]))
+            guard !closing, !uncertain, var current = runs[id], !current.finished, !current.stopped,
+                  current.generation == generation, current.accepted, current.inputObserved else { return }
+            current.idleEarly = false; runs[id] = current
+            if statuses[run.sessionID] == nil || statuses[run.sessionID] == .idle { finish(id, state: .idle) }
+        } catch {
+            guard !closing, let current = runs[id], !current.finished, current.generation == generation else { return }
+            failConnection(.connectionLost)
+        }
+    }
+
+    private func finish(_ id: UUID, state: ThreadState) {
+        guard var run = runs[id], !run.finished else { return }
+        run.finished = true; runs[id] = run
+        if activeRunID == id { activeRunID = nil }
+        if run.autonomous {
+            continuation.yield(.activity(.init(id: id, state: .idle,
+                stopReason: .string(state == .idle ? "end_turn" : state == .interrupted ? "cancelled" : "error"))))
+        } else {
+            if state == .failed {
+                continuation.yield(.context(runID: id, event: .message(.init(id: "opencode-v1-failure-" + id.uuidString,
+                    role: .system, text: "OpenCode could not complete this turn."))))
+            }
+            continuation.yield(.context(runID: id, event: .completed(state)))
+        }
+    }
+
+    public func interrupt() async throws {
+        if let token = preparing { stoppedPreparations.insert(token) }
+        guard !closing else { throw CancellationError() }
+        if let id = activeRunID, var run = runs[id] {
+            run.stopped = true; run.generation += 1; runs[id] = run
+            if !run.inputObserved && !run.assistantObserved {
+                // The native abort may race a POST still entering the server.
+                // Do not report known cancellation or leave a delayed POST alive.
+                failConnection(.uncertainDelivery); await close()
+                throw OpenCodeV1SessionError.uncertainDelivery
+            }
+        }
+        guard let root = sessionID else { return }
+        try Self.boolean(try await call(method: "POST", path: ["session", root, "abort"], body: .object([:])))
+        try await abortDescendants(root)
+    }
+
+    private func abortDescendants(_ root: String) async throws {
+        var queue = [root], seen: Set<String> = [root]
+        let deadline = ContinuousClock.now + .seconds(15)
+        while !queue.isEmpty {
+            guard ContinuousClock.now < deadline, seen.count <= 256 else { throw OpenCodeV1SessionError.invalidResponse }
+            let parent = queue.removeFirst()
+            let children = try OpenCodeV1Protocol.children(try await call(method: "GET", path: ["session", parent, "children"]), parentID: parent, directory: cwd.path)
+            for child in children where seen.insert(child.id).inserted {
+                queue.append(child.id)
+                try Self.boolean(try await call(method: "POST", path: ["session", child.id, "abort"], body: .object([:])))
+            }
+        }
+    }
+
+    private func receive(_ permission: OpenCodeV1Permission, owner: UUID) throws {
+        let key = Self.requestKey(permission.sessionID, permission.id)
+        guard !settledRequests.contains(key) else { return }
+        if pending.values.contains(where: { $0.nativeID == permission.id && $0.sessionID == permission.sessionID }) { return }
+        guard pending.count < 256 else { throw OpenCodeV1SessionError.invalidResponse }
+        let id = JSONValue.string("opencode-v1-request-" + UUID().uuidString)
+        let request = permission.approval(localID: id)
+        pending[id] = .init(request: request, owner: owner, sessionID: permission.sessionID,
+                            nativeID: permission.id, permission: permission, question: nil)
+        continuation.yield(.sessionApproval(request))
+    }
+
+    private func receive(_ question: OpenCodeV1Question, owner: UUID) throws {
+        guard !settledRequests.contains(Self.requestKey(question.sessionID, question.id)) else { return }
+        if pending.values.contains(where: { $0.nativeID == question.id && $0.sessionID == question.sessionID }) { return }
+        guard pending.count < 256 else { throw OpenCodeV1SessionError.invalidResponse }
+        let id = JSONValue.string("opencode-v1-request-" + UUID().uuidString)
+        let request = question.approval(localID: id)
+        pending[id] = .init(request: request, owner: owner, sessionID: question.sessionID,
+                            nativeID: question.id, permission: nil, question: question)
+        continuation.yield(.sessionApproval(request))
+    }
+
+    public func respond(_ request: ApprovalRequest, allow: Bool) async throws {
+        let entry = try pendingEntry(request)
+        if let permission = entry.permission {
+            try await reply(entry, path: ["permission", entry.nativeID, "reply"], body: permission.replyBody(decision: allow ? .once : .reject))
+        } else if !allow, entry.question != nil {
+            try await reply(entry, path: ["question", entry.nativeID, "reject"], body: .object([:]))
+        } else { throw OpenCodeV1SessionError.staleRequest }
+    }
+
+    public func answer(_ request: ApprovalRequest, answers: [String: String]) async throws {
+        let entry = try pendingEntry(request)
+        guard let question = entry.question else { throw OpenCodeV1SessionError.staleRequest }
+        try await reply(entry, path: ["question", entry.nativeID, "reply"], body: question.answerBody(answers: answers))
+    }
+
+    public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws {
+        let entry = try pendingEntry(request)
+        guard let question = entry.question else { throw OpenCodeV1SessionError.staleRequest }
+        try await reply(entry, path: ["question", entry.nativeID, "reply"], body: question.answerBody(selections: selections))
+    }
+
+    public func choose(_ request: ApprovalRequest, optionID: String) async throws {
+        let entry = try pendingEntry(request)
+        guard let permission = entry.permission else { throw OpenCodeV1SessionError.staleRequest }
+        if optionID == "conversation" {
+            guard !permission.always.isEmpty, answering.insert(request.id).inserted else { throw OpenCodeV1SessionError.staleRequest }
+            var rules = policies[entry.sessionID] ?? []
+            for pattern in permission.always {
+                let rule = OpenCodeV1PermissionRule(permission: permission.permission, pattern: pattern, action: "allow")
+                if !rules.contains(rule) { rules.append(rule) }
+            }
+            guard rules.count <= 1_024 else { answering.remove(request.id); throw OpenCodeV1SessionError.invalidResponse }
+            do {
+                let updated = try OpenCodeV1Protocol.session(try await call(method: "PATCH", path: ["session", entry.sessionID], body: .object(["permission": .array(rules.map(\.json))])), expectedID: entry.sessionID, directory: cwd.path)
+                guard updated.permissions == rules else { throw OpenCodeV1SessionError.invalidResponse }
+                grants[entry.sessionID] = rules.filter { !(policies[entry.sessionID] ?? []).contains($0) }
+                policies[entry.sessionID] = rules
+                try await reply(entry, path: ["permission", entry.nativeID, "reply"], body: permission.replyBody(decision: .once), reserved: true)
+            } catch { answering.remove(request.id); throw error }
+            return
+        }
+        let decision: OpenCodeV1Permission.Decision
+        switch optionID { case "once": decision = .once; case "always": decision = .always; case "reject": decision = .reject; default: throw OpenCodeV1SessionError.staleRequest }
+        try await reply(entry, path: ["permission", entry.nativeID, "reply"], body: permission.replyBody(decision: decision,
+            message: decision == .reject ? "The user declined this action. Do not retry it through another tool." : nil))
+    }
+
+    private func pendingEntry(_ request: ApprovalRequest) throws -> OpenCodeV1PendingRequest {
+        guard !closing, !uncertain, let entry = pending[request.id], entry.request == request else { throw OpenCodeV1SessionError.staleRequest }
+        return entry
+    }
+
+    private func reply(_ entry: OpenCodeV1PendingRequest, path: [String], body: JSONValue, reserved: Bool = false) async throws {
+        guard !closing, !uncertain, pending[entry.request.id]?.request == entry.request else { throw OpenCodeV1SessionError.staleRequest }
+        if !reserved, !answering.insert(entry.request.id).inserted { throw OpenCodeV1SessionError.staleRequest }
+        do { try Self.boolean(try await call(method: "POST", path: path, body: body)) }
+        catch {
+            if pending[entry.request.id] == nil { return }
+            if error is OpenCodeV1RejectedResponse { answering.remove(entry.request.id) }
+            else { failConnection(.uncertainDelivery) }
+            throw OpenCodeV1SessionError.invalidResponse
+        }
+        // The event, not a local request completion, settles the native request.
+        // Keep the answer reservation until that exact replied/rejected notice.
+    }
+
+    private func dismiss(nativeID: String, session: String) {
+        let key = Self.requestKey(session, nativeID)
+        if !settledRequests.contains(key) { settledRequests.append(key) }
+        if settledRequests.count > 1_024 { settledRequests.removeFirst(256) }
+        for (id, entry) in pending where entry.sessionID == session && entry.nativeID == nativeID {
+            pending.removeValue(forKey: id); answering.remove(id)
+            continuation.yield(.sessionApprovalDismissed(id))
+        }
+    }
+
+    private func bufferPart(_ event: OpenCodeV1Event, key: ProviderEntityKey) throws {
+        let size = Self.eventBytes(event)
+        guard earlyParts.values.reduce(0, { $0 + $1.count }) < 256, earlyPartBytes + size <= 2 * 1_024 * 1_024 else { throw OpenCodeV1SessionError.invalidResponse }
+        earlyParts[key, default: []].append(event); earlyPartBytes += size
+    }
+
+    private func bufferChild(_ event: OpenCodeV1Event, nativeID: String) throws {
+        let size = Self.eventBytes(event)
+        guard earlyChildren.values.reduce(0, { $0 + $1.count }) < 256, earlyChildBytes + size <= 2 * 1_024 * 1_024 else { throw OpenCodeV1SessionError.invalidResponse }
+        earlyChildren[nativeID, default: []].append(event); earlyChildBytes += size
+    }
+
+    private func streamEnded() {
+        if !closing { failConnection(.connectionLost) }
+    }
+
+    private func failConnection(_ error: OpenCodeV1SessionError) {
+        guard !closing, !uncertain else { return }
+        uncertain = true; continuation.yield(.connectionClosed(error.localizedDescription))
+    }
+
+    public func close() async {
+        if let closeTask { await closeTask.value; return }
+        closing = true
+        let task = Task { await self.finishClose() }
+        closeTask = task; await task.value
+    }
+
+    private func finishClose() async {
+        if let token = preparing { stoppedPreparations.insert(token) }
+        connecting?.cancel()
+        let owned = Array(requests.values), reconciles = Array(reconciliation.values)
+        for request in owned { request.cancel() }
+        for task in reconciles { task.cancel() }
+        let transport = transport
+        let nativeIDs = connected ? Set(nativeOwners.keys).union(sessionID.map { [$0] } ?? []) : []
+        let stop = Task {
+            for id in nativeIDs.sorted() { _ = try? await transport.request(method: "POST", path: ["session", id, "abort"], body: .object([:])) }
+        }
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            await transport.close()
+        }
+        await stop.value; deadline.cancel(); await deadline.value
+        await transport.close()
+        for request in owned { _ = try? await request.value }
+        for task in reconciles { await task.value }
+        if let connecting { _ = try? await connecting.value }
+        reader?.cancel(); await reader?.value
+        continuation.finish()
+    }
+
+    private func trimRuns() {
+        guard runs.count >= 128 else { return }
+        let retained = Set(backgroundActive.compactMap { nativeOwners[$0] }).union(pending.values.map(\.owner)).union(inFlightSends)
+        for id in runs.keys where id != activeRunID && runs[id]?.finished == true && !retained.contains(id) { runs.removeValue(forKey: id) }
+        guard runs.count < 256 else { return }
+        messageOwners = messageOwners.filter { runs[$0.value] != nil }
+        userMessages = userMessages.filter { messageOwners[$0] != nil }
+        projectors = projectors.filter { runs[$0.key.runID] != nil }
+        nativeOwners = nativeOwners.filter { runs[$0.value] != nil }
+        childCalls = childCalls.filter { runs[$0.value.owner] != nil }
+        childParents = childParents.filter { childCalls[$0.key] != nil || nativeOwners[$0.value] != nil }
+    }
+
+    private func nextMessageID() -> String {
+        let now = UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
+        if now > lastMessageMillis { lastMessageMillis = now; messageCounter = 0 }
+        messageCounter += 1
+        let timestamp = (lastMessageMillis &* 4_096 &+ messageCounter) & 0xffffffffffff
+        let alphabet = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+        let suffix = String((0..<28).map { _ in alphabet.randomElement()! })
+        return "msg_" + String(format: "%012llx", timestamp) + suffix
+    }
+
+    private static func resolveModel(_ selected: OpenCodeModelSelection?, inventory: OpenCodeMetadataSnapshot) throws -> OpenCodeModelSelection? {
+        // /provider.default contains one default per provider, not the actual
+        // agent/history/config default. Omission delegates that choice natively.
+        guard let model = selected else { return nil }
+        guard
+              let row = inventory.models.first(where: { $0.selection.providerID == model.providerID && $0.selection.id == model.id && $0.enabled }),
+              model.variant == nil || row.variants.contains(model.variant!) else { throw OpenCodeV1SessionError.invalidConfiguration }
+        return model
+    }
+
+    private static func permissionRules(_ permission: PermissionMode, agent: String, native: [OpenCodeV1PermissionRule]) -> [OpenCodeV1PermissionRule] {
+        func rule(_ name: String, _ action: String) -> OpenCodeV1PermissionRule { .init(permission: name, pattern: "*", action: action) }
+        func rule(_ name: String, _ pattern: String, _ action: String) -> OpenCodeV1PermissionRule { .init(permission: name, pattern: pattern, action: action) }
+        var result: [OpenCodeV1PermissionRule]
+        if permission == .fullAccess { result = [rule("*", "allow")] }
+        else {
+            let restricted = ["bash", "edit", "webfetch", "websearch", "codesearch", "external_directory", "doom_loop"]
+            result = [rule("*", "deny")] + restricted.map { rule($0, "deny") }
+            result += [rule("*", "ask")] + restricted.map { rule($0, "ask") }
+            result += ["question", "read", "glob", "grep", "lsp", "todowrite", "task", "skill"].map { rule($0, "allow") }
+            result += [rule("read", "*.env", "ask"), rule("read", "*.env.*", "ask"), rule("read", "*.env.example", "allow")]
+            if permission == .autoAcceptEdits { result.append(rule("edit", "allow")) }
+        }
+        // Session policy must not erase the selected native agent's explicit
+        // restrictions; plan-specific path allowances remain narrow and ordered.
+        if agent == "plan", !native.contains(where: { $0.permission == "edit" && $0.pattern == "*" && $0.action == "deny" }) {
+            result.append(rule("edit", "deny"))
+        }
+        result += native.filter {
+            $0.action == "deny" || ($0.action == "allow" && $0.pattern != "*" && ["edit", "external_directory"].contains($0.permission))
+        }
+        return result
+    }
+
+    private static func parts(_ input: ProviderInput) throws -> [JSONValue] {
+        guard input.text.utf8.count <= 2 * 1_024 * 1_024, input.images.count <= 100,
+              !input.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !input.images.isEmpty,
+              input.images.allSatisfy({ $0.data.count <= 20 * 1_024 * 1_024 && ["image/png", "image/jpeg", "image/gif", "image/webp"].contains($0.mimeType) }) else { throw OpenCodeV1SessionError.unsupportedInput }
+        var parts: [JSONValue] = []
+        if !input.text.isEmpty { parts.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+        parts += input.images.map { .object(["type": .string("file"), "mime": .string($0.mimeType), "url": .string("data:" + $0.mimeType + ";base64," + $0.data.base64EncodedString())]) }
+        return parts
+    }
+
+    private static func boolean(_ response: OpenCodeHTTPResponse) throws {
+        guard response.status == 200, (try? JSONDecoder().decode(JSONValue.self, from: response.body)) == .bool(true) else { throw OpenCodeV1SessionError.invalidResponse }
+    }
+    private static func identifier(_ id: String) throws {
+        guard !id.isEmpty, id.utf8.count <= 1_024, !id.contains("/"), !id.contains("\\"), !id.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw OpenCodeV1SessionError.wrongSession }
+    }
+    private static func messageKey(_ session: String, _ id: String) -> ProviderEntityKey { .init(sessionID: session, type: "message", id: id) }
+    private static func requestKey(_ session: String, _ id: String) -> ProviderEntityKey { .init(sessionID: session, type: "request", id: id) }
+    private static func eventBytes(_ event: OpenCodeV1Event) -> Int {
+        var count = 16_384 + (event.part?.text?.utf8.count ?? 0) + (event.delta?.utf8.count ?? 0)
+        if let tool = event.part?.tool {
+            count += (try? JSONEncoder().encode(tool.input).count) ?? 4_194_304
+            count += (tool.output?.utf8.count ?? 0) + (tool.title?.utf8.count ?? 0)
+        }
+        if let permission = event.permission { count += (permission.patterns + permission.always).reduce(0) { $0 + $1.utf8.count } }
+        if let question = event.question {
+            for item in question.questions {
+                count += item.question.utf8.count + item.header.utf8.count
+                count += item.options.reduce(0) { $0 + $1.label.utf8.count + $1.description.utf8.count }
+            }
+        }
+        if let info = event.session { count += (info.permissions ?? []).reduce(0) { $0 + $1.permission.utf8.count + $1.pattern.utf8.count + 64 } }
+        return count
+    }
+}
+
+private struct OpenCodeV1Run {
+    let id: UUID
+    let sessionID: String
+    let inputID: String
+    let autonomous: Bool
+    var accepted = false
+    var inputObserved = false
+    var assistantObserved = false
+    var announced = false
+    var idleEarly = false
+    var stopped = false
+    var finished = false
+    var generation = 0
+}
+
+private struct OpenCodeV1ProjectionOwner: Hashable { let sessionID: String; let runID: UUID }
+private struct OpenCodeV1ChildCall { let parentID: String; let owner: UUID; let messageID: String; let callID: String }
+private struct OpenCodeV1PendingRequest {
+    let request: ApprovalRequest
+    let owner: UUID
+    let sessionID: String
+    let nativeID: String
+    let permission: OpenCodeV1Permission?
+    let question: OpenCodeV1Question?
+}
+private struct OpenCodeV1RejectedResponse: Error {}
+
+private actor OpenCodeV1OwnedRuntime: OpenCodeV1SessionTransport {
+    private let owner: OpenCodeOwnedServer
+    private let cwd: URL
+    private var client: OpenCodeHTTPClient?
+    private var metadata: OpenCodeMetadataConnection?
+    private var stream: OpenCodeSSEConnection?
+    private var closing = false
+
+    init(executable: URL, cwd: URL, configuration: OpenCodeConfiguration) {
+        self.cwd = cwd
+        owner = .init(executable: executable, generation: .v1, cwd: cwd)
+    }
+
+    func connect() async throws -> AsyncThrowingStream<OpenCodeSSEEvent, any Error> {
+        guard !closing, client == nil else { throw OpenCodeV1SessionError.closed }
+        do {
+            let endpoint = try await owner.start()
+            guard !closing else { throw CancellationError() }
+            let client = try OpenCodeHTTPClient(origin: endpoint.origin, credential: endpoint.credential)
+            self.client = client
+            let metadata = OpenCodeMetadataConnection(client: client, expectedGeneration: .v1, ownedProcessIdentifier: endpoint.processIdentifier)
+            self.metadata = metadata
+            _ = try await metadata.identify()
+            guard !closing else { throw CancellationError() }
+            let stream = try await OpenCodeSSEConnection.open(client: client, generation: .v1, directory: cwd)
+            self.stream = stream
+            guard !closing else { throw CancellationError() }
+            return stream.events
+        } catch { await close(); throw error }
+    }
+
+    func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot {
+        guard !closing, let metadata else { throw OpenCodeV1SessionError.closed }
+        return try await metadata.inventory(directory: directory)
+    }
+
+    func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule] {
+        let response = try await request(method: "GET", path: ["agent"], body: nil)
+        guard response.status == 200, let value = try? JSONDecoder().decode(JSONValue.self, from: response.body),
+              let entries = value.array, entries.count <= 512,
+              let agent = entries.first(where: { $0["name"] == .string(agentID) }) else { throw OpenCodeV1SessionError.invalidConfiguration }
+        if agent["permission"] == .null { return [] }
+        return try OpenCodeV1Protocol.permissionRules(agent["permission"])
+    }
+
+    func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
+        guard !closing, let client else { throw OpenCodeV1SessionError.closed }
+        return try await client.request(method: method, path: path, query: [.init(name: "directory", value: cwd.path)],
+            body: try body.map { try JSONEncoder().encode($0) }, maximumBytes: path.last == "message" ? 16 * 1_024 * 1_024 : 4 * 1_024 * 1_024)
+    }
+
+    func close() async {
+        closing = true
+        await stream?.close(); await metadata?.close(); await client?.close(); await owner.close()
+    }
+}

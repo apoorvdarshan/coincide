@@ -45,6 +45,7 @@ public protocol ProviderSession: Actor {
     func respond(_ request: ApprovalRequest, allow: Bool) async throws
     func answer(_ request: ApprovalRequest, answers: [String: String]) async throws
     func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws
+    func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]], notes: [String: String]) async throws
     func choose(_ request: ApprovalRequest, optionID: String) async throws
     func close() async
     func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities
@@ -63,6 +64,9 @@ extension ProviderSession {
     }
     public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws {
         throw CoincideError("This provider does not expose selectable question answers.")
+    }
+    public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]], notes: [String: String]) async throws {
+        throw CoincideError("This provider does not support question answers with notes.")
     }
     public func codexAccountSnapshot() async throws -> CodexAccountSnapshot {
         throw CoincideError("This provider does not expose a Codex account.")
@@ -91,9 +95,11 @@ public enum ProviderSessions {
         if thread.provider == .opencode {
             guard let configuration = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
             try OpenCodeConfigurationValidation.thread(thread)
-            guard configuration.generation == .v2 else { throw OpenCodeProtocolError.wrongGeneration }
             guard let executable = ProcessChannel.findExecutable(configuration.executable) else {
-                throw CoincideError("Install and sign in to OpenCode 2 before sending a message.")
+                throw CoincideError("Install and sign in to the selected OpenCode version before sending a message.")
+            }
+            if configuration.generation == .v1 {
+                return OpenCodeV1Session(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration)
             }
             return OpenCodeV2Session(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration)
         }
@@ -104,8 +110,10 @@ public enum ProviderSessions {
                 throw CoincideError("The executable for \(agent.name) is not installed or executable.")
             }
             let cwd = URL(fileURLWithPath: thread.workspacePath)
-            if agent.experimentalV2 == true { return try ACP2Session(executable: executable, arguments: agent.arguments, cwd: cwd, integration: agent.integration) }
-            return try ACPSession(executable: executable, arguments: agent.arguments, cwd: cwd, integration: agent.integration)
+            let grokMode = try ProviderConfiguration(thread: thread).resolvedGrokRuntimeMode()
+            let arguments = grokMode.map(GrokACP.arguments(runtimeMode:)) ?? agent.arguments
+            if agent.experimentalV2 == true { return try ACP2Session(executable: executable, arguments: arguments, cwd: cwd, integration: agent.integration, grokRuntimeMode: grokMode) }
+            return try ACPSession(executable: executable, arguments: arguments, cwd: cwd, integration: agent.integration, grokRuntimeMode: grokMode)
         }
         guard let executable = ProcessChannel.findExecutable(thread.provider.executable) else {
             throw CoincideError("Install and sign in to \(thread.provider.name) CLI before sending a message.")

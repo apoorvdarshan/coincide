@@ -33,6 +33,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case checkpointPolicy(RunCheckpointPolicy)
     case codexModel(ProviderModel), codexReasoning(model: ProviderModel, effort: String?), codexDefaultModel(CodexDefaultModelSelection)
     case openCodeModel(ProviderModel?), openCodeVariant(model: ProviderModel, variant: String?), openCodeAgent(String)
+    case openCodeGeneration(OpenCodeGeneration), grokRuntimeMode(GrokACPRuntimeMode)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -552,6 +553,19 @@ struct WorkspaceDecision: Sendable {
                 case .openCodeAgent(let agent):
                     guard thread.provider == .opencode, let native = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
                     let selected = native.selecting(agentID: agent); try selected.validate(); thread.openCodeConfiguration = selected
+                case .openCodeGeneration(let generation):
+                    guard thread.provider == .opencode, let native = thread.openCodeConfiguration,
+                          !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else {
+                        throw WorkspaceCommandError("Start a new OpenCode conversation to choose a different server generation.")
+                    }
+                    if native.generation != generation {
+                        decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.providerThreadID = nil
+                        thread.openCodeConfiguration = .init(instanceID: id, generation: generation, executable: native.executable)
+                        thread.model = ""
+                    }
+                case .grokRuntimeMode(let mode):
+                    guard thread.provider == .acp, thread.acpAgent?.integration == .grok else { throw GrokConfigurationValidation.invalid() }
+                    thread.permission = mode == .fullAccess ? .fullAccess : mode == .auto ? .auto : .supervised
                 case .title(let title):
                     let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !title.isEmpty else { throw WorkspaceCommandError("A conversation title cannot be empty.") }; thread.title = title
@@ -562,7 +576,11 @@ struct WorkspaceDecision: Sendable {
                     }
                     if thread.model != model { thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil }
                     thread.model = model
-                case .permission(let mode): thread.permission = mode
+                case .permission(let mode):
+                    if thread.provider == .acp, thread.acpAgent?.integration == .grok {
+                        _ = try GrokACP.runtimeMode(permission: mode)
+                    }
+                    thread.permission = mode
                 case .agentMode(let mode): thread.agentModeID = mode
                 case .agentConfig(let id, let value):
                     guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
@@ -668,7 +686,13 @@ struct WorkspaceDecision: Sendable {
                         throw WorkspaceCommandError("This permission option is no longer available.")
                     }
                 case .decision(let allow):
-                    if request.method == "opencode/form" {
+                    if GrokACP.questionMethod(request.method) {
+                        guard thread.provider == .acp, thread.acpAgent?.integration == .grok, !allow else {
+                            throw WorkspaceCommandError("Answer the Grok question or cancel it.")
+                        }
+                    } else if request.method == "opencode/question" {
+                        guard thread.provider == .opencode, !allow else { throw WorkspaceCommandError("Answer the OpenCode questions or cancel them.") }
+                    } else if request.method == "opencode/form" {
                         guard thread.provider == .opencode, !allow else { throw WorkspaceCommandError("Answer the OpenCode form or cancel it.") }
                     } else if let method = CursorACPMethod.canonical(request.method) {
                         guard thread.provider == .acp, thread.acpAgent?.integration == .cursor,
@@ -677,14 +701,26 @@ struct WorkspaceDecision: Sendable {
                         }
                     } else { guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") } }
                 case .answers(let answers):
-                    if request.method == "opencode/form" {
+                    if GrokACP.questionMethod(request.method) {
+                        guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else { throw ACPIntegrationValidation.failure() }
+                        _ = try question.response(answers: answers)
+                    } else if request.method == "opencode/question" {
+                        guard thread.provider == .opencode, let question = request.openCodeQuestion else { throw OpenCodeV1ProtocolError.invalidAnswer }
+                        _ = try question.answerBody(answers: answers)
+                    } else if request.method == "opencode/form" {
                         guard thread.provider == .opencode, let form = request.openCodeForm else { throw WorkspaceCommandError("This OpenCode form is no longer valid.") }
                         _ = try form.answerBody(answers: answers)
                     } else {
                         guard CursorACPMethod.canonical(request.method) == nil, request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
                     }
                 case .selections(let selections):
-                    if request.method == "opencode/form" {
+                    if GrokACP.questionMethod(request.method) {
+                        guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else { throw ACPIntegrationValidation.failure() }
+                        _ = try question.response(selections: selections)
+                    } else if request.method == "opencode/question" {
+                        guard thread.provider == .opencode, let question = request.openCodeQuestion else { throw OpenCodeV1ProtocolError.invalidAnswer }
+                        _ = try question.answerBody(selections: selections)
+                    } else if request.method == "opencode/form" {
                         guard thread.provider == .opencode, let form = request.openCodeForm else { throw WorkspaceCommandError("This OpenCode form is no longer valid.") }
                         _ = try form.answerBody(selections: selections)
                     } else {
@@ -694,6 +730,11 @@ struct WorkspaceDecision: Sendable {
                       do { _ = try question.response(for: selections) }
                       catch { throw WorkspaceCommandError("Select valid answers for every required question.") }
                     }
+                case .selectionsWithNotes(let selections, let notes):
+                    guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else {
+                        throw WorkspaceCommandError("This provider question does not accept notes.")
+                    }
+                    _ = try question.response(selections: selections, notes: notes)
                 }
                 thread.runtimeRequests[i].responding = true
                 if sessionScoped, let runtimeID = thread.runtimeID {
@@ -862,6 +903,8 @@ struct WorkspaceDecision: Sendable {
                 guard let record = thread.runHistory?.first(where: { $0.id == owner }),
                       record.removedByHistoryOperationID == nil, record.checkpoints?.providerReleased != false,
                       (record.configuration.provider == .acp && record.configuration.acpAgent?.integration == .copilot) ||
+                        (thread.provider == .acp && thread.acpAgent?.integration == .grok &&
+                         record.configuration.provider == .acp && record.configuration.acpAgent == thread.acpAgent) ||
                         (thread.provider == .opencode && record.configuration.provider == .opencode &&
                          record.configuration.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity),
                       record.providerThreadID == thread.providerThreadID else { return }

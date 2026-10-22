@@ -989,6 +989,21 @@ final class WorkspaceStore {
             return .openCodeAgent(agent)
         }
     }
+    func setOpenCodeGeneration(_ generation: OpenCodeGeneration, threadID: UUID) {
+        _ = enqueueOpenCodeEdit(threadID: threadID) { _ in .openCodeGeneration(generation) }
+    }
+    func setGrokRuntimeMode(_ mode: GrokACPRuntimeMode, threadID: UUID) {
+        guard let captured = thread(threadID), captured.provider == .acp, captured.acpAgent?.integration == .grok else { return }
+        let task = enqueuePreparing { [weak self] in
+            guard let self, let current = self.thread(threadID), current.projectID == captured.projectID,
+                  current.workspacePath == captured.workspacePath, current.acpAgent == captured.acpAgent else { throw CancellationError() }
+            return .editThread(threadID, .grokRuntimeMode(mode))
+        }
+        Task {
+            do { _ = try await task.value }
+            catch { if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription } }
+        }
+    }
     private func enqueueOpenCodeEdit(threadID: UUID, prepare: @escaping @MainActor (CodingThread) throws -> ThreadEdit) -> Task<Bool, Never> {
         guard !terminating, let captured = thread(threadID), captured.provider == .opencode else { return Task { false } }
         let task = enqueuePreparing { [weak self] in
@@ -1381,6 +1396,10 @@ final class WorkspaceStore {
     }
     func selectAnswers(_ request: ApprovalRequest, threadID id: UUID, selections: [String: [String]]) async {
         let task = enqueue(.respond(threadID: id, requestID: request.id, response: .selections(selections)))
+        do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
+    }
+    func selectAnswers(_ request: ApprovalRequest, threadID id: UUID, selections: [String: [String]], notes: [String: String]) async {
+        let task = enqueue(.respond(threadID: id, requestID: request.id, response: .selectionsWithNotes(selections: selections, notes: notes)))
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
     }
     func choose(_ request: ApprovalRequest, threadID id: UUID, optionID: String) async {

@@ -140,7 +140,8 @@ struct ChatView: View {
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },
                                      onOption: { option in Task { await store.choose(request, threadID: threadID, optionID: option) } },
-                                     onSelections: { selections in Task { await store.selectAnswers(request, threadID: threadID, selections: selections) } })
+                                     onSelections: { selections in Task { await store.selectAnswers(request, threadID: threadID, selections: selections) } },
+                                     onSelectionsWithNotes: { selections, notes in Task { await store.selectAnswers(request, threadID: threadID, selections: selections, notes: notes) } })
                     }
                     if !thread.queuedTurns.isEmpty { QueuedTurnsView(store: store, thread: thread) }
                     if !thread.draftAttachments.isEmpty { AttachmentShelf(store: store, attachments: thread.draftAttachments, remove: { store.removeAttachment($0, threadID: threadID) }) }
@@ -168,7 +169,9 @@ struct ChatView: View {
                                          _ = await submitted.value
                                          sending = false
                                      }
-                                 }, stop: { Task { await store.interrupt(threadID) } })
+                                 }, stop: { Task { await store.interrupt(threadID) } },
+                                 grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode,
+                                 setGrokRuntimeMode: { store.setGrokRuntimeMode($0, threadID: threadID) })
                 }
                 .coincideGlassGroup()
                 .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(minWidth: 0, maxWidth: .infinity)

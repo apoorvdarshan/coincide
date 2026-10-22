@@ -293,8 +293,11 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var id: JSONValue
     public var method: String
     public var params: JSONValue
-    public var isQuestion: Bool { method == "opencode/form" || method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
+    public var isQuestion: Bool { method == "opencode/form" || method == "opencode/question" || GrokACP.questionMethod(method) || method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
     public var openCodeForm: OpenCodeV2Form? { try? OpenCodeV2Form.presentation(self) }
+    public var openCodeQuestion: OpenCodeV1Question? { try? OpenCodeV1Question.presentation(self) }
+    public var grokQuestion: GrokACPQuestionRequest? { GrokACP.questionMethod(method) ? try? .init(params: params) : nil }
+    public var isGrokQuestion: Bool { GrokACP.questionMethod(method) }
     public var questions: [JSONValue] {
         if method == "can_use_tool" {
             return (params["input"]["questions"].array ?? []).map { question in
@@ -306,6 +309,8 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
+        if method == "opencode/question" { return "Answer OpenCode questions" }
+        if GrokACP.questionMethod(method) { return "Answer Grok questions" }
         if method == "opencode/form" || method == "opencode/permission" { return params["title"].string ?? "OpenCode needs your input" }
         if let question = cursorQuestion { return question.title ?? "Answer Cursor questions" }
         if let plan = cursorPlan { return plan.name ?? "Review Cursor plan" }

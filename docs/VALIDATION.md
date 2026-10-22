@@ -1,5 +1,48 @@
 # Validation record
 
+## 2026-10-22 — native OpenCode 1 and Grok ACP flows
+
+- Added a separate native OpenCode 1 HTTP/SSE conversation actor, preserving its
+  server-generated sessions, authored-message/assistant-parent ownership, native
+  idle completion, captured model/variant/agent/rules, questions and scoped
+  permissions. A real TCP fixture exercises the production factory, owned
+  process, URLSession, SSE, Engine FIFO and SQLite; it is not an installed server.
+- Added a named Grok profile to both ACP adapters, prompt-correlated xAI
+  completion/background activity, captured Ask/Auto/Always approve launch policy,
+  existing noninteractive sign-in, cancellation metadata and typed questions with
+  choices and notes in one durable response. Initialize-only status does not
+  authenticate. Storage 27 fences the new profile/response semantics; migration
+  from both 25 and 26 preserves existing native OpenCode and ACP conversations.
+- The serialized local suite executed 1003 test declarations: 995 passed and
+  eight optional installed-provider checks were skipped. Core reports 845
+  declarations including those skips (258.375 seconds); all 139 native view/store
+  tests (49.144 seconds), six terminal tests and 13 Markdown tests passed.
+- Subsequent source review found that a delta could reveal an ignored/synthetic
+  OpenCode part after its hidden snapshot. Projection now retains suppression
+  through deltas, while an authoritative visible snapshot can clear it.
+  A separate review corrected Default Model: v1 now omits model/variant and lets
+  the native server resolve agent/history/config defaults, rather than guessing
+  from per-provider catalog defaults. Grok v2 review also fixed raw RPC rejection
+  text reaching durable errors and native idle bypassing unfinished background
+  tasks. Real stdio regressions exercise both paths.
+- After all four corrections, expanded OpenCode/ACP checks executed 120 test
+  declarations: 115 passed and five optional installed checks were skipped.
+  Core reports 112 including skips (6.546 seconds); all eight selected native
+  view/store tests passed (0.299 seconds). Separate ignored/synthetic cases,
+  captured default versus future-header selection, native question controls,
+  Grok v1/v2/fallback and the real TCP Engine test are included. This final
+  targeted run covers the corrections made after the full-suite result above.
+- Final packaging, strict/deep signatures and native math-resource rendering
+  passed. The rebuilt development app reopened and a fresh window screenshot
+  was captured. A private consistent backup preceded the 26-to-27 migration;
+  SQLite integrity and canonical workspace content remain unchanged, with
+  three conversations and 25 messages.
+- These checks use offline peers. No installed Grok or OpenCode 1 turn was sent;
+  the installed OpenCode CLI is 2.1.2. Exact owned-parent shutdown is not proof of
+  OS descendant exit. Native authentication/setup, broader controls/history,
+  usage, other providers and complete T3 parity remain unfinished. Hosted GUI
+  acceptance remains pending.
+
 ## 2026-10-22 — bounded hosted test crash diagnostics
 
 - Exact head `d33e7c7`, run `39766284863`, built successfully but its production
@@ -18,6 +61,11 @@
   input/output bounds. All 28 Python harness/configuration checks passed in
   2.110 seconds. This change adds diagnostics without retries, deadline changes,
   test removal or an inferred fix for the unlocalized crash.
+- Exact diagnostic head `aa22177d`, run `39769282901`, reproduced Darwin
+  signal 10 before packaging. Crash collection ran but returned zero reports;
+  this does not establish whether report arrival, matching or another condition
+  prevented capture. No stack or assertion localized the cause. The dependent
+  native GUI job was skipped, so this run executed zero of its 14 scenarios.
 
 ## 2026-10-22 — native OpenCode 2 conversations
 

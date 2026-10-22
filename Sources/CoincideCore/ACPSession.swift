@@ -9,6 +9,9 @@ public actor ACPSession: ProviderSession {
     private let cwd: URL
     private let cancellationTimeout: Duration
     private let integration: ACPIntegration?
+    private let grokRuntimeMode: GrokACPRuntimeMode?
+    private var grok = GrokACPBridge()
+    private var grokPromptID: String?
     private var copilot = CopilotACPBridge()
     private var copilotRunID: UUID?
     private var copilotChildren: [String: CopilotACPChildUpdate] = [:]
@@ -18,6 +21,7 @@ public actor ACPSession: ProviderSession {
     private var sessionSetup: Task<Void, any Error>?
     private var sessionReady = false
     private var initialization: JSONValue?
+    private var authentication: Task<Void, any Error>?
     private var sessionID: String?
     private var setup: JSONValue = .object([:])
     private var defaults: JSONValue = .object([:])
@@ -36,21 +40,23 @@ public actor ACPSession: ProviderSession {
     private var cursorNotifications = CursorACPNotifications()
     private var tools: [String: JSONValue] = [:]
 
-    public init(executable: URL, arguments: [String], cwd: URL, cancellationTimeout: Duration = .seconds(10), integration: ACPIntegration? = nil) throws {
+    public init(executable: URL, arguments: [String], cwd: URL, cancellationTimeout: Duration = .seconds(10), integration: ACPIntegration? = nil, grokRuntimeMode: GrokACPRuntimeMode? = nil) throws {
         let pair = AsyncStream<ProviderEvent>.makeStream()
         events = pair.stream; continuation = pair.continuation; self.cwd = cwd
         self.cancellationTimeout = cancellationTimeout
         self.integration = integration
+        self.grokRuntimeMode = grokRuntimeMode
         rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd,
                                     dialect: .jsonRPC2, maximumFrameSize: 128 * 1_024 * 1_024)
     }
     /// A negotiated v1 fallback adopts the existing transport; it never launches
     /// another process or consumes the same stream as a second adapter.
-    init(adopting rpc: JSONRPCConnection, cwd: URL, initialization: JSONValue, integration: ACPIntegration? = nil) {
+    init(adopting rpc: JSONRPCConnection, cwd: URL, initialization: JSONValue, integration: ACPIntegration? = nil, grokRuntimeMode: GrokACPRuntimeMode? = nil) {
         let pair = AsyncStream<ProviderEvent>.makeStream()
         events = pair.stream; continuation = pair.continuation; self.cwd = cwd
         self.rpc = rpc; self.initialization = initialization; cancellationTimeout = .seconds(10)
         self.integration = integration
+        self.grokRuntimeMode = grokRuntimeMode
     }
     @discardableResult public func connect() async throws -> JSONValue {
         guard !closing else { throw CancellationError() }
@@ -63,12 +69,14 @@ public actor ACPSession: ProviderSession {
             let result = try await connecting.value; guard !closing else { throw CancellationError() }
             initialization = result; return result
         }
-        let rpc = rpc, capabilities = integration?.clientCapabilities ?? .object([:])
+        let rpc = rpc, capabilities = integration?.clientCapabilities ?? .object([:]), grokProfile = integration == .grok
         let task = Task<JSONValue, any Error> {
-            let result = try await rpc.request("initialize", params: .object([
+            var parameters: [String: JSONValue] = [
                 "protocolVersion": .number(1), "clientCapabilities": capabilities,
                 "clientInfo": .object(["name": .string("coincide"), "title": .string("Coincide"), "version": .string("0.1.0")])
-            ]), timeout: .seconds(60))
+            ]
+            if grokProfile { parameters["_meta"] = GrokACP.initializeMetadata }
+            let result = try await rpc.request("initialize", params: .object(parameters), timeout: .seconds(60))
             guard result["protocolVersion"] == .number(1) else {
                 await rpc.close(); throw CoincideError("This agent requires an ACP version Coincide does not support yet.")
             }
@@ -87,6 +95,7 @@ public actor ACPSession: ProviderSession {
     private func createSession(resumeID: String?) async throws {
         let info = try await connect()
         guard !closing else { throw CancellationError() }
+        try await ensureAuthenticated(info)
         if sessionID != nil { return }
         var params: [String: JSONValue] = ["cwd": .string(cwd.path), "mcpServers": .array([])]
         let response: JSONValue
@@ -107,10 +116,25 @@ public actor ACPSession: ProviderSession {
             sessionID = id
         }
         guard !closing, let sessionID else { throw CancellationError() }
-        setup = response
-        defaults = response
+        setup = integration == .grok ? GrokACP.metadata(response) : response
+        defaults = setup
         sessionReady = true
         emit(.thread(sessionID)); emit(.configuration(setup))
+    }
+    private func ensureAuthenticated(_ info: JSONValue) async throws {
+        guard integration == .grok else { return }
+        let task: Task<Void, any Error>
+        if let authentication { task = authentication }
+        else {
+            let method = try GrokACP.authenticationMethod(info), rpc = rpc
+            task = Task {
+                do { _ = try await rpc.request("authenticate", params: .object(["methodId": .string(method)]), timeout: .seconds(60)) }
+                catch { throw CoincideError("Grok could not use its existing sign-in. Sign in with grok login and reconnect.") }
+            }
+            authentication = task
+        }
+        try await task.value
+        guard !closing else { throw CancellationError() }
     }
     public func models() async throws -> [ProviderModel] {
         try await ensureSession(resumeID: nil)
@@ -130,34 +154,45 @@ public actor ACPSession: ProviderSession {
     }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard !working, !closing else { throw CoincideError("A turn is already running or the agent is closed.") }
+        if integration == .grok {
+            let captured = thread.activeRun?.configuration ?? .init(thread: thread)
+            let selected = try GrokACP.runtimeMode(permission: captured.permission)
+            guard selected == (grokRuntimeMode ?? .approvalRequired) else { throw CoincideError("Grok's permission mode changed. Reconnect before sending this captured input.") }
+        }
         working = true; interrupted = false; runID = thread.activeRun?.id; generation = UUID(); segment = 0; announcedTurn = false; tools = [:]
         cursorNotifications = CursorACPNotifications()
         let token = generation
         do {
             try await ensureSession(resumeID: thread.providerThreadID)
             guard !closing, let sessionID else { throw CancellationError() }
-            if !input.images.isEmpty, initialization?["agentCapabilities"]["promptCapabilities"]["image"] != .bool(true) {
+            if !input.images.isEmpty, integration != .grok, initialization?["agentCapabilities"]["promptCapabilities"]["image"] != .bool(true) {
                 throw CoincideError("This agent does not advertise image input support.")
             }
             try await configure(thread, sessionID: sessionID)
             // A configuration reply can resume its waiter before earlier wire
             // notifications have drained. They still belong to the old work.
-            if integration == .copilot { await rpc.flushEvents() }
+            if integration == .copilot || integration == .grok { await rpc.flushEvents() }
             guard !closing, !interrupted else { throw CancellationError() }
             if integration == .copilot {
                 let owner = runID ?? token
                 try copilot.beginRun(sessionID: sessionID, runID: owner); copilotRunID = owner
             }
+            if integration == .grok {
+                let id = "coincide-xai-prompt-\(UUID().uuidString)"
+                try grok.beginRun(sessionID: sessionID, runID: runID ?? token, promptID: id); grokPromptID = id
+            }
             var blocks: [JSONValue] = input.images.map {
                 .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())])
             }
             if !input.text.isEmpty { blocks.append(.object(["type": .string("text"), "text": .string(input.text)])) }
-            let dispatch = ACPDispatch(), rpc = rpc
+            let dispatch = ACPDispatch(), rpc = rpc, grokID = grokPromptID
             promptTask = Task { [weak self] in
                 do {
-                    let result = try await rpc.request("session/prompt", params: .object([
+                    var parameters: [String: JSONValue] = [
                         "sessionId": .string(sessionID), "prompt": .array(blocks)
-                    ]), timeout: .seconds(86_400), onSent: { dispatch.finish(.success(())) })
+                    ]
+                    if let grokID { parameters["_meta"] = .object(["promptId": .string(grokID), "requestId": .string(grokID)]) }
+                    let result = try await rpc.request("session/prompt", params: .object(parameters), timeout: .seconds(86_400), onSent: { dispatch.finish(.success(())) })
                     dispatch.finish(.success(()))
                     await rpc.flushEvents()
                     await self?.promptFinished(result, token: token)
@@ -169,16 +204,23 @@ public actor ACPSession: ProviderSession {
             // finishes. Permission responses and stops keep their reserved capacity.
             try await dispatch.wait()
             if generation == token, working { announceTurn() }
-        } catch { if generation == token { working = false; finishCopilotRun() }; throw error }
+        } catch { if generation == token { working = false; finishCopilotRun(); finishGrokRun() }; throw error }
     }
     public func interrupt() async throws {
         guard working, let sessionID, !closing else { throw CoincideError("There is no active agent turn to stop.") }
         interrupted = true
-        try await rpc.notify("session/cancel", params: .object(["sessionId": .string(sessionID)]))
+        var cancellation: [String: JSONValue] = ["sessionId": .string(sessionID)]
+        if integration == .grok { cancellation["_meta"] = GrokACP.cancellationMetadata }
+        try await rpc.notify("session/cancel", params: .object(cancellation))
         let requests = pending, wireIDs = cursorWireIDs; pending = [:]; cursorWireIDs = [:]
-        for (id, _) in requests {
-            try await rpc.respond(id: wireIDs[id] ?? id, result: .object(["outcome": .object(["outcome": .string("cancelled")])]))
+        for (id, request) in requests {
+            try await rpc.respond(id: wireIDs[id] ?? id, result: GrokACP.questionMethod(request.method) ? GrokACPQuestionRequest.cancelledResponse : .object(["outcome": .object(["outcome": .string("cancelled")])]))
             emit(.approvalDismissed(id))
+        }
+        if integration == .grok {
+            working = false; finishGrokRun(); emit(.completed(.interrupted))
+            emit(.connectionClosed("Grok stopped. Reconnect before sending another input."))
+            await close(); return
         }
         // Agents must resolve the prompt after cancellation. A stalled agent must
         // not leave the conversation running forever or keep approvals open.
@@ -191,6 +233,10 @@ public actor ACPSession: ProviderSession {
         }
     }
     public func respond(_ request: ApprovalRequest, allow: Bool) async throws {
+        if integration == .grok, GrokACP.questionMethod(request.method) {
+            guard !allow else { throw GrokACP.failure() }
+            try await finishGrokRequest(request, result: GrokACPQuestionRequest.cancelledResponse); return
+        }
         if let method = CursorACPMethod.canonical(request.method) {
             guard integration == .cursor else { throw ACPIntegrationValidation.failure() }
             let outcome: String
@@ -222,11 +268,21 @@ public actor ACPSession: ProviderSession {
         }
     }
     public func answer(_ request: ApprovalRequest, answers: [String: String]) async throws {
+        if integration == .grok, GrokACP.questionMethod(request.method) {
+            try await finishGrokRequest(request, result: GrokACPQuestionRequest(params: request.params).response(answers: answers)); return
+        }
         throw CoincideError("This agent did not negotiate native question support.")
     }
     public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws {
+        if integration == .grok, GrokACP.questionMethod(request.method) {
+            try await finishGrokRequest(request, result: GrokACPQuestionRequest(params: request.params).response(selections: selections)); return
+        }
         guard integration == .cursor, let question = request.cursorQuestion else { throw ACPIntegrationValidation.failure() }
         try await finishCursorRequest(request, result: question.response(for: selections))
+    }
+    public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]], notes: [String: String]) async throws {
+        guard integration == .grok, GrokACP.questionMethod(request.method) else { throw GrokACP.failure() }
+        try await finishGrokRequest(request, result: GrokACPQuestionRequest(params: request.params).response(selections: selections, notes: notes))
     }
     private func finishCursorRequest(_ request: ApprovalRequest, result: JSONValue) async throws {
         guard integration == .cursor, working, !closing, !interrupted, pending[request.id] == request,
@@ -239,10 +295,16 @@ public actor ACPSession: ProviderSession {
             pending.removeValue(forKey: request.id); cursorWireIDs.removeValue(forKey: request.id); emit(.approvalDismissed(request.id))
         }
     }
+    private func finishGrokRequest(_ request: ApprovalRequest, result: JSONValue) async throws {
+        guard integration == .grok, working, !closing, !interrupted, pending[request.id] == request,
+              let wire = cursorWireIDs[request.id] else { throw GrokACP.failure() }
+        try await rpc.respond(id: wire, result: result)
+        if pending[request.id] == request { pending.removeValue(forKey: request.id); cursorWireIDs.removeValue(forKey: request.id); emit(.approvalDismissed(request.id)) }
+    }
     public func close() async {
         guard !closing else { return }; closing = true
-        promptTask?.cancel(); connecting?.cancel(); sessionSetup?.cancel(); cancellationTimer?.cancel(); await rpc.close()
-        reader?.cancel(); reader = nil; pending = [:]; cursorWireIDs = [:]; copilot.reset(); copilotChildren = [:]; copilotChildSegments = [:]; continuation.finish()
+        promptTask?.cancel(); connecting?.cancel(); authentication?.cancel(); sessionSetup?.cancel(); cancellationTimer?.cancel(); await rpc.close()
+        reader?.cancel(); reader = nil; pending = [:]; cursorWireIDs = [:]; copilot.reset(); copilotChildren = [:]; copilotChildSegments = [:]; grok.reset(); grokPromptID = nil; continuation.finish()
     }
     private func consume(_ event: RPCEvent) async {
         switch event {
@@ -255,6 +317,25 @@ public actor ACPSession: ProviderSession {
             working = false; continuation.finish()
         case .request(let id, let method, let params):
             if integration == .copilot { copilot.invalidatePendingDeltas() }
+            if integration == .grok, GrokACP.questionMethod(method) || GrokACP.planMethod(method) {
+                let body = GrokACP.requestBody(params)
+                guard working, !closing, !loadingHistory, !interrupted, sessionReady, body["sessionId"].string == sessionID else {
+                    try? await rpc.respond(id: id, result: GrokACPQuestionRequest.cancelledResponse); return
+                }
+                do {
+                    if GrokACP.planMethod(method) {
+                        let text = try ACPIntegrationValidation.string(body["planContent"], maximum: 262_144, multiline: true) ?? "The agent exited plan mode without writing a plan."
+                        emit(.message(.init(role: .tool, text: text)))
+                        try await rpc.respond(id: id, result: .object(["outcome": .string("abandoned"), "feedback": .string("The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.")]))
+                    } else {
+                        guard pending.count < 1_024, !cursorWireIDs.values.contains(id) else { throw GrokACP.failure() }
+                        let question = try GrokACPQuestionRequest(params: params), local: JSONValue = .string("grok-question-\(UUID())")
+                        let request = ApprovalRequest(id: local, method: method, params: question.parameters)
+                        cursorWireIDs[local] = id; pending[local] = request; announceTurn(); emit(.approval(request))
+                    }
+                } catch { try? await rpc.reject(id: id, message: GrokACP.failureMessage) }
+                return
+            }
             if integration == .cursor, let canonical = CursorACPMethod.canonical(method) {
                 guard working, !closing, !loadingHistory, !interrupted, sessionReady,
                       params["sessionId"] == .null || params["sessionId"].string == sessionID else {
@@ -290,9 +371,28 @@ public actor ACPSession: ProviderSession {
                 for (key, value) in params["toolCall"].object ?? [:] where value != .null { call[key] = value }
                 enriched["toolCall"] = .object(call)
             }
-            let request = ApprovalRequest(id: id, method: method, params: .object(enriched))
+            let parameters: JSONValue
+            do { parameters = integration == .grok ? try GrokACP.permission(.object(enriched)) : .object(enriched) }
+            catch { try? await rpc.reject(id: id, message: GrokACP.failureMessage); return }
+            let request = ApprovalRequest(id: id, method: method, params: parameters)
             pending[id] = request; emit(.approval(request))
         case .notification(let method, let params):
+            if integration == .grok, !loadingHistory, !closing, method != "$/cancel_request" {
+                do {
+                    let observed = try grok.consume(method: method, params: params)
+                    for update in observed.updates {
+                        if update.runID == runID, working { emit(.entity(update.update)) }
+                        else { emit(.runEntity(runID: update.runID, update: update.update)) }
+                    }
+                    if let completion = observed.completion, completion.promptID == grokPromptID {
+                        let ownedPrompt = promptTask
+                        promptFinished(completion.response, token: generation); ownedPrompt?.cancel()
+                    }
+                } catch { emit(.connectionClosed(GrokACP.failureMessage)); await close() }
+                if method == "session/update", ["current_mode_update", "config_option_update", "available_commands_update", "usage_update"].contains(params["update"]["sessionUpdate"].string ?? "") {
+                    if params["update"]["sessionUpdate"] == .string("usage_update") { setMetadata(field: "usage", value: GrokACP.metadata(params["update"])); return }
+                } else { return }
+            }
             if method == "$/cancel_request" {
                 let wireID = params["requestId"]
                 if let localID = cursorWireIDs.first(where: { $0.value == wireID })?.key {
@@ -361,8 +461,14 @@ public actor ACPSession: ProviderSession {
     }
     private func promptFinished(_ result: JSONValue, token: UUID) {
         guard generation == token, working, !closing else { return }
+        if integration == .grok, let id = grokPromptID {
+            if let observed = result["_meta"]["promptId"].string, observed != id { return }
+            do { guard try grok.acceptCompletion(promptID: id, stopReason: result["stopReason"].string ?? "unknown") != nil else { return } }
+            catch { emit(.connectionClosed(GrokACP.failureMessage)); return }
+        }
         working = false; promptTask = nil
         finishCopilotRun()
+        finishGrokRun()
         cancellationTimer?.cancel(); cancellationTimer = nil
         for id in pending.keys { emit(.approvalDismissed(id)) }; pending = [:]; cursorWireIDs = [:]
         let reason = result["stopReason"].string ?? "unknown"
@@ -370,14 +476,16 @@ public actor ACPSession: ProviderSession {
         else if ["end_turn", "max_tokens", "max_turn_requests", "refusal"].contains(reason) {
             if reason != "end_turn" { emit(.message(.init(role: .system, text: "The agent stopped: \(reason.replacingOccurrences(of: "_", with: " "))."))) }
             emit(.completed(.idle))
-        } else { emit(.failure("The agent returned an unrecognized stop reason: \(reason).")) }
+        } else if integration == .grok { emit(.message(.init(role: .system, text: reason == "rate_limit" ? "Grok usage limit reached. Try again later." : "Grok could not complete this turn."))); emit(.completed(.failed)) }
+        else { emit(.failure("The agent returned an unrecognized stop reason: \(reason).")) }
     }
     private func promptFailed(_ error: any Error, token: UUID) {
         guard generation == token, working, !closing else { return }; working = false; promptTask = nil
         finishCopilotRun()
+        finishGrokRun()
         for id in pending.keys { emit(.approvalDismissed(id)) }; pending = [:]; cursorWireIDs = [:]
         cancellationTimer?.cancel(); cancellationTimer = nil
-        emit(.failure(error.localizedDescription))
+        emit(.failure(integration == .grok ? "Grok could not complete this turn." : error.localizedDescription))
     }
     private func cancelTimedOut(token: UUID) async {
         guard generation == token, working, interrupted, !closing else { return }
@@ -390,6 +498,9 @@ public actor ACPSession: ProviderSession {
     private func finishCopilotRun() {
         if let sessionID, let owner = copilotRunID { copilot.finishRun(sessionID: sessionID, runID: owner) }
         copilotRunID = nil
+    }
+    private func finishGrokRun() {
+        if let id = grokPromptID { grok.finishRun(promptID: id) }; grokPromptID = nil
     }
     private func publishCopilotChild(_ child: CopilotACPChildUpdate) {
         copilotChildren[child.childSessionID] = child
@@ -420,6 +531,9 @@ public actor ACPSession: ProviderSession {
         emit(.runEntity(runID: child.runID, update: try .acp(.object(update), sessionID: routed.sessionID)))
     }
     private func configure(_ thread: CodingThread, sessionID: String) async throws {
+        var thread = thread
+        // Grok Build names the product/default choice, not an ACP wire model.
+        if integration == .grok, thread.model == "grok-build" { thread.model = "" }
         // Unrecognized option types keep their agent defaults; they cannot hide
         // a supported selector in the same semantic category.
         let initial = (setup["configOptions"].array ?? []).filter { $0["type"].string == "select" }
@@ -461,6 +575,7 @@ public actor ACPSession: ProviderSession {
         }
     }
     private func setMetadata(section: String? = nil, field: String, value: JSONValue) {
+        let value = integration == .grok ? GrokACP.metadata(value) : value
         var object = setup.object ?? [:]
         if let section { var nested = object[section]?.object ?? [:]; nested[field] = value; object[section] = .object(nested) }
         else { object[field] = value }
