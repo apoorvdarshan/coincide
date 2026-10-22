@@ -53,6 +53,11 @@ private struct ConversationHistoryRead {
     let task: Task<ConversationHistoryReview, any Error>
 }
 
+private struct CodexModelDefaultsRead {
+    let id: UUID
+    let task: Task<Bool, Never>
+}
+
 private struct CheckpointRestoreRead {
     let threadID: UUID
     let task: Task<RunCheckpointRestoreReview, any Error>
@@ -106,6 +111,7 @@ final class WorkspaceStore {
     private var loadingTask: Task<Void, Never>?
     private var updatesTask: Task<Void, Never>?
     private var commandTail: Task<Void, Never>?
+    private var codexModelDefaultsReads: [UUID: CodexModelDefaultsRead] = [:]
     private var promptSteeringAvailability: [UUID: (NativePromptSteeringKey, PromptSteeringAvailability)] = [:]
     private var acceptingPromptSteering: Set<UUID> = []
     private var draftSaveTask: Task<Void, Never>?
@@ -751,9 +757,11 @@ final class WorkspaceStore {
         processAutomaticHistoryRecalls()
     }
     private func reconcileRemovedResources(threadIDs: Set<UUID>, projectIDs: Set<UUID>) {
+        let modelReads = threadIDs.compactMap { codexModelDefaultsReads[$0]?.task }
         for id in threadIDs {
             pendingDrafts.removeValue(forKey: id); draftOverrides.removeValue(forKey: id); acpModels.removeValue(forKey: id)
             promptSteeringAvailability.removeValue(forKey: id)
+            codexModelDefaultsReads.removeValue(forKey: id)?.task.cancel()
         }
         let imports = attachmentImportTasks.compactMap { key, task in attachmentImportOwners[key].map { threadIDs.contains($0) } == true ? task : nil }
         let worktrees = worktreeTasks.filter { threadIDs.contains($0.key) }.map(\.value)
@@ -794,6 +802,7 @@ final class WorkspaceStore {
         }
         let cleanupID = UUID()
         let task: Task<Void, Never> = Task { [weak self] in
+            for task in modelReads { _ = await task.value }
             for task in imports { await task.value }
             for task in worktrees { _ = await task.result }
             for task in worktreeReads { _ = await task.result }
@@ -811,12 +820,16 @@ final class WorkspaceStore {
         removalCleanupTasks[cleanupID] = .init(projectIDs: projectIDs, task: task)
     }
     private func enqueue(_ command: WorkspaceCommand, preflight: (@MainActor () throws -> Void)? = nil) -> Task<WorkspaceCommandReceipt, any Error> {
+        enqueuePreparing({ command }, preflight: preflight)
+    }
+    private func enqueuePreparing(_ prepare: @escaping @MainActor () throws -> WorkspaceCommand,
+                                  preflight: (@MainActor () throws -> Void)? = nil) -> Task<WorkspaceCommandReceipt, any Error> {
         let previous = commandTail, engine = engine
         let task = Task<WorkspaceCommandReceipt, any Error> {
             await previous?.value
             try preflight?()
             guard let engine else { throw CoincideError("The workspace runtime is unavailable.") }
-            let receipt = try await engine.dispatch(command)
+            let receipt = try await engine.dispatch(try prepare())
             apply(await engine.current())
             return receipt
         }
@@ -927,9 +940,87 @@ final class WorkspaceStore {
             } catch { errorMessage = error.localizedDescription }
         }
     }
-    func setModel(_ model: String, id: UUID) { sendCommand(.editThread(id, .model(model))) }
-    func setProvider(_ provider: ProviderKind, id: UUID) { sendCommand(.editThread(id, .provider(provider))) }
-    func setACPAgent(_ agent: ACPAgentConfiguration, id: UUID) { sendCommand(.editThread(id, .acpAgent(agent))) }
+    func setModel(_ model: String, id: UUID) {
+        cancelCodexModelDefaultsRead(id)
+        if thread(id)?.provider == .codex, let advertised = models(for: .codex).first(where: { $0.id == model }) {
+            sendCommand(.editThread(id, .codexModel(advertised)))
+        } else { sendCommand(.editThread(id, .model(model))) }
+    }
+    func setProvider(_ provider: ProviderKind, id: UUID) {
+        cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .provider(provider)))
+    }
+    func setACPAgent(_ agent: ACPAgentConfiguration, id: UUID) {
+        cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .acpAgent(agent)))
+    }
+    func codexReasoningModel(threadID: UUID) -> ProviderModel? {
+        guard let thread = thread(threadID), thread.provider == .codex else { return nil }
+        return models(for: .codex).first { $0.id == thread.model }
+    }
+    func setCodexReasoningEffort(_ effort: String?, model: ProviderModel, threadID: UUID) -> Task<Bool, Never> {
+        guard !terminating, let thread = thread(threadID), thread.provider == .codex, thread.model == model.id else { return Task { false } }
+        cancelCodexModelDefaultsRead(threadID)
+        let task = enqueuePreparing { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == .codex,
+                  current.projectID == thread.projectID, current.workspacePath == thread.workspacePath,
+                  current.model == model.id else { throw CancellationError() }
+            guard let advertised = self.codexReasoningModel(threadID: threadID) else {
+                throw CoincideError("This model's reasoning options changed. Refresh models and choose again.")
+            }
+            return .editThread(threadID, .codexReasoning(model: advertised, effort: effort))
+        }
+        return Task {
+            do { _ = try await task.value; return true }
+            catch {
+                if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription }
+                return false
+            }
+        }
+    }
+    func isReadingCodexModelDefaults(_ threadID: UUID) -> Bool { codexModelDefaultsReads[threadID] != nil }
+    private func cancelCodexModelDefaultsRead(_ threadID: UUID) {
+        codexModelDefaultsReads.removeValue(forKey: threadID)?.task.cancel()
+    }
+    func useCodexDefaultModel(_ threadID: UUID) -> Task<Bool, Never> {
+        guard !terminating, let engine, let captured = thread(threadID), captured.provider == .codex,
+              workspaceReady(for: captured), !actionsPreventPromptSteering(threadID: threadID) else { return Task { false } }
+        cancelCodexModelDefaultsRead(threadID)
+        let id = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return false }
+            defer { if self.codexModelDefaultsReads[threadID]?.id == id { self.codexModelDefaultsReads.removeValue(forKey: threadID) } }
+            do {
+                // Metadata I/O stays outside commandTail so Stop, approvals and
+                // drafting remain responsive while the CLI reads its defaults.
+                let selection = try await engine.reviewCodexDefaultModel(threadID: threadID)
+                try Task.checkCancellation()
+                guard self.codexModelDefaultsReads[threadID]?.id == id, !self.terminating else { return false }
+                let commit = self.enqueue(.editThread(threadID, .codexDefaultModel(selection))) { [weak self] in
+                    guard let self, !self.terminating, self.codexModelDefaultsReads[threadID]?.id == id,
+                          let current = self.thread(threadID), current.projectID == captured.projectID,
+                          current.workspacePath == captured.workspacePath, current.provider == .codex,
+                          current.model == captured.model, current.reasoningEffort == captured.reasoningEffort,
+                          current.codexReasoningPreferences == captured.codexReasoningPreferences,
+                          current.codexModelSelectionSource == captured.codexModelSelectionSource,
+                          !self.actionsPreventPromptSteering(threadID: threadID) else { throw CancellationError() }
+                }
+                _ = try await commit.value
+                if let advertised = selection.catalogModel {
+                    var values = self.providerModels[.codex] ?? []
+                    if let index = values.firstIndex(where: { $0.id == advertised.id }) { values[index] = advertised }
+                    else { values.append(advertised) }
+                    self.providerModels[.codex] = values
+                }
+                return true
+            } catch {
+                if !(error is CancellationError), !self.terminating, self.codexModelDefaultsReads[threadID]?.id == id {
+                    self.errorMessage = error.localizedDescription
+                }
+                return false
+            }
+        }
+        codexModelDefaultsReads[threadID] = .init(id: id, task: task)
+        return task
+    }
     func setAgentMode(_ mode: String?, id: UUID) { sendCommand(.editThread(id, .agentMode(mode))) }
     func setAgentConfig(_ optionID: String, value: String?, id: UUID) { sendCommand(.editThread(id, .agentConfig(id: optionID, value: value))) }
     func setAgentConfiguration(_ optionID: String, value: JSONValue?, id: UUID) { sendCommand(.editThread(id, .agentConfiguration(id: optionID, value: value))) }
@@ -1866,6 +1957,8 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        let modelReads = codexModelDefaultsReads.values.map(\.task); codexModelDefaultsReads.removeAll()
+        for task in modelReads { task.cancel() }; for task in modelReads { _ = await task.value }
         let recalls = Array(automaticHistoryRecallTasks.values)
         for task in recalls { task.cancel() }; for task in recalls { await task.value }
         while !historyRecallDraftOwners.isEmpty {

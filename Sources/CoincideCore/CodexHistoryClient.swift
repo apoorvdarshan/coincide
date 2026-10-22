@@ -87,6 +87,7 @@ struct CodexHistoryClient: Sendable {
             "sandbox": .string(configuration.permission == .fullAccess ? "danger-full-access" : configuration.permission == .supervised ? "read-only" : "workspace-write"),
             "excludeTurns": .bool(true), "ephemeral": .bool(false), "deferGoalContinuation": .bool(true)]
         if !configuration.model.isEmpty { params["model"] = .string(configuration.model) }
+        if let effort = configuration.reasoningEffort { params["config"] = .object(["model_reasoning_effort": .string(effort)]) }
         switch boundary { case .head: break; case .throughTurn(let id): params["lastTurnId"] = .string(id); case .beforeTurn(let id): params["beforeTurnId"] = .string(id) }
         try Task.checkCancellation()
         let response = try await request("thread/fork", params: .object(params), deadline: deadline, mutation: true)

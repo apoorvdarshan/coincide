@@ -5,6 +5,7 @@ public actor CodexSession: ProviderSession {
     public nonisolated let events: AsyncStream<ProviderEvent>
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
+    private let processWorkspace: URL
     private var eventTask: Task<Void, Never>?
     private var threadID: String?
     private var turnID: String?
@@ -25,6 +26,7 @@ public actor CodexSession: ProviderSession {
     public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"]) throws {
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
         self.events = events; self.continuation = continuation
+        processWorkspace = cwd
         rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd, maximumFrameSize: 128 * 1_024 * 1_024)
     }
     public func connect() async throws {
@@ -121,12 +123,99 @@ public actor CodexSession: ProviderSession {
         }
     }
     public func models() async throws -> [ProviderModel] {
-        try await connect()
-        let response = try await rpc.request("model/list", params: .object(["limit": .number(100)]))
-        return (response["data"].array ?? []).compactMap {
-            guard let id = $0["model"].string ?? $0["id"].string else { return nil }
-            return ProviderModel(id: id, name: $0["displayName"].string ?? id)
+        try await readModelCatalog(deadline: ContinuousClock.now + .seconds(30))
+    }
+    private func readModelCatalog(deadline: ContinuousClock.Instant) async throws -> [ProviderModel] {
+        do {
+            try Task.checkCancellation()
+            try await connect()
+            var cursor: String?
+            var seenCursors: Set<String> = []
+            var entries: [String: CodexModelCatalogEntry] = [:]
+            var catalogOwners: [String: String] = [:]
+            var models: [ProviderModel] = []
+            var bytes = 0, rows = 0
+            for _ in 0..<20 {
+                try Task.checkCancellation()
+                guard !shuttingDown, ContinuousClock.now < deadline else { throw CodexModelCatalogEntry.failure() }
+                var params: [String: JSONValue] = ["limit": .number(100), "includeHidden": .bool(false)]
+                if let cursor { params["cursor"] = .string(cursor) }
+                let response = try await rpc.request("model/list", params: .object(params), timeout: ContinuousClock.now.duration(to: deadline))
+                try Task.checkCancellation()
+                guard !shuttingDown, ContinuousClock.now < deadline,
+                      response.object != nil, let page = response["data"].array, page.count <= 100 else { throw CodexModelCatalogEntry.failure() }
+                bytes += try JSONEncoder().encode(response).count; rows += page.count
+                guard bytes <= 8 * 1_024 * 1_024, rows <= 2_000 else { throw CodexModelCatalogEntry.failure() }
+                for item in page {
+                    let entry = try CodexModelCatalogEntry(item), model = entry.model
+                    if let previous = entries[model.id] {
+                        guard previous == entry else { throw CodexModelCatalogEntry.failure() }
+                    } else {
+                        entries[model.id] = entry
+                        if let catalogID = model.catalogID {
+                            guard catalogOwners[catalogID] == nil || catalogOwners[catalogID] == model.id else { throw CodexModelCatalogEntry.failure() }
+                            catalogOwners[catalogID] = model.id
+                        }
+                        if !entry.hidden { models.append(model) }
+                    }
+                }
+                guard let next = try CodexModelCatalogEntry.string(response["nextCursor"], maximum: 4_096) else { return models }
+                guard seenCursors.insert(next).inserted else { throw CodexModelCatalogEntry.failure() }
+                cursor = next
+            }
+            throw CodexModelCatalogEntry.failure()
+        } catch {
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            throw CodexModelCatalogEntry.failure()
         }
+    }
+    public func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection {
+        let deadline = ContinuousClock.now + .seconds(30)
+        do {
+            try Task.checkCancellation()
+            guard processWorkspace.isFileURL, processWorkspace.host == nil || processWorkspace.host == "" || processWorkspace.host == "localhost",
+                  processWorkspace.query == nil, processWorkspace.fragment == nil else { throw CodexModelCatalogEntry.failure() }
+            let workspacePath = processWorkspace.standardizedFileURL.resolvingSymlinksInPath().path
+            try await connect()
+            let initial = try await readDefaultModelConfig(workspacePath: workspacePath, deadline: deadline)
+            let catalog = try await readModelCatalog(deadline: deadline)
+            let selectedModel: String
+            if let configured = initial.model { selectedModel = configured }
+            else {
+                // Codex 0.163's models manager marks its picker-visible default
+                // before app-server publishes this catalog. Never replace an
+                // explicit cwd-config model with this fallback.
+                guard CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile else {
+                    throw CodexModelCatalogEntry.failure()
+                }
+                let defaults = catalog.filter(\.isDefault)
+                guard defaults.count == 1, let model = defaults.first else { throw CodexModelCatalogEntry.failure() }
+                selectedModel = model.id
+            }
+            let advertised = catalog.first { $0.id == selectedModel }
+            guard advertised != nil || initial.effort != nil else { throw CodexModelCatalogEntry.failure() }
+            let effort = initial.effort ?? advertised?.codexDefaultReasoningEffort
+            let final = try await readDefaultModelConfig(workspacePath: workspacePath, deadline: deadline)
+            guard initial.model == final.model, initial.effort == final.effort, initial.modelProvider == final.modelProvider, !shuttingDown,
+                  ContinuousClock.now < deadline else { throw CodexModelCatalogEntry.failure() }
+            try Task.checkCancellation()
+            return try .init(workspacePath: workspacePath, model: selectedModel, reasoningEffort: effort, catalogModel: advertised)
+        } catch {
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            throw CoincideError("The Codex CLI default model could not be resolved safely. Refresh defaults and try again.")
+        }
+    }
+    private func readDefaultModelConfig(workspacePath: String, deadline: ContinuousClock.Instant) async throws -> (model: String?, effort: String?, modelProvider: String?) {
+        try Task.checkCancellation()
+        guard !shuttingDown, ContinuousClock.now < deadline else { throw CodexModelCatalogEntry.failure() }
+        let response = try await rpc.request("config/read", params: .object(["cwd": .string(workspacePath), "includeLayers": .bool(false)]),
+                                             timeout: ContinuousClock.now.duration(to: deadline))
+        try Task.checkCancellation()
+        guard response.object != nil, response["config"].object != nil,
+              try JSONEncoder().encode(response).count <= 4 * 1_024 * 1_024 else { throw CodexModelCatalogEntry.failure() }
+        return (try CodexModelCatalogEntry.string(response["config"]["model"], maximum: 4_096),
+                try CodexModelCatalogEntry.string(response["config"]["model_reasoning_effort"], maximum: 256),
+                try CodexModelCatalogEntry.string(response["config"]["model_provider"], maximum: 4_096))
     }
     private func connectForHistory() async throws {
         do { try await connect() }
@@ -140,6 +229,12 @@ public actor CodexSession: ProviderSession {
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
         guard !working, !historyMutationInFlight else { throw CoincideError("A turn or conversation history operation is already running in this thread.") }
+        if let effort = thread.reasoningEffort {
+            guard !effort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, effort.utf8.count <= 256,
+                  !effort.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
+                throw CoincideError("The selected Codex reasoning effort is invalid.")
+            }
+        }
         working = true
         sendGeneration += 1
         let generation = sendGeneration, submittedRunID = thread.activeRun?.id
@@ -173,8 +268,9 @@ public actor CodexSession: ProviderSession {
             var params: [String: JSONValue] = ["threadId": .string(threadID!), "cwd": .string(thread.workspacePath),
                 "input": .array(items),
                 "approvalPolicy": thread.permission.approvalPolicy, "approvalsReviewer": thread.permission.reviewer,
-                "sandboxPolicy": thread.permission.sandbox(cwd: thread.workspacePath)]
+                "sandboxPolicy": thread.permission.sandbox(cwd: thread.workspacePath), "summary": .string("detailed")]
             if !thread.model.isEmpty { params["model"] = .string(thread.model) }
+            if let effort = thread.reasoningEffort { params["effort"] = .string(effort) }
             let response = try await rpc.request("turn/start", params: .object(params))
             guard let id = response["turn"]["id"].string else { throw CoincideError("Codex did not return a turn id.") }
             if generation == sendGeneration, !completedTurnIDs.contains(id) { turnID = id; emit(.turn(id), runID: submittedRunID) }

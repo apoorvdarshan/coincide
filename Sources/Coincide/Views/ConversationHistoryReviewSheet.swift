@@ -133,6 +133,9 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                         }
                         LabeledContent("Provider", value: RunHistoryPresentation.provider(configuration))
                         LabeledContent("Model", value: RunHistoryPresentation.model(configuration))
+                        if configuration.provider == .codex, let effort = configuration.reasoningEffort {
+                            LabeledContent("Reasoning", value: ReasoningEffortPresentation.title(effort))
+                        }
                         LabeledContent("Permissions") { Text(LocalizedStringKey(configuration.permission.title)) }
                         Text(configuration.workspacePath).font(.caption.monospaced()).textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("conversation-history-workspace")

@@ -4,6 +4,16 @@ The goal is a complete native Swift macOS port of T3 Code, including its core
 services. A running T3 Code/Node server or Electron frontend is not the intended
 final architecture. This goal is **not complete**.
 
+The product uses the ChatGPT macOS app as its interaction and layout reference.
+Liquid Glass is the default design requirement across native chrome and controls
+on supported macOS versions, with native system-material fallbacks on older
+versions. Its visual adoption and accessibility checks are still pending.
+Provider parity includes every T3 built-in driver and ACP Registry integration:
+Codex, Claude, Cursor, Grok, OpenCode, Antigravity, Pi, Muse Code, and Copilot
+through ACP. A selectable name or preset alone does not establish end-to-end
+integration: installation/setup, authentication, controls, streaming, tools,
+permissions, recovery and supported history behavior each need verification.
+
 The reference is [pingdotgg/t3code at 680152e27b2a961686389ca69a1557cbb2c55f08](https://github.com/pingdotgg/t3code/tree/680152e27b2a961686389ca69a1557cbb2c55f08).
 `upstream-inventory.json` records 198 registered RPC methods (182 from `WS_METHODS`
 and 16 from `ORCHESTRATION_V2_WS_METHODS`), three separate legacy constant-only
@@ -50,7 +60,21 @@ must each be mapped and verified before declaring parity.
   state rather than writing whole snapshots. Rejected commands also retain their
   idempotency receipts. Runtime ownership is exclusive per database, and provider
   events are scoped to a connection and run so stale replies cannot reopen a turn.
-- Queued turns capture their model, permission, and workspace configuration. Normal
+- Codex model discovery follows bounded catalog pagination and preserves wire IDs,
+  catalog IDs, advertised open-ended reasoning options, descriptions and defaults.
+  Native model selection saves per-model reasoning overrides; Model Default clears
+  only that model's override and captures a concrete advertised effort. The pinned
+  T3 policy prefers Medium for the exact Astra family when advertised. CLI Default
+  Model reads cwd-aware CLI configuration and its catalog on an owned metadata
+  connection without changing CLI config or sending a turn. It retains only the
+  selected model and effort, rechecks relevant configuration after catalog I/O,
+  and rejects stale source ownership before committing. Stop, streaming and draft
+  edits continue during that read. Header, queue, active-run and audit settings
+  remain distinct; omitted legacy effort stays explicitly unspecified. Normal
+  turns send the captured `effort` and detailed summaries. Steering has no model
+  or reasoning override. Full account/setup and other provider controls remain
+  unfinished.
+- Queued turns capture their model, reasoning effort, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
   hold it for explicit resumption. Database storage version 23 protects these fields
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
@@ -397,9 +421,9 @@ must each be mapped and verified before declaring parity.
 | Area | Implemented now | Remaining work for parity |
 | --- | --- | --- |
 | Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, logical repository/folder/physical grouping and overrides, explicit checkout choice for new conversations, restored conversation selection, physical/group renaming and collapse, persistent manual ordering and aggregated activity/thread-creation sorting, confirmed atomic physical/group removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, explicit settlement generations and Resume, settings | Snooze/automatic settlement, undo, scratch projects, import/migration |
-| Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt, reviewed same-workspace native fork and history-only rewind on the 0.163.x profile | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, broader history contracts and cross-workspace transfer, all tool events |
+| Codex | Handshake, bounded paginated model discovery, native advertised reasoning controls with per-model preferences and concrete cwd-aware CLI default selection, captured reasoning in turns/queues/history, start/resume, streaming, command/file approvals, user questions, interrupt, reviewed same-workspace native fork and history-only rewind on the 0.163.x profile | Full protocol coverage, auth/setup UI, multi-account/usage, remaining provider controls, broader history contracts and cross-workspace transfer, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
-| Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |
+| Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Copilot/Grok/Antigravity/Pi/Muse behavior |
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind, standalone restoration and combined provider-then-files intents with retained audit, explicit partial outcomes, inspect-only recovery and one-time latest-draft recall, legacy migration | Complete provider recovery, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, direct Codex/Claude same-turn steering with Queue/Steer preference and exact compatible queued promotion, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, restart/configuration-changing steering and other-provider delivery |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
@@ -407,7 +431,7 @@ must each be mapped and verified before declaring parity.
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup, bounded t3.json script discovery with explicit native selection and dedicated command tabs/cwd/environment/exit status, app-owned setup and settle jobs with shared output and separate command/background lifetime | Preview behavior, project-script settings/editing, durable terminal restart restoration, remote attachment/replay, search/settings, activity/idle detection and idle-tab closure, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |
-| Desktop integration | App bundle, commands/shortcuts, appearance | Notifications, deep links, updates, browser/preview, screenshot/import features, localization resources and locale QA, power/resources, accessibility QA |
+| Desktop integration | App bundle, commands/shortcuts, appearance | Default Liquid Glass across native chrome and controls, notifications, deep links, updates, browser/preview, screenshot/import features, localization resources and locale QA, power/resources, accessibility QA |
 | Distribution | Local development-identity or ad-hoc signed bundle | Release signing/notarization, installer/update validation, full notices |
 | Validation | Deterministic core/protocol/orchestration tests, CI workflow, native Codex/Claude turn and queue smoke checks | Upstream replay corpus, broader live tool/approval coverage, UI automation, full parity and failure audit |
 

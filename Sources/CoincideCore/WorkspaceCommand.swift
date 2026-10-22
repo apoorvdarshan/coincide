@@ -31,6 +31,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case agentConfiguration(id: String, value: JSONValue?)
     case resetAgentOptions
     case checkpointPolicy(RunCheckpointPolicy)
+    case codexModel(ProviderModel), codexReasoning(model: ProviderModel, effort: String?), codexDefaultModel(CodexDefaultModelSelection)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -254,7 +255,7 @@ struct WorkspaceDecision: Sendable {
             let allIDs = decision.snapshot.threads.compactMap(\.workspacePreparation).flatMap { $0.previousAttempts.map { $0.request.id } + [$0.id] }
             guard !allIDs.contains(request.id), !decision.snapshot.cloneAttemptIDs.contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is already in use.") }
             thread.workspacePreparation = .init(request: request, now: now, previousAttempts: history, reviewSetup: reviewSetup)
-            thread.workspacePath = request.destinationPath; thread.providerThreadID = nil; thread.runtimeID = nil
+            thread.workspacePath = request.destinationPath; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; thread.runtimeID = nil
             thread.runtimeRequests = []; thread.providerMetadata = nil; thread.providerActivity = nil
             for j in thread.queuedTurns.indices {
                 thread.queuedTurns[j].configuration.workspacePath = request.destinationPath
@@ -542,10 +543,15 @@ struct WorkspaceDecision: Sendable {
             case .editThread(_, let edit):
                 switch edit {
                 case .checkpointPolicy(let value): thread.checkpointPolicy = value
+                case .codexModel(let model): try thread.selectCodexModel(model)
+                case .codexReasoning(let model, let effort): try thread.selectCodexReasoning(model: model, effort: effort)
+                case .codexDefaultModel(let selection): try thread.selectCodexDefaultModel(selection)
                 case .title(let title):
                     let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !title.isEmpty else { throw WorkspaceCommandError("A conversation title cannot be empty.") }; thread.title = title
-                case .model(let model): thread.model = model
+                case .model(let model):
+                    if thread.model != model { thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil }
+                    thread.model = model
                 case .permission(let mode): thread.permission = mode
                 case .agentMode(let mode): thread.agentModeID = mode
                 case .agentConfig(let id, let value):
@@ -562,12 +568,12 @@ struct WorkspaceDecision: Sendable {
                 case .provider(let kind):
                     guard kind != .acp else { throw WorkspaceCommandError("Choose a configured ACP agent.") }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
-                    decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
+                    decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
                     guard decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Save this agent in Settings first.") }
                     decision.closeRuntimes.insert(thread.id); thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
-                    thread.model = ""; thread.providerThreadID = nil; thread.runtimeID = nil
+                    thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value
                 case .pinned(let value): thread.isPinned = value
@@ -603,7 +609,7 @@ struct WorkspaceDecision: Sendable {
                     }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Change the workspace before sending the first message.") }
                     guard decision.snapshot.workspaceReady(for: thread) else { throw WorkspaceCommandError("Wait for the clone before changing workspaces.") }
-                    thread.workspacePath = path; thread.providerThreadID = nil; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
+                    thread.workspacePath = path; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
                 }
             case .submit(_, let text):
                 let text = text.trimmingCharacters(in: .whitespacesAndNewlines)

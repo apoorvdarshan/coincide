@@ -143,7 +143,7 @@ exact-head hosted job runs; compilation and fixture tests alone are not GUI proo
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all thirteen tests to pass with zero
+gate requires all fourteen tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 
@@ -199,3 +199,19 @@ and Git HEAD remain unchanged. The peer has no real provider or network fallback
 and the same staged wrapper preflight applies without a bypass. SQLite is opened
 read-only solely beneath this test's private root; no app launch hooks seed the
 projection. Its runtime outcome remains pending until hosted execution.
+
+The fourteenth workflow exercises the native provider/model and nested Reasoning
+menus without sending any input. A dedicated offline peer exposes only
+initialize, visible model/list, and read-only cwd config/read; it rejects all
+thread/turn and configuration-write methods. Refresh Models must expose exact
+wire IDs and advertised effort IDs, preserve an override separately for each
+model, apply Astra's reviewed Medium default, and clear only the selected
+model's override through Model Default. An atomic private fixture catalog update
+removes a future effort from the same wire model and changes its default; the
+native refreshed menu must reflect both. CLI Default Model must resolve a
+different cwd-configured model and effort, rather than the catalog's default
+flag. The read-only private SQLite audit, latest unsent draft, README and Git HEAD
+must survive relaunch unchanged, with no repeat metadata/default read and zero
+provider-input RPCs. The existing staged wrapper preflight remains mandatory.
+This is offline native integration; its actual GUI result remains pending until
+the exact-head hosted run executes the fourteenth workflow.

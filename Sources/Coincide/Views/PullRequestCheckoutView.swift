@@ -210,6 +210,9 @@ private struct PullRequestCheckoutReviewContent: View {
             LabeledContent("Conversation", value: review.title)
             LabeledContent("Provider", value: RunHistoryPresentation.provider(review.targetConfiguration))
             LabeledContent("Model", value: RunHistoryPresentation.model(review.targetConfiguration))
+            if review.targetConfiguration.provider == .codex, let effort = review.targetConfiguration.reasoningEffort {
+                LabeledContent("Reasoning", value: ReasoningEffortPresentation.title(effort))
+            }
             LabeledContent("Permissions") { Text(LocalizedStringKey(review.targetConfiguration.permission.title)) }
             if RunHistoryPresentation.hasSavedAgentOptions(review.targetConfiguration) {
                 Text("Saved agent options").font(.caption).foregroundStyle(.secondary)

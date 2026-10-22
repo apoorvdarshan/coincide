@@ -8,6 +8,125 @@ import XCTest
 final class CoincideDesktopUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
+    @MainActor func testNativeModelReasoningMenusResolveAdvertisedAndCLIDefaultsWithoutSending() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "models")
+        let app = fixture.app, root = fixture.root
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
+        let project = root.appendingPathComponent("Native Models", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let document = project.appendingPathComponent("README.md"), original = Data("Model selection must leave files unchanged\n".utf8)
+        try original.write(to: document)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Native model fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "models-git-\(arguments[0])")
+        }
+        let originalHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "models-original-head")
+        let state = root.appendingPathComponent("models-peer.json"), wire = root.appendingPathComponent("models-peer-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 1]).write(to: state, options: .atomic)
+        let bundled = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_models_ui", withExtension: "py"))
+        let peer = root.appendingPathComponent("codex_models_ui.py"); try Data(contentsOf: bundled).write(to: peer)
+        let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
+        for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        let executable = bin.appendingPathComponent("codex")
+        try ("#!/bin/sh\nexec " + [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ") + "\n")
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"; app.launchEnvironment["CODEX_HOME"] = home.path
+        addTeardownBlock { @MainActor [weak self] in
+            if let data = try? Data(contentsOf: wire), let text = String(data: data, encoding: .utf8) {
+                let audit = XCTAttachment(string: text); audit.name = "models-offline-metadata-wire"; audit.lifetime = .keepAlways; self?.add(audit)
+            }
+        }
+        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: "models")
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let threadID = try selectedThreadIdentifier(in: app), draft = "Keep this unsent discussion while choosing model reasoning"
+        composer.click(); composer.typeText(draft); XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        openNativeProviderMenu(in: app)
+        let refresh = app.menuItems["Refresh Models"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5)); XCTAssertTrue(refresh.isEnabled); refresh.click()
+        try chooseNativeProviderModel("gpt-6-astra", in: app)
+        _ = try waitForNativeModel(root, model: "gpt-6-astra", effort: "medium")
+        try chooseNativeReasoning("high", in: app)
+        _ = try waitForNativeModel(root, model: "gpt-6-astra", effort: "high")
+        try chooseNativeProviderModel("future-native-model", in: app)
+        _ = try waitForNativeModel(root, model: "future-native-model", effort: "light")
+        try chooseNativeReasoning("experimental-effort", in: app)
+        _ = try waitForNativeModel(root, model: "future-native-model", effort: "experimental-effort")
+        try chooseNativeProviderModel("gpt-6-astra", in: app)
+        _ = try waitForNativeModel(root, model: "gpt-6-astra", effort: "high")
+        try chooseNativeReasoning(nil, in: app)
+        let reset = try waitForNativeModel(root, model: "gpt-6-astra", effort: "medium")
+        XCTAssertEqual((reset["codexReasoningPreferences"] as? [String: String]), ["future-native-model": "experimental-effort"])
+        try chooseNativeProviderModel("future-native-model", in: app)
+        _ = try waitForNativeModel(root, model: "future-native-model", effort: "experimental-effort")
+        XCTAssertEqual(composer.value as? String, draft)
+        capture(app, name: "models-per-model-effort-restored-without-sending")
+
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 2]).write(to: state, options: .atomic)
+        openNativeProviderMenu(in: app); app.menuItems["Refresh Models"].click()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Offline Future Refreshed", "Offline Future Refreshed")).firstMatch.waitForExistence(timeout: 10), "The current model label must reflect the refreshed catalog before opening its new effort menu.")
+        openNativeProviderMenu(in: app)
+        let reasoning = app.menuItems["codex-reasoning-menu"]
+        XCTAssertTrue(reasoning.waitForExistence(timeout: 10)); reasoning.click()
+        XCTAssertFalse(app.menuItems["codex-reasoning-experimental-effort"].exists, "Refresh must remove an effort no longer advertised for the same wire model.")
+        let currentDefault = app.menuItems["codex-reasoning-default"]
+        XCTAssertTrue(currentDefault.waitForExistence(timeout: 5)); XCTAssertTrue(currentDefault.isEnabled); currentDefault.click()
+        _ = try waitForNativeModel(root, model: "future-native-model", effort: "deep")
+        openNativeProviderMenu(in: app)
+        let cliDefault = app.menuItems["codex-model-default"]
+        XCTAssertTrue(cliDefault.waitForExistence(timeout: 5)); XCTAssertTrue(cliDefault.isEnabled); cliDefault.click()
+        let selected = try waitForNativeModel(root, model: "future-cwd-model", effort: "deep")
+        XCTAssertEqual(selected["codexModelSelectionSource"] as? String, "cliDefault")
+        XCTAssertTrue((selected["codexReasoningPreferences"] as? [String: String] ?? [:]).isEmpty)
+        XCTAssertTrue((selected["messages"] as? [[String: Any]] ?? []).isEmpty)
+        XCTAssertTrue((selected["queuedTurns"] as? [[String: Any]] ?? []).isEmpty)
+        XCTAssertTrue((selected["runHistory"] as? [[String: Any]] ?? []).isEmpty)
+        XCTAssertEqual(composer.value as? String, draft)
+        let beforeRestart = try historyWire(wire)
+        XCTAssertTrue(beforeRestart.filter { $0["method"] as? String == "config/read" }.count >= 2, "CLI defaults require a stable cwd-config observation before and after the catalog read.")
+        XCTAssertFalse(beforeRestart.contains { ($0["method"] as? String ?? "").hasPrefix("turn/") || ($0["method"] as? String ?? "").hasPrefix("thread/") })
+        capture(app, name: "models-cwd-cli-default-preserves-unsent-draft")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        let restored = try waitForNativeModel(root, model: "future-cwd-model", effort: "deep")
+        XCTAssertEqual(restored["codexModelSelectionSource"] as? String, "cliDefault")
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: historyWire(wire), options: .sortedKeys),
+                       try JSONSerialization.data(withJSONObject: beforeRestart, options: .sortedKeys), "Relaunch must preserve concrete defaults without rereading config or sending input.")
+        XCTAssertEqual(try Data(contentsOf: document), original)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "models-reopened-head"), originalHead)
+        capture(app, name: "models-reopened-concrete-reasoning-and-draft")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
+    @MainActor private func openNativeProviderMenu(in app: XCUIApplication) {
+        let menu = app.descendants(matching: .any).matching(identifier: "provider-model-menu").firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10)); XCTAssertTrue(menu.isEnabled && menu.isHittable); menu.click()
+    }
+    @MainActor private func chooseNativeProviderModel(_ model: String, in app: XCUIApplication) throws {
+        openNativeProviderMenu(in: app)
+        let item = app.menuItems["provider-model-" + model]
+        XCTAssertTrue(item.waitForExistence(timeout: 10)); XCTAssertTrue(item.isEnabled && item.isHittable); item.click()
+    }
+    @MainActor private func chooseNativeReasoning(_ effort: String?, in app: XCUIApplication) throws {
+        openNativeProviderMenu(in: app)
+        let menu = app.menuItems["codex-reasoning-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5)); menu.click()
+        let item = app.menuItems[effort.map { "codex-reasoning-" + $0 } ?? "codex-reasoning-default"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5)); XCTAssertTrue(item.isEnabled && item.isHittable); item.click()
+    }
+    @MainActor private func waitForNativeModel(_ root: URL, model: String, effort: String) throws -> [String: Any] {
+        let snapshot = try waitForPrivateWorkspace(root, timeout: 15) { snapshot in
+            guard let thread = (snapshot["threads"] as? [[String: Any]])?.first else { return false }
+            return thread["model"] as? String == model && thread["reasoningEffort"] as? String == effort
+        }
+        return try XCTUnwrap((snapshot["threads"] as? [[String: Any]])?.first)
+    }
+
     @MainActor func testNativeSteeringTargetsRunningTurnAndPreservesReceiptAcrossRestart() throws {
         let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "steering")
         let app = fixture.app, root = fixture.root

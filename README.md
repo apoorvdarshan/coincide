@@ -34,6 +34,13 @@ Push use your existing Git credentials. A folder without Git can initialize a
 repository; staging and unstaging also work before its first commit. A new thread
 can choose a Git worktree before its first message.
 
+Use **Refresh Models** in the header menu to load Codex's advertised models and
+reasoning options. Reasoning preferences are saved separately for each model;
+**Model Default** clears that model's override. **CLI Default Model** reads the
+current checkout's CLI configuration and captures its concrete default model,
+keeping any saved reasoning preference for it. These choices apply to future
+turns. Active and queued turns retain the settings they already captured.
+
 While a turn runs, Return queues the next message by default. Command-Return uses
 the alternate **Steer** action when the live provider supports it. The delivery
 menu offers both actions, and Settings changes which one is the default. Steer

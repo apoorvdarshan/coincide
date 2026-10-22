@@ -8,6 +8,62 @@ public struct WorkspaceUpdate: Sendable {
 }
 
 extension WorkspaceEngine {
+    private struct ReviewedCodexDefault: Sendable {
+        let selection: CodexDefaultModelSelection
+        let incarnation: UUID
+        let projectID: UUID
+        let configuration: ProviderConfiguration
+        let preferences: [String: String]?
+        let selectionSource: CodexModelSelectionSource?
+    }
+    public func reviewCodexDefaultModel(threadID: UUID) async throws -> CodexDefaultModelSelection {
+        _ = try await load(); try Task.checkCancellation()
+        if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), thread.provider == .codex,
+              !thread.isArchived, let incarnation = threadIncarnations[threadID], revision.snapshot.workspaceReady(for: thread),
+              !revision.snapshot.isConversationHistoryLocked(threadID: threadID), !revision.snapshot.isCheckpointRestoreLocked(threadID: threadID),
+              !revision.snapshot.isPullRequestCreationLocked(threadID: threadID), !revision.snapshot.isPullRequestCheckoutLocked(threadID: threadID) else {
+            throw WorkspaceCommandError("Choose an available Codex conversation before reading its CLI defaults.")
+        }
+        let configuration = ProviderConfiguration(thread: thread)
+        let observed = try await readHistory(thread: thread, forceOwnedMetadata: true) { try await $0.codexDefaultModelSelection() }
+        try observed.validate()
+        let physicalWorkspace = URL(fileURLWithPath: thread.workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
+        guard URL(fileURLWithPath: observed.workspacePath).standardizedFileURL.resolvingSymlinksInPath().path == physicalWorkspace else {
+            throw WorkspaceCommandError("The CLI default response belongs to another checkout.")
+        }
+        // Bind a physical observation back to the exact registered spelling, including
+        // a valid /tmp or user-selected symlink alias. The reducer performs no I/O.
+        let selection = try CodexDefaultModelSelection(workspacePath: thread.workspacePath, model: observed.model,
+            reasoningEffort: observed.reasoningEffort, catalogModel: observed.catalogModel)
+        let reviewed = ReviewedCodexDefault(selection: selection, incarnation: incarnation, projectID: thread.projectID,
+            configuration: configuration, preferences: thread.codexReasoningPreferences, selectionSource: thread.codexModelSelectionSource)
+        guard selection.workspacePath == thread.workspacePath, ownsCodexDefaultSource(reviewed, threadID: threadID, snapshot: revision.snapshot) else {
+            throw WorkspaceCommandError("This conversation changed while reading CLI defaults. Choose CLI Default Model again.")
+        }
+        codexDefaultReviews[threadID] = reviewed
+        return selection
+    }
+    private func ownsCodexDefaultSource(_ reviewed: ReviewedCodexDefault, threadID: UUID, snapshot: WorkspaceSnapshot) -> Bool {
+        guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[threadID] == reviewed.incarnation,
+              let thread = snapshot.threads.first(where: { $0.id == threadID }), !thread.isArchived,
+              thread.provider == .codex, thread.projectID == reviewed.projectID,
+              thread.provider == reviewed.configuration.provider, thread.workspacePath == reviewed.configuration.workspacePath,
+              thread.model == reviewed.configuration.model, thread.reasoningEffort == reviewed.configuration.reasoningEffort,
+              thread.codexReasoningPreferences == reviewed.preferences, thread.codexModelSelectionSource == reviewed.selectionSource else { return false }
+        return true
+    }
+    private func validateCodexDefaultCommand(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
+        guard case .client(.editThread(let threadID, .codexDefaultModel(let selection))) = command else { return }
+        guard let reviewed = codexDefaultReviews[threadID], reviewed.selection == selection,
+              ownsCodexDefaultSource(reviewed, threadID: threadID, snapshot: snapshot) else {
+            throw WorkspaceCommandError("The reviewed CLI defaults or conversation changed. Choose CLI Default Model again.")
+        }
+    }
+}
+
+extension WorkspaceEngine {
     public func promptSteeringAvailability(threadID: UUID, queuedID: UUID? = nil) async -> PromptSteeringAvailability {
         do { _ = try await load() } catch { return .init(unavailableReason: "The workspace is unavailable.") }
         guard !closing, !stoppingEffects, fatalError == nil else { return .init(unavailableReason: "The workspace is closing.") }
@@ -103,7 +159,7 @@ extension WorkspaceEngine {
             try Task.checkCancellation() // Still proven unsent; the durable marker is conservative after a crash.
             let configuration = operation.configuration
             thread.provider = configuration.provider; thread.workspacePath = configuration.workspacePath
-            thread.model = configuration.model; thread.permission = configuration.permission
+            thread.model = configuration.model; thread.reasoningEffort = configuration.reasoningEffort; thread.permission = configuration.permission
             thread.agentModeID = configuration.agentModeID; thread.agentConfigValues = configuration.agentConfigValues
             thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent
             thread.providerThreadID = operation.nativeThreadID
@@ -587,15 +643,21 @@ extension WorkspaceEngine {
         }
     }
 
-    private func readHistory<Value: Sendable>(thread: CodingThread, operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
+    private func readHistory<Value: Sendable>(thread: CodingThread, forceOwnedMetadata: Bool = false,
+                                              operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
         try Task.checkCancellation()
         guard !closing, !stoppingEffects, fatalError == nil, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
         let token = UUID(), metadataID: UUID?, session: any ProviderSession
-        if let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
+        if !forceOwnedMetadata, let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
            runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent {
             metadataID = nil; session = runtime.session
         } else {
-            let id = UUID(); metadataID = id; session = try factory(thread)
+            var configured = thread
+            if forceOwnedMetadata {
+                configured.activeRun = nil; configured.runtimeID = nil; configured.runtimeRequests = []
+                configured.providerActivity = nil; configured.state = .idle
+            }
+            let id = UUID(); metadataID = id; session = try factory(configured)
             metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: thread.id, projectID: thread.projectID, configuration: .init(thread: thread))
         }
         let task = Task { try await operation(session) }
@@ -603,7 +665,12 @@ extension WorkspaceEngine {
             drain: Task { _ = try? await task.value }, cancel: { task.cancel() })
         defer { historyReads.removeValue(forKey: token) }
         do {
-            let value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            let value = try await withTaskCancellationHandler { try await task.value } onCancel: {
+                task.cancel()
+                if let metadataID {
+                    Task { [weak self] in await self?.cancelOwnedHistoryRead(metadataID) }
+                }
+            }
             try Task.checkCancellation()
             guard !task.isCancelled, !closing, !stoppingEffects, fatalError == nil, threadIncarnations[thread.id] == incarnation else { throw CancellationError() }
             if let metadataID {
@@ -622,6 +689,12 @@ extension WorkspaceEngine {
             }
             throw error
         }
+    }
+
+    private func cancelOwnedHistoryRead(_ id: UUID) {
+        // Reused active runtimes have no metadata ID and never enter this path.
+        // Register one idempotent close before waiting for a cancellation-resistant read.
+        _ = beginMetadataClose(id)
     }
 
     private static func readReviewedNativeHistory(session: any ProviderSession, thread: CodingThread, runID: UUID, kind: ConversationHistoryKind) async throws -> ReviewedNativeHistory {
@@ -693,7 +766,7 @@ extension WorkspaceEngine {
                 guard let project = revision.snapshot.projects.first(where: { $0.id == thread.projectID }) else { return .cancelled }
                 configured = CodingThread(project: project, model: review.targetConfiguration.model)
                 configured.id = review.targetThreadID!; configured.workspacePath = review.targetConfiguration.workspacePath
-                configured.provider = review.targetConfiguration.provider; configured.permission = review.targetConfiguration.permission
+                configured.provider = review.targetConfiguration.provider; configured.reasoningEffort = review.targetConfiguration.reasoningEffort; configured.permission = review.targetConfiguration.permission
                 configured.acpAgent = review.targetConfiguration.acpAgent; configured.agentModeID = review.targetConfiguration.agentModeID
                 configured.agentConfigValues = review.targetConfiguration.agentConfigValues; configured.agentConfiguration = review.targetConfiguration.agentConfiguration
             }
@@ -1255,6 +1328,7 @@ public actor WorkspaceEngine {
     }
     private var worktreeInspections: [UUID: WorktreeInspection] = [:]
     private var threadIncarnations: [UUID: UUID] = [:]
+    private var codexDefaultReviews: [UUID: ReviewedCodexDefault] = [:]
     private let ownership: WorkspaceRuntimeLock
     private let factory: ProviderFactory
     private let cloneFactory: CloneFactory
@@ -1463,6 +1537,7 @@ public actor WorkspaceEngine {
                 if let fatalError { throw CoincideError(fatalError) }
                 let decision: WorkspaceDecision
                 do {
+                    try validateCodexDefaultCommand(envelope.command, snapshot: base.snapshot)
                     if case .promptSteeringAccepted(let operation) = envelope.command,
                        threadIncarnations[operation.threadID] != operation.sourceIncarnation {
                         throw WorkspaceCommandError("The active provider turn changed before steering was accepted.")
@@ -1524,6 +1599,9 @@ public actor WorkspaceEngine {
                     }
                     if let attemptID = decision.cancelWorktreeAttempt {
                         for (effectID, request) in effectRequests where request.worktreeAttemptID == attemptID { effects[effectID]?.cancel() }
+                    }
+                    codexDefaultReviews = codexDefaultReviews.filter { id, reviewed in
+                        decision.snapshot.threads.contains { $0.id == id && $0.projectID == reviewed.projectID }
                     }
                     beginDecisionCleanup(decision, previous: base.snapshot, removedEffects: outcome.removedEffects)
                     committed = true
@@ -1921,7 +1999,7 @@ public actor WorkspaceEngine {
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false else { return .cancelled }
             var configured = thread
             configured.provider = configuration.provider; configured.workspacePath = configuration.workspacePath
-            configured.providerThreadID = configuration.nativeThreadID; configured.model = configuration.model; configured.permission = configuration.permission
+            configured.providerThreadID = configuration.nativeThreadID; configured.model = configuration.model; configured.reasoningEffort = configuration.reasoningEffort; configured.permission = configuration.permission
             configured.acpAgent = configuration.acpAgent; configured.agentModeID = configuration.agentModeID
             configured.agentConfigValues = configuration.agentConfigValues
             configured.agentConfiguration = configuration.agentConfiguration
@@ -2123,7 +2201,7 @@ public actor WorkspaceEngine {
         for read in historyReads.values { read.cancel() }
         historyReviews = [:]
         checkpointRestoreReviews = [:]
-        pullRequestCreationReviews = [:]; pullRequestCheckoutReviews = [:]
+        pullRequestCreationReviews = [:]; pullRequestCheckoutReviews = [:]; codexDefaultReviews = [:]
         for read in pullRequestReads.values { read.cancel() }
         let inspections = worktreeInspections; worktreeInspections = [:]
         for inspection in inspections.values {
@@ -2214,7 +2292,7 @@ public actor WorkspaceEngine {
         if loaded, fatalError == nil { _ = try? await enqueue(.pauseQueues) }
         closing = true
         let pullRequestReadJobs = Array(pullRequestReads.values); for read in pullRequestReadJobs { read.cancel() }
-        pullRequestCreationReviews = [:]; pullRequestCheckoutReviews = [:]
+        pullRequestCreationReviews = [:]; pullRequestCheckoutReviews = [:]; codexDefaultReviews = [:]
         let history = Array(historyReads.values); historyReads = [:]
         for read in history { read.cancel() }
         let unusedHistoryReviews = Array(historyReviews.values)

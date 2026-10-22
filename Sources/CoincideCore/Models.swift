@@ -76,6 +76,9 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var draft: String
     public var draftAttachments: [ChatAttachment]
     public var model: String
+    public var reasoningEffort: String?
+    public var codexReasoningPreferences: [String: String]?
+    public var codexModelSelectionSource: CodexModelSelectionSource?
     public var permission: PermissionMode
     public var state: ThreadState
     public var messages: [ChatMessage]
@@ -102,7 +105,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
         case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
-        case draftAttachments
+        case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
     }
@@ -125,6 +128,9 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         draft = try values.decodeIfPresent(String.self, forKey: .draft) ?? ""
         draftAttachments = try values.decodeIfPresent([ChatAttachment].self, forKey: .draftAttachments) ?? []
         model = try values.decode(String.self, forKey: .model)
+        reasoningEffort = try values.decodeIfPresent(String.self, forKey: .reasoningEffort)
+        codexReasoningPreferences = try values.decodeIfPresent([String: String].self, forKey: .codexReasoningPreferences)
+        codexModelSelectionSource = try values.decodeIfPresent(CodexModelSelectionSource.self, forKey: .codexModelSelectionSource)
         permission = try values.decode(PermissionMode.self, forKey: .permission)
         state = try values.decode(ThreadState.self, forKey: .state)
         messages = try values.decode([ChatMessage].self, forKey: .messages)
@@ -279,12 +285,6 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             if !threads[i].queuedTurns.isEmpty { threads[i].queuePaused = true }
         }
     }
-}
-
-public struct ProviderModel: Identifiable, Sendable, Equatable {
-    public var id: String
-    public var name: String
-    public init(id: String, name: String) { self.id = id; self.name = name }
 }
 
 public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {

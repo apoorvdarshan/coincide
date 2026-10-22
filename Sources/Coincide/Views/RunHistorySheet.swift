@@ -196,6 +196,9 @@ private struct RunHistoryRow: View {
                     LabeledContent("Origin", value: RunHistoryPresentation.origin(record.origin))
                     LabeledContent("Provider", value: RunHistoryPresentation.provider(record.configuration))
                     LabeledContent("Model", value: RunHistoryPresentation.model(record.configuration))
+                    if record.configuration.provider == .codex, let effort = record.configuration.reasoningEffort {
+                        LabeledContent("Reasoning", value: ReasoningEffortPresentation.title(effort))
+                    }
                     LabeledContent("Permissions") { Text(LocalizedStringKey(record.configuration.permission.title)) }
                     if let mode = record.configuration.agentModeID, !mode.isEmpty {
                         LabeledContent("Agent mode", value: mode)

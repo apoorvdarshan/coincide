@@ -84,6 +84,7 @@ extension CodingThread {
               Set(records.map(\.id)).isDisjoint(with: Set(queuedTurns.map(\.id))),
               records.filter({ !$0.status.isTerminal }).count <= 1 else { throw CoincideError("The conversation has invalid or duplicate run history.") }
         for record in records {
+            try CodexReasoningValidation.configuration(record.configuration)
             guard record.messageAttributionVersion == nil || record.messageAttributionVersion == 1 else { throw CoincideError("This run uses unsupported transcript attribution.") }
             if record.messageAttributionVersion == 1, record.origin == .user {
                 guard let message = messages.first(where: { $0.id == record.userMessageID }),

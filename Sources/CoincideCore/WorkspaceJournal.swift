@@ -118,6 +118,7 @@ public enum WorkspaceJournal {
         let settlementIDs = Set(snapshot.threads.compactMap { $0.settlement?.id })
         guard settlementIDs.count == snapshot.threads.filter({ $0.settlement != nil }).count, settlementIDs.isDisjoint(with: cloneIDs) else { throw CoincideError("Settlement generations must have unique identities.") }
         for thread in snapshot.threads {
+            try CodexReasoningValidation.thread(thread)
             try thread.validateRunHistory()
             for record in thread.runHistory ?? [] {
                 guard let checkpoints = record.checkpoints else { continue }
@@ -153,7 +154,7 @@ public enum WorkspaceJournal {
             if let agent = thread.acpAgent { try agent.validate() }
             if thread.provider == .acp, thread.acpAgent == nil { throw CoincideError("This conversation has no ACP agent configuration.") }
             try AttachmentLimits.validate(thread.draftAttachments)
-            for queued in thread.queuedTurns { try AttachmentLimits.validate(queued.attachments ?? []) }
+            for queued in thread.queuedTurns { try AttachmentLimits.validate(queued.attachments ?? []); try CodexReasoningValidation.configuration(queued.configuration) }
             for message in thread.messages { try AttachmentLimits.validate(message.attachments ?? []) }
         }
         guard checkpointIDs.isDisjoint(with: preparationIDs), checkpointIDs.isDisjoint(with: scriptIDs) else { throw CoincideError("Run checkpoint ownership overlaps another operation.") }

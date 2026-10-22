@@ -77,7 +77,7 @@ func fixtureConnection(_ mode: String) throws -> JSONRPCConnection {
     let cwd = FileManager.default.temporaryDirectory
     let session = try CodexSession(executable: URL(fileURLWithPath: "/usr/bin/python3"), cwd: cwd, arguments: [fixture.path, "codex"])
     let models = try await session.models()
-    #expect(models == [ProviderModel(id: "fixture-model", name: "Fixture Model")])
+    #expect(models == [ProviderModel(id: "fixture-model", name: "Fixture Model", catalogID: "fixture")])
     let observer = Task {
         var text = "", approved = false, completed = false
         for await event in session.events {
@@ -106,6 +106,13 @@ func installedCodexHandshakeAndModelDiscovery() async throws {
         let models = try await session.models()
         #expect(!models.isEmpty)
         #expect(models.allSatisfy { !$0.id.isEmpty })
+        let defaults = try await session.codexDefaultModelSelection()
+        try defaults.validate()
+        #expect(defaults.workspacePath == FileManager.default.temporaryDirectory.standardizedFileURL.resolvingSymlinksInPath().path)
+        if let row = defaults.catalogModel, !row.reasoningEfforts.isEmpty {
+            #expect(row.id == defaults.model)
+            #expect(row.reasoningEfforts.contains { $0.id == defaults.reasoningEffort })
+        }
         await session.close()
     } catch { await session.close(); throw error }
 }

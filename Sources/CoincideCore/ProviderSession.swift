@@ -32,6 +32,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
 public protocol ProviderSession: Actor {
     nonisolated var events: AsyncStream<ProviderEvent> { get }
     func models() async throws -> [ProviderModel]
+    func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
     func interrupt() async throws
@@ -49,6 +50,9 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection {
+        throw CoincideError("This provider does not expose Codex model defaults.")
+    }
     public func steeringCapabilities() async -> ProviderSteeringCapabilities { .init(unavailableReason: ProviderSteeringError(.unsupported).localizedDescription) }
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt { throw ProviderSteeringError(.unsupported) }
     public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities { throw ProviderHistoryError(.unsupported) }
