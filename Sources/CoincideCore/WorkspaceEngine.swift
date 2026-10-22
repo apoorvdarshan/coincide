@@ -7,6 +7,45 @@ public struct WorkspaceUpdate: Sendable {
 }
 
 extension WorkspaceEngine {
+    @discardableResult public func retryPostRunCheckpoint(threadID: UUID, runID: UUID, expectedAttemptID: UUID) async throws -> WorkspaceCommandReceipt {
+        try await dispatch(.retryPostRunCheckpoint(threadID: threadID, runID: runID, expectedAttemptID: expectedAttemptID))
+    }
+    @discardableResult public func continueAfterPostRunCheckpoint(threadID: UUID, runID: UUID, expectedAttemptID: UUID) async throws -> WorkspaceCommandReceipt {
+        try await dispatch(.continueAfterPostRunCheckpoint(threadID: threadID, runID: runID, expectedAttemptID: expectedAttemptID))
+    }
+    public func drainCheckpointInspections() async {
+        while true {
+            let jobs = checkpointReads.values.filter(\.inspection).map(\.task)
+            guard !jobs.isEmpty else { return }; for job in jobs { await job.value }
+        }
+    }
+    public func runCheckpointDiff(threadID: UUID, runID: UUID, maxBytes: Int = 1_048_576) async throws -> GitCheckpointDiff {
+        _ = try await load()
+        if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), let incarnation = threadIncarnations[threadID],
+              let checkpoints = thread.runHistory?.first(where: { $0.id == runID })?.checkpoints,
+              let baseline = checkpoints.baseline.receipt, let post = checkpoints.postRun?.receipt,
+              checkpoints.baseline.phase == .ready, checkpoints.postRun?.phase == .ready,
+              baseline.plan.workspacePath == thread.workspacePath, post.plan.workspacePath == thread.workspacePath,
+              revision.snapshot.workspaceReady(for: thread), !closing, !stoppingEffects else { throw GitCheckpointError(.incomplete) }
+        let session = try checkpointFactory(URL(fileURLWithPath: thread.workspacePath)), token = UUID()
+        let task = Task { try await session.diff(from: baseline, to: post, paths: nil, ignoreWhitespace: false, maxBytes: maxBytes) }
+        let drain = Task<Void, Never> { _ = try? await task.value }
+        checkpointReads[token] = .init(threadID: threadID, projectID: thread.projectID, inspection: false, task: drain, cancel: { task.cancel() })
+        defer { checkpointReads.removeValue(forKey: token) }
+        return try await withTaskCancellationHandler {
+            do {
+                let value = try await task.value
+                if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
+                guard checkpointDiffOwner(threadID: threadID, runID: runID, path: thread.workspacePath, incarnation: incarnation, baseline: baseline, post: post) else { throw CancellationError() }
+                try Task.checkCancellation(); return value
+            } catch {
+                if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
+                guard checkpointDiffOwner(threadID: threadID, runID: runID, path: thread.workspacePath, incarnation: incarnation, baseline: baseline, post: post) else { throw CancellationError() }
+                throw error
+            }
+        } onCancel: { task.cancel() }
+    }
     @discardableResult public func settleThread(threadID: UUID, expectedWorkspacePath: String, reviewScript: Bool = false) async throws -> WorkspaceCommandReceipt {
         try await dispatch(.settleThread(threadID: threadID, expectedWorkspacePath: expectedWorkspacePath, reviewScript: reviewScript))
     }
@@ -216,6 +255,156 @@ extension WorkspaceEngine {
     }
 }
 
+private extension WorkspaceEngine {
+    func checkpointProviderReleased(threadID: UUID, runID: UUID) -> Bool {
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), thread.activeRun?.id == runID,
+              thread.activeRun?.stopRequested == false, !thread.isArchived else { return false }
+        return thread.runHistory?.first(where: { $0.id == runID })?.checkpoints?.providerReleased ?? true
+    }
+    func checkpointDiffOwner(threadID: UUID, runID: UUID, path: String, incarnation: UUID,
+                             baseline: GitCheckpointReceipt, post: GitCheckpointReceipt) -> Bool {
+        guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[threadID] == incarnation,
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.workspacePath == path }),
+              revision.snapshot.workspaceReady(for: thread), let checkpoints = thread.runHistory?.first(where: { $0.id == runID })?.checkpoints else { return false }
+        return checkpoints.baseline.receipt == baseline && checkpoints.postRun?.receipt == post
+    }
+    func ownsCheckpoint(threadID: UUID, runID: UUID, stage: RunCheckpointStage, attemptID: UUID,
+                        path: String, incarnation: UUID, recovery: Bool = false) -> Bool {
+        guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[threadID] == incarnation,
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.workspacePath == path }),
+              revision.snapshot.workspaceReady(for: thread), recovery || !thread.isArchived,
+              let attempt = thread.runCheckpoint(runID: runID, stage: stage), attempt.id == attemptID, attempt.workspacePath == path else { return false }
+        if recovery { return attempt.phase == .interrupted && attempt.plan != nil }
+        guard attempt.phase.isRunning else { return false }
+        if stage == .baseline { return thread.activeRun?.id == runID && thread.activeRun?.stopRequested == false }
+        return thread.heldPostRunCheckpoint?.runID == runID && thread.heldPostRunCheckpoint?.attempt.id == attemptID
+    }
+    func ownsCheckpointEvent(_ command: EngineCommand) -> Bool {
+        switch command {
+        case .runCheckpointEffectResult(let request, _, let incarnation):
+            guard let threadID = request.threadID, let owner = request.checkpointOwner,
+                  let path = revision.snapshot.threads.first(where: { $0.id == threadID })?.runCheckpoint(runID: owner.runID, stage: owner.stage)?.workspacePath else { return false }
+            return ownsCheckpoint(threadID: threadID, runID: owner.runID, stage: owner.stage, attemptID: owner.attemptID, path: path, incarnation: incarnation)
+        case .runCheckpointRecovered(let thread, let run, let stage, let attempt, let path, let incarnation, _):
+            return ownsCheckpoint(threadID: thread, runID: run, stage: stage, attemptID: attempt, path: path, incarnation: incarnation, recovery: true)
+        default: return true
+        }
+    }
+    func awaitCheckpointDrains(threadID: UUID, excludingAttempt: UUID? = nil) async {
+        while true {
+            let tasks = checkpointDrains.values.filter { $0.threadID == threadID && $0.attemptID != excludingAttempt }.map(\.task)
+            guard !tasks.isEmpty else { return }; for task in tasks { await task.value }
+        }
+    }
+    func performRunCheckpoint(_ request: WorkspaceEffectRequest) async throws -> EffectResult {
+        guard let threadID = request.threadID, let owner = request.checkpointOwner, let incarnation = threadIncarnations[threadID],
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              let attempt = thread.runCheckpoint(runID: owner.runID, stage: owner.stage),
+              ownsCheckpoint(threadID: threadID, runID: owner.runID, stage: owner.stage, attemptID: owner.attemptID, path: attempt.workspacePath, incarnation: incarnation) else { return .cancelled }
+        await awaitCheckpointDrains(threadID: threadID, excludingAttempt: owner.attemptID)
+        try Task.checkCancellation()
+        guard ownsCheckpoint(threadID: threadID, runID: owner.runID, stage: owner.stage, attemptID: owner.attemptID, path: attempt.workspacePath, incarnation: incarnation) else { throw CancellationError() }
+        // Interrupt/error teardown can already be detached when the post boundary is committed.
+        // Join only this thread's existing closes; process I/O never runs on the command inbox.
+        let prerequisites = cleanupTasks.values.filter { $0.threadIDs.contains(threadID) }.map(\.task)
+        for task in prerequisites { await task.value }
+        if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
+        guard ownsCheckpoint(threadID: threadID, runID: owner.runID, stage: owner.stage, attemptID: owner.attemptID, path: attempt.workspacePath, incarnation: incarnation) else { throw CancellationError() }
+        try Task.checkCancellation()
+        let session = try checkpointFactory(URL(fileURLWithPath: attempt.workspacePath))
+        do {
+            let result: EffectResult
+            switch request {
+            case .resolveRunCheckpoint:
+                guard attempt.phase == .resolving, attempt.plan == nil else { return .cancelled }
+                let plan = try await session.prepare(id: attempt.id)
+                try plan.validate()
+                guard plan.id == attempt.id, plan.workspacePath == attempt.workspacePath else { throw GitCheckpointError(.invalidPlan) }
+                result = .checkpointResolved(plan)
+            case .captureRunCheckpoint(_, _, _, let plan):
+                guard attempt.phase == .capturing, attempt.plan == plan else { return .cancelled }
+                let receipt = try await session.capture(plan)
+                try receipt.validate(); guard receipt.plan == plan else { throw GitCheckpointError(.invalidPlan) }
+                var cleanupWarning = false
+                do { cleanupWarning = try await session.finalizeScratch(receipt) == .preserved }
+                catch is CancellationError { throw CancellationError() }
+                catch { cleanupWarning = true }
+                result = .checkpointCaptured(receipt, cleanupWarning: cleanupWarning)
+            default: return .cancelled
+            }
+            if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
+            guard ownsCheckpoint(threadID: threadID, runID: owner.runID, stage: owner.stage, attemptID: owner.attemptID, path: attempt.workspacePath, incarnation: incarnation) else { throw CancellationError() }
+            try Task.checkCancellation(); return result
+        } catch {
+            if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
+            guard ownsCheckpoint(threadID: threadID, runID: owner.runID, stage: owner.stage, attemptID: owner.attemptID, path: attempt.workspacePath, incarnation: incarnation) else { throw CancellationError() }
+            try Task.checkCancellation()
+            if let error = error as? GitCheckpointError, error.kind == .notRepository { return .checkpointUnavailable }
+            throw error
+        }
+    }
+    func beginCheckpointCleanup(previous: WorkspaceSnapshot, next: WorkspaceSnapshot, projectIDs: inout Set<UUID>, threadIDs: inout Set<UUID>, jobs: inout [Task<Void, Never>]) {
+        for (effectID, request) in effectRequests {
+            guard let threadID = request.threadID, let owner = request.checkpointOwner,
+                  let old = previous.threads.first(where: { $0.id == threadID }) else { continue }
+            let current = next.threads.first(where: { $0.id == threadID })
+            let active = current?.runCheckpoint(runID: owner.runID, stage: owner.stage)
+            if current?.isArchived != true, current?.workspacePath == old.workspacePath, active?.id == owner.attemptID, active?.phase.isRunning == true { continue }
+            guard let task = effects[effectID], checkpointDrains[effectID] == nil else { continue }
+            task.cancel(); projectIDs.insert(old.projectID); threadIDs.insert(threadID)
+            let drain = Task<Void, Never> { [weak self] in await task.value; await self?.checkpointDrainFinished(effectID) }
+            checkpointDrains[effectID] = .init(threadID: threadID, attemptID: owner.attemptID, task: drain); jobs.append(drain)
+        }
+        for (id, read) in checkpointReads where !next.threads.contains(where: { $0.id == read.threadID && $0.workspacePath == previous.threads.first(where: { $0.id == read.threadID })?.workspacePath && (!$0.isArchived || read.inspection) }) {
+            checkpointReads.removeValue(forKey: id); read.cancel()
+            projectIDs.insert(read.projectID); threadIDs.insert(read.threadID); jobs.append(read.task)
+        }
+    }
+    func checkpointDrainFinished(_ id: UUID) { checkpointDrains.removeValue(forKey: id) }
+    func cancelCheckpointReads() {
+        let reads = checkpointReads; checkpointReads = [:]
+        for read in reads.values {
+            read.cancel()
+            _ = startCleanup(projectIDs: [read.projectID], threadIDs: [read.threadID], sessions: [], jobs: [read.task])
+        }
+    }
+    func scheduleCheckpointReconciliation() {
+        let gate = checkpointInspectionGate
+        for thread in revision.snapshot.threads {
+            var candidates: [(UUID, RunCheckpointStage, ThreadRunCheckpointAttempt)] = []
+            for record in thread.runHistory ?? [] {
+                guard let checkpoints = record.checkpoints else { continue }
+                let baseline = checkpoints.baseline
+                if baseline.phase == .interrupted, baseline.plan != nil { candidates.append((record.id, .baseline, baseline)) }
+                if let post = checkpoints.postRun, post.phase == .interrupted, post.plan != nil { candidates.append((record.id, .postRun, post)) }
+            }
+            guard !candidates.isEmpty, let incarnation = threadIncarnations[thread.id] else { continue }
+            let token = UUID(), factory = checkpointFactory, pending = candidates
+            let task = Task<Void, Never> { [weak self] in
+                for (runID, stage, attempt) in pending {
+                    if Task.isCancelled { break }
+                    guard let plan = attempt.plan else { continue }
+                    do {
+                        let receipt: GitCheckpointReceipt? = try await gate.perform(key: String(thread.id.uuid.0 & 3)) {
+                            let session = try factory(URL(fileURLWithPath: attempt.workspacePath))
+                            if case .ready(let receipt) = try await session.inspect(plan) { return receipt }; return nil
+                        }
+                        try Task.checkCancellation()
+                        guard let self, let receipt else { continue }
+                        if await self.waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { break }
+                        guard await self.ownsCheckpoint(threadID: thread.id, runID: runID, stage: stage, attemptID: attempt.id, path: attempt.workspacePath, incarnation: incarnation, recovery: true) else { continue }
+                        _ = try await self.enqueue(.runCheckpointRecovered(threadID: thread.id, runID: runID, stage: stage, attemptID: attempt.id, path: attempt.workspacePath, incarnation: incarnation, receipt: receipt))
+                    } catch { if Task.isCancelled { break } }
+                }
+                await self?.checkpointReadFinished(token)
+            }
+            checkpointReads[token] = .init(threadID: thread.id, projectID: thread.projectID, inspection: true, task: task, cancel: { task.cancel() })
+        }
+    }
+    func checkpointReadFinished(_ id: UUID) { checkpointReads.removeValue(forKey: id) }
+}
+
 /// Serial command decisions and durable commits are independent of provider I/O.
 public actor WorkspaceEngine {
     public typealias ProviderFactory = @Sendable (CodingThread) throws -> any ProviderSession
@@ -224,6 +413,19 @@ public actor WorkspaceEngine {
     public typealias IdentityResolver = @Sendable (URL) async throws -> RepositoryIdentity?
     public typealias ProjectScriptPlanner = @Sendable (ProjectScriptPlanningContext) async throws -> ProjectScriptExecutionPlan?
     public typealias ProjectScriptFactory = @Sendable (ProjectScriptExecutionPlan) throws -> any ProjectScriptExecutionSession
+    public typealias CheckpointFactory = @Sendable (URL) throws -> any RunCheckpointSession
+    private let checkpointFactory: CheckpointFactory
+    private struct CheckpointRead: Sendable {
+        let threadID: UUID
+        let projectID: UUID
+        let inspection: Bool
+        let task: Task<Void, Never>
+        let cancel: @Sendable () -> Void
+    }
+    private var checkpointReads: [UUID: CheckpointRead] = [:]
+    private struct CheckpointDrain: Sendable { let threadID: UUID; let attemptID: UUID; let task: Task<Void, Never> }
+    private var checkpointDrains: [UUID: CheckpointDrain] = [:]
+    private let checkpointInspectionGate = GitOperationGate()
     private struct ScriptRuntime: Sendable {
         let threadID: UUID, projectID: UUID
         let owner: ProjectScriptOwner
@@ -327,7 +529,8 @@ public actor WorkspaceEngine {
                 identityResolver: @escaping IdentityResolver = { try await RepositoryIdentityResolver(root: $0).resolve() },
                 worktreeFactory: @escaping WorktreeFactory = { GitWorktreeService(request: $0) },
                 projectScriptPlanner: @escaping ProjectScriptPlanner = { try await ProjectScriptSetupPlanner.plan($0) },
-                projectScriptFactory: @escaping ProjectScriptFactory = { _ in throw ProjectScriptExecutionError(.helperUnavailable) }) throws {
+                projectScriptFactory: @escaping ProjectScriptFactory = { _ in throw ProjectScriptExecutionError(.helperUnavailable) },
+                checkpointFactory: @escaping CheckpointFactory = { GitCheckpointService(root: $0) }) throws {
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
@@ -336,6 +539,7 @@ public actor WorkspaceEngine {
         self.identityResolver = identityResolver
         self.worktreeFactory = worktreeFactory
         self.projectScriptPlanner = projectScriptPlanner; self.projectScriptFactory = projectScriptFactory
+        self.checkpointFactory = checkpointFactory
         worktreesRoot = url.deletingLastPathComponent().appendingPathComponent("Worktrees", isDirectory: true).standardizedFileURL
         try FileManager.default.createDirectory(at: worktreesRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let pair = AsyncStream<Envelope>.makeStream()
@@ -369,6 +573,7 @@ public actor WorkspaceEngine {
         publish()
         scheduleIdentityRefreshes(previous: nil)
         scheduleWorktreeReconciliation()
+        scheduleCheckpointReconciliation()
         return recovered
     }
     public func current() -> WorkspaceUpdate { .init(snapshot: revision.snapshot, sequence: revision.sequence, error: fatalError) }
@@ -490,7 +695,7 @@ public actor WorkspaceEngine {
                        (threadIncarnations[threadID] != incarnation || request.destinationRoot != worktreesRoot.path) {
                         throw WorkspaceCommandError("This conversation changed. Choose the worktree again in its current workspace.")
                     }
-                    if !ownsScriptEvent(envelope.command) {
+                    if !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else if case .worktreeRecovered(let threadID, let attemptID, let incarnation, _) = envelope.command,
                        !ownsWorktree(threadID: threadID, attemptID: attemptID, incarnation: incarnation) {
@@ -595,6 +800,7 @@ public actor WorkspaceEngine {
             threadIncarnations[thread.id] = UUID()
         }
         for id in removedThreads { threadIncarnations.removeValue(forKey: id) }
+        beginCheckpointCleanup(previous: previous, next: decision.snapshot, projectIDs: &projectIDs, threadIDs: &cleanupThreadIDs, jobs: &jobs)
         for (id, inspection) in worktreeInspections where removedThreads.contains(inspection.threadID) || removedProjects.contains(inspection.projectID) {
             worktreeInspections.removeValue(forKey: id); inspection.task.cancel(); projectIDs.insert(inspection.projectID)
             jobs.append(Task { _ = try? await inspection.task.value })
@@ -775,6 +981,7 @@ public actor WorkspaceEngine {
     }
     private func execute(_ effect: WorkspaceEffect) async {
         let scriptIncarnation = effect.request.projectScriptRunID == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
+        let checkpointIncarnation = effect.request.checkpointOwner == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
         defer {
             effects.removeValue(forKey: effect.id); effectRequests.removeValue(forKey: effect.id)
             completedDuringCommit?.insert(effect.id)
@@ -796,7 +1003,7 @@ public actor WorkspaceEngine {
         }
         catch is CancellationError { result = .cancelled }
         catch {
-            let message = effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError(for: effect.request.projectScriptOwner?.role ?? .setup) : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
+            let message = effect.request.checkpointOwner != nil ? ThreadRunCheckpointAttempt.failureMessage : effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError(for: effect.request.projectScriptOwner?.role ?? .setup) : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
             result = .failed(message)
         }
         heartbeat.cancel()
@@ -804,12 +1011,14 @@ public actor WorkspaceEngine {
             do {
                 let owned: Bool
                 switch result {
-                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved: owned = try await database.settleEffect(effect.id, workerID: workerID)
+                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: owned = try await database.settleEffect(effect.id, workerID: workerID)
                 case .failed(let message): owned = try await database.settleEffect(effect.id, workerID: workerID, error: message)
                 case .cancelled: owned = try await database.cancelEffect(effect.id, workerID: workerID, reason: "The targeted run or request is no longer active.")
                 }
                 guard owned else { await infrastructureFailed("Provider execution lost its workspace lease."); return }
-                if effect.request.projectScriptRunID != nil {
+                if effect.request.checkpointOwner != nil {
+                    if !retiringEffects.contains(effect.id), let checkpointIncarnation { _ = try await enqueue(.runCheckpointEffectResult(effect.request, result, incarnation: checkpointIncarnation)) }
+                } else if effect.request.projectScriptRunID != nil {
                     if !retiringEffects.contains(effect.id), let scriptIncarnation {
                         _ = try await enqueue(.projectScriptEffectResult(effect.request, result, incarnation: scriptIncarnation))
                     }
@@ -830,6 +1039,7 @@ public actor WorkspaceEngine {
         guard !stoppingEffects, fatalError == nil else { throw CancellationError() }
         if await waitForRemovalCommit(threadID: request.threadID, projectID: request.projectID) { return .cancelled }
         try Task.checkCancellation()
+        if request.checkpointOwner != nil { return try await performRunCheckpoint(request) }
         if request.projectScriptRunID != nil { return try await performProjectScript(request) }
         if request.worktreeAttemptID != nil { return try await performWorktree(request) }
         if case .projectClone(let projectID, let plan) = request {
@@ -853,9 +1063,11 @@ public actor WorkspaceEngine {
         }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
-        case .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
+        case .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
+            await awaitCheckpointDrains(threadID: thread.id)
+            guard checkpointProviderReleased(threadID: thread.id, runID: runID) else { return .cancelled }
             let input = try await attachments.prepare(text: prompt, attachments: references ?? [])
             guard !closing, !stoppingEffects,
                   revision.snapshot.workspaceReady(for: thread),
@@ -1061,6 +1273,7 @@ public actor WorkspaceEngine {
         fatalError = "Workspace execution stopped: \(message)"; publish()
         for task in effects.values { task.cancel() }
         cancelIdentityRefreshes()
+        cancelCheckpointReads()
         let inspections = worktreeInspections; worktreeInspections = [:]
         for inspection in inspections.values {
             inspection.task.cancel()
@@ -1152,6 +1365,7 @@ public actor WorkspaceEngine {
         let inspections = Array(worktreeInspections.values); worktreeInspections = [:]
         for inspection in inspections { inspection.task.cancel() }
         cancelIdentityRefreshes()
+        cancelCheckpointReads()
         let jobs = Array(effects.values); for job in jobs { job.cancel() }
         await closeAllProjectScripts()
         for id in Array(runtimes.keys) { await closeRuntime(id) }

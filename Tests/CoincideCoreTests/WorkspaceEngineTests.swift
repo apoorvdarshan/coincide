@@ -364,7 +364,7 @@ private func waitRuntime(_ condition: () async throws -> Bool) async throws {
         let provider = try #require(f.harness.providers(f.thread.id).first)
         await provider.respond(.init(id: .string("approval"), method: "item/commandExecution/requestApproval", params: .object([:])), allow: true)
         try await waitRuntime { await f.engine.current().error?.contains("lease") == true }
-        #expect(try await database.effects().allSatisfy { $0.status == .cancelled })
+        #expect(try await database.effects().filter { if case .providerStart = $0.request { true } else { false } }.allSatisfy { $0.status == .cancelled })
         await #expect(throws: (any Error).self) { try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "must not execute")) }
     }
 }

@@ -1,5 +1,78 @@
 # Validation record
 
+## 2026-10-22 — automatic run checkpoints and native workspace comparisons
+
+- Newly accepted input captures its checkpoint policy, defaulting to automatic.
+  Before provider dispatch, the engine saves an immutable plan and attempts its
+  baseline. A non-cancellation failure releases the original accepted payload
+  with visible missing evidence. Legacy queued messages retain their absent
+  policy without being retroactively changed.
+- Completed/interrupted provider boundaries save a final workspace observation
+  before the next FIFO message. Failure holds the queue for an exact-attempt
+  Retry Current Workspace or Continue Without Snapshot. Retries retain earlier
+  attempts and label their later observation; they never replay provider work.
+  Failed, unknown, app-lost and never-dispatched runs record unavailable final
+  evidence instead of inventing a successful capture.
+- Incarnation/run/stage/attempt/path/plan fences protect asynchronous results.
+  Stop, archive, removal and shutdown drain owned work outside the command inbox.
+  A second canceled baseline cannot join its own drain. Restart performs bounded
+  inspection only, does not replay provider work/captures or resume the restored
+  FIFO, and a late inspection cannot override a newer explicit resume intent.
+- Successful receipts bind a bounded scratch manifest by SHA-256. Cleanup checks
+  retained directory anchors, exact file identities/content and known entry sets
+  before unlinking only the temporary alternate index/private Git admin. Unknown,
+  replaced, modified or locked entries are preserved. Matching durable markers
+  permit partial cleanup to resume. Saved refs, objects, plans and receipts remain
+  usable, including after cleanup and restart; legacy unproven scratch is kept.
+- Unused executable filter settings, including global Git LFS configuration, no
+  longer reject ordinary repositories. Actual driver use is checked against the
+  frozen private admin/index before and after add, using bounded real/scratch
+  inventories and literal attributes. Selected executable drivers remain omitted
+  and unsupported. Fixtures prove missing-attribute fallback, staged ignored
+  additions, removed real-index entries, configuration changes and attribute-only
+  races cannot execute a filter or publish an unsupported capture.
+- Native controls expose policy, preparation, queue holds, later-observation
+  retries, preserved attempt status and bounded read-only Workspace Changes.
+  Captured drafts, settings and selection survive reopen. Sixteen offscreen
+  banner/history/diff/unavailable renders at 320/680 points in light/dark were
+  inspected for readability and overflow. They do not establish interactive GUI
+  or keyboard behavior.
+- A real-Git engine fixture proves the baseline is ready before provider send,
+  final receipt precedes second FIFO dispatch, scratch is removed, diff survives
+  reopen, and working bytes/real staging remain unchanged. Focused Core execution
+  passes **49 tests**, including cancellation/recovery, cleanup and filter races.
+- Final `swift test --no-parallel` passes **460 tests**: 374 Core, 67 native
+  UI/Store, 6 terminal and 13 Markdown, with no compiler warnings. Native tests
+  include real setup/worktree/settlement FIFO using the production checkpoint
+  factory and this Mac's unchanged global LFS configuration. Offscreen native split
+  tests verify bounded loaded/dirty Files content, divider width restoration,
+  retained host/cache ownership and first-responder preservation. These checks
+  remain separate from the hosted interactive crash verdict.
+- The repository-owned app packages, signs and launches successfully. Deep/strict
+  app/helper signature checks and native math-resource rendering pass. Storage
+  upgrades from 14 to 15 with the complete canonical workspace unchanged against
+  its private SQLite backup: three conversations and 25 messages. No system install
+  or public app release was performed.
+- Fork, conversation rewind, filesystem restore and full T3 parity remain open.
+
+## 2026-10-22 — strict-eight GUI result and explicit native inspector hosting
+
+- Exact pushed `16b61a4` [run 39707700757](https://github.com/apoorvdarshan/coincide/actions/runs/39707700757)
+  passes production tests/package/signatures/resources and **7 of 8 actual GUI
+  workflows**, with zero skips (795.343 seconds). Setup (77.360 seconds) and settle
+  (99.074 seconds) now pass their exact output/exit/draft checks and explicit
+  Continue/Resume actions using the observed native triangle location.
+- Files still aborts when opening the inspector. The retained `7483BE6F…ips`
+  has the same constraint exception through `NSWindow._postWindowNeedsUpdateConstraints`,
+  `SplitViewChildController.hostingView` and `NSHostingView.SizeConstraints`.
+  The geometry-bound SwiftUI inspector candidate did not fix the actual crash.
+- The next candidate replaces that inspector host with a narrow native
+  `NSSplitView` bridge and retained hosting controllers whose intrinsic sizing and
+  inner scene bridging are disabled. Existing sidebar, outer toolbar/commands,
+  explicit inspector toggle, Files/Changes views and shared buffers are retained.
+  Actual GUI proof of this replacement is still pending; no test assertion or
+  workflow was removed to obtain a passing result.
+
 ## 2026-10-22 — inspector constraint boundary and script-output GUI targeting
 
 - Manual strict-seven run [39705334238](https://github.com/apoorvdarshan/coincide/actions/runs/39705334238)

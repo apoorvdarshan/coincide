@@ -80,6 +80,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var queuePaused: Bool
     public var activeRun: ActiveRun?
     public var runHistory: [ThreadRunRecord]?
+    public var checkpointPolicy: RunCheckpointPolicy?
     public var runtimeID: UUID?
     public var runtimeRequests: [RuntimeRequest]
     public var isPinned: Bool
@@ -94,7 +95,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runHistory, runtimeID, runtimeRequests, workspacePreparation, settlement
+        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, runtimeID, runtimeRequests, workspacePreparation, settlement
         case draftAttachments
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
@@ -125,6 +126,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         queuePaused = try values.decodeIfPresent(Bool.self, forKey: .queuePaused) ?? false
         activeRun = try values.decodeIfPresent(ActiveRun.self, forKey: .activeRun)
         runHistory = try values.decodeIfPresent([ThreadRunRecord].self, forKey: .runHistory)
+        checkpointPolicy = try values.decodeIfPresent(RunCheckpointPolicy.self, forKey: .checkpointPolicy)
         runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
         runtimeRequests = try values.decodeIfPresent([RuntimeRequest].self, forKey: .runtimeRequests) ?? []
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
@@ -161,6 +163,19 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             projects[i].clone = clone
         }
         for i in threads.indices {
+            for j in (threads[i].runHistory ?? []).indices {
+                guard var checkpoints = threads[i].runHistory?[j].checkpoints else { continue }
+                if checkpoints.baseline.phase.isRunning {
+                    checkpoints.baseline.phase = .interrupted; checkpoints.baseline.error = ThreadRunCheckpointAttempt.interruptedMessage
+                    checkpoints.baseline.updatedAt = Date()
+                }
+                if var post = checkpoints.postRun, post.phase.isRunning {
+                    post.phase = .interrupted; post.error = ThreadRunCheckpointAttempt.interruptedMessage; post.updatedAt = Date()
+                    checkpoints.postRun = post; threads[i].queuePaused = true
+                }
+                checkpoints.pendingStart = nil
+                threads[i].runHistory?[j].checkpoints = checkpoints
+            }
             if var settlement = threads[i].settlement {
                 if var run = settlement.script, [.discovering, .starting, .running, .stopping].contains(run.phase) {
                     let provenSuccess = run.phase == .stopping && run.pendingAction == .cancel && run.commandExit == .exited(0)

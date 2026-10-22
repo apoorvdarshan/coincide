@@ -144,6 +144,9 @@ private func waitCloneEngine(_ condition: () async throws -> Bool) async throws 
         #expect(waiting.threads[0].queuedTurns.map(\.text) == ["first prompt", "second prompt"])
         #expect(f.harness.sessions(thread.id).isEmpty)
 
+        // This fake publishes no Git checkout; provide its ready local directory so
+        // automatic observations truthfully report a non-Git workspace.
+        try FileManager.default.createDirectory(at: URL(fileURLWithPath: plan.destinationPath), withIntermediateDirectories: true)
         await peer.succeed()
         try await waitCloneEngine { await f.harness.sessions(thread.id).first?.turns.count == 1 }
         let provider = try #require(f.harness.sessions(thread.id).first)

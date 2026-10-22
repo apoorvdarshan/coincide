@@ -72,7 +72,7 @@ func nativeSettlementOwnsBackgroundJobsAndNewMessagesResumeOnlyAfterDrainWithCap
         try await waitNativeSetup { await fixture.provider.calls.count == 2 }
         #expect(await fixture.provider.calls.last == .init(prompt: "Second resumed prompt", path: checkout.path, model: "second-resume-model", permission: .fullAccess))
         await fixture.provider.finish()
-        try await waitNativeSetup { store.thread(id)?.isBusy == false }
+        try await waitNativeSetup { store.thread(id).map { !$0.isBusy && $0.heldPostRunCheckpoint == nil } == true }
         #expect(store.thread(id)?.settlement == nil, "Provider idle must not settle a conversation.")
         #expect(store.thread(id)?.draft == "Unsent after automatic resume")
         try await store.settleThread(id)

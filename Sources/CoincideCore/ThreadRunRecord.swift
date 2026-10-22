@@ -24,6 +24,7 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
     public var turnIDs: [String]
     public var endReason: ThreadRunEndReason?
     public var providerStopReason: String?
+    public var checkpoints: ThreadRunCheckpoints?
 
     public init(run: ActiveRun, origin: ThreadRunOrigin, userMessageID: String? = nil) {
         id = run.id; self.origin = origin; configuration = run.configuration
@@ -35,10 +36,11 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
 }
 
 extension CodingThread {
-    mutating func beginRunRecord(_ run: ActiveRun, origin: ThreadRunOrigin, userMessageID: String? = nil) {
+    mutating func beginRunRecord(_ run: ActiveRun, origin: ThreadRunOrigin, userMessageID: String? = nil, checkpoints: ThreadRunCheckpoints? = nil) {
         if runHistory == nil { runHistory = [] }
         guard !runHistory!.contains(where: { $0.id == run.id }) else { return }
         runHistory!.append(.init(run: run, origin: origin, userMessageID: userMessageID))
+        runHistory![runHistory!.count - 1].checkpoints = checkpoints
     }
 
     mutating func updateRunRecord(status: ThreadRunStatus? = nil) {
@@ -59,6 +61,17 @@ extension CodingThread {
         guard let i = runHistory?.firstIndex(where: { $0.id == run.id }), runHistory?[i].status.isTerminal == false else { return }
         runHistory?[i].status = status; runHistory?[i].endedAt = now; runHistory?[i].endReason = reason
         runHistory?[i].providerStopReason = providerStopReason.map { String($0.prefix(500)) }
+        if var checkpoints = runHistory?[i].checkpoints, checkpoints.postRun == nil {
+            let unavailable: RunCheckpointUnavailableReason?
+            if !checkpoints.providerReleased { unavailable = .providerNotStarted }
+            else if reason == .applicationClosed || status == .unknown { unavailable = .unknownExit }
+            else if status == .failed { unavailable = .failedRun }
+            else { unavailable = nil }
+            if let unavailable {
+                checkpoints.postRun = .init(workspacePath: run.configuration.workspacePath, phase: .unavailable, now: now, unavailableReason: unavailable)
+                runHistory?[i].checkpoints = checkpoints
+            }
+        }
     }
 
     func validateRunHistory() throws {
@@ -67,6 +80,7 @@ extension CodingThread {
               Set(records.map(\.id)).isDisjoint(with: Set(queuedTurns.map(\.id))),
               records.filter({ !$0.status.isTerminal }).count <= 1 else { throw CoincideError("The conversation has invalid or duplicate run history.") }
         for record in records {
+            try validateRunCheckpoints(record)
             guard record.status.isTerminal == (record.endedAt != nil), record.status.isTerminal == (record.endReason != nil),
                   Set(record.turnIDs).count == record.turnIDs.count, record.turnIDs.allSatisfy({ !$0.isEmpty }),
                   record.status.isTerminal || activeRun?.id == record.id,

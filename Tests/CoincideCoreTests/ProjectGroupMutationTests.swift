@@ -308,7 +308,7 @@ private func groupMutationEventually(_ condition: () async throws -> Bool) async
         }
         let survivorProvider = try #require(harness.values(fixture.survivor.id).first)
         #expect(await survivorProvider.closed == false)
-        let effects = try await database.effects()
+        let effects = try await database.effects().filter { if case .providerStart = $0.request { true } else { false } }
         #expect(effects.filter { $0.request.threadID == first.id || $0.request.threadID == second.id }.allSatisfy { $0.status == .cancelled })
         #expect(effects.first { $0.request.threadID == fixture.survivor.id }?.status == .running)
         try await engine.dispatch(.editThread(fixture.survivor.id, .draft("Unrelated draft still works")))

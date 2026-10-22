@@ -27,6 +27,11 @@ struct ChatView: View {
                         ExternalEditorMenu(store: store, workspacePath: thread.workspacePath, title: "Open Workspace in…")
                         Button("Run History…") { runHistorySheet = true }
                             .accessibilityIdentifier("conversation-run-history")
+                        Toggle("Save Run Checkpoints", isOn: Binding(
+                            get: { thread.effectiveCheckpointPolicy == .automatic },
+                            set: { store.setCheckpointPolicy($0 ? .automatic : .disabled, id: threadID) }))
+                            .accessibilityIdentifier("conversation-run-checkpoints")
+                            .help("Save workspace observations before and after future messages. Already accepted messages keep their captured setting.")
                         if let settlement = thread.settlement {
                             Button("Resume Conversation") { store.requestResume(threadID, generationID: settlement.id) }
                                 .disabled(settlement.phase == .resuming)
@@ -61,7 +66,12 @@ struct ChatView: View {
                             if thread.state == .running || thread.state == .awaitingApproval {
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    Text(thread.state == .awaitingApproval ? "Waiting for input…" : thread.providerActivity?.state == .idle ? "Waiting for agent confirmation…" : "\(thread.providerName) is working…").font(.caption).foregroundStyle(.secondary)
+                                    Text(RunCheckpointPresentation.preparingBaseline(in: thread)
+                                         ? String(localized: "Preparing workspace snapshot…")
+                                         : thread.state == .awaitingApproval ? String(localized: "Waiting for input…")
+                                         : thread.providerActivity?.state == .idle ? String(localized: "Waiting for agent confirmation…")
+                                         : String(localized: "\(thread.providerName) is working…"))
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }
                             }
                             Color.clear.frame(height: 1).id("latest")
@@ -101,6 +111,7 @@ struct ChatView: View {
                     if let settlement = thread.settlement {
                         ThreadSettlementBanner(store: store, threadID: threadID, settlement: settlement)
                     }
+                    RunCheckpointBanner(store: store, threadID: threadID)
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },

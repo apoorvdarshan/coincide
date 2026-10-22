@@ -16,25 +16,37 @@ struct ContentView: View {
                         onSettle: { settlementThread = $0 })
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
         } detail: {
-            if let thread = store.selectedThread {
-                VSplitView {
-                    ChatView(store: store, threadID: thread.id, onSettle: { settlementThread = $0 }).id(thread.id).frame(minHeight: 280)
-                    if terminalVisible, store.workspaceReady(for: thread) {
-                        TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
-                                      report: { store.errorMessage = $0 }, hide: { terminalVisible = false })
-                            .id(thread.id).frame(minHeight: 160, idealHeight: 260, maxHeight: 600)
+            NativeInspectorSplit(isPresented: store.inspectorVisible) {
+                if let thread = store.selectedThread {
+                    VSplitView {
+                        ChatView(store: store, threadID: thread.id, onSettle: { settlementThread = $0 }).id(thread.id).frame(minHeight: 280)
+                        if terminalVisible, store.workspaceReady(for: thread) {
+                            TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
+                                          report: { store.errorMessage = $0 }, hide: { terminalVisible = false })
+                                .id(thread.id).frame(minHeight: 160, idealHeight: 260, maxHeight: 600)
+                        }
+                    }
+                        .frame(minWidth: 0, maxWidth: .infinity)
+                } else {
+                    ContentUnavailableView {
+                        Label("Coincide", systemImage: "square.stack.3d.up")
+                    } description: {
+                        Text("Your projects and coding agents, in a native Mac workspace.")
+                    } actions: {
+                        Button("New Project…") { newProjectSheetPresented = true }
+                        Button("Add Project…") { store.addProject() }
+                        if !store.snapshot.projects.isEmpty { Button("New Thread") { store.newThread() } }
                     }
                 }
-                    .frame(minWidth: 0, maxWidth: .infinity)
-            } else {
-                ContentUnavailableView {
-                    Label("Coincide", systemImage: "square.stack.3d.up")
-                } description: {
-                    Text("Your projects and coding agents, in a native Mac workspace.")
-                } actions: {
-                    Button("New Project…") { newProjectSheetPresented = true }
-                    Button("Add Project…") { store.addProject() }
-                    if !store.snapshot.projects.isEmpty { Button("New Thread") { store.newThread() } }
+            } inspector: {
+                if let thread = store.selectedThread {
+                    if store.workspaceReady(for: thread) {
+                        WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath)
+                    } else {
+                        ContentUnavailableView("Workspace Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when checkout preparation finishes."))
+                    }
+                } else {
+                    ContentUnavailableView("No Thread Selected", systemImage: "sidebar.right", description: Text("Select a thread to browse its files and source control."))
                 }
             }
         }
@@ -50,20 +62,6 @@ struct ContentView: View {
                     .accessibilityIdentifier("project-scripts")
             }
             ToolbarItem { Button { store.inspectorVisible.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") } }
-        }
-        // Keep the inspector host stable while selection and the detail's native split view change.
-        .inspector(isPresented: $store.inspectorVisible) {
-            InspectorContentBounds {
-                if let thread = store.selectedThread {
-                    if store.workspaceReady(for: thread) {
-                        WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath)
-                    } else {
-                        ContentUnavailableView("Workspace Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when checkout preparation finishes."))
-                    }
-                } else {
-                    ContentUnavailableView("No Thread Selected", systemImage: "sidebar.right", description: Text("Select a thread to browse its files and source control."))
-                }
-            }.inspectorColumnWidth(min: 280, ideal: 360, max: 600)
         }
         .alert("Coincide", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("OK") { store.errorMessage = nil }

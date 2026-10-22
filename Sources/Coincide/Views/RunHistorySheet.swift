@@ -4,14 +4,21 @@ import SwiftUI
 struct RunHistorySheet: View {
     let store: WorkspaceStore
     let threadID: UUID
+    @State private var diffRequest: RunCheckpointDiffRequest?
 
     var body: some View {
-        RunHistoryContent(thread: store.thread(threadID))
+        RunHistoryContent(thread: store.thread(threadID), showWorkspaceChanges: { diffRequest = .init(id: $0) })
+            .sheet(item: $diffRequest) { request in
+                RunCheckpointDiffSheet(store: store, threadID: threadID, runID: request.id)
+            }
     }
 }
 
+private struct RunCheckpointDiffRequest: Identifiable { let id: UUID }
+
 struct RunHistoryContent: View {
     let thread: CodingThread?
+    var showWorkspaceChanges: ((UUID) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -60,7 +67,7 @@ struct RunHistoryContent: View {
                         .accessibilityIdentifier("run-history-incomplete")
                 }
                 ForEach(records) { record in
-                    RunHistoryRow(record: record, thread: thread).padding(.vertical, 14)
+                    RunHistoryRow(record: record, thread: thread, showWorkspaceChanges: showWorkspaceChanges).padding(.vertical, 14)
                     Divider()
                 }
             }.padding(.horizontal, 20)
@@ -71,6 +78,7 @@ struct RunHistoryContent: View {
 private struct RunHistoryRow: View {
     let record: ThreadRunRecord
     let thread: CodingThread
+    let showWorkspaceChanges: ((UUID) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -94,6 +102,9 @@ private struct RunHistoryRow: View {
                 .accessibilityIdentifier("run-history-workspace-\(record.id)")
             if record.stopRequested {
                 Text("Stop requested").font(.caption).foregroundStyle(.secondary)
+            }
+            if let checkpoints = record.checkpoints {
+                checkpointSummary(checkpoints)
             }
             DisclosureGroup("Details") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -133,6 +144,54 @@ private struct RunHistoryRow: View {
             }.font(.caption)
         }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain).accessibilityIdentifier("run-history-record-\(record.id)")
+    }
+
+    private func checkpointSummary(_ checkpoints: ThreadRunCheckpoints) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            LabeledContent("Before run", value: RunCheckpointPresentation.status(checkpoints.baseline))
+            if let postRun = checkpoints.postRun {
+                LabeledContent("After run", value: RunCheckpointPresentation.status(postRun))
+                if postRun.isLaterObservation {
+                    Text("Later observation of the current workspace. It may include edits made after the run ended.")
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("run-history-later-observation-\(record.id)")
+                }
+            } else if !record.status.isTerminal {
+                LabeledContent("After run", value: String(localized: "Waiting for run to end"))
+            }
+            if !checkpoints.previousPostRunAttempts.isEmpty {
+                DisclosureGroup("Earlier snapshot attempts") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(checkpoints.previousPostRunAttempts) { attempt in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(RunCheckpointPresentation.status(attempt))
+                                    Spacer(minLength: 8)
+                                    Text(attempt.requestedAt, format: .dateTime.month(.abbreviated).day().hour().minute())
+                                        .foregroundStyle(.secondary)
+                                }
+                                if attempt.isLaterObservation {
+                                    Text("Later workspace observation").foregroundStyle(.secondary)
+                                }
+                                if attempt.cleanupWarning != nil {
+                                    Text("Some temporary checkpoint data was preserved.")
+                                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }.padding(.top, 5)
+                }
+            }
+            if checkpoints.baseline.cleanupWarning != nil || checkpoints.postRun?.cleanupWarning != nil {
+                Text("Some temporary checkpoint data was preserved.")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if RunCheckpointPresentation.canShowDiff(checkpoints), let showWorkspaceChanges {
+                Button("Workspace Changes…") { showWorkspaceChanges(record.id) }
+                    .accessibilityIdentifier("run-history-changes-\(record.id)")
+            }
+        }.font(.caption)
+            .accessibilityIdentifier("run-history-checkpoints-\(record.id)")
     }
 
     private var references: some View {

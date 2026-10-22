@@ -7,15 +7,17 @@ import Foundation
 enum CheckpointFiles {
     static let maximumIndexBytes = 67_108_864
     static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
-    static func index(_ admin: GitWorktreeDirectory) throws -> GitCheckpointIndexRevision? {
+    static func index(_ admin: GitWorktreeDirectory, name: String = "index", maximum: Int = maximumIndexBytes) throws -> GitCheckpointIndexRevision? {
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0"),
+              (0...maximumIndexBytes).contains(maximum) else { throw GitCheckpointError(.invalidPlan) }
         try admin.validate()
-        let fd = openat(admin.fd, "index", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        let fd = openat(admin.fd, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         if fd < 0, errno == ENOENT { return nil }
         guard fd >= 0 else { throw GitCheckpointError(.ownershipLost) }
         defer { close(fd) }
         var before = stat()
         guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
-              before.st_size >= 0, before.st_size <= maximumIndexBytes else { throw GitCheckpointError(.unsupportedConfiguration) }
+              before.st_size >= 0, before.st_size <= maximum else { throw GitCheckpointError(.unsupportedConfiguration) }
         var hash = SHA256(), count = 0, buffer = [UInt8](repeating: 0, count: 65_536)
         while true {
             try Task.checkCancellation()
@@ -23,11 +25,11 @@ enum CheckpointFiles {
             if read == 0 { break }
             if read < 0 { if errno == EINTR { continue }; throw GitCheckpointError(.ownershipLost) }
             count += read
-            guard count <= maximumIndexBytes else { throw GitCheckpointError(.outputLimit) }
+            guard count <= maximum else { throw GitCheckpointError(.outputLimit) }
             hash.update(data: Data(buffer.prefix(read)))
         }
         var after = stat(), named = stat()
-        guard fstat(fd, &after) == 0, fstatat(admin.fd, "index", &named, AT_SYMLINK_NOFOLLOW) == 0,
+        guard fstat(fd, &after) == 0, fstatat(admin.fd, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
               worktreeIdentity(before) == worktreeIdentity(after), worktreeIdentity(after) == worktreeIdentity(named),
               before.st_size == count, before.st_size == after.st_size,
               before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec, before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec else {

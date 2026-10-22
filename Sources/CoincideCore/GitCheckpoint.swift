@@ -71,19 +71,25 @@ public struct GitCheckpointReceipt: Codable, Sendable, Equatable {
     public let commit: String
     public let tree: String
     public let capturedAt: Date
-    public init(plan: GitCheckpointPlan, commit: String, tree: String, capturedAt: Date = Date()) throws {
-        self.plan = plan; self.commit = commit; self.tree = tree; self.capturedAt = capturedAt; try validate()
+    /// Binds the exact temporary-file ownership proof without making that proof necessary
+    /// for reading the saved Git objects. Older receipts deliberately have no cleanup proof.
+    public let scratchManifestDigest: String?
+    public init(plan: GitCheckpointPlan, commit: String, tree: String, capturedAt: Date = Date(), scratchManifestDigest: String? = nil) throws {
+        self.plan = plan; self.commit = commit; self.tree = tree; self.capturedAt = capturedAt
+        self.scratchManifestDigest = scratchManifestDigest; try validate()
     }
     public func validate() throws {
         try plan.validate()
         guard CheckpointValidation.object(commit, format: plan.objectFormat), CheckpointValidation.object(tree, format: plan.objectFormat),
-              capturedAt.timeIntervalSince1970.isFinite else { throw GitCheckpointError(.invalidPlan) }
+              capturedAt.timeIntervalSince1970.isFinite,
+              scratchManifestDigest.map(CheckpointValidation.digest) ?? true else { throw GitCheckpointError(.invalidPlan) }
     }
-    private enum CodingKeys: String, CodingKey { case plan, commit, tree, capturedAt }
+    private enum CodingKeys: String, CodingKey { case plan, commit, tree, capturedAt, scratchManifestDigest }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(plan: c.decode(GitCheckpointPlan.self, forKey: .plan), commit: c.decode(String.self, forKey: .commit),
-                      tree: c.decode(String.self, forKey: .tree), capturedAt: c.decode(Date.self, forKey: .capturedAt))
+                      tree: c.decode(String.self, forKey: .tree), capturedAt: c.decode(Date.self, forKey: .capturedAt),
+                      scratchManifestDigest: c.decodeIfPresent(String.self, forKey: .scratchManifestDigest))
     }
 }
 public enum GitCheckpointInspection: Sendable, Equatable { case missing, incomplete, ready(GitCheckpointReceipt) }

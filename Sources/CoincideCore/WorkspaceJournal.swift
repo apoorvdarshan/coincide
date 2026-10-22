@@ -98,10 +98,18 @@ public enum WorkspaceJournal {
         }
         var preparationIDs: Set<UUID> = []
         var scriptIDs: Set<UUID> = []
+        var checkpointIDs: Set<UUID> = []
         let settlementIDs = Set(snapshot.threads.compactMap { $0.settlement?.id })
         guard settlementIDs.count == snapshot.threads.filter({ $0.settlement != nil }).count, settlementIDs.isDisjoint(with: cloneIDs) else { throw CoincideError("Settlement generations must have unique identities.") }
         for thread in snapshot.threads {
             try thread.validateRunHistory()
+            for record in thread.runHistory ?? [] {
+                guard let checkpoints = record.checkpoints else { continue }
+                let attempts = [checkpoints.baseline] + checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? [])
+                for attempt in attempts {
+                    guard checkpointIDs.insert(attempt.id).inserted, !cloneIDs.contains(attempt.id), !settlementIDs.contains(attempt.id) else { throw CoincideError("Run checkpoints must have unique identities.") }
+                }
+            }
             if let preparation = thread.workspacePreparation {
                 try preparation.validate(thread: thread)
                 for id in preparation.previousAttempts.map({ $0.request.id }) + [preparation.id] {
@@ -132,6 +140,7 @@ public enum WorkspaceJournal {
             for queued in thread.queuedTurns { try AttachmentLimits.validate(queued.attachments ?? []) }
             for message in thread.messages { try AttachmentLimits.validate(message.attachments ?? []) }
         }
+        guard checkpointIDs.isDisjoint(with: preparationIDs), checkpointIDs.isDisjoint(with: scriptIDs) else { throw CoincideError("Run checkpoint ownership overlaps another operation.") }
         guard Set(snapshot.acpAgents.map(\.id)).count == snapshot.acpAgents.count else { throw CoincideError("Agent configurations must have unique identities.") }
         for agent in snapshot.acpAgents { try agent.validate() }
         try snapshot.sidebarPreferences?.validate(projectIDs: projects)

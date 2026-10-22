@@ -10,7 +10,7 @@ private struct RunHistoryFixture {
     var thread: CodingThread { snapshot.threads[0] }
     init() {
         let project = WorkspaceProject(path: FileManager.default.temporaryDirectory.path)
-        var thread = CodingThread(project: project); thread.model = "first-model"
+        var thread = CodingThread(project: project); thread.model = "first-model"; thread.checkpointPolicy = .disabled
         threadID = thread.id; snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
     }
     @discardableResult mutating func command(_ command: EngineCommand, id: UUID = UUID()) throws -> WorkspaceDecision {

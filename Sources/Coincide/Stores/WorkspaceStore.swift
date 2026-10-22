@@ -104,6 +104,7 @@ final class WorkspaceStore {
     private var projectScriptService: NativeProjectScriptService?
     private(set) var availableExternalEditors: [ExternalEditorDescriptor] = []
     private var retryingProjectClones: Set<UUID> = []
+    private var respondingToPostRunCheckpoints: Set<UUID> = []
     private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
     private var lastSequence: Int64 = -1
     private var terminating = false
@@ -617,6 +618,10 @@ final class WorkspaceStore {
     func setAgentConfig(_ optionID: String, value: String?, id: UUID) { sendCommand(.editThread(id, .agentConfig(id: optionID, value: value))) }
     func setAgentConfiguration(_ optionID: String, value: JSONValue?, id: UUID) { sendCommand(.editThread(id, .agentConfiguration(id: optionID, value: value))) }
     func resetAgentOptions(_ id: UUID) { sendCommand(.editThread(id, .resetAgentOptions)) }
+    func setCheckpointPolicy(_ policy: RunCheckpointPolicy, id: UUID) {
+        guard !terminating, thread(id) != nil else { return }
+        sendCommand(.editThread(id, .checkpointPolicy(policy)))
+    }
     func saveACPAgent(_ agent: ACPAgentConfiguration) async throws { _ = try await enqueue(.saveACPAgent(agent)).value }
     func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] { providerModels[provider] ?? [] }
@@ -890,6 +895,54 @@ final class WorkspaceStore {
                   self.canEditWorkspace(current.workspacePath) else { throw CancellationError() }
         }
         _ = try await task.value
+    }
+    func isRespondingToPostRunCheckpoint(_ attemptID: UUID) -> Bool {
+        respondingToPostRunCheckpoints.contains(attemptID)
+    }
+    func retryPostRunCheckpoint(threadID: UUID, runID: UUID, expectedAttemptID: UUID) async throws {
+        try await performPostRunCheckpointCommand(.retryPostRunCheckpoint(threadID: threadID, runID: runID,
+                                                                        expectedAttemptID: expectedAttemptID),
+                                                threadID: threadID, runID: runID, attemptID: expectedAttemptID, retry: true)
+    }
+    func continueAfterPostRunCheckpoint(threadID: UUID, runID: UUID, expectedAttemptID: UUID) async throws {
+        try await performPostRunCheckpointCommand(.continueAfterPostRunCheckpoint(threadID: threadID, runID: runID,
+                                                                                 expectedAttemptID: expectedAttemptID),
+                                                threadID: threadID, runID: runID, attemptID: expectedAttemptID, retry: false)
+    }
+    private func performPostRunCheckpointCommand(_ command: WorkspaceCommand, threadID: UUID, runID: UUID,
+                                                 attemptID: UUID, retry: Bool) async throws {
+        guard !terminating, let captured = thread(threadID), !captured.isArchived,
+              let held = captured.heldPostRunCheckpoint, held.runID == runID, held.attempt.id == attemptID,
+              retry ? held.attempt.canRetryPostRun : held.attempt.canContinuePostRun,
+              canEditWorkspace(captured.workspacePath), respondingToPostRunCheckpoints.insert(attemptID).inserted else {
+            throw CancellationError()
+        }
+        defer { respondingToPostRunCheckpoints.remove(attemptID) }
+        flushDrafts()
+        let task = enqueue(command) { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(threadID), !current.isArchived,
+                  current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
+                  let held = current.heldPostRunCheckpoint, held.runID == runID, held.attempt.id == attemptID,
+                  retry ? held.attempt.canRetryPostRun : held.attempt.canContinuePostRun,
+                  self.canEditWorkspace(current.workspacePath) else { throw CancellationError() }
+        }
+        let receipt = try await task.value
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
+    func runCheckpointDiff(threadID: UUID, runID: UUID, maxBytes: Int = 262_144) async throws -> GitCheckpointDiff {
+        guard !terminating, let engine, let captured = thread(threadID), canEditWorkspace(captured.workspacePath),
+              let checkpoints = captured.runHistory?.first(where: { $0.id == runID })?.checkpoints,
+              checkpoints.baseline.phase == .ready, checkpoints.baseline.receipt != nil,
+              checkpoints.postRun?.phase == .ready, checkpoints.postRun?.receipt != nil else { throw CancellationError() }
+        let result = try await engine.runCheckpointDiff(threadID: threadID, runID: runID,
+                                                       maxBytes: min(max(maxBytes, 1), 262_144))
+        try Task.checkCancellation()
+        guard !terminating, let current = thread(threadID), current.projectID == captured.projectID,
+              current.workspacePath == captured.workspacePath, canEditWorkspace(current.workspacePath),
+              let latest = current.runHistory?.first(where: { $0.id == runID })?.checkpoints,
+              latest.baseline.receipt == checkpoints.baseline.receipt,
+              latest.postRun?.receipt == checkpoints.postRun?.receipt else { throw CancellationError() }
+        return result
     }
     func canSettle(_ thread: CodingThread) -> Bool {
         !terminating && snapshot.canSettle(threadID: thread.id) && canEditWorkspace(thread.workspacePath)

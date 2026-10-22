@@ -87,6 +87,26 @@ and turn references. Agent-initiated work is labeled separately. Older messages
 remain available without invented turn boundaries. This view does not yet fork,
 rewind, or restore a checkout.
 
+**Save Run Checkpoints** in the workspace menu is enabled for future messages by
+default. Each accepted message keeps its captured setting. Coincide attempts a
+workspace snapshot before starting the provider, then saves another after a
+completed or interrupted run before advancing queued messages. A missing or
+failed before-run snapshot is visible and does not prevent provider work. A
+failed after-run snapshot holds the queue for **Retry Current Workspace** or
+**Continue Without Snapshot**. Retry records a later observation; it does not
+repeat the provider's work or recreate the earlier filesystem state.
+
+Run History shows checkpoint status and **Workspace Changes…** when both
+observations are available. Changes can include your edits and other tools'
+work. Capturing leaves HEAD, branches, staging and checkout files unchanged.
+Temporary indexes and private Git staging files are removed only when they still
+match their saved ownership proof; snapshot refs, plans and receipts are retained.
+Restart inspects saved completion evidence without replaying captures or provider
+work, and keeps queues paused. Unused Git filter settings, including global Git
+LFS setup, do not block snapshots. Files requiring executable clean/process filters
+and non-cone sparse layouts are currently unsupported. Restoring files and
+rewinding provider history remain separate work.
+
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a
 UTF-8 file, edit it, and save. Files over 1 MiB open as read-only previews. Binary

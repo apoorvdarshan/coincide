@@ -95,6 +95,7 @@ public struct GitCheckpointService: Sendable {
         let sparse: Bool
         let values: [String: String]
         let files: [String: Data]
+        let executableFilters: Set<String>
     }
     private struct Staging: Sendable { let admin: GitWorktreeDirectory }
     private static let safeOptions = ["--no-lazy-fetch", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.splitIndex=false",
@@ -190,7 +191,6 @@ public struct GitCheckpointService: Sendable {
             guard let separator = entry.firstIndex(of: 10), let key = String(data: entry[..<separator], encoding: .utf8),
                   let value = String(data: entry[entry.index(after: separator)...], encoding: .utf8) else { throw GitCheckpointError(.unsupportedConfiguration) }
             let lower = key.lowercased()
-            if lower.hasPrefix("filter."), (lower.hasSuffix(".clean") || lower.hasSuffix(".process")), !value.isEmpty { throw GitCheckpointError(.unsupportedConfiguration) }
             values[lower] = value
         }
         func enabled(_ key: String) -> Bool { ["true", "yes", "on", "1", ""].contains(values[key]?.lowercased() ?? "false") }
@@ -219,7 +219,56 @@ public struct GitCheckpointService: Sendable {
             let bytes = files[key]!
             fingerprint.append(contentsOf: ("\0" + key + "\0" + String(bytes.count) + "\0").utf8); fingerprint.append(bytes)
         }
-        return .init(digest: CheckpointFiles.digest(fingerprint), sparse: sparse, values: values, files: files)
+        var executableFilters = Set<String>()
+        for (key, value) in values where !value.isEmpty && key.hasPrefix("filter.") {
+            for suffix in [".clean", ".process"] where key.hasSuffix(suffix) {
+                executableFilters.insert(String(key.dropFirst("filter.".count).dropLast(suffix.count)))
+            }
+        }
+        return .init(digest: CheckpointFiles.digest(fingerprint), sparse: sparse, values: values, files: files, executableFilters: executableFilters)
+    }
+    /// Inspect attributes without executing a driver. Classification uses the actual
+    /// frozen staging admin/index, including Git's fallback for missing attributes.
+    /// Configured drivers remain absent from that admin even if attributes race us.
+    private func validateFilters(_ c: Context, configuration: Configuration, index: String, staging: Staging,
+                                 deadline: ContinuousClock.Instant) async throws {
+        guard !configuration.executableFilters.isEmpty else { return }
+        var candidates = Set<String>(), bytes = 0
+        // The real index includes force-tracked ignored additions; the scratch index
+        // includes HEAD entries that may have been removed from real staging.
+        for source in [false, true] {
+            let data = try await output(["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."], c,
+                deadline: deadline, index: source ? index : nil, staging: source ? staging : nil)
+            for path in try CheckpointFiles.names(data) where candidates.insert(path).inserted {
+                try CheckpointFiles.relative(path); bytes += path.utf8.count + 1
+                guard bytes <= 4_194_304 else { throw GitCheckpointError(.outputLimit) }
+            }
+        }
+        var chunk = [String](), chunkBytes = 0
+        func check(_ paths: [String]) async throws {
+            guard !paths.isEmpty else { return }
+            let data = try await output(["check-attr", "-z", "filter", "--"] + paths, c, deadline: deadline, index: index, staging: staging)
+            guard data.last == 0 else { throw GitCheckpointError(.commandFailed) }
+            let fields = data.dropLast().split(separator: 0, omittingEmptySubsequences: false)
+            guard fields.count == paths.count * 3 else { throw GitCheckpointError(.commandFailed) }
+            for (offset, path) in paths.enumerated() {
+                guard String(data: fields[offset * 3], encoding: .utf8) == path,
+                      String(data: fields[offset * 3 + 1], encoding: .utf8) == "filter",
+                      let driver = String(data: fields[offset * 3 + 2], encoding: .utf8) else { throw GitCheckpointError(.unsupportedConfiguration) }
+                guard !configuration.executableFilters.contains(driver.lowercased()) else { throw GitCheckpointError(.unsupportedConfiguration) }
+            }
+        }
+        for path in candidates.sorted() {
+            var node = stat()
+            if lstat(c.workspace.path + "/" + path, &node) != 0 {
+                guard errno == ENOENT || errno == ENOTDIR else { throw GitCheckpointError(.ownershipLost) }; continue
+            }
+            // Git does not run clean/process filters for deleted files, symlinks or gitlinks.
+            guard node.st_mode & S_IFMT == S_IFREG else { continue }
+            if chunk.count == 512 || chunkBytes + path.utf8.count > 65_536 { try await check(chunk); chunk = []; chunkBytes = 0 }
+            chunk.append(path); chunkBytes += path.utf8.count
+        }
+        try await check(chunk)
     }
     private func configurationFile(_ path: String) throws -> Data? {
         let resolved = CheckpointFiles.canonical(path)
@@ -338,6 +387,7 @@ public struct GitCheckpointService: Sendable {
         // hide same-size/same-timestamp working edits after read-tree rewrites the scratch file.
         if configuration.sparse, let revision = plan.indexRevision { try CheckpointFiles.makeRacy(CheckpointFiles.indexName(plan.id), admin: c.admin, before: revision) }
         if configuration.sparse { try await correctSparseFlags(c, metadata: metadata, index: indexPath, staging: staging, deadline: deadline) }
+        try await validateFilters(c, configuration: configuration, index: indexPath, staging: staging, deadline: deadline)
         try metadata.validate(); try await validateCurrent(plan, c, deadline: deadline)
 
         // New staged files can be ignored even though they are explicitly tracked. Restore their
@@ -367,11 +417,12 @@ public struct GitCheckpointService: Sendable {
         try await validateCurrent(plan, c, deadline: deadline)
         if configuration.sparse, let revision = plan.indexRevision { try CheckpointFiles.makeRacy(CheckpointFiles.indexName(plan.id), admin: c.admin, before: revision) }
         _ = try await output(["add"] + (configuration.sparse ? ["--sparse"] : []) + [ignored.status == 0 ? "-u" : "-A", "--", "."], c, deadline: deadline, index: indexPath, staging: staging)
+        try await validateFilters(c, configuration: configuration, index: indexPath, staging: staging, deadline: deadline)
         let tree = try CheckpointFiles.line(await output(["write-tree"], c, deadline: deadline, index: indexPath, staging: staging))
         guard CheckpointValidation.object(tree, format: plan.objectFormat) else { throw GitCheckpointError(.commandFailed) }
         let message = "Coincide checkpoint " + plan.id.uuidString.lowercased()
         let commit = try CheckpointFiles.line(await output(["commit-tree", tree] + (plan.headCommit.map { ["-p", $0] } ?? []) + ["-m", message], c, deadline: deadline, index: indexPath, staging: staging))
-        let receipt = try GitCheckpointReceipt(plan: plan, commit: commit, tree: tree)
+        let capturedAt = Date()
         try metadata.validate(); try await validateCurrent(plan, c, deadline: deadline)
         guard try await reference(plan, c, deadline: deadline) == nil else { throw GitCheckpointError(.refCollision) }
         let publication = try await run(["update-ref", plan.reference, commit, String(repeating: "0", count: plan.objectFormat == "sha256" ? 64 : 40)], c, deadline: deadline, index: indexPath)
@@ -379,6 +430,15 @@ public struct GitCheckpointService: Sendable {
         // Ref publication alone is not a completion receipt. Only the owned, drained successful
         // command path may write complete.json; an orphaned Git process never proves readiness.
         try await validateCurrent(plan, c, deadline: deadline); try metadata.validate(); try Task.checkCancellation()
+        let scratchDigest: String?
+        do { scratchDigest = try CheckpointScratch.seal(plan: plan, commit: commit, tree: tree, metadata: metadata, admin: c.admin) }
+        catch is CancellationError { throw CancellationError() }
+        catch {
+            // A missing cleanup proof must not discard an otherwise complete checkpoint.
+            // Its temporary files stay untouched and the caller can show a cleanup warning.
+            try Task.checkCancellation(); scratchDigest = nil
+        }
+        let receipt = try GitCheckpointReceipt(plan: plan, commit: commit, tree: tree, capturedAt: capturedAt, scratchManifestDigest: scratchDigest)
         try metadata.writeExclusive(encoder.encode(receipt), name: "complete.json")
         guard try await inspect(plan, c, deadline: deadline) == .ready(receipt) else { throw GitCheckpointError(.metadataInvalid) }
         return receipt

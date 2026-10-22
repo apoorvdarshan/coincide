@@ -490,9 +490,10 @@ func setupSuccessfulCommandRetainsReadinessAndExitEvidenceWhileBackgroundOwnerSt
         #expect(stopping.workspacePreparation?.setup?.commandExit == .exited(0))
         #expect(await f.engine.current().snapshot.providerReady(for: stopping))
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "Setup already succeeded"))
-        try await waitSetup { await f.harness.providerSessions(f.thread.id).first?.turns.count == 1 }
+        #expect(f.harness.providerSessions(f.thread.id).isEmpty, "The automatic baseline waits for the already-stopping background owner to drain.")
         peer.releaseClosure()
         try await waitSetup { peer.isClosed }
+        try await waitSetup { await f.harness.providerSessions(f.thread.id).first?.turns.count == 1 }
         let closed = try await f.currentThread()
         #expect(closed.workspacePreparation?.setup?.commandExit == .exited(0))
         #expect(await f.engine.current().snapshot.providerReady(for: closed))

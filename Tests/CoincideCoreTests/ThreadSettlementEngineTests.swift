@@ -307,7 +307,10 @@ func settlementRequiresExplicitGenerationAndIdleProviderCompletionNeverRunsClean
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "Normal provider turn"))
         try await waitSettlement { await f.harness.providerSessions(f.thread.id).first?.turns.count == 1 }
         let provider = try #require(f.harness.providerSessions(f.thread.id).first)
-        await provider.finish(); try await waitSettlement { try await f.currentThread().state == .idle }
+        await provider.finish(); try await waitSettlement {
+            let thread = try await f.currentThread()
+            return thread.state == .idle && thread.heldPostRunCheckpoint == nil
+        }
         #expect(try await f.currentThread().settlement == nil)
         #expect(f.harness.scriptSessions().isEmpty)
         await #expect(throws: WorkspaceCommandError.self) {

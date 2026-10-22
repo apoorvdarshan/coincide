@@ -3,13 +3,13 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-private struct CheckpointFile: Sendable, Equatable {
+struct CheckpointFile: Sendable, Equatable {
     let bytes: Data
     let mode: UInt16
     let link: String?
 }
 
-private struct CheckpointUserState: Sendable, Equatable {
+struct CheckpointUserState: Sendable, Equatable {
     let indexFiles: [String: Data]
     let head: Data
     let branches: Data
@@ -18,7 +18,7 @@ private struct CheckpointUserState: Sendable, Equatable {
     let files: [String: CheckpointFile]
 }
 
-private struct CheckpointFixture: Sendable {
+struct CheckpointFixture: Sendable {
     let root: URL
     let repository: URL
     let git: URL
@@ -360,10 +360,12 @@ func gitCheckpointNeverExecutesConfiguredCleanOrProcessFilters(kind: String) asy
     try fixture.write(".gitattributes", "*.txt filter=fixture\n")
     _ = try await fixture.run(["config", "filter.fixture." + kind, "touch '" + sentinel.path + "'"])
     let before = try await fixture.state()
-    try await checkpointExpectError(.unsupportedConfiguration) { _ = try await fixture.service().prepare() }
+    let service = fixture.service(), plan = try await service.prepare()
+    try await checkpointExpectError(.unsupportedConfiguration) { _ = try await service.capture(plan) }
     var inherited = fixture
     inherited.environment["GIT_CONFIG"] = "/dev/null"
-    try await checkpointExpectError(.unsupportedConfiguration) { _ = try await inherited.service().prepare() }
+    let inheritedService = inherited.service(), inheritedPlan = try await inheritedService.prepare()
+    try await checkpointExpectError(.unsupportedConfiguration) { _ = try await inheritedService.capture(inheritedPlan) }
     #expect(!FileManager.default.fileExists(atPath: sentinel.path))
     #expect(try await fixture.state() == before)
 }

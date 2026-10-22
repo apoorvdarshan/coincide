@@ -118,10 +118,11 @@ private func worktreeUIGit(_ arguments: [String], root: URL) async throws {
     }
 }
 
-@MainActor private func waitWorktreeUI(_ condition: () async throws -> Bool) async throws {
+@MainActor private func waitWorktreeUI(file: StaticString = #fileID, line: UInt = #line,
+                                     _ condition: () async throws -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(10)
     while try await !condition() {
-        guard ContinuousClock.now < deadline else { throw CoincideError("The native worktree fixture did not settle.") }
+        guard ContinuousClock.now < deadline else { throw CoincideError("The native worktree fixture did not settle at \(file):\(line).") }
         try await Task.sleep(for: .milliseconds(10))
     }
 }

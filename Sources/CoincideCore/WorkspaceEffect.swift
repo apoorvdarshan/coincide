@@ -38,10 +38,12 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     case startProjectScript(threadID: UUID, attemptID: UUID, plan: ProjectScriptExecutionPlan)
     case resolveThreadScript(threadID: UUID, owner: ProjectScriptOwner, runID: UUID)
     case startThreadScript(threadID: UUID, owner: ProjectScriptOwner, plan: ProjectScriptExecutionPlan)
+    case resolveRunCheckpoint(threadID: UUID, runID: UUID, stage: RunCheckpointStage, attemptID: UUID)
+    case captureRunCheckpoint(threadID: UUID, runID: UUID, stage: RunCheckpointStage, plan: GitCheckpointPlan)
     public var threadID: UUID? {
         switch self {
         case .projectClone: nil
-        case .resolveThreadScript(let id, _, _), .startThreadScript(let id, _, _), .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
+        case .resolveRunCheckpoint(let id, _, _, _), .captureRunCheckpoint(let id, _, _, _), .resolveThreadScript(let id, _, _), .startThreadScript(let id, _, _), .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }
     var worktreeAttemptID: UUID? {
@@ -57,11 +59,18 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
         default: nil
         }
     }
+    var checkpointOwner: (runID: UUID, stage: RunCheckpointStage, attemptID: UUID)? {
+        switch self {
+        case .resolveRunCheckpoint(_, let runID, let stage, let id): (runID, stage, id)
+        case .captureRunCheckpoint(_, let runID, let stage, let plan): (runID, stage, plan.id)
+        default: nil
+        }
+    }
     public var projectID: UUID? { if case .projectClone(let id, _) = self { id } else { nil } }
     public var targetID: UUID {
         switch self {
         case .projectClone(let id, _): id
-        case .resolveThreadScript(let id, _, _), .startThreadScript(let id, _, _), .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
+        case .resolveRunCheckpoint(let id, _, _, _), .captureRunCheckpoint(let id, _, _, _), .resolveThreadScript(let id, _, _), .startThreadScript(let id, _, _), .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }
 }

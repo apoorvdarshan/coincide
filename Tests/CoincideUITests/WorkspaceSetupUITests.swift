@@ -111,10 +111,11 @@ actor NativeSetupOutput {
         #expect(try String(contentsOf: source.appendingPathComponent("untracked.txt"), encoding: .utf8) == "Untracked source kept\n")
     }
 }
-@MainActor func waitNativeSetup(_ condition: () async throws -> Bool) async throws {
+@MainActor func waitNativeSetup(file: StaticString = #fileID, line: UInt = #line,
+                               _ condition: () async throws -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(10)
     while try await !condition() {
-        guard ContinuousClock.now < deadline else { throw CoincideError("The native setup fixture did not settle.") }
+        guard ContinuousClock.now < deadline else { throw CoincideError("The native setup fixture did not settle at \(file):\(line).") }
         try await Task.sleep(for: .milliseconds(10))
     }
 }

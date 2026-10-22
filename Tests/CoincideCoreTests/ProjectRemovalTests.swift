@@ -322,7 +322,7 @@ private func expectRemovalRejection(_ command: WorkspaceCommand, fixture f: Remo
         }
         let database = try WorkspaceDatabase(url: f.databaseURL)
         try await waitRemoval {
-            let effects = try await database.effects()
+            let effects = try await database.effects().filter { if case .providerStart = $0.request { true } else { false } }
             let providers = f.harness.allProviders()
             guard effects.filter({ $0.status == .running }).count == 8,
                   effects.filter({ $0.status == .pending }).count == 2, providers.count == 8 else { return false }
@@ -337,7 +337,7 @@ private func expectRemovalRejection(_ command: WorkspaceCommand, fixture f: Remo
         #expect(f.harness.count == madeBefore)
         #expect(await f.engine.current().snapshot.projects == [other])
         #expect(await f.engine.current().error == nil)
-        let cancelled = try await database.effects()
+        let cancelled = try await database.effects().filter { if case .providerStart = $0.request { true } else { false } }
         #expect(cancelled.count == 10 && cancelled.allSatisfy { $0.status == .cancelled })
         for provider in f.harness.allProviders() {
             #expect(await provider.closeFinished)

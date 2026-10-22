@@ -227,6 +227,8 @@ private func waitWorktree(_ condition: () async throws -> Bool) async throws {
         let rows = try await database.effects()
         #expect(rows.contains { if case .resolveWorktree = $0.request { $0.status == .succeeded } else { false } })
         #expect(rows.contains { if case .prepareWorktree = $0.request { $0.status == .running } else { false } })
+        // The fake Git executor still publishes an existing local checkout directory.
+        try FileManager.default.createDirectory(at: URL(fileURLWithPath: state.destinationPath), withIntermediateDirectories: true)
         await peer.succeed()
         try await waitWorktree { await f.harness.sessions(f.thread.id).first?.turns.count == 1 }
         let provider = try #require(f.harness.sessions(f.thread.id).first), first = try #require(await provider.turns.first)

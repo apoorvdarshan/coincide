@@ -36,12 +36,13 @@ private func waitV2(_ predicate: () async throws -> Bool) async throws {
         try await Task.sleep(for: .milliseconds(10))
     }
 }
-private func approveV2UntilIdle(_ f: V2Fixture) async throws {
+private func approveV2UntilIdle(_ f: V2Fixture, allowPausedQueue: Bool = false) async throws {
     let deadline = ContinuousClock.now + .seconds(10)
     while true {
         let current = await f.engine.current(), thread = current.snapshot.threads[0]
         if let error = current.error { throw CoincideError(error) }
-        if thread.activeRun == nil && thread.state == .idle { return }
+        if thread.activeRun == nil && thread.state == .idle && thread.heldPostRunCheckpoint == nil &&
+           (thread.queuedTurns.isEmpty || (allowPausedQueue && thread.queuePaused)) { return }
         if thread.state == .failed { throw CoincideError(thread.messages.last(where: { $0.role == .system })?.text ?? "The fixture failed") }
         for request in thread.runtimeRequests where !request.responding && request.id.string != "background-request" {
             try await f.engine.dispatch(.respond(threadID: thread.id, requestID: request.id, response: .option("opaque-allow")))
@@ -173,7 +174,7 @@ func acpV2RejectedAndUnconfirmedSubmissionsRemainVisibleWithoutAutomaticResend(_
     try await withV2(mode) { f in
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "first"))
         try await waitV2 { await f.engine.current().snapshot.threads[0].runtimeRequests.count == 1 }
-        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "second")); try await approveV2UntilIdle(f)
+        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "second")); try await approveV2UntilIdle(f, allowPausedQueue: mode == "unknown_stop")
         let done = await f.engine.current().snapshot.threads[0]
         #expect(done.state == .idle && done.activeRun == nil)
         if mode == "unknown_stop" {
@@ -300,10 +301,16 @@ func installedOpenCodeUsesTheVersionNegotiatedOnItsNativeConnection() async thro
         let commandID = UUID()
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "must not reach agent"), id: commandID)
         try await waitV2 { FileManager.default.fileExists(atPath: f.gate.path + ".config") }
+        let runID = try #require(await f.engine.current().snapshot.threads[0].activeRun?.id)
         try await f.engine.dispatch(.interrupt(threadID: f.thread.id))
         try await waitV2 { await f.engine.current().snapshot.threads[0].state == .interrupted }
         let database = try WorkspaceDatabase(url: f.root.appendingPathComponent("workspace.sqlite"))
-        try await waitV2 { try await database.effects(commandID: commandID).first?.status == .cancelled }
+        try await waitV2 {
+            try await database.effects().contains { effect in
+                guard case .providerStart(let threadID, let effectRunID, _, _, _) = effect.request else { return false }
+                return threadID == f.thread.id && effectRunID == runID && effect.status == .cancelled
+            }
+        }
         await f.engine.shutdown()
         #expect(!FileManager.default.fileExists(atPath: f.gate.path + ".prompt"))
     }
