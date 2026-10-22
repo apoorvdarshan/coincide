@@ -301,14 +301,24 @@ private struct RunHistoryRow: View {
     private var references: some View {
         DisclosureGroup("Recorded references") {
             VStack(alignment: .leading, spacing: 5) {
-                Text("Session and turn references may be supplied by an adapter.")
+                Text(record.configuration.provider == .claude
+                     ? String(localized: "Adapter input references are separate from Claude transcript-entry UUIDs. A history review verifies the complete native boundary before it can be used.")
+                     : String(localized: "Session and turn references may be supplied by an adapter."))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 LabeledContent("Run", value: record.id.uuidString)
                 if let session = record.providerThreadID, !session.isEmpty {
                     LabeledContent("Session", value: session)
                 }
                 ForEach(record.turnIDs, id: \.self) { reference in
-                    LabeledContent("Turn", value: reference)
+                    LabeledContent(record.configuration.provider == .claude ? "Adapter input reference" : "Turn", value: reference)
+                }
+                if let claude = record.claude {
+                    LabeledContent("Registered native input", value: claude.openingInputID)
+                    LabeledContent("Registered steering inputs", value: claude.steeringInputs.count.formatted())
+                    LabeledContent("Observed native inputs", value: claude.observedInputIDs.count.formatted())
+                    if let cursor = claude.finalRootAssistantMessageID {
+                        LabeledContent("Last observed root assistant UUID", value: cursor)
+                    }
                 }
             }.textSelection(.enabled).padding(.top, 5)
         }

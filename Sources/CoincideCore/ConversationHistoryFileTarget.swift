@@ -153,6 +153,14 @@ extension CodingThread {
               record.configuration.provider == provider,
               record.configuration.workspacePath == workspacePath else { return false }
         if verifiedNativeRunIDs.contains(record.id) {
+            if provider == .claude {
+                guard let runtime = claudeRuntimeConfiguration, let evidence = record.claude,
+                      record.configuration.claudeRuntimeConfiguration?.runtimeIdentity == runtime.runtimeIdentity,
+                      evidence.runtimeIdentity == runtime.runtimeIdentity, evidence.nativeSessionID == record.providerThreadID,
+                      evidence.openingInputID == ClaudeInputIdentity.opening(runID: record.id),
+                      record.providerThreadID != nil else { return false }
+                return record.configuration.nativeThreadID == nil || record.configuration.nativeThreadID == record.providerThreadID
+            }
             guard provider == .opencode, openCodeConfiguration?.generation == .v1,
                   record.configuration.openCodeConfiguration?.runtimeIdentity == openCodeConfiguration?.runtimeIdentity,
                   let originalID = record.providerThreadID, !originalID.isEmpty else { return false }
@@ -181,6 +189,59 @@ extension WorkspaceSnapshot {
         try review.validate()
         guard let thread = threads.first(where: { $0.id == review.sourceThreadID && $0.projectID == review.projectID }) else {
             return .unavailable(.missingRun)
+        }
+        if let evidence = review.claude {
+            guard evidence.source.matchesBinding(.init(thread: thread)) else { return .unavailable(.workspaceChanged) }
+            if operationID != nil {
+                guard operationID == review.id, let operation = conversationHistoryOperation(review.id), operation.review == review,
+                      operation.phase == .applied, let selection = operation.result?.claude?.selection,
+                      thread.providerThreadID == selection.nativeSessionID, thread.claudeResumeSelection == selection,
+                      thread.claudeResumeConsumerRunID == nil else { return .unavailable(.workspaceChanged) }
+                try operation.validate()
+            } else {
+                guard thread.providerThreadID == evidence.source.reference.nativeThreadID,
+                      thread.claudeResumeSelection == evidence.source.selection else { return .unavailable(.workspaceChanged) }
+            }
+            var verified = Set<UUID>()
+            for input in evidence.inputs {
+                guard let record = thread.runHistory?.first(where: { $0.id == input.runID }), let original = record.claude,
+                      record.origin == .user, record.messageAttributionVersion == 1,
+                      record.configuration.provider == .claude, evidence.source.matchesBinding(record.configuration),
+                      original.runtimeIdentity == evidence.source.runtimeIdentity,
+                      original.nativeSessionID == evidence.source.reference.nativeThreadID,
+                      record.providerThreadID == original.nativeSessionID,
+                      original.openingInputID == input.openingInputID,
+                      original.rootAssistantMessageIDs == input.rootAssistantMessageIDs,
+                      input.steeringInputs.allSatisfy({ original.steeringInputs.contains($0) }) else { return .unavailable(.workspaceChanged) }
+                try original.validate(); verified.insert(record.id)
+            }
+            // The original scope-zero baseline survives a confirmed fresh reset.
+            // Follow only this logical thread's exact applied native selections;
+            // never rewrite a historical run's original provider reference.
+            if let original = thread.runHistory?.first, !verified.contains(original.id), let captured = original.claude,
+               captured.runtimeIdentity == evidence.source.runtimeIdentity, original.providerThreadID == captured.nativeSessionID,
+               original.configuration.provider == .claude, evidence.source.matchesBinding(original.configuration),
+               let start = captured.nativeSessionID {
+                var current = start, seen = Set<String>()
+                while current != evidence.source.reference.nativeThreadID, seen.insert(current).inserted, seen.count <= 10_000 {
+                    let successors = (conversationHistoryOperations ?? []).filter { prior in
+                        prior.phase == .applied && prior.review.sourceThreadID == thread.id && prior.review.kind == .rewindBeforeRun &&
+                            prior.review.claude?.source.runtimeIdentity == evidence.source.runtimeIdentity &&
+                            prior.review.sourceReference.nativeThreadID == current && prior.result?.reference.nativeThreadID != current &&
+                            prior.result?.claude?.selection?.kind == .freshSession
+                    }
+                    guard successors.count == 1, let next = successors[0].result?.reference.nativeThreadID else { break }
+                    try successors[0].validate(); current = next
+                }
+                if current == evidence.source.reference.nativeThreadID,
+                   (start == current || (conversationHistoryOperations ?? []).contains(where: {
+                       $0.phase == .applied && $0.review.sourceThreadID == thread.id &&
+                           $0.review.claude?.source.runtimeIdentity == captured.runtimeIdentity &&
+                           $0.review.claude?.inputs.contains(where: { $0.runID == original.id && $0.openingInputID == captured.openingInputID }) == true
+                   })) { verified.insert(original.id) }
+            }
+            return thread.conversationHistoryFileTarget(beforeRunID: review.runID,
+                includingRemovedByHistoryOperationID: operationID, verifiedNativeRunIDs: verified)
         }
         guard let evidence = review.openCodeV1 else {
             return thread.conversationHistoryFileTarget(beforeRunID: review.runID, includingRemovedByHistoryOperationID: operationID)

@@ -78,11 +78,17 @@ extension WorkspaceSnapshot {
               operation.review.removedRunIDs.allSatisfy({ id in thread.runHistory?.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) == true }),
               operation.review.removedMessageIDs.allSatisfy({ id in thread.messages.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) }) else { throw WorkspaceCommandError("The rewound conversation or its exact file target changed.") }
         var expectedConfiguration = operation.review.sourceConfiguration
-        if operation.review.openCodeV1 != nil {
+        if operation.review.openCodeV1 != nil || operation.review.claude != nil {
             // The validated V1 result adopts a new native conversation while
             // retaining the exact pre-adoption checkpoint/run audit. Only the
             // current native reference changes; no other reviewed setting does.
             expectedConfiguration.nativeThreadID = operation.result?.reference.nativeThreadID
+        }
+        if operation.review.claude != nil {
+            guard let selection = operation.result?.claude?.selection, thread.claudeResumeSelection == selection,
+                  thread.claudeResumeConsumerRunID == nil, thread.claudeInheritedHead == operation.review.claude?.inheritedHead else {
+                throw WorkspaceCommandError("The selected Claude context changed before its workspace restoration.")
+            }
         }
         guard ProviderConfiguration(thread: thread) == expectedConfiguration,
               try conversationHistoryFileTarget(for: operation.review, includingRemovedByHistoryOperationID: operation.id) == .available(files.review.target) else { throw WorkspaceCommandError("The rewound conversation or its exact file target changed.") }

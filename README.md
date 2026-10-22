@@ -214,13 +214,24 @@ their run audit. Its current draft, provider, model, permissions and agent optio
 stay unchanged. **Recall Prompt** explicitly appends the original input and
 attachments to the latest draft once, rather than replacing existing edits.
 
+New Claude runs with captured runtime and native input/assistant evidence also
+expose these actions. A fork publishes a verified native transcript copy and
+preserves its inherited context. Claude rewind saves a resume point for the next
+explicit message; accepting it sends no provider prompt and leaves the native
+transcript unchanged. The next message uses that selection once. An interrupted
+or unproven attempt stays paused for read-only inspection before another send.
+Before the first local run, reset preserves verified inherited fork context or
+reserves a fresh native session. See [native Claude history](docs/CLAUDE_HISTORY.md)
+for supported transcript boundaries and installed-verification status.
+
 Both actions leave workspace files and staging unchanged. While a history change
 is pending, provider work and configuration changes wait; drafting, pinning and
 conversation selection remain available. An unconfirmed rewind stays paused for
 **Inspect Provider State**, which reads the outcome without repeating the action.
 Lost acknowledgments and restart never automatically replay a history mutation.
-Claude, ACP and older histories without verified boundaries do not offer these
-conversation actions.
+ACP and older histories without verified boundaries do not offer these
+conversation actions. An uncertain Claude fork retains its exact reserved native
+file for inspection; it is never silently published again.
 
 **Save Run Checkpoints** in the workspace menu is enabled for future messages by
 default. Each accepted message keeps its captured setting. Coincide attempts a

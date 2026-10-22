@@ -39,6 +39,9 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case antigravityConfiguration(AntigravityConfiguration)
     case codexRuntimeConfiguration(CodexRuntimeConfiguration)
     case codexProvider(CodexRuntimeConfiguration)
+    case claudeProvider(ClaudeRuntimeConfiguration)
+    case claudeRuntimeConfiguration(ClaudeRuntimeConfiguration)
+    case claudeWorkspace(ClaudeRuntimeConfiguration)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -61,6 +64,7 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case createThread(CodingThread)
     case editThread(UUID, ThreadEdit)
     case submit(threadID: UUID, text: String)
+    case submitCapturedClaude(threadID: UUID, text: String, configuration: ClaudeRuntimeConfiguration)
     case interrupt(threadID: UUID)
     case respond(threadID: UUID, requestID: JSONValue, response: ProviderApprovalResponse)
     case removeQueued(threadID: UUID, queuedID: UUID)
@@ -91,12 +95,15 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case dismissConversationHistoryRecall(operationID: UUID)
 }
 
-enum EngineCommand: Codable, Sendable {
+// Captured history/checkpoint values can be large. Keep the internal command
+// envelope indirect so decoding and broad switch dispatch copy an owned reference
+// instead of reserving every case's maximum payload on the worker stack.
+indirect enum EngineCommand: Codable, Sendable {
     case client(WorkspaceCommand)
     case runtimeOpened(threadID: UUID, runID: UUID, runtimeID: UUID)
     case provider(threadID: UUID, runtimeID: UUID, event: ProviderEvent)
     case effectResult(WorkspaceEffectRequest, EffectResult)
-    case beginWorktreePreparation(threadID: UUID, request: GitWorktreeRequest, expectedSourcePath: String, previousAttemptID: UUID?, incarnation: UUID, reviewSetup: Bool = false)
+    case beginWorktreePreparation(threadID: UUID, request: GitWorktreeRequest, expectedSourcePath: String, previousAttemptID: UUID?, incarnation: UUID, reviewSetup: Bool = false, claudeRuntimeConfiguration: ClaudeRuntimeConfiguration? = nil)
     case worktreeStarted(threadID: UUID, attemptID: UUID)
     case worktreeRecovered(threadID: UUID, attemptID: UUID, incarnation: UUID, result: GitWorktreeResult)
     case pauseQueues
@@ -121,6 +128,8 @@ enum EngineCommand: Codable, Sendable {
     case conversationHistoryDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case conversationHistoryEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryCandidateObserved(operationID: UUID, candidate: OpenCodeV1HistoryCandidate, incarnation: UUID)
+    case conversationHistoryClaudeForkReserved(operationID: UUID, publication: ClaudeTranscriptPublication, incarnation: UUID)
+    case claudeResumeInspected(threadID: UUID, incarnation: UUID, selection: ClaudeResumeSelection, run: ThreadRunRecord, result: ClaudeResumeInspection)
     case conversationHistoryReconciled(operationID: UUID, incarnation: UUID, result: ConversationHistoryReconciliation)
     case conversationHistoryMaintenanceAccepted(operationID: UUID, attempt: ConversationHistoryMaintenanceAttempt, incarnation: UUID)
     case conversationHistoryMaintenanceDispatching(threadID: UUID, operationID: UUID, attemptID: UUID, incarnation: UUID)
@@ -176,7 +185,9 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         let reduced: GeneralReduction
         switch command {
-        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved,
+        case .provider(let threadID, let runtimeID, let event):
+            reduced = try reduceProvider(event, threadID: threadID, runtimeID: runtimeID, snapshot: snapshot, now: now)
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
              .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
              .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt):
             reduced = .init(decision: try reduceConversationHistory(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
@@ -203,6 +214,25 @@ struct WorkspaceDecision: Sendable {
         return try finalized(reduced.decision)
     }
 
+    /// Provider events have their own frame: the broad admission switch owns
+    /// many large captured values that must not stay on the stack while a
+    /// terminal event validates history and starts its FIFO successor.
+    @inline(never)
+    private static func reduceProvider(_ event: ProviderEvent, threadID: UUID, runtimeID: UUID,
+                                       snapshot: WorkspaceSnapshot, now: Date) throws -> GeneralReduction {
+        var decision = Self(snapshot: snapshot)
+        guard !snapshot.isCheckpointRestoreLocked(threadID: threadID),
+              !snapshot.isPullRequestCreationLocked(threadID: threadID),
+              !snapshot.isPullRequestCheckoutLocked(threadID: threadID) else {
+            return .init(decision: decision, requiresFinalization: false)
+        }
+        do { try decision.receive(event, threadID: threadID, runtimeID: runtimeID, now: now) }
+        catch let error as CoincideError {
+            try decision.receive(.failure(error.localizedDescription), threadID: threadID, runtimeID: runtimeID, now: now)
+        }
+        return .init(decision: decision, requiresFinalization: true)
+    }
+
     @inline(never)
     private static func finalized(_ value: Self) throws -> Self {
         var decision = value
@@ -224,6 +254,8 @@ struct WorkspaceDecision: Sendable {
             decision.finishConversationHistory(request, result: result, incarnation: incarnation, now: now)
         case .conversationHistoryCandidateObserved(let operationID, let candidate, let incarnation):
             try decision.recordOpenCodeV1HistoryCandidate(operationID: operationID, candidate: candidate, incarnation: incarnation, now: now)
+        case .conversationHistoryClaudeForkReserved(let operationID, let publication, let incarnation):
+            try decision.recordClaudeHistoryForkPublication(operationID: operationID, publication: publication, incarnation: incarnation, now: now)
         case .conversationHistoryReconciled(let operationID, _, let result):
             try decision.reconcileConversationHistory(operationID: operationID, result: result, now: now)
         case .conversationHistoryMaintenanceAccepted(let operationID, let attempt, let incarnation):
@@ -317,9 +349,8 @@ struct WorkspaceDecision: Sendable {
     private static func makeGeneral(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> GeneralReduction {
         var decision = Self(snapshot: snapshot)
         if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
-        if case .provider(let threadID, _, _) = command, snapshot.isCheckpointRestoreLocked(threadID: threadID) || snapshot.isPullRequestCreationLocked(threadID: threadID) || snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return .init(decision: decision, requiresFinalization: false) }
         switch command {
-        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved,
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
              .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
              .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt),
              .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
@@ -362,7 +393,7 @@ struct WorkspaceDecision: Sendable {
                 // Restart already held restored work. Inspection must not override a
                 // newer explicit submit/resume intent, and never starts work itself.
             }
-        case .beginWorktreePreparation(let threadID, let request, let expectedSourcePath, let previousAttemptID, _, let reviewSetup):
+        case .beginWorktreePreparation(let threadID, let request, let expectedSourcePath, let previousAttemptID, _, let reviewSetup, let claudeRuntimeConfiguration):
             guard !snapshot.pullRequestCheckoutReservedIDs.union(snapshot.promptSteeringReservedIDs).contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is reserved by a pull request checkout.") }
             guard !decision.snapshot.isPullRequestCheckoutLocked(threadID: threadID),
                   !decision.snapshot.isPullRequestCheckoutLocked(path: request.sourcePath),
@@ -400,14 +431,38 @@ struct WorkspaceDecision: Sendable {
             let allIDs = decision.snapshot.threads.compactMap(\.workspacePreparation).flatMap { $0.previousAttempts.map { $0.request.id } + [$0.id] }
             guard !allIDs.contains(request.id), !decision.snapshot.cloneAttemptIDs.contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is already in use.") }
             thread.workspacePreparation = .init(request: request, now: now, previousAttempts: history, reviewSetup: reviewSetup)
+            if let previous = thread.claudeRuntimeConfiguration {
+                guard let captured = claudeRuntimeConfiguration,
+                      captured == (try previous.replacingWorkspace(request.destinationPath, physicalPath: captured.workspacePath)) else { throw ClaudeRuntimeConfiguration.invalid() }
+                thread.claudeRuntimeConfiguration = captured
+            } else if claudeRuntimeConfiguration != nil { throw ClaudeRuntimeConfiguration.invalid() }
+            thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
             thread.workspacePath = request.destinationPath; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; thread.runtimeID = nil
             thread.runtimeRequests = []; thread.providerMetadata = nil; thread.providerActivity = nil
             for j in thread.queuedTurns.indices {
+                if let previous = thread.queuedTurns[j].configuration.claudeRuntimeConfiguration {
+                    guard let captured = claudeRuntimeConfiguration else { throw ClaudeRuntimeConfiguration.invalid() }
+                    thread.queuedTurns[j].configuration.claudeRuntimeConfiguration = try previous.replacingWorkspace(request.destinationPath, physicalPath: captured.workspacePath)
+                }
+                thread.queuedTurns[j].configuration.claudeLaunchSelection = nil
                 thread.queuedTurns[j].configuration.workspacePath = request.destinationPath
                 thread.queuedTurns[j].configuration.nativeThreadID = nil
             }
             thread.updatedAt = now; decision.snapshot.threads[i] = thread; decision.closeRuntimes.insert(thread.id)
             decision.effects.append(.init(id: request.id, request: .resolveWorktree(threadID: threadID, request: request)))
+        case .claudeResumeInspected(let threadID, _, let selection, let run, let result):
+            guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
+                  !decision.snapshot.threads[i].isBusy,
+                  decision.snapshot.threads[i].claudeResumeSelection == selection,
+                  decision.snapshot.threads[i].claudeResumeConsumerRunID == run.id,
+                  decision.snapshot.threads[i].runHistory?.first(where: { $0.id == run.id }) == run,
+                  decision.snapshot.threads[i].claudeRuntimeConfiguration == run.configuration.claudeRuntimeConfiguration else {
+                throw WorkspaceCommandError("The Claude resume attempt changed. Inspect it again.")
+            }
+            decision.snapshot.threads[i].claudeResumeConsumerRunID = nil
+            if result == .consumed { decision.snapshot.threads[i].claudeResumeSelection = nil }
+            decision.snapshot.threads[i].queuePaused = true
+            decision.snapshot.threads[i].updatedAt = now
         case .client(.settleThread(let threadID, let expectedPath, let review)):
             guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
                   decision.snapshot.threads[i].workspacePath == expectedPath, !decision.snapshot.threads[i].isArchived else {
@@ -750,13 +805,22 @@ struct WorkspaceDecision: Sendable {
                 case .resetAgentOptions:
                     guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
                     thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.agentModeID = nil; thread.model = ""
-                case .provider, .codexProvider:
-                    let kind: ProviderKind, codexConfiguration: CodexRuntimeConfiguration?
-                    if case .provider(let value) = edit { kind = value; codexConfiguration = nil }
+                case .claudeRuntimeConfiguration(let configuration):
+                    try configuration.validate()
+                    guard thread.provider == .claude, thread.claudeRuntimeConfiguration == nil,
+                          configuration.registeredWorkspacePath == thread.workspacePath else { throw ClaudeRuntimeConfiguration.invalid() }
+                    thread.claudeRuntimeConfiguration = configuration
+                case .provider, .codexProvider, .claudeProvider:
+                    let kind: ProviderKind, codexConfiguration: CodexRuntimeConfiguration?, claudeConfiguration: ClaudeRuntimeConfiguration?
+                    if case .provider(let value) = edit { kind = value; codexConfiguration = nil; claudeConfiguration = nil }
                     else if case .codexProvider(let value) = edit {
                         do { try value.validate() }
                         catch { throw WorkspaceCommandError(CodexRuntimeConfiguration.invalid().localizedDescription) }
-                        kind = .codex; codexConfiguration = value
+                        kind = .codex; codexConfiguration = value; claudeConfiguration = nil
+                    } else if case .claudeProvider(let value) = edit {
+                        try value.validate()
+                        guard value.registeredWorkspacePath == thread.workspacePath else { throw ClaudeRuntimeConfiguration.invalid() }
+                        kind = .claude; codexConfiguration = nil; claudeConfiguration = value
                     } else { throw WorkspaceCommandError("The provider selection is invalid.") }
                     guard kind != .acp else { throw WorkspaceCommandError("Choose a configured ACP agent.") }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
@@ -766,6 +830,8 @@ struct WorkspaceDecision: Sendable {
                     thread.museConfiguration = kind == .muse ? .init(instanceID: id) : nil
                     thread.antigravityConfiguration = kind == .antigravity ? .init() : nil
                     thread.codexRuntimeConfiguration = codexConfiguration
+                    thread.claudeRuntimeConfiguration = claudeConfiguration; thread.claudeResumeSelection = nil
+                    thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
                     if kind == .muse, thread.permission != .supervised && thread.permission != .fullAccess { thread.permission = .supervised }
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
@@ -775,6 +841,7 @@ struct WorkspaceDecision: Sendable {
                     thread.piConfiguration = nil
                     thread.museConfiguration = nil
                     thread.antigravityConfiguration = nil; thread.codexRuntimeConfiguration = nil
+                    thread.claudeRuntimeConfiguration = nil; thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
                     thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value
@@ -803,7 +870,11 @@ struct WorkspaceDecision: Sendable {
                             thread.settlement?.script = run
                         }
                     }
-                case .workspacePath(let path):
+                case .workspacePath, .claudeWorkspace:
+                    let path: String, captured: ClaudeRuntimeConfiguration?
+                    if case .workspacePath(let value) = edit { path = value; captured = nil }
+                    else if case .claudeWorkspace(let value) = edit { path = value.registeredWorkspacePath; captured = value }
+                    else { throw ClaudeRuntimeConfiguration.invalid() }
                     guard thread.settlement == nil else { throw WorkspaceCommandError("Resume this conversation before changing its workspace.") }
                     if thread.workspacePreparation != nil {
                         guard path == thread.workspacePath else { throw WorkspaceCommandError("Use Choose Worktree to change a prepared conversation's workspace.") }
@@ -811,9 +882,25 @@ struct WorkspaceDecision: Sendable {
                     }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Change the workspace before sending the first message.") }
                     guard decision.snapshot.workspaceReady(for: thread) else { throw WorkspaceCommandError("Wait for the clone before changing workspaces.") }
+                    if let previous = thread.claudeRuntimeConfiguration {
+                        guard let captured, captured == (try previous.replacingWorkspace(path, physicalPath: captured.workspacePath)) else {
+                            throw WorkspaceCommandError("Choose this Claude workspace through its captured runtime.")
+                        }
+                        thread.claudeRuntimeConfiguration = captured
+                    } else if captured != nil { throw ClaudeRuntimeConfiguration.invalid() }
+                    thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
                     thread.workspacePath = path; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
                 }
-            case .submit(_, let text):
+            case .submit(_, let text), .submitCapturedClaude(_, let text, _):
+                if case .submitCapturedClaude(_, _, let configuration) = action {
+                    try configuration.validate()
+                    guard thread.provider == .claude, configuration.registeredWorkspacePath == thread.workspacePath,
+                          thread.claudeRuntimeConfiguration == nil || thread.claudeRuntimeConfiguration == configuration else { throw ClaudeRuntimeConfiguration.invalid() }
+                    thread.claudeRuntimeConfiguration = configuration
+                }
+                guard thread.claudeResumeConsumerRunID == nil || thread.isBusy else {
+                    throw WorkspaceCommandError("Inspect the previous Claude resume attempt before sending another message.")
+                }
                 let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard (!text.isEmpty || !thread.draftAttachments.isEmpty), !thread.isArchived else { throw WorkspaceCommandError("Enter a message or attach a file in an active conversation.") }
                 guard text.utf16.count <= 120_000 else { throw WorkspaceCommandError("Messages can contain up to 120,000 characters. Shorten the draft or attach it as a file.") }
@@ -984,6 +1071,7 @@ struct WorkspaceDecision: Sendable {
                 guard thread.draft.isEmpty, thread.draftAttachments.isEmpty, let item = thread.queuedTurns.first(where: { $0.id == queuedID }) else { throw WorkspaceCommandError("Clear the composer before editing a queued message.") }
                 thread.draft = item.text; thread.draftAttachments = item.attachments ?? []; thread.queuedTurns.removeAll { $0.id == queuedID }
             case .resumeQueue:
+                guard thread.claudeResumeConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Claude resume attempt before resuming queued messages.") }
                 guard !thread.isBusy, !thread.isArchived else { throw WorkspaceCommandError("Wait for the current turn before resuming the queue.") }
                 thread.queuePaused = false; decision.startNext(in: &thread, now: now)
             case .addAttachments(_, let attachments):
@@ -1003,10 +1091,7 @@ struct WorkspaceDecision: Sendable {
                 decision.snapshot.threads[i].runtimeID = runtimeID
             }
         case .provider(let threadID, let runtimeID, let event):
-            do { try decision.receive(event, threadID: threadID, runtimeID: runtimeID, now: now) }
-            catch let error as CoincideError {
-                try decision.receive(.failure(error.localizedDescription), threadID: threadID, runtimeID: runtimeID, now: now)
-            }
+            return try reduceProvider(event, threadID: threadID, runtimeID: runtimeID, snapshot: snapshot, now: now)
         case .effectResult(let request, let result), .projectScriptEffectResult(let request, let result, _), .runCheckpointEffectResult(let request, let result, _):
             decision.finished(request, result: result, now: now)
         case .antigravityAuthenticationPreparing(let instanceID):
@@ -1103,6 +1188,11 @@ struct WorkspaceDecision: Sendable {
 
     private mutating func start(_ queued: QueuedTurn, in thread: inout CodingThread, now: Date) {
         var configuration = queued.configuration; configuration.nativeThreadID = thread.providerThreadID
+        if configuration.provider == .claude, let selection = thread.claudeResumeSelection,
+           thread.claudeResumeConsumerRunID == nil {
+            configuration.claudeLaunchSelection = selection
+            thread.claudeResumeConsumerRunID = queued.id
+        }
         thread.activeRun = ActiveRun(id: queued.id, configuration: configuration, startedAt: now)
         if thread.messages.isEmpty { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
         var message: ChatMessage
@@ -1125,7 +1215,7 @@ struct WorkspaceDecision: Sendable {
     }
     mutating func startNext(in thread: inout CodingThread, now: Date) {
         if let i = snapshot.threads.firstIndex(where: { $0.id == thread.id }) { snapshot.threads[i] = thread }
-        guard !snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), snapshot.providerReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
+        guard thread.claudeResumeConsumerRunID == nil, !snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), snapshot.providerReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
         let queued = thread.queuedTurns.removeFirst(); start(queued, in: &thread, now: now)
     }
     private mutating func receive(_ scopedEvent: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
@@ -1141,7 +1231,7 @@ struct WorkspaceDecision: Sendable {
         if case .thread(let nativeID) = event {
             let owner = snapshot.threads[index]
             let configuration = owner.activeRun?.configuration ?? ProviderConfiguration(thread: owner)
-            if snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) {
+            if snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) || snapshot.isClaudeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) {
                 event = .connectionClosed("This provider conversation is held by another conversation's pending history action.")
             }
         }
@@ -1152,6 +1242,9 @@ struct WorkspaceDecision: Sendable {
             switch event { case .sessionApproval, .sessionApprovalDismissed, .configuration, .thread, .runEntity: break; default: return }
         }
         switch event {
+        case .claudeHistoryEvidence(let evidence):
+            guard thread.provider == .claude, thread.activeRun?.id == evidence.runID else { return }
+            try thread.mergeClaudeHistoryEvidence(evidence)
         case .steeringCapabilitiesChanged:
             guard thread.activeRun != nil else { return }
             thread.steeringCapabilityRevision = (thread.steeringCapabilityRevision ?? 0) &+ 1
@@ -1277,10 +1370,19 @@ struct WorkspaceDecision: Sendable {
             guard thread.activeRun != nil else { return }
             let stopped = thread.activeRun?.stopRequested == true
             let status: ThreadRunStatus = stopped || state == .interrupted ? .interrupted : state == .idle ? .completed : state == .failed ? .failed : .unknown
+            if status == .completed, let run = thread.activeRun,
+               thread.claudeResumeConsumerRunID == run.id, let selected = thread.claudeResumeSelection,
+               run.configuration.claudeLaunchSelection == selected,
+               run.configuration.claudeRuntimeConfiguration == thread.claudeRuntimeConfiguration,
+               let evidence = thread.runHistory?.first(where: { $0.id == run.id })?.claude,
+               evidence.terminalStatus == .completed, evidence.nativeSessionID == selected.nativeSessionID,
+               evidence.observedInputIDs.contains(evidence.openingInputID) {
+                thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil
+            }
             thread.finishRunRecord(status: status, reason: .providerCompleted, now: now)
             if let runID = thread.activeRun?.id { requestPostRunCheckpoint(runID: runID, in: &thread, now: now) }
             thread.activeRun = nil; thread.runtimeRequests.removeAll { $0.sessionScoped != true }; thread.state = stopped ? .interrupted : state
-            if stopped || state != .idle { thread.queuePaused = true }
+            if stopped || state != .idle || thread.claudeResumeConsumerRunID != nil { thread.queuePaused = true }
             else { startNext(in: &thread, now: now) }
         case .failure(let message), .connectionClosed(let message):
             closeRuntimes.insert(thread.id); thread.runtimeID = nil
@@ -1424,7 +1526,7 @@ private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
         case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
-        case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
+        case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .submitCapturedClaude(let id, _, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }
 }

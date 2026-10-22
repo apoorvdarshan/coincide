@@ -96,6 +96,7 @@ enum CodexReasoningValidation {
         try MuseConfigurationValidation.configuration(configuration)
         try AntigravityConfigurationValidation.configuration(configuration)
         try CodexRuntimeConfigurationValidation.configuration(configuration)
+        try configuration.validateClaudeConfiguration()
         if let effort = configuration.reasoningEffort {
             try id(effort, limit: 256)
             guard configuration.provider == .codex else { throw CoincideError("Reasoning effort belongs to a different provider.") }
@@ -108,6 +109,8 @@ enum CodexReasoningValidation {
         try MuseConfigurationValidation.configuration(.init(thread: thread))
         try AntigravityConfigurationValidation.configuration(.init(thread: thread))
         try CodexRuntimeConfigurationValidation.configuration(.init(thread: thread))
+        try ProviderConfiguration(thread: thread).validateClaudeConfiguration()
+        if let run = thread.activeRun { try run.configuration.validateClaudeConfiguration() }
         if let effort = thread.reasoningEffort { try id(effort, limit: 256) }
         guard (thread.codexReasoningPreferences?.count ?? 0) <= 128,
               thread.codexModelSelectionSource == nil || (thread.provider == .codex && !thread.model.isEmpty) else { throw CoincideError("The Codex reasoning preferences are invalid.") }

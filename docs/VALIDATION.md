@@ -1,5 +1,124 @@
 # Validation record
 
+## 2026-10-23 — durable native Claude history and deferred context
+
+- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits 1 with
+  1535 declarations: 1523 pass, eleven optional installed-provider checks skip,
+  and one existing OpenCode v1 HTTP history declaration fails. All 1318 Core
+  declarations across eight suites finish in 299.697 seconds; all 198 native
+  view/store declarations pass in 64.638 seconds, terminal six in 1.376 seconds
+  and Markdown thirteen in 0.127 seconds. This adds 45 declarations without
+  dropping existing coverage. The async-default ABI guard passes on 835 Mach-O
+  objects (app 218, Core 531), with three local records
+  and zero weak records. Packaging and interactive GUI acceptance remain hosted
+  gates; no system app install/relaunch occurs locally.
+- The failed existing declaration is
+  `openCodeV1HistoryHTTPRepeatedAdoptionsResolveImmutableRunsAndPublishCandidateBeforeFurtherWire`.
+  Its second source input loses the event connection between fixture observations;
+  the durable run is failed with `connectionLost`, rather than completed. The
+  exact unchanged declaration passes separately in 1.624 seconds. The retained
+  generated diagnostic does not contain the underlying HTTP/SSE failure category,
+  so neither raw-buffer overflow nor delayed idle is established as its cause.
+  No pacing, timeout, assertion, retry policy or production transport was changed
+  to conceal this failure. The full suite remains unconfirmed until this failure
+  is diagnosed and a fresh complete run passes; hosted acceptance is also pending.
+- Claude Run History is connected to the native Swift transcript service, durable
+  command/effect journal and native review/recovery UI. New user runs capture the
+  physical runtime/configuration/profile and exact registered workspace spelling,
+  prospective opening/steering UUIDs and outer root-assistant UUID observations.
+  Legacy input references are not retroactively interpreted as assistant cursors.
+- Fork publication saves its exact native-file reservation in SQLite before any
+  external write. The native source remains unchanged; the verified child keeps
+  its remapped inherited head. Restart inspection proves that exact reserved copy
+  or an untouched destination, without replay, guessing or deletion. The real
+  Engine filesystem tests reject every provider-factory construction during history.
+- Rewind follows the pinned T3 inclusive root-assistant cursor. Acceptance saves
+  a resume point without a provider prompt or native transcript truncation. First
+  local reset preserves verified inherited fork context or reserves a fresh UUID.
+  Only the next explicit consuming run receives the launch selection; queued
+  successors capture none. Unstamped completion, interruption and failure retain
+  the consumer until exact read-only inspection, with the queue paused. The
+  optional native `resumeDropsTurn` flag remains disabled.
+- Physical configuration-root/native-UUID ownership spans launcher and registered
+  cwd aliases. Owned runtime, metadata and history readers are tracked and drained.
+  Workspace changes capture physical paths before the pure command reduction;
+  queued worktree preparation retains the launcher/home/profile. Captured Claude
+  model discovery uses its bound thread rather than the ambient provider catalog.
+  Separately reviewed Git-file restoration and once-only latest-draft recall keep
+  their existing admission and recovery boundaries.
+- Focused local execution passes 33 Core declarations in 1.174 seconds and seven
+  native view/store declarations in 0.305 seconds. Coverage includes filesystem
+  publication/recovery, both reset forms, repeated pending rewind, inherited
+  lineage, exact consuming/queued runs, model metadata, malformed roots and scope
+  aliases. These deterministic peers/offscreen views are not installed-provider
+  acceptance or interactive GUI acceptance.
+- Before the event-reducer split, the unchanged consuming-run regression crashes
+  with SIGBUS. Its native report explicitly says `Thread stack size exceeded`;
+  the stack traverses `makeGeneral`, `receive`, native history locking and
+  `___chkstk_darwin`. Provider events now reduce in a separate non-inlined frame,
+  and the same completion/queue regression passes. The full suite then exposes
+  the same stack-size failure in the unchanged Codex reasoning/queue regression,
+  at an outlined copy of the enlarged `EngineCommand`. That internal command
+  envelope is now indirect, avoiding maximum-payload stack copies while preserving
+  value semantics and Codable case/associated-value labels. Both formerly
+  crashing paths pass unchanged: five declarations in 0.135 seconds. This is
+  distinct from the earlier weak async-default ABI investigation; no stack-size
+  or test-deadline workaround was added.
+- Storage advances from 36 to 37 for captured runtime, prospective evidence,
+  exact publication and deferred context state. Old nil captures remain legacy;
+  tests reject future storage 38 without downgrade. The system-installed app and
+  existing user workspace database were not opened or migrated by this work.
+- Installed validation found and corrected two production boundaries. Setting
+  `CLAUDE_CONFIG_DIR` explicitly for the physical default root made the existing
+  signed-in CLI report no login; the same inherited environment without that
+  override reported a signed-in Claude account. Runtime capture now preserves
+  default-home versus explicit-config environment presence and raw spelling,
+  includes that choice in identity/Codable/rebinding, and revalidates its physical
+  root before launch. Eight focused declarations pass in 0.363 seconds, including
+  synthetic default/explicit child environments and retargeted-root refusal.
+- The first authenticated fork attempt was correctly rejected before reservation:
+  closing the idle CLI appended 834 bytes in two metadata records, `last-prompt`
+  and `cost-state`, after review. The reviewed bytes remained an exact prefix on
+  the same inode. Review now drains that owned process before capturing its
+  source revision; all strict source/hash checks remain. The installed test
+  separately proves pre-drain conversation records are preserved and compares
+  publication against the exact post-drain reviewed revision. The deterministic
+  regression passes in 0.111 seconds: its owned idle actor holds close behind a
+  gate, review cannot return before metadata is appended to the same inode, and
+  the subsequent reserved fork preserves that post-drain source with exactly one
+  provider construction/input and no model discovery.
+- Read-only installed metadata reports Claude Code 2.1.304. Its help advertises
+  `--session-id` and `--replay-user-messages`; the pinned SDK source is 0.3.276
+  (declaring CLI 2.1.276). Metadata alone does not verify hidden resume flags or
+  model/history behavior. The new opt-in `COINCIDE_LIVE_CLAUDE_HISTORY=1` check
+  uses the production factory and four generated-marker turns in a private cwd;
+  it passes in 12.705 seconds. Both source marker turns, fork recall of only the
+  retained first marker, and explicit rewound recall of that same retained marker
+  succeed. The check independently verifies native input/root IDs, exact remapped
+  publication and source preservation, deferred context with no native truncation,
+  one consuming launch selection, discarded-input exclusion on the selected native
+  chain, no tool/approval/workspace writes and SQLite restart receipts. Its private
+  generated evidence and native transcripts are retained outside the repository.
+  This verifies that installed version/case, not other native formats, steering,
+  interactive GUI acceptance or complete provider parity.
+
+## 2026-10-23 — preceding hosted isolation failure evidence
+
+- [Run 39843887487](https://github.com/apoorvdarshan/coincide/actions/runs/39843887487)
+  at `b3bd556` completes the full 1490-declaration serial suite in 864.100 seconds:
+  1480 pass and ten optional installed checks skip. The isolated managed
+  inspection and compiled async-default verifier pass. The separate isolated
+  direct-executable inspection throws `verificationFailed` after 5.093 seconds;
+  that same declaration later passes in the full suite in 0.207 seconds. The
+  workflow correctly fails its isolation gate and skips packaging/native UI.
+- The sanitized diagnostic artifact reports zero crash candidates/reports after
+  seven scans. This is no evidence of SIGBUS, Python startup, stdin EOF failure,
+  or a particular subprocess phase. Bounded fixed failure diagnostics now report
+  only phase/count/EOF classifications from already-owned synthetic audit rows.
+  They omit paths, environment, raw errors and records; assertions, timeouts,
+  retry behavior and the isolation gate remain unchanged. The current revision
+  still requires its own hosted test/package/native-UI results.
+
 ## 2026-10-23 — native Claude transcript primitives and owned lifecycle
 
 - Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits 0 with

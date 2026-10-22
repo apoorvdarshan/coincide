@@ -87,10 +87,12 @@ private struct ConversationHistoryInspection {
 @MainActor @Observable
 final class WorkspaceStore {
     typealias ProjectCreator = @Sendable (String, URL) async throws -> ManagedProjectCreationResult
+    typealias ClaudeRuntimeCapture = @Sendable (String) throws -> ClaudeRuntimeConfiguration
     let managedProjectsRoot: URL
     let worktreesRoot: URL
     private let projectCreator: ProjectCreator
     private let projectScriptReader: NativeProjectScriptService.Reader
+    @ObservationIgnored private let claudeRuntimeCapture: ClaudeRuntimeCapture
     var snapshot = WorkspaceSnapshot()
     var selectedThreadID: UUID? {
         didSet {
@@ -130,6 +132,7 @@ final class WorkspaceStore {
     @ObservationIgnored private var codexAuthenticationChanges: Set<UUID> = []
     @ObservationIgnored private var codexAuthenticationLeases: [UUID: CodexWorkspaceAuthenticationLease] = [:]
     var codexModels: [UUID: [ProviderModel]] = [:]
+    private var claudeModels: [UUID: (identity: ClaudeRuntimeIdentity, models: [ProviderModel])] = [:]
     @ObservationIgnored private var codexCatalogReads: [UUID: Task<[ProviderModel], any Error>] = [:]
     @ObservationIgnored private var codexMetadataScope = UUID()
     private var providerSkills: [UUID: ProviderSkillsStore] = [:]
@@ -197,7 +200,9 @@ final class WorkspaceStore {
     init(databaseURL: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
          codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
          codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
+         claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
+        self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot, installation: codexInstallation)
         codexAuthentication = .init(configuration: codexRuntime.configuration)
@@ -234,8 +239,10 @@ final class WorkspaceStore {
          codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
          codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization,
+         claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
          projectScriptReader: NativeProjectScriptService.Reader? = nil,
          projectCreator: ProjectCreator? = nil) {
+        self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
         codexAuthentication = .init(configuration: codexRuntime.configuration)
@@ -467,6 +474,10 @@ final class WorkspaceStore {
             ?? snapshot.threads.first { $0.projectID == projectID && Self.canonicalPath($0.workspacePath) == path }
             ?? newCodingThread(project: project)
         var configuration = ProviderConfiguration(thread: source); configuration.nativeThreadID = nil
+        if source.provider == .claude, configuration.claudeRuntimeConfiguration == nil {
+            guard let captured = try? claudeRuntimeCapture(source.workspacePath) else { return nil }
+            configuration.claudeRuntimeConfiguration = captured
+        }
         return (configuration, source.checkpointPolicy)
     }
     private func pullRequestCheckoutScope(paths: [String]) -> Set<String> {
@@ -1229,6 +1240,15 @@ final class WorkspaceStore {
     func setProvider(_ provider: ProviderKind, id: UUID) {
         let previousProvider = thread(id)?.provider
         guard provider != previousProvider else { return }
+        if provider == .claude {
+            guard let current = thread(id) else { return }
+            do {
+                let captured = try claudeRuntimeCapture(current.workspacePath)
+                cancelCodexModelDefaultsRead(id)
+                sendCommand(.editThread(id, .claudeProvider(captured)))
+            } catch { errorMessage = "Install and sign in to Claude before sending a message." }
+            return
+        }
         if provider == .codex {
             cancelCodexModelDefaultsRead(id)
             sendCommand(.editThread(id, .codexProvider(codexRuntime.configuration)))
@@ -1417,6 +1437,8 @@ final class WorkspaceStore {
     func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] {
         if provider == .codex, let selectedThread, selectedThread.provider == .codex { return models(for: selectedThread) }
+        if provider == .claude, let selectedThread, selectedThread.provider == .claude,
+           selectedThread.claudeRuntimeConfiguration != nil { return models(for: selectedThread) }
         if provider == .opencode || provider == .pi || provider == .muse || provider == .antigravity {
             guard let selectedThread, selectedThread.provider == provider else { return [] }
             return models(for: selectedThread)
@@ -1424,6 +1446,10 @@ final class WorkspaceStore {
         return providerModels[provider] ?? []
     }
     func models(for thread: CodingThread) -> [ProviderModel] {
+        if thread.provider == .claude, let runtime = thread.claudeRuntimeConfiguration {
+            guard let catalog = claudeModels[thread.id], catalog.identity == runtime.runtimeIdentity else { return [] }
+            return catalog.models
+        }
         if thread.provider == .codex {
             if let models = codexModels[thread.id] { return models }
             return ProviderConfiguration(thread: thread).codexRuntimeBinding == CodexRuntimeConfiguration() && codexRuntime.configuration == .init() ? providerModels[.codex] ?? [] : []
@@ -1583,7 +1609,12 @@ final class WorkspaceStore {
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
-        let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.antigravityConfiguration?.executable ?? thread.museConfiguration?.executable ?? thread.piConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable
+        let capturedClaude: ClaudeRuntimeConfiguration?
+        if thread.provider == .claude, thread.claudeRuntimeConfiguration == nil {
+            do { capturedClaude = try claudeRuntimeCapture(thread.workspacePath) }
+            catch { errorMessage = "Install and sign in to Claude before sending a message."; return Task { false } }
+        } else { capturedClaude = nil }
+        let executable = thread.provider == .claude ? (thread.claudeRuntimeConfiguration ?? capturedClaude)?.executable ?? thread.provider.executable : thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.antigravityConfiguration?.executable ?? thread.museConfiguration?.executable ?? thread.piConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable
         if thread.provider == .codex {
             do { _ = try codexRuntimeInstallation.resolve(configuration: thread.codexRuntimeConfiguration ?? .init()) }
             catch { errorMessage = error.localizedDescription; return Task { false } }
@@ -1596,7 +1627,9 @@ final class WorkspaceStore {
         }
         pendingDrafts.removeValue(forKey: id)
         draftOverrides[id] = ""
-        let task = enqueue(.submit(threadID: id, text: prompt))
+        let command: WorkspaceCommand = capturedClaude.map { .submitCapturedClaude(threadID: id, text: prompt, configuration: $0) }
+            ?? .submit(threadID: id, text: prompt)
+        let task = enqueue(command)
         return Task {
             do { _ = try await task.value; if draftOverrides[id] == "" { draftOverrides.removeValue(forKey: id) }; return true }
             catch {
@@ -1782,6 +1815,13 @@ final class WorkspaceStore {
                           ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: captured).codexRuntimeBinding else { return }
                     codexModels[captured.id] = models
                 } else if codexRuntime.configuration == configuration { providerModels[.codex] = models }
+            } else if kind == .claude, let captured = selectedThread,
+                      captured.provider == .claude, let runtime = captured.claudeRuntimeConfiguration {
+                let models = try await engine.models(thread: captured)
+                guard !terminating, let current = thread(captured.id), current.provider == .claude,
+                      current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
+                      current.claudeRuntimeConfiguration?.runtimeIdentity == runtime.runtimeIdentity else { return }
+                claudeModels[captured.id] = (runtime.runtimeIdentity, models)
             } else if kind == .opencode {
                 guard let thread = selectedThread, thread.provider == .opencode else {
                     throw CoincideError("Choose OpenCode in a conversation before refreshing its workspace models.")
@@ -2240,6 +2280,30 @@ final class WorkspaceStore {
         }
     }
     func isInspectingConversationHistory(_ id: UUID) -> Bool { historyInspections[id] != nil }
+    func canInspectConversationHistory(_ operation: ConversationHistoryOperation) -> Bool {
+        !terminating && snapshot.canInspectConversationHistory(operationID: operation.id)
+    }
+    func hasPendingClaudeResumeSelection(_ operation: ConversationHistoryOperation) -> Bool {
+        snapshot.isClaudeResumeSelectionPending(operationID: operation.id)
+    }
+    func isConsumingClaudeResumeSelection(_ operation: ConversationHistoryOperation) -> Bool {
+        hasPendingClaudeResumeSelection(operation) && thread(operation.review.sourceThreadID)?.claudeResumeConsumerRunID != nil
+    }
+    func claudeResumeSelectionNeedsInspection(threadID: UUID) -> Bool {
+        snapshot.claudeResumeSelectionNeedsInspection(threadID: threadID)
+    }
+    func isInspectingClaudeResumeSelection(threadID: UUID) -> Bool { historyInspections[threadID] != nil }
+    func inspectClaudeResumeSelection(threadID: UUID) async throws {
+        guard !terminating, let engine, snapshot.claudeResumeSelectionNeedsInspection(threadID: threadID),
+              historyInspections[threadID] == nil else { throw CancellationError() }
+        let task = Task { try await engine.reconcileClaudeResumeSelection(threadID: threadID) }
+        historyInspections[threadID] = .init(threadID: threadID, task: task)
+        defer { historyInspections.removeValue(forKey: threadID) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
     func canKeepOpenCodeV1Original(_ operation: ConversationHistoryOperation) -> Bool {
         !terminating && operation.phase == .unconfirmed && operation.review.kind == .rewindBeforeRun &&
             operation.review.openCodeV1 != nil && !operation.isWorking &&
@@ -2279,8 +2343,8 @@ final class WorkspaceStore {
         if let rejection = receipt.rejection { throw CoincideError(rejection) }
     }
     func reconcileConversationHistory(_ id: UUID) async throws {
-        guard !terminating, let engine, let operation = conversationHistoryOperation(id), operation.phase == .unconfirmed,
-              operation.review.kind == .rewindBeforeRun, historyInspections[id] == nil,
+        guard !terminating, let engine, let operation = conversationHistoryOperation(id), canInspectConversationHistory(operation),
+              historyInspections[id] == nil,
               operation.maintenance?.phase.isWorking != true,
               let source = thread(operation.review.sourceThreadID),
               operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
@@ -2319,11 +2383,11 @@ final class WorkspaceStore {
                 do { try await self.recallConversationHistoryPrompt(operation.id) }
                 catch is CancellationError {
                     if !self.terminating, self.conversationHistoryOperation(operation.id)?.needsPromptRecall == true {
-                        self.automaticHistoryRecallErrors[operation.id] = String(localized: "Rewind completed. The original input could not be recalled. Review the latest draft and attachments, then recall it or keep your current draft.")
+                        self.automaticHistoryRecallErrors[operation.id] = ConversationHistoryPresentation.recallFailure(operation)
                     }
                 } catch {
                     if !self.terminating, self.conversationHistoryOperation(operation.id)?.needsPromptRecall == true {
-                        self.automaticHistoryRecallErrors[operation.id] = String(localized: "Rewind completed. The original input could not be recalled. Review the latest draft and attachments, then recall it or keep your current draft.")
+                        self.automaticHistoryRecallErrors[operation.id] = ConversationHistoryPresentation.recallFailure(operation)
                     }
                 }
             }
@@ -2365,7 +2429,7 @@ final class WorkspaceStore {
             }
         } catch {
             if !terminating, conversationHistoryOperation(id)?.needsPromptRecall == true {
-                automaticHistoryRecallErrors[id] = String(localized: "Rewind completed. The original input could not be recalled. Review the latest draft and attachments, then recall it or keep your current draft.")
+                automaticHistoryRecallErrors[id] = ConversationHistoryPresentation.recallFailure(operation)
             }
             throw error
         }

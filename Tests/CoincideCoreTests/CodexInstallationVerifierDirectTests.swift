@@ -79,6 +79,7 @@ func codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstal
         try await codexDirectInspectionWaitForExit(processIDs)
         try FileManager.default.removeItem(at: root)
     } catch {
+        codexDirectInspectionFailureDiagnostics(root)
         // inspect owns, stops and joins its children on failure too. Preserve
         // scratch rather than delete it if an observed exact PID remains alive.
         let rows = (try? codexDirectInspectionRows(root.appendingPathComponent("started.jsonl"))) ?? []
@@ -86,6 +87,52 @@ func codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstal
         if ids.allSatisfy(codexDirectInspectionStopped) { try? FileManager.default.removeItem(at: root) }
         throw error
     }
+}
+
+/// Diagnostic facts come only from this test's already-owned audit records.
+/// Never print arbitrary JSON values, executable/home paths, PIDs or errors.
+private func codexDirectInspectionFailureDiagnostics(_ root: URL) {
+    func read(_ name: String) -> (rows: [JSONValue], available: Bool) {
+        guard let file = try? FileHandle(forReadingFrom: root.appendingPathComponent(name)) else { return ([], false) }
+        defer { try? file.close() }
+        guard let data = try? file.read(upToCount: 32_769), data.count <= 32_768 else { return ([], false) }
+        guard let newline = data.lastIndex(of: 10) else { return ([], true) }
+        let lines = data[...newline].split(separator: 10)
+        guard lines.count <= 16 else { return ([], false) }
+        var rows: [JSONValue] = []
+        for line in lines {
+            guard let row = try? JSONDecoder().decode(JSONValue.self, from: Data(line)), row.object != nil else { return ([], false) }
+            rows.append(row)
+        }
+        return (rows, true)
+    }
+    let started = read("started.jsonl"), completed = read("completed.jsonl")
+    let version: JSONValue = .array([.string("--version")])
+    let help: JSONValue = .array([.string("app-server"), .string("--help")])
+    var versionStarted = 0, helpStarted = 0, otherStarted = 0
+    for row in started.rows {
+        if row["argv"] == version { versionStarted += 1 }
+        else if row["argv"] == help { helpStarted += 1 }
+        else { otherStarted += 1 }
+    }
+    var versionCompleted = 0, helpCompleted = 0, otherCompleted = 0
+    var eofTrue = 0, eofFalse = 0, eofUnknown = 0
+    for row in completed.rows {
+        let pid = codexDirectInspectionPID(row)
+        let invocation = pid.flatMap { id in started.rows.first { codexDirectInspectionPID($0) == id } }?["argv"]
+        if invocation == version { versionCompleted += 1 }
+        else if invocation == help { helpCompleted += 1 }
+        else { otherCompleted += 1 }
+        if row["stdinEOF"] == .bool(true) { eofTrue += 1 }
+        else if row["stdinEOF"] == .bool(false) { eofFalse += 1 }
+        else { eofUnknown += 1 }
+    }
+    let fixed = "COINCIDE_CODEX_DIRECT_INSPECTION_FAILURE startedAudit=\(started.available) completedAudit=\(completed.available) " +
+        "started=\(started.rows.count) completed=\(completed.rows.count) " +
+        "versionStarted=\(versionStarted) helpStarted=\(helpStarted) otherStarted=\(otherStarted) " +
+        "versionCompleted=\(versionCompleted) helpCompleted=\(helpCompleted) otherCompleted=\(otherCompleted) " +
+        "eofTrue=\(eofTrue) eofFalse=\(eofFalse) eofUnknown=\(eofUnknown)\n"
+    try? FileHandle.standardError.write(contentsOf: Data(fixed.utf8))
 }
 
 private func codexDirectInspectionRows(_ file: URL) throws -> [JSONValue] {

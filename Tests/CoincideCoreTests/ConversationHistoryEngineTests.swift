@@ -67,7 +67,7 @@ actor HistoryEnginePeer {
         case .beforeTurn(let id):
             guard let index = history.firstIndex(of: id) else { throw ProviderHistoryError(.boundaryUnavailable) }
             selected = Array(history[..<index])
-        case .beforeMessage, .throughMessage: throw ProviderHistoryError(.unsupported)
+        case .beforeMessage, .throughMessage, .throughClaudeMessage, .freshClaudeSession: throw ProviderHistoryError(.unsupported)
         }
         let target = kind == .forkAfterRun ? "native-fork-" + UUID().uuidString : source.nativeThreadID
         histories[target] = selected

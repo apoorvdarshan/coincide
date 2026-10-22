@@ -224,6 +224,7 @@ extension WorkspaceDecision {
             switch edit {
             case .draft, .pinned, .title: return
             case .workspacePath(let path): guard !snapshot.isCheckpointRestoreLocked(path: path) else { throw WorkspaceCommandError("The destination is locked by a checkpoint restoration.") }
+            case .claudeWorkspace(let configuration): guard !snapshot.isCheckpointRestoreLocked(path: configuration.registeredWorkspacePath) else { throw WorkspaceCommandError("The destination is locked by a checkpoint restoration.") }
             default: break
             }
             try requireCheckpointRestoreUnlocked([id])
@@ -234,7 +235,7 @@ extension WorkspaceDecision {
         case .removeProjectGroup(_, let projects, _):
             guard !projects.contains(where: { snapshot.isCheckpointRestoreLocked(path: $0.path) }) else { throw WorkspaceCommandError("This group overlaps a checkpoint restoration.") }
             try requireCheckpointRestoreUnlocked(snapshot.threads.filter { thread in projects.contains { $0.id == thread.projectID } }.map(\.id))
-        case .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .resumeQueue(let id), .removeQueued(let id, _), .editQueued(let id, _),
+        case .submit(let id, _), .submitCapturedClaude(let id, _, _), .interrupt(let id), .respond(let id, _, _), .resumeQueue(let id), .removeQueued(let id, _), .editQueued(let id, _),
              .settleThread(let id, _, _), .resumeThread(let id, _), .cancelWorktreePreparation(let id), .approveProjectScript(let id, _, _),
              .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .retryPostRunCheckpoint(let id, _, _),
              .continueAfterPostRunCheckpoint(let id, _, _): try requireCheckpointRestoreUnlocked([id])

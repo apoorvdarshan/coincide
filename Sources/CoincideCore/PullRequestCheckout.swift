@@ -235,7 +235,8 @@ extension WorkspaceDecision {
             guard !reserved.contains(project.id), project.clone.map({ !reserved.contains($0.id) }) ?? true,
                   !snapshot.isPullRequestCheckoutLocked(path: project.path) else { throw WorkspaceCommandError("This project overlaps a pending pull request checkout.") }
         case .editThread(let id, let edit):
-            switch edit { case .draft, .title, .pinned: return; case .workspacePath(let path): guard !snapshot.isPullRequestCheckoutLocked(path: path) else { throw WorkspaceCommandError("The destination is held by a pull request checkout.") }; default: break }
+            switch edit { case .draft, .title, .pinned: return; case .workspacePath(let path): guard !snapshot.isPullRequestCheckoutLocked(path: path) else { throw WorkspaceCommandError("The destination is held by a pull request checkout.") }
+            case .claudeWorkspace(let configuration): guard !snapshot.isPullRequestCheckoutLocked(path: configuration.registeredWorkspacePath) else { throw WorkspaceCommandError("The destination is held by a pull request checkout.") }; default: break }
             try requirePullRequestCheckoutUnlocked([id])
         case .removeProject(let id, _), .retryProjectClone(let id, _), .cancelProjectClone(let id):
             guard let project = snapshot.projects.first(where: { $0.id == id }) else { return }
@@ -244,7 +245,7 @@ extension WorkspaceDecision {
         case .removeProjectGroup(_, let projects, _):
             guard !projects.contains(where: { member in snapshot.isPullRequestCheckoutLocked(path: member.path) || (snapshot.pullRequestCheckouts ?? []).contains { $0.projectID == member.id && $0.retainsProject } }) else { throw WorkspaceCommandError("This group owns a pending pull request checkout.") }
             try requirePullRequestCheckoutUnlocked(snapshot.threads.filter { thread in projects.contains { $0.id == thread.projectID } }.map(\.id))
-        case .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .resumeQueue(let id), .removeQueued(let id, _), .editQueued(let id, _),
+        case .submit(let id, _), .submitCapturedClaude(let id, _, _), .interrupt(let id), .respond(let id, _, _), .resumeQueue(let id), .removeQueued(let id, _), .editQueued(let id, _),
              .settleThread(let id, _, _), .resumeThread(let id, _), .cancelWorktreePreparation(let id), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _),
              .skipProjectScript(let id, _), .retryProjectScript(let id, _), .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _): try requirePullRequestCheckoutUnlocked([id])
         case .saveACPAgent(let agent): try requirePullRequestCheckoutUnlocked(snapshot.threads.filter { $0.acpAgent?.id == agent.id }.map(\.id))
@@ -301,7 +302,7 @@ extension WorkspaceDecision {
         var target = CodingThread(project: project), configuration = operation.review.targetConfiguration
         configuration.workspacePath = result.destinationPath; configuration.nativeThreadID = nil
         target.id = operation.targetThreadID; target.title = operation.review.title; target.workspacePath = configuration.workspacePath
-        target.provider = configuration.provider; target.model = configuration.model; target.reasoningEffort = configuration.reasoningEffort; target.permission = configuration.permission; target.acpAgent = configuration.acpAgent; target.openCodeConfiguration = configuration.openCodeConfiguration; target.piConfiguration = configuration.piConfiguration; target.museConfiguration = configuration.museConfiguration; target.antigravityConfiguration = configuration.antigravityConfiguration; target.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration
+        target.provider = configuration.provider; target.model = configuration.model; target.reasoningEffort = configuration.reasoningEffort; target.permission = configuration.permission; target.acpAgent = configuration.acpAgent; target.openCodeConfiguration = configuration.openCodeConfiguration; target.piConfiguration = configuration.piConfiguration; target.museConfiguration = configuration.museConfiguration; target.antigravityConfiguration = configuration.antigravityConfiguration; target.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration; target.claudeRuntimeConfiguration = configuration.claudeRuntimeConfiguration
         target.agentModeID = configuration.agentModeID; target.agentConfigValues = configuration.agentConfigValues; target.agentConfiguration = configuration.agentConfiguration
         target.checkpointPolicy = operation.review.checkpointPolicy; target.pullRequestCheckoutOperationID = operation.id
         target.queuePaused = true; target.createdAt = now; target.updatedAt = now

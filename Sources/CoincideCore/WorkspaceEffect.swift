@@ -15,6 +15,10 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
     public var model: String
     public var reasoningEffort: String?
     public var codexRuntimeConfiguration: CodexRuntimeConfiguration?
+    public var claudeRuntimeConfiguration: ClaudeRuntimeConfiguration?
+    /// Only the durably selected consuming run receives this launch state.
+    /// Ordinary queued configuration capture deliberately leaves it nil.
+    public var claudeLaunchSelection: ClaudeResumeSelection?
     public var permission: PermissionMode
     public var acpAgent: ACPAgentConfiguration?
     public var openCodeConfiguration: OpenCodeConfiguration?
@@ -28,6 +32,7 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
         provider = thread.provider; workspacePath = thread.workspacePath
         nativeThreadID = thread.providerThreadID; model = thread.model; reasoningEffort = thread.provider == .codex ? thread.reasoningEffort : nil; permission = thread.permission
         codexRuntimeConfiguration = thread.codexRuntimeConfiguration
+        claudeRuntimeConfiguration = thread.claudeRuntimeConfiguration; claudeLaunchSelection = nil
         acpAgent = thread.acpAgent; openCodeConfiguration = thread.openCodeConfiguration; piConfiguration = thread.piConfiguration; agentModeID = thread.agentModeID
         museConfiguration = thread.museConfiguration
         antigravityConfiguration = thread.antigravityConfiguration

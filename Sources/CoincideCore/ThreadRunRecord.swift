@@ -27,6 +27,8 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
     public var checkpoints: ThreadRunCheckpoints?
     /// Nil on older records: their transcript boundaries must not be guessed.
     public var messageAttributionVersion: Int?
+    /// Nil on legacy records. Never inferred from today's ambient CLI or text.
+    public var claude: ClaudeRunHistoryEvidence?
     public var removedByHistoryOperationID: UUID?
 
     public init(run: ActiveRun, origin: ThreadRunOrigin, userMessageID: String? = nil) {
@@ -35,10 +37,28 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
         status = .running; stopRequested = run.stopRequested
         providerThreadID = run.configuration.nativeThreadID
         turnIDs = run.nativeTurnID.map { [$0] } ?? []
+        if origin == .user, run.configuration.provider == .claude, let runtime = run.configuration.claudeRuntimeConfiguration {
+            claude = try? .init(runID: run.id, runtimeIdentity: runtime.runtimeIdentity)
+        }
     }
 }
 
 extension CodingThread {
+    public mutating func registerClaudeSteeringInput(runID: UUID, messageID: String) throws {
+        guard let index = runHistory?.firstIndex(where: { $0.id == runID }), var evidence = runHistory?[index].claude else {
+            throw ClaudeRuntimeConfiguration.invalid()
+        }
+        try evidence.registerSteering(messageID: messageID); runHistory?[index].claude = evidence
+    }
+    public mutating func mergeClaudeHistoryEvidence(_ observed: ClaudeRunHistoryEvidence) throws {
+        guard let index = runHistory?.firstIndex(where: { $0.id == observed.runID }),
+              let previous = runHistory?[index].claude,
+              runHistory?[index].configuration.claudeRuntimeConfiguration?.runtimeIdentity == observed.runtimeIdentity,
+              observed.nativeSessionID == nil || observed.nativeSessionID == runHistory?[index].providerThreadID else {
+            throw ClaudeRuntimeConfiguration.invalid()
+        }
+        runHistory?[index].claude = try previous.merging(observed)
+    }
     mutating func beginRunRecord(_ run: ActiveRun, origin: ThreadRunOrigin, userMessageID: String? = nil, checkpoints: ThreadRunCheckpoints? = nil, attributesMessages: Bool = false) {
         if runHistory == nil { runHistory = [] }
         guard !runHistory!.contains(where: { $0.id == run.id }) else { return }
@@ -85,6 +105,19 @@ extension CodingThread {
               records.filter({ !$0.status.isTerminal }).count <= 1 else { throw CoincideError("The conversation has invalid or duplicate run history.") }
         for record in records {
             try CodexReasoningValidation.configuration(record.configuration)
+            try record.configuration.claudeRuntimeConfiguration?.validate()
+            if let selection = record.configuration.claudeLaunchSelection {
+                guard record.configuration.provider == .claude, let runtime = record.configuration.claudeRuntimeConfiguration else { throw ClaudeRuntimeConfiguration.invalid() }
+                try selection.validate(runtime: runtime)
+            }
+            if let claude = record.claude {
+                try claude.validate()
+                guard record.origin == .user, record.configuration.provider == .claude, claude.runID == record.id,
+                      claude.runtimeIdentity == record.configuration.claudeRuntimeConfiguration?.runtimeIdentity,
+                      claude.nativeSessionID == nil || claude.nativeSessionID == record.providerThreadID else { throw ClaudeRuntimeConfiguration.invalid() }
+            } else if record.origin == .user, record.configuration.provider == .claude, record.configuration.claudeRuntimeConfiguration != nil {
+                throw ClaudeRuntimeConfiguration.invalid()
+            }
             guard record.messageAttributionVersion == nil || record.messageAttributionVersion == 1 else { throw CoincideError("This run uses unsupported transcript attribution.") }
             if record.messageAttributionVersion == 1, record.origin == .user {
                 guard let message = messages.first(where: { $0.id == record.userMessageID }),

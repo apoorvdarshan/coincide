@@ -265,7 +265,7 @@ func codexHistoryForkUsesExactBoundaryAndDefersEveryGoal(boundary: ProviderHisto
         case .head: "native-3"
         case .throughTurn: "native-2"
         case .beforeTurn: "native-1"
-        case .beforeMessage, .throughMessage: throw ProviderHistoryError(.unsupported)
+        case .beforeMessage, .throughMessage, .throughClaudeMessage, .freshClaudeSession: throw ProviderHistoryError(.unsupported)
         }
         #expect(result.headTurnID == expected)
         let request = try #require(peer.requests("thread/fork").first)
@@ -282,7 +282,7 @@ func codexHistoryForkUsesExactBoundaryAndDefersEveryGoal(boundary: ProviderHisto
         case .head: #expect(params.object?["lastTurnId"] == nil && params.object?["beforeTurnId"] == nil)
         case .throughTurn(let id): #expect(params["lastTurnId"] == .string(id) && params.object?["beforeTurnId"] == nil)
         case .beforeTurn(let id): #expect(params["beforeTurnId"] == .string(id) && params.object?["lastTurnId"] == nil)
-        case .beforeMessage, .throughMessage: throw ProviderHistoryError(.unsupported)
+        case .beforeMessage, .throughMessage, .throughClaudeMessage, .freshClaudeSession: throw ProviderHistoryError(.unsupported)
         }
         try await historyError(.notIdle) { _ = try await peer.session.forkConversation(source: source, boundary: .head, configuration: peer.configuration) }
         #expect(try peer.requests("thread/fork").count == 1)

@@ -44,6 +44,23 @@ public struct ClaudeTranscript: Sendable, Equatable {
     public let selectedChainRecords: [JSONValue]
     private static let transcriptTypes: Set<String> = ["user", "assistant", "system", "attachment", "progress"]
 
+    /// Selects an already-verified native root assistant cursor without changing
+    /// raw records or inventing a replacement session. Used by deferred rewind:
+    /// the file's latest branch can still contain the intentionally hidden tail.
+    public func selected(upToMessageID: String) throws -> (selectedChainRecords: [JSONValue], selectedMessages: [JSONValue]) {
+        guard Self.validUUID(upToMessageID),
+              let index = records.firstIndex(where: { $0["uuid"].string == upToMessageID }),
+              records[index]["type"].string == "assistant", records[index]["isSidechain"] != .bool(true),
+              records[index]["isMeta"] != .bool(true), !Self.truthy(records[index]["teamName"]) else {
+            throw ClaudeTranscriptError(.invalidBoundary)
+        }
+        let native = records.prefix(index + 1).filter { Self.transcriptTypes.contains($0["type"].string ?? "") }
+        let chain = try Self.chain(native)
+        let messages = Self.project(try Self.promoteQueued(chain))
+        guard messages.last?["uuid"].string == upToMessageID else { throw ClaudeTranscriptError(.invalidBoundary) }
+        return (chain, messages)
+    }
+
     public static func parse(_ data: Data) throws -> Self {
         guard data.count <= maximumBytes else { throw ClaudeTranscriptError(.limitExceeded) }
         var records: [JSONValue] = []

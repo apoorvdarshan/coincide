@@ -5,10 +5,12 @@ struct ConversationHistoryBanner: View {
     let store: WorkspaceStore
     let threadID: UUID
     var body: some View {
-        if let operation = store.conversationHistoryOperations(threadID: threadID).first,
-           operation.isWorking || operation.phase == .unconfirmed || operation.locksFiles ||
-            operation.needsPromptRecall || store.canRecallConversationHistoryPrompt(operation) ||
-            operation.error == ConversationHistoryOperation.openCodeV1NotAdoptedMessage {
+        if let operation = store.conversationHistoryOperations(threadID: threadID).first(where: {
+            $0.isWorking || $0.phase == .unconfirmed || $0.locksFiles ||
+                $0.needsPromptRecall || store.canRecallConversationHistoryPrompt($0) ||
+                store.hasPendingClaudeResumeSelection($0) ||
+                $0.error == ConversationHistoryOperation.openCodeV1NotAdoptedMessage
+        }) {
             ConversationHistoryOperationView(store: store, operation: operation)
                 .padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .coincideSurface()
@@ -25,6 +27,7 @@ struct ConversationHistoryOperationView: View {
     @State private var confirmingKeepOriginal = false
 
     private var recalling: Bool { store.isRecallingConversationHistoryPrompt(operation.id) }
+    private var claudeContext: Bool { ConversationHistoryPresentation.isClaudeContextSelection(operation.review) }
     private var incompleteFiles: ConversationHistoryFilesState? {
         guard operation.phase == .applied, let files = operation.files,
               [.failed, .unconfirmed].contains(files.phase), files.acknowledgedAt == nil else { return nil }
@@ -39,19 +42,30 @@ struct ConversationHistoryOperationView: View {
                     .accessibilityIdentifier("conversation-history-operation-status")
             }
             providerState
+            claudeResumeState
             maintenanceState
             if let message = operation.error { detail(message) }
             if let files = operation.files {
                 if operation.isPending {
-                    detail(String(localized: "Files will be restored only after the provider rewind is confirmed. The original input returns after both steps finish."))
+                    detail(claudeContext
+                        ? String(localized: "Files will be restored only after the Claude resume point is durably saved. The original input returns after both steps finish; no message is sent.")
+                        : String(localized: "Files will be restored only after the provider rewind is confirmed. The original input returns after both steps finish."))
                 } else if files.isWorking {
-                    detail(String(localized: "Conversation history is rewound. Workspace actions remain paused while files are restored; you can keep editing your draft."))
+                    detail(claudeContext
+                        ? String(localized: "The Claude resume point is saved for your next message. Workspace actions remain paused while files are restored; you can keep editing your draft.")
+                        : String(localized: "Conversation history is rewound. Workspace actions remain paused while files are restored; you can keep editing your draft."))
                 } else if files.acknowledgedAt != nil {
-                    detail(String(localized: "Current files were explicitly kept. The conversation rewind remains applied; its original input was not returned to the draft."))
+                    detail(claudeContext
+                        ? String(localized: "Current files were explicitly kept. The saved Claude resume point remains selected for your next message; its original input was not returned to the draft.")
+                        : String(localized: "Current files were explicitly kept. The conversation rewind remains applied; its original input was not returned to the draft."))
                 }
             }
             if let files = incompleteFiles {
-                detail(files.phase == .unconfirmed
+                detail(claudeContext
+                       ? files.phase == .unconfirmed
+                       ? String(localized: "The Claude resume point is saved, but files or staging may be partially changed. Workspace actions stay paused. Inspect the evidence or explicitly keep current files; restoration will not be repeated.")
+                       : String(localized: "The Claude resume point is saved, but file restoration did not complete. Workspace actions stay paused until you explicitly keep current files. The original input has not been returned.")
+                       : files.phase == .unconfirmed
                        ? String(localized: "Conversation history is rewound, but files or staging may be partially changed. Workspace actions stay paused. Inspect the evidence or explicitly keep the current files; restoration will not be repeated.")
                        : String(localized: "Conversation history is rewound, but file restoration did not complete. Workspace actions stay paused until you explicitly keep the current files. The original input has not been returned."))
                 ViewThatFits(in: .horizontal) {
@@ -78,7 +92,9 @@ struct ConversationHistoryOperationView: View {
                 Button("Keep Current Files") { perform { try await store.acknowledgeConversationHistoryFiles(operation.id) } }
                     .accessibilityIdentifier("conversation-history-keep-files-confirm")
             } message: {
-                Text("The conversation rewind remains applied. Current files and staging may contain a partial restoration. Continuing keeps those bytes, releases the workspace hold and leaves your latest draft unchanged; the original input will not be recalled.")
+                Text(claudeContext
+                     ? String(localized: "The saved Claude resume point remains selected for your next message. Current files and staging may contain a partial restoration. Continuing keeps those bytes, releases the workspace hold and leaves your latest draft unchanged; the original input will not be recalled.")
+                     : String(localized: "The conversation rewind remains applied. Current files and staging may contain a partial restoration. Continuing keeps those bytes, releases the workspace hold and leaves your latest draft unchanged; the original input will not be recalled."))
             }
             .alert("Clear the pending OpenCode revert?", isPresented: $confirmingMaintenance) {
                 Button("Cancel", role: .cancel) { }.keyboardShortcut(.defaultAction)
@@ -102,10 +118,24 @@ struct ConversationHistoryOperationView: View {
                    ? String(localized: "The local transcript was kept and provider work is paused. Inspect the provider state before continuing; the rewind will not be repeated.")
                    : String(localized: "The provider may have created a fork. This action was not repeated; the source conversation is unchanged."))
             if operation.files != nil { detail(String(localized: "File restoration has not started. The original input has not been returned to the draft.")) }
-            if operation.review.kind == .rewindBeforeRun {
-                Button("Inspect Provider State") { perform { try await store.reconcileConversationHistory(operation.id) } }
+            if operation.review.claude != nil {
+                detail(operation.review.kind == .forkAfterRun
+                       ? String(localized: "Inspect checks only the exact reserved native fork and its source proof. It does not repeat publication, delete a transcript or send a message.")
+                       : String(localized: "Inspect verifies the saved Claude context selection and its exact native source. It does not submit a message or replay the history action."))
+                if let publication = operation.claudeForkPublication {
+                    LabeledContent("Reserved fork", value: publication.target.sessionID)
+                        .font(.caption.monospaced()).textSelection(.enabled)
+                        .accessibilityIdentifier("conversation-history-claude-native-candidate")
+                }
+            }
+            if store.canInspectConversationHistory(operation) {
+                Button(operation.review.claude != nil && operation.review.kind == .forkAfterRun ? "Inspect Reserved Fork" : "Inspect Provider State") {
+                    perform { try await store.reconcileConversationHistory(operation.id) }
+                }
                     .disabled(store.isInspectingConversationHistory(operation.id) || operation.maintenance?.phase.isWorking == true).controlSize(.small)
                     .accessibilityIdentifier("conversation-history-reconcile")
+            }
+            if operation.review.kind == .rewindBeforeRun {
                 if operation.review.openCodeV2 != nil {
                     Button("Clear Pending Revert…") { confirmingMaintenance = true }
                         .disabled(!store.canClearConversationHistoryMaintenance(operation)).controlSize(.small)
@@ -120,6 +150,21 @@ struct ConversationHistoryOperationView: View {
                         .disabled(!store.canKeepOpenCodeV1Original(operation)).controlSize(.small)
                         .accessibilityIdentifier("conversation-history-keep-original")
                 }
+            }
+        }
+    }
+    @ViewBuilder private var claudeResumeState: some View {
+        if store.hasPendingClaudeResumeSelection(operation) {
+            if store.claudeResumeSelectionNeedsInspection(threadID: operation.review.sourceThreadID) {
+                detail(String(localized: "Claude’s use of the selected context could not be confirmed. Inspect it before starting another turn. No input will be replayed."))
+                Button("Inspect Claude Context") {
+                    perform { try await store.inspectClaudeResumeSelection(threadID: operation.review.sourceThreadID) }
+                }.disabled(store.isInspectingClaudeResumeSelection(threadID: operation.review.sourceThreadID))
+                    .controlSize(.small).accessibilityIdentifier("conversation-history-inspect-claude-context")
+            } else if store.isConsumingClaudeResumeSelection(operation) {
+                detail(String(localized: "This Claude turn is using the saved context. Its selection remains recorded until the matching turn is confirmed."))
+            } else {
+                detail(String(localized: "Your next explicit message will use the saved Claude context. Existing native transcripts are retained; this selection did not send a message."))
             }
         }
     }

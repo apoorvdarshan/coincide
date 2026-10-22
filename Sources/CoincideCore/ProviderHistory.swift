@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ProviderHistoryMode: String, Codable, Sendable, Equatable { case legacy, paginated, messageOrdered, unknown }
+public enum ProviderHistoryMode: String, Codable, Sendable, Equatable { case legacy, paginated, messageOrdered, nativeTranscript, unknown }
 public enum ProviderHistoryTurnStatus: String, Codable, Sendable, Equatable {
     case running, completed, interrupted, failed, unknown
     public var isTerminal: Bool { self == .completed || self == .interrupted || self == .failed }
@@ -29,12 +29,17 @@ public enum ProviderHistoryBoundary: Codable, Sendable, Equatable {
     case beforeTurn(String)
     case beforeMessage(String)
     case throughMessage(String)
+    case throughClaudeMessage(String)
+    case freshClaudeSession(String)
     public func validate() throws {
         switch self { case .head: break; case .throughTurn(let id), .beforeTurn(let id): try ProviderHistoryValidation.id(id)
-        case .beforeMessage(let id), .throughMessage(let id): try OpenCodeV2HistoryValidation.messageID(id) }
+        case .beforeMessage(let id), .throughMessage(let id): try OpenCodeV2HistoryValidation.messageID(id)
+        case .throughClaudeMessage(let id), .freshClaudeSession(let id):
+            guard id.utf8.count == 36, UUID(uuidString: id) != nil else { throw ProviderHistoryError(.invalidRequest) }
+        }
     }
     private enum CodingKeys: String, CodingKey { case kind, turnID, messageID }
-    private enum Kind: String, Codable { case head, throughTurn, beforeTurn, beforeMessage, throughMessage }
+    private enum Kind: String, Codable { case head, throughTurn, beforeTurn, beforeMessage, throughMessage, throughClaudeMessage, freshClaudeSession }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(Kind.self, forKey: .kind) {
@@ -43,6 +48,8 @@ public enum ProviderHistoryBoundary: Codable, Sendable, Equatable {
         case .beforeTurn: self = .beforeTurn(try c.decode(String.self, forKey: .turnID))
         case .beforeMessage: self = .beforeMessage(try c.decode(String.self, forKey: .messageID))
         case .throughMessage: self = .throughMessage(try c.decode(String.self, forKey: .messageID))
+        case .throughClaudeMessage: self = .throughClaudeMessage(try c.decode(String.self, forKey: .messageID))
+        case .freshClaudeSession: self = .freshClaudeSession(try c.decode(String.self, forKey: .messageID))
         }
         try validate()
     }
@@ -54,6 +61,8 @@ public enum ProviderHistoryBoundary: Codable, Sendable, Equatable {
         case .beforeTurn(let id): try c.encode(Kind.beforeTurn, forKey: .kind); try c.encode(id, forKey: .turnID)
         case .beforeMessage(let id): try c.encode(Kind.beforeMessage, forKey: .kind); try c.encode(id, forKey: .messageID)
         case .throughMessage(let id): try c.encode(Kind.throughMessage, forKey: .kind); try c.encode(id, forKey: .messageID)
+        case .throughClaudeMessage(let id): try c.encode(Kind.throughClaudeMessage, forKey: .kind); try c.encode(id, forKey: .messageID)
+        case .freshClaudeSession(let id): try c.encode(Kind.freshClaudeSession, forKey: .kind); try c.encode(id, forKey: .messageID)
         }
     }
 }
@@ -109,20 +118,26 @@ public struct ProviderConversationSnapshot: Codable, Sendable, Equatable {
     public let headTurnID: String?
     public let openCodeV2: OpenCodeV2HistorySnapshot?
     public let openCodeV1: OpenCodeV1HistorySnapshot?
+    public let claude: ClaudeHistoryResult?
     public init(reference: ProviderConversationReference, workspacePath: String,
                 historyMode: ProviderHistoryMode, headTurnID: String? = nil, openCodeV2: OpenCodeV2HistorySnapshot? = nil,
-                openCodeV1: OpenCodeV1HistorySnapshot? = nil) throws {
+                openCodeV1: OpenCodeV1HistorySnapshot? = nil, claude: ClaudeHistoryResult? = nil) throws {
         try reference.validate(); try ProviderHistoryValidation.path(workspacePath)
         if let headTurnID { try ProviderHistoryValidation.id(headTurnID) }
         self.reference = reference; self.workspacePath = workspacePath
         self.historyMode = historyMode; self.headTurnID = headTurnID; self.openCodeV2 = openCodeV2; self.openCodeV1 = openCodeV1
+        self.claude = claude
         try validate()
     }
     public func validate() throws {
         try reference.validate(); try ProviderHistoryValidation.path(workspacePath)
         if let headTurnID { try ProviderHistoryValidation.id(headTurnID) }
-        guard openCodeV1 == nil || openCodeV2 == nil else { throw ProviderHistoryError(.invalidResponse) }
-        if let openCodeV1 {
+        guard [openCodeV1 != nil, openCodeV2 != nil, claude != nil].filter({ $0 }).count <= 1 else { throw ProviderHistoryError(.invalidResponse) }
+        if let claude {
+            try claude.validate()
+            guard reference == claude.reference, workspacePath == claude.workspacePath,
+                  historyMode == .nativeTranscript, headTurnID == nil else { throw ProviderHistoryError(.invalidResponse) }
+        } else if let openCodeV1 {
             try openCodeV1.validate()
             guard reference == openCodeV1.reference, workspacePath == openCodeV1.workspacePath,
                   historyMode == .messageOrdered, headTurnID == nil else { throw ProviderHistoryError(.invalidResponse) }
@@ -130,15 +145,16 @@ public struct ProviderConversationSnapshot: Codable, Sendable, Equatable {
             try openCodeV2.validate()
             guard reference == openCodeV2.reference, workspacePath == openCodeV2.workspacePath,
                   historyMode == .messageOrdered, headTurnID == nil else { throw ProviderHistoryError(.invalidResponse) }
-        } else if historyMode == .messageOrdered { throw ProviderHistoryError(.invalidResponse) }
+        } else if historyMode == .messageOrdered || historyMode == .nativeTranscript { throw ProviderHistoryError(.invalidResponse) }
     }
-    private enum CodingKeys: String, CodingKey { case reference, workspacePath, historyMode, headTurnID, openCodeV2, openCodeV1 }
+    private enum CodingKeys: String, CodingKey { case reference, workspacePath, historyMode, headTurnID, openCodeV2, openCodeV1, claude }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(reference: c.decode(ProviderConversationReference.self, forKey: .reference),
             workspacePath: c.decode(String.self, forKey: .workspacePath), historyMode: c.decode(ProviderHistoryMode.self, forKey: .historyMode),
             headTurnID: c.decodeIfPresent(String.self, forKey: .headTurnID), openCodeV2: c.decodeIfPresent(OpenCodeV2HistorySnapshot.self, forKey: .openCodeV2),
-            openCodeV1: c.decodeIfPresent(OpenCodeV1HistorySnapshot.self, forKey: .openCodeV1))
+            openCodeV1: c.decodeIfPresent(OpenCodeV1HistorySnapshot.self, forKey: .openCodeV1),
+            claude: c.decodeIfPresent(ClaudeHistoryResult.self, forKey: .claude))
     }
 }
 

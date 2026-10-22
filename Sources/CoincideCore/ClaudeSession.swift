@@ -8,6 +8,10 @@ public actor ClaudeSession: ProviderSession {
     public nonisolated let events: AsyncStream<ProviderEvent>
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
+    private let runtimeConfiguration: ClaudeRuntimeConfiguration?
+    private let launchSelection: ClaudeResumeSelection?
+    private var historyEvidence: ClaudeRunHistoryEvidence?
+    private var submittedOpening = false
     private var reader: Task<Void, Never>?
     private var closeTask: Task<Void, Never>?
     private var connecting: Task<JSONValue, any Error>?
@@ -32,17 +36,61 @@ public actor ClaudeSession: ProviderSession {
     private var activeRootSubagentTools: Set<String> = []
     private var activeSubagentTasks: [String: String] = [:]
     private var steerEchoes: [String] = []
+    private var attemptedSteeringInputIDs: Set<String> = []
 
-    public init(executable: URL, cwd: URL, resumeID: String? = nil, arguments: [String]? = nil) throws {
+    public init(executable: URL, cwd: URL, resumeID: String? = nil, arguments: [String]? = nil,
+                configuration: ClaudeRuntimeConfiguration? = nil, launchSelection: ClaudeResumeSelection? = nil) throws {
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
         self.events = events; self.continuation = continuation
+        runtimeConfiguration = configuration; self.launchSelection = launchSelection
+        var environment: [String: String]?
+        if let configuration {
+            try configuration.validate()
+            guard executable.path == configuration.executable,
+                  try ClaudeRuntimeValidation.physical(cwd.path, allowMissing: false) == configuration.workspacePath,
+                  try ClaudeRuntimeValidation.configurationDirectory(configuration.configurationDirectorySelection) == configuration.configurationDirectory else { throw ClaudeRuntimeConfiguration.invalid() }
+            var capturedEnvironment = ProcessChannel.environment()
+            switch configuration.configurationDirectorySelection {
+            case .defaultHome(let home):
+                capturedEnvironment.removeValue(forKey: "CLAUDE_CONFIG_DIR")
+                capturedEnvironment["HOME"] = home
+            case .explicitDirectory(let path): capturedEnvironment["CLAUDE_CONFIG_DIR"] = path
+            }
+            capturedEnvironment["CLAUDE_CODE_PROJECT_DIR_NAME"] = configuration.projectDirectoryName
+            capturedEnvironment.removeValue(forKey: "CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP")
+            environment = capturedEnvironment
+        }
         var args = arguments ?? ["--print", "--input-format", "stream-json", "--output-format", "stream-json",
             "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio",
             "--allow-dangerously-skip-permissions"]
-        if arguments == nil, let resumeID { args += ["--resume", resumeID] }
-        nativeThreadID = resumeID
+        if let launchSelection {
+            guard let configuration, arguments == nil else { throw ClaudeRuntimeConfiguration.invalid() }
+            try launchSelection.validate(runtime: configuration)
+            let store = try ClaudeTranscriptStore(configurationDirectory: URL(fileURLWithPath: configuration.configurationDirectory),
+                workspace: URL(fileURLWithPath: configuration.workspacePath), projectDirectoryName: configuration.projectDirectoryName)
+            switch launchSelection.kind {
+            case .resumeAt:
+                let snapshot = try store.read(sessionID: launchSelection.nativeSessionID)
+                guard snapshot.location == launchSelection.reviewedLocation, snapshot.revision == launchSelection.reviewedRevision else {
+                    throw ClaudeTranscriptStoreError(.sourceChanged)
+                }
+                args += ["--resume", launchSelection.nativeSessionID, "--resume-session-at=\(launchSelection.cursor!)"]
+                // resumeDropsTurn is NOT enabled without a separate verified CLI
+                // profile; selecting a local cursor does not claim that guard.
+            case .freshSession:
+                do {
+                    _ = try store.read(sessionID: launchSelection.nativeSessionID)
+                    throw ClaudeTranscriptStoreError(.collision)
+                } catch let error as ClaudeTranscriptStoreError where error.kind == .notFound {}
+                args += ["--session-id", launchSelection.nativeSessionID]
+            }
+            nativeThreadID = launchSelection.nativeSessionID
+        } else {
+            if arguments == nil, let resumeID { args += ["--resume", resumeID] }
+            nativeThreadID = resumeID
+        }
         rpc = try JSONRPCConnection(executable: executable, arguments: args, cwd: cwd, dialect: .claudeControl,
-            maximumFrameSize: 128 * 1_024 * 1_024, drainProcessOnClose: true)
+            maximumFrameSize: 128 * 1_024 * 1_024, environment: environment, drainProcessOnClose: true)
     }
     public func connect() async throws {
         guard !shuttingDown else { throw CoincideError("The Claude connection is closed.") }
@@ -95,23 +143,39 @@ public actor ClaudeSession: ProviderSession {
     }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         let submittedRunID = thread.activeRun?.id
+        let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         guard !shuttingDown else { throw CoincideError("The Claude connection is closed.") }
         guard !working else { throw CoincideError("A turn is already running in this thread.") }
-        if let expected = thread.providerThreadID, let nativeThreadID, expected != nativeThreadID {
+        let expectedNative = captured.claudeLaunchSelection?.nativeSessionID ?? captured.nativeThreadID ?? thread.providerThreadID
+        if let expected = expectedNative, let nativeThreadID, expected != nativeThreadID {
             throw CoincideError("The Claude conversation changed. Open a connection for the selected conversation before sending.")
         }
-        if nativeThreadID == nil { nativeThreadID = thread.providerThreadID }
+        if let runtimeConfiguration {
+            guard captured.provider == .claude, captured.claudeRuntimeConfiguration == runtimeConfiguration,
+                  captured.claudeLaunchSelection == launchSelection else { throw ClaudeRuntimeConfiguration.invalid() }
+        } else if captured.claudeRuntimeConfiguration != nil || captured.claudeLaunchSelection != nil { throw ClaudeRuntimeConfiguration.invalid() }
+        if nativeThreadID == nil { nativeThreadID = expectedNative }
         eventRunID = submittedRunID
         working = true; requestedInterrupt = false; emittedAssistant = false
         turnGeneration += 1
         let generation = turnGeneration
-        activeConfiguration = .init(thread: thread); activeNativeThreadID = thread.providerThreadID ?? nativeThreadID
+        activeConfiguration = captured; activeNativeThreadID = expectedNative ?? nativeThreadID
         activeTurnID = nil; steeringSubmitted = false; clearRootSubagents(); activeSubagentTasks = [:]
+        submittedOpening = false
+        attemptedSteeringInputIDs = []
+        if let submittedRunID, let runtimeConfiguration {
+            historyEvidence = try .init(runID: submittedRunID, runtimeIdentity: runtimeConfiguration.runtimeIdentity)
+        } else { historyEvidence = nil }
         do {
             try await connect()
-            _ = try await rpc.request("set_permission_mode", params: .object(["mode": .string(Self.permissionMode(thread.permission))]))
-            _ = try await rpc.request("set_model", params: .object(["model": thread.model.isEmpty ? .null : .string(thread.model)]))
-            let promptID = UUID().uuidString
+            guard ownsPreparing(generation) else { throw CancellationError() }
+            _ = try await rpc.request("set_permission_mode", params: .object(["mode": .string(Self.permissionMode(captured.permission))]))
+            guard ownsPreparing(generation) else { throw CancellationError() }
+            _ = try await rpc.request("set_model", params: .object(["model": captured.model.isEmpty ? .null : .string(captured.model)]))
+            guard ownsPreparing(generation) else { throw CancellationError() }
+            await rpc.flushEvents()
+            guard ownsPreparing(generation) else { throw CancellationError() }
+            let promptID = submittedRunID.map(ClaudeInputIdentity.opening(runID:)) ?? UUID().uuidString
             activeTurnID = promptID
             var images: [JSONValue] = input.images.map { image in
                 .object(["type": .string("image"), "source": .object(["type": .string("base64"),
@@ -119,10 +183,11 @@ public actor ClaudeSession: ProviderSession {
             }
             if !input.text.isEmpty { images.append(.object(["type": .string("text"), "text": .string(input.text)])) }
             let content: JSONValue = input.images.isEmpty ? .string(input.text) : .array(images)
+            submittedOpening = true
             try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(promptID),
                 "message": .object(["role": .string("user"), "content": content]), "parent_tool_use_id": .null]))
             emit(.turn(promptID), runID: submittedRunID)
-        } catch { if generation == turnGeneration { working = false; activeTurnID = nil }; throw error }
+        } catch { if generation == turnGeneration { working = false; activeTurnID = nil; submittedOpening = false }; throw error }
     }
     public func steeringCapabilities() async -> ProviderSteeringCapabilities {
         guard initialized, !shuttingDown else { return .init(unavailableReason: ProviderSteeringError(.unsupported).localizedDescription) }
@@ -131,6 +196,9 @@ public actor ClaudeSession: ProviderSession {
         }
         guard activeRootSubagentTools.isEmpty else {
             return .init(interruptsTools: true, unavailableReason: "This turn has active agents that this connection cannot safely move to the background. Queue the message instead.")
+        }
+        guard attemptedSteeringInputIDs.count < ClaudeRunHistoryEvidence.maximumInputs - 1 else {
+            return .init(unavailableReason: "This turn reached its retained input limit. Queue the next message instead.")
         }
         return .init(supportsActiveSteering: true, interruptsTools: true)
     }
@@ -153,9 +221,12 @@ public actor ClaudeSession: ProviderSession {
                 "media_type": .string(image.mimeType), "data": .string(image.data.base64EncodedString())])])
         }
         if !input.text.isEmpty { content.append(.object(["type": .string("text"), "text": .string(input.text)])) }
-        // Fresh transport UUIDs avoid mistaking an old CLI transcript echo for
-        // this delivery. The app's durable message ID is not an idempotency key.
-        let promptID = UUID().uuidString, id = UUID()
+        // The native UUID is bound to the already-persisted authored row. It is
+        // prospective history ownership, never a provider idempotency promise.
+        let promptID = try ClaudeInputIdentity.steering(messageID: clientMessageID), id = UUID()
+        guard !attemptedSteeringInputIDs.contains(promptID) else { throw ProviderSteeringError(.outcomeUncertain) }
+        guard attemptedSteeringInputIDs.count < ClaudeRunHistoryEvidence.maximumInputs - 1 else { throw ProviderSteeringError(.unsupported) }
+        try historyEvidence?.registerSteering(messageID: clientMessageID)
         let frame: JSONValue = .object(["type": .string("user"), "uuid": .string(promptID), "priority": .string("now"),
             "message": .object(["role": .string("user"), "content": input.images.isEmpty ? .string(input.text) : .array(content)]),
             "parent_tool_use_id": .null])
@@ -176,6 +247,7 @@ public actor ClaudeSession: ProviderSession {
         guard activeRootSubagentTools.isEmpty else { throw ProviderSteeringError(.unsupported) }
         try ProviderSteeringValidation.target(thread, provider: .claude, configuration: activeConfiguration,
             runID: eventRunID, nativeThreadID: activeNativeThreadID, turnID: activeTurnID, expectedTurnID: expectedTurnID)
+        guard let inputID = frame["uuid"].string, attemptedSteeringInputIDs.insert(inputID).inserted else { throw ProviderSteeringError(.outcomeUncertain) }
         steeringSubmitted = true
         do {
             try await rpc.sendFrame(frame)
@@ -185,8 +257,9 @@ public actor ClaudeSession: ProviderSession {
     public func interrupt() async throws {
         guard working else { throw CoincideError("There is no active Claude turn to stop.") }
         requestedInterrupt = true
+        let generation = turnGeneration
         do { _ = try await rpc.request("interrupt") }
-        catch { requestedInterrupt = false; throw error }
+        catch { if generation == turnGeneration { requestedInterrupt = false }; throw error }
     }
     public func respond(_ request: ApprovalRequest, allow: Bool) async throws {
         guard pendingApprovals[request.id] != nil else { throw CoincideError("This approval is no longer pending.") }
@@ -246,12 +319,17 @@ public actor ClaudeSession: ProviderSession {
                 if working, activeNativeThreadID == nil { activeNativeThreadID = id }
                 emit(.thread(id))
             }
+            if isRoot { observeHistoryFrame(frame, method: method) }
             switch method {
             case "control_cancel_request":
                 let id = frame["request_id"]
                 pendingApprovals.removeValue(forKey: id); emit(.approvalDismissed(id))
-            case "stream_event": consumeStream(frame["event"], isRoot: isRoot)
-            case "assistant": consumeAssistant(frame["message"], isRoot: isRoot)
+            case "stream_event":
+                guard !isRoot || !working || submittedOpening else { return }
+                consumeStream(frame["event"], isRoot: isRoot)
+            case "assistant":
+                guard !isRoot || !working || submittedOpening else { return }
+                consumeAssistant(frame["message"], isRoot: isRoot)
             case "user":
                 if isRoot, let uuid = frame["uuid"].string {
                     steerEchoes.append(uuid); if steerEchoes.count > 128 { steerEchoes.removeFirst() }
@@ -275,9 +353,11 @@ public actor ClaudeSession: ProviderSession {
                 // Steering can leave several aborted query segments queued
                 // ahead of a Stop result. Completion is one fact for the live
                 // root query; late segments and child results cannot repeat it.
-                guard isRoot, working else { return }
+                guard isRoot, working, submittedOpening, resultBelongsToCurrentInput(frame) else { return }
                 if steeringSubmitted, !requestedInterrupt,
                    ["aborted_tools", "aborted_streaming"].contains(frame["terminal_reason"].string ?? "") { return }
+                let terminal: ThreadRunStatus = requestedInterrupt ? .interrupted : (frame["is_error"] == .bool(true) ? .failed : .completed)
+                finishHistory(terminal)
                 working = false; pendingApprovals.removeAll()
                 activeTurnID = nil; steeringSubmitted = false; clearRootSubagents(); activeSubagentTasks = [:]
                 if requestedInterrupt { emit(.completed(.interrupted)) }
@@ -328,6 +408,56 @@ public actor ClaudeSession: ProviderSession {
             default: break
             }
         }
+    }
+    private func ownsPreparing(_ generation: Int) -> Bool {
+        generation == turnGeneration && working && !requestedInterrupt && !shuttingDown && !Task.isCancelled
+    }
+    private func stampedInputIDs(_ frame: JSONValue) -> [String] {
+        if let inputs = frame["user_message_uuids"].array, inputs.count <= 64 {
+            return inputs.compactMap(\.string)
+        }
+        return frame["user_message_uuid"].string.map { [$0] } ?? []
+    }
+    private func resultBelongsToCurrentInput(_ frame: JSONValue) -> Bool {
+        let stamped = stampedInputIDs(frame)
+        guard !stamped.isEmpty else { return true } // Older native producers omit stamps.
+        let registered = historyEvidence?.registeredInputIDs ?? ([activeTurnID].compactMap { $0 } + Array(attemptedSteeringInputIDs))
+        return stamped.contains(where: { registered.contains($0) })
+    }
+    private func observeHistoryFrame(_ frame: JSONValue, method: String) {
+        guard working, !shuttingDown, var evidence = historyEvidence, evidence.runID == eventRunID,
+              let sessionID = frame["session_id"].string, nativeThreadID == sessionID,
+              frame["replayed"] != .bool(true), frame["isReplay"] != .bool(true) else { return }
+        let old = evidence
+        do {
+            // Root init is a session observation, never proof an input was sent.
+            guard submittedOpening || (method == "system" && frame["subtype"].string == "init") else { return }
+            let stamped = stampedInputIDs(frame)
+            if !stamped.isEmpty, !stamped.contains(where: { evidence.registeredInputIDs.contains($0) }) { return }
+            var observed = stamped.filter { evidence.registeredInputIDs.contains($0) }
+            if method == "user", let input = frame["uuid"].string, evidence.registeredInputIDs.contains(input), !observed.contains(input) { observed.append(input) }
+            for input in observed where !steerEchoes.contains(input) {
+                steerEchoes.append(input); if steerEchoes.count > 128 { steerEchoes.removeFirst() }
+            }
+            // Both required native envelope owners must be present. Nested API
+            // message.id and sidechain UUIDs are never history cursor evidence.
+            let assistantID = method == "assistant" && frame.object?.keys.contains("parent_tool_use_id") == true
+                && frame["parent_tool_use_id"] == .null ? frame["uuid"].string : nil
+            try evidence.observe(nativeSessionID: sessionID, inputIDs: observed, rootAssistantMessageID: assistantID)
+            historyEvidence = evidence
+            if evidence != old { emit(.claudeHistoryEvidence(evidence), runID: evidence.runID) }
+        } catch {
+            // Keep the ordinary transcript, but an incomplete native audit must
+            // never later acquire a successful terminal boundary by omission.
+            historyEvidence = nil
+        }
+    }
+    private func finishHistory(_ status: ThreadRunStatus) {
+        guard var evidence = historyEvidence, evidence.runID == eventRunID else { return }
+        do {
+            try evidence.finish(status); historyEvidence = evidence
+            emit(.claudeHistoryEvidence(evidence), runID: evidence.runID)
+        } catch { historyEvidence = nil }
     }
     private func observeRootSubagent(_ block: JSONValue, id: String, isRoot: Bool) {
         guard isRoot, working, ["agent", "task"].contains(block["name"].string?.lowercased() ?? "") else { return }

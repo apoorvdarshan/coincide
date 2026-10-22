@@ -68,6 +68,10 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var providerThreadID: String?
     public var provider: ProviderKind
     public var codexRuntimeConfiguration: CodexRuntimeConfiguration?
+    public var claudeRuntimeConfiguration: ClaudeRuntimeConfiguration?
+    public var claudeResumeSelection: ClaudeResumeSelection?
+    public var claudeResumeConsumerRunID: UUID?
+    public var claudeInheritedHead: ClaudeInheritedHead?
     public var acpAgent: ACPAgentConfiguration?
     public var openCodeConfiguration: OpenCodeConfiguration?
     public var piConfiguration: PiConfiguration?
@@ -114,6 +118,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
         case museConfiguration
         case antigravityConfiguration, codexRuntimeConfiguration
+        case claudeRuntimeConfiguration, claudeResumeSelection, claudeResumeConsumerRunID, claudeInheritedHead
         case providerActivity, agentConfiguration
     }
     public init(from decoder: any Decoder) throws {
@@ -127,6 +132,10 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
         provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
         codexRuntimeConfiguration = try values.decodeIfPresent(CodexRuntimeConfiguration.self, forKey: .codexRuntimeConfiguration)
+        claudeRuntimeConfiguration = try values.decodeIfPresent(ClaudeRuntimeConfiguration.self, forKey: .claudeRuntimeConfiguration)
+        claudeResumeSelection = try values.decodeIfPresent(ClaudeResumeSelection.self, forKey: .claudeResumeSelection)
+        claudeResumeConsumerRunID = try values.decodeIfPresent(UUID.self, forKey: .claudeResumeConsumerRunID)
+        claudeInheritedHead = try values.decodeIfPresent(ClaudeInheritedHead.self, forKey: .claudeInheritedHead)
         acpAgent = try values.decodeIfPresent(ACPAgentConfiguration.self, forKey: .acpAgent)
         openCodeConfiguration = try values.decodeIfPresent(OpenCodeConfiguration.self, forKey: .openCodeConfiguration)
         piConfiguration = try values.decodeIfPresent(PiConfiguration.self, forKey: .piConfiguration)

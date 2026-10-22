@@ -113,6 +113,7 @@ enum ProviderSteeringValidation {
         // Every execution setting must still be the captured active setting.
         var presented = ProviderConfiguration(thread: thread)
         presented.nativeThreadID = configuration.nativeThreadID
+        presented.claudeLaunchSelection = configuration.claudeLaunchSelection
         guard presented == configuration else { throw ProviderSteeringError(.staleTarget) }
     }
     static func target(_ thread: CodingThread, provider: ProviderKind, configuration: ProviderConfiguration?, runID: UUID?,
@@ -124,6 +125,7 @@ enum ProviderSteeringValidation {
             throw ProviderSteeringError(.staleTarget)
         }
         var presented = ProviderConfiguration(thread: thread); presented.nativeThreadID = configuration.nativeThreadID
+        presented.claudeLaunchSelection = configuration.claudeLaunchSelection
         guard presented == configuration else { throw ProviderSteeringError(.staleTarget) }
     }
     static func frame(_ frame: JSONValue) throws {

@@ -27,6 +27,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     case sessionApprovalDismissed(JSONValue)
     case submissionFailed(clientMessageID: String, reason: String)
     case steeringCapabilitiesChanged
+    case claudeHistoryEvidence(ClaudeRunHistoryEvidence)
     indirect case context(runID: UUID, event: ProviderEvent)
 }
 
@@ -138,6 +139,16 @@ public enum ProviderSessions {
             let environment = try CodexRuntimeEnvironment.make(configuration: configuration)
             return try CodexSession(executable: lease.resolved.executable, cwd: URL(fileURLWithPath: thread.workspacePath),
                                     environment: environment, installationLease: lease, runtimeConfiguration: configuration)
+        }
+        if thread.provider == .claude, let configuration = thread.claudeRuntimeConfiguration {
+            try ProviderConfiguration(thread: thread).validateClaudeConfiguration()
+            let launch = thread.activeRun?.configuration.claudeLaunchSelection
+            // Discovery never adopts a deferred selection or resumes a reserved
+            // fresh UUID which has no transcript until an explicit user input.
+            let resume = thread.claudeResumeSelection?.kind == .freshSession && launch == nil ? nil : thread.providerThreadID
+            return try ClaudeSession(executable: URL(fileURLWithPath: configuration.executable),
+                cwd: URL(fileURLWithPath: thread.workspacePath), resumeID: resume,
+                configuration: configuration, launchSelection: launch)
         }
         if thread.provider == .antigravity {
             try AntigravityConfigurationValidation.configuration(.init(thread: thread))

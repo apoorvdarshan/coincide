@@ -44,7 +44,7 @@ public actor WorkspaceDatabase {
         let versionStatus = sqlite3_step(version)
         let storageVersion = sqlite3_column_int(version, 0)
         sqlite3_finalize(version)
-        guard versionStatus == SQLITE_ROW, (0...36).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
+        guard versionStatus == SQLITE_ROW, (0...37).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
         let setup = """
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=FULL;
@@ -55,7 +55,7 @@ public actor WorkspaceDatabase {
         CREATE TABLE IF NOT EXISTS workspace_receipts (id TEXT PRIMARY KEY, fingerprint BLOB NOT NULL, payload BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS workspace_effects (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, command_id TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, payload BLOB NOT NULL);
         CREATE INDEX IF NOT EXISTS workspace_effects_pending ON workspace_effects(status,sequence);
-        PRAGMA user_version=36;
+        PRAGMA user_version=37;
         """
         guard sqlite3_exec(connection, setup, nil, nil, nil) == SQLITE_OK else { throw CoincideError("Could not initialize the workspace database.") }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)

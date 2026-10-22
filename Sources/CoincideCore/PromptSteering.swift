@@ -85,6 +85,7 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
         try ProviderSteeringValidation.id(messageID); try ProviderHistoryValidation.path(configuration.workspacePath)
         try AttachmentLimits.validate(input.attachments ?? [])
         var inputConfiguration = input.configuration; inputConfiguration.nativeThreadID = configuration.nativeThreadID
+        inputConfiguration.claudeLaunchSelection = configuration.claudeLaunchSelection
         guard inputConfiguration == configuration, Set([id, effectID, threadID, projectID, runID, input.id]).count == 6,
               queuedID == nil || queuedID == input.id, input.existingMessageID == nil,
               input.text.utf16.count <= 120_000, !input.text.isEmpty || input.attachments?.isEmpty == false,
@@ -129,6 +130,7 @@ extension WorkspaceSnapshot {
             guard let queued = thread.queuedTurns.first(where: { $0.id == queuedID }) else { return "The selected queued input is no longer available." }
             guard queued.existingMessageID == nil else { return "This steering input is already reserved as a follow-up. Resume its queue instead." }
             var configuration = queued.configuration; configuration.nativeThreadID = run.configuration.nativeThreadID
+            configuration.claudeLaunchSelection = run.configuration.claudeLaunchSelection
             guard configuration == run.configuration else { return "This queued input has different captured settings. Keep it queued or explicitly restart with those settings." }
         }
         return nil
@@ -232,6 +234,9 @@ extension WorkspaceDecision {
         }
         var message = ChatMessage(id: operation.messageID, role: .user, text: operation.input.text, attachments: operation.input.attachments)
         message.createdAt = operation.input.createdAt; message.runReference = .init(threadID: thread.id, runID: run.id); message.promptSteeringID = operation.id
+        if run.configuration.provider == .claude, run.configuration.claudeRuntimeConfiguration != nil {
+            try thread.registerClaudeSteeringInput(runID: run.id, messageID: operation.messageID)
+        }
         thread.messages.append(message); thread.updatedAt = operation.createdAt; snapshot.threads[index] = thread
         if snapshot.promptSteerings == nil { snapshot.promptSteerings = [] }; snapshot.promptSteerings!.append(operation)
         try snapshot.validatePromptSteerings()

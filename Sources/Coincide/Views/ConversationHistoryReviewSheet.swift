@@ -101,11 +101,7 @@ struct ConversationHistoryReviewContent<Status: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(ConversationHistoryPresentation.title(kind)).font(.title2)
-                Text(kind == .forkAfterRun
-                     ? String(localized: "Create a separate conversation through the end of this run. The source conversation and its draft stay unchanged.")
-                     : review?.recallPromptOnSuccess == true
-                     ? String(localized: "Rewind before this run and keep its audit. After the rewind fully completes, the original prompt and attachments return to your latest draft. Current provider settings stay unchanged.")
-                     : String(localized: "Remove this run and later messages from the current conversation. Its run audit is retained; your current draft and settings stay unchanged."))
+                Text(ConversationHistoryPresentation.reviewSummary(review, kind: kind))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if kind == .forkAfterRun || (operation != nil && review?.files == nil) {
                     Text("Workspace files and staging stay as they are.").font(.caption).foregroundStyle(.secondary)
@@ -127,7 +123,11 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
                         if let files = review.files { ConversationHistoryFilesReviewSection(files: files) }
-                        if review.openCodeV1 != nil, kind == .rewindBeforeRun {
+                        if review.claude != nil, kind == .rewindBeforeRun {
+                            Text(ConversationHistoryPresentation.claudeContextDetail(review))
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("conversation-history-claude-context-selection")
+                        } else if review.openCodeV1 != nil, kind == .rewindBeforeRun {
                             Text("OpenCode v1 creates and verifies a separate native conversation, then switches this conversation to it. The original native conversation is kept. Your current settings and latest draft stay unchanged until the optional prompt recall.")
                                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("conversation-history-v1-adoption")
@@ -145,7 +145,9 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                         Text(configuration.workspacePath).font(.caption.monospaced()).textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("conversation-history-workspace")
                         LabeledContent("Messages kept", value: review.prefix.count.formatted())
-                        if kind == .rewindBeforeRun { LabeledContent("Messages removed", value: review.removedMessageIDs.count.formatted()) }
+                        if kind == .rewindBeforeRun {
+                            LabeledContent(review.claude == nil ? "Messages removed" : "Local messages hidden", value: review.removedMessageIDs.count.formatted())
+                        }
                         DisclosureGroup("Verified boundary") {
                             VStack(alignment: .leading, spacing: 6) {
                                 LabeledContent("Run", value: review.runID.uuidString)
@@ -153,7 +155,19 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                                 if let head = review.reviewedHeadTurnID {
                                     LabeledContent("Reviewed head", value: head)
                                 }
-                                if let evidence = review.openCodeV1 {
+                                if let evidence = review.claude {
+                                    if let head = evidence.source.headMessageID { LabeledContent("Reviewed native message head", value: head) }
+                                    if let opening = evidence.inputs.first(where: { $0.runID == review.runID })?.openingInputID {
+                                        LabeledContent("Selected native opening input", value: opening)
+                                    }
+                                    if let inherited = evidence.inheritedHead {
+                                        LabeledContent("Inherited fork head", value: inherited.cursor)
+                                    }
+                                    if kind == .forkAfterRun {
+                                        Text("Claude copies the native transcript through the inclusive selected entry and verifies the fork’s remapped message identities before it can be opened. The source is retained.")
+                                            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                    }
+                                } else if let evidence = review.openCodeV1 {
                                     if let head = evidence.source.messages.last?.id { LabeledContent("Reviewed message head", value: head) }
                                     LabeledContent("Selected opening message", value: evidence.selectedOpeningMessageID)
                                     Text("OpenCode v1 copies native messages at the exact reviewed cut. Copied message IDs change; historical run IDs and their audit are retained.")
@@ -171,6 +185,14 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                                     LabeledContent("First excluded message", value: id)
                                 case .throughMessage(let id):
                                     LabeledContent("Last retained message", value: id)
+                                case .throughClaudeMessage(let id):
+                                    LabeledContent("Inclusive Claude transcript cursor", value: id)
+                                    Text("This is a native transcript-entry reference, separate from API message IDs and adapter input references.")
+                                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                case .freshClaudeSession(let id):
+                                    LabeledContent("Reserved next conversation", value: id)
+                                    Text("The new native transcript starts only when you explicitly send a message.")
+                                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                 case .head:
                                     Text("Current provider head")
                                 }
@@ -200,11 +222,13 @@ struct ConversationHistoryReviewContent<Status: View>: View {
     @ViewBuilder private var actionButtons: some View {
         if operation == nil {
             if kind == .rewindBeforeRun {
-                Button(review?.files == nil ? "Revert Files Too…" : "Revert Files Too", role: .destructive) {
+                Button(review?.claude != nil
+                       ? review?.files == nil ? "Restore Files Too…" : "Save Point and Restore Files"
+                       : review?.files == nil ? "Revert Files Too…" : "Revert Files Too", role: .destructive) {
                     if review?.files != nil { confirmFiles?() } else { reviewFiles?() }
                 }.disabled(review == nil || accepting || filesLoading || reviewFiles == nil)
                     .accessibilityIdentifier("conversation-history-revert-files")
-                Button("Revert and Keep Changes", action: confirm)
+                Button(review?.claude == nil ? "Revert and Keep Changes" : "Save Resume Point", action: confirm)
                     .disabled(review == nil || accepting).accessibilityIdentifier("conversation-history-confirm")
             } else {
                 Button("Fork Conversation", action: confirm)
@@ -246,6 +270,37 @@ struct ConversationHistoryFilesReviewSection: View {
 }
 
 enum ConversationHistoryPresentation {
+    static func isClaudeContextSelection(_ review: ConversationHistoryReview) -> Bool {
+        review.claude != nil && review.kind == .rewindBeforeRun
+    }
+    static func reviewSummary(_ review: ConversationHistoryReview?, kind: ConversationHistoryKind) -> String {
+        if let review, isClaudeContextSelection(review) {
+            return review.recallPromptOnSuccess == true
+                ? String(localized: "Save the context before this run for your next explicit Claude message. The original prompt and attachments return to your latest draft after this action and any selected file restoration finish. Current settings stay unchanged; no message is sent.")
+                : String(localized: "Save the context before this run for your next explicit Claude message. The local run audit and native transcript are retained. Your current draft and settings stay unchanged; no message is sent.")
+        }
+        return kind == .forkAfterRun
+            ? String(localized: "Create a separate conversation through the end of this run. The source conversation and its draft stay unchanged.")
+            : review?.recallPromptOnSuccess == true
+            ? String(localized: "Rewind before this run and keep its audit. After the rewind fully completes, the original prompt and attachments return to your latest draft. Current provider settings stay unchanged.")
+            : String(localized: "Remove this run and later messages from the current conversation. Its run audit is retained; your current draft and settings stay unchanged.")
+    }
+    static func claudeContextDetail(_ review: ConversationHistoryReview) -> String {
+        if let evidence = review.claude, evidence.inputs.first?.runID == review.runID, evidence.inheritedHead != nil {
+            return String(localized: "Your next Claude message resumes from this conversation’s inherited fork head. The inherited context is kept; this does not start an empty conversation or delete native history.")
+        }
+        switch review.boundary {
+        case .freshClaudeSession:
+            return String(localized: "Your next message starts a new, empty Claude conversation. Its identity is reserved now; no native transcript is created until you send. Existing native conversations are kept.")
+        default:
+            return String(localized: "Claude will resume through the selected native transcript entry when you next send a message. The original transcript is not deleted or truncated. This action does not run Claude or restore files by itself.")
+        }
+    }
+    static func recallFailure(_ operation: ConversationHistoryOperation) -> String {
+        isClaudeContextSelection(operation.review)
+            ? String(localized: "The Claude resume point was saved, but the original input could not be recalled. Review the latest draft and attachments, then recall it or keep your current draft. No message was sent.")
+            : String(localized: "Rewind completed. The original input could not be recalled. Review the latest draft and attachments, then recall it or keep your current draft.")
+    }
     static func title(_ kind: ConversationHistoryKind) -> String {
         kind == .forkAfterRun ? String(localized: "Fork After This Run") : String(localized: "Rewind Before This Run")
     }
@@ -253,6 +308,24 @@ enum ConversationHistoryPresentation {
         operation.isWorking
     }
     static func status(_ operation: ConversationHistoryOperation) -> String {
+        if isClaudeContextSelection(operation.review) {
+            if operation.phase == .applied, let files = operation.files {
+                switch files.phase {
+                case .waitingForProvider: return String(localized: "Claude resume point saved; files not restored")
+                case .accepted, .dispatching: return String(localized: "Claude resume point saved; restoring files…")
+                case .applied: return String(localized: "Claude resume point saved; workspace files restored")
+                case .failed: return files.acknowledgedAt == nil ? String(localized: "Claude resume point saved; files were not restored") : String(localized: "Claude resume point saved; current files kept")
+                case .unconfirmed: return files.acknowledgedAt == nil ? String(localized: "Claude resume point saved; file restoration unconfirmed") : String(localized: "Claude resume point saved; current files kept")
+                }
+            }
+            return switch operation.phase {
+            case .accepted: String(localized: "Claude context selection accepted")
+            case .dispatching: String(localized: "Saving Claude resume point…")
+            case .applied: String(localized: "Claude resume point saved")
+            case .failed: String(localized: "Claude context selection could not complete")
+            case .unconfirmed: String(localized: "Claude context selection unconfirmed")
+            }
+        }
         if operation.error == ConversationHistoryOperation.openCodeV1NotAdoptedMessage { return String(localized: "Original conversation kept") }
         if operation.phase == .unconfirmed, let maintenance = operation.maintenance {
             switch maintenance.phase {

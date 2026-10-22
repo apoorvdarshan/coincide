@@ -169,7 +169,7 @@ extension WorkspaceEngine {
             thread.provider = configuration.provider; thread.workspacePath = configuration.workspacePath
             thread.model = configuration.model; thread.reasoningEffort = configuration.reasoningEffort; thread.permission = configuration.permission
             thread.agentModeID = configuration.agentModeID; thread.agentConfigValues = configuration.agentConfigValues
-            thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent; thread.openCodeConfiguration = configuration.openCodeConfiguration; thread.piConfiguration = configuration.piConfiguration; thread.museConfiguration = configuration.museConfiguration; thread.antigravityConfiguration = configuration.antigravityConfiguration; thread.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration
+            thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent; thread.openCodeConfiguration = configuration.openCodeConfiguration; thread.piConfiguration = configuration.piConfiguration; thread.museConfiguration = configuration.museConfiguration; thread.antigravityConfiguration = configuration.antigravityConfiguration; thread.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration; thread.claudeRuntimeConfiguration = configuration.claudeRuntimeConfiguration
             thread.providerThreadID = operation.nativeThreadID
             do {
                 let result = try await runtime.session.steer(input: input, thread: thread, target: target, clientMessageID: operation.messageID)
@@ -406,8 +406,8 @@ extension WorkspaceEngine {
         let resultingHead: String?
     }
 
-    /// A review performs only reads. Its ephemeral token is bound to this engine
-    /// incarnation and to the complete returned value, not just a caller's UUID.
+    /// A review drains applicable owned idle connections before reading. Its
+    /// ephemeral token binds this incarnation and the complete returned value.
     public func reviewConversationHistory(threadID: UUID, runID: UUID, kind: ConversationHistoryKind,
                                           recallPromptOnSuccess: Bool = false) async throws -> ConversationHistoryReview {
         _ = try await load()
@@ -421,18 +421,37 @@ extension WorkspaceEngine {
               let incarnation = threadIncarnations[threadID],
               let record = thread.runHistory?.first(where: { $0.id == runID && $0.removedByHistoryOperationID == nil }),
               record.status.isTerminal,
-              record.providerThreadID == thread.providerThreadID || (thread.provider == .opencode && thread.openCodeConfiguration?.generation == .v1),
+              record.providerThreadID == thread.providerThreadID || thread.provider == .claude || (thread.provider == .opencode && thread.openCodeConfiguration?.generation == .v1),
               record.configuration.provider == thread.provider,
               record.configuration.workspacePath == thread.workspacePath else {
             throw WorkspaceCommandError("Finish this conversation's work and select a run with verified provider history before continuing.")
         }
         let fingerprint = try revision.snapshot.historySourceFingerprint(threadID: threadID)
         let rawPrefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
-        let prefix = kind == .forkAfterRun ? try revision.snapshot.verifiedForkPrefix(rawPrefix) : rawPrefix
-        let native: ReviewedNativeHistory
+        var prefix = kind == .forkAfterRun && thread.provider != .claude ? try revision.snapshot.verifiedForkPrefix(rawPrefix) : rawPrefix
+        let native: ReviewedNativeHistory?
+        let claude: ClaudeHistoryReviewEvidence?
         let openCodeV1: OpenCodeV1HistoryReviewEvidence?
         let openCodeV2: OpenCodeV2HistoryReviewEvidence?
-        if thread.provider == .opencode, thread.openCodeConfiguration?.generation == .v1 {
+        if thread.provider == .claude {
+            guard let nativeID = thread.providerThreadID, claudeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
+            // Claude flushes native metadata while its idle process closes. The
+            // reviewed revision must include that flush; accepting an earlier
+            // revision would make our own later drain invalidate the review.
+            try await drainClaudeHistoryOwners(thread: thread)
+            guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: fingerprint),
+                  revision.snapshot.canReviewConversationHistory(threadID: threadID),
+                  claudeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            let observed = try await readClaudeHistory(thread: thread) { service in
+                let first = try service.snapshot(sessionID: nativeID, selection: thread.claudeResumeSelection)
+                guard first == (try service.snapshot(sessionID: nativeID, selection: thread.claudeResumeSelection)) else { throw ProviderHistoryError(.historyChanged) }
+                return first
+            }
+            let evidence = try ClaudeHistoryReviewEvidence.make(source: observed, snapshot: revision.snapshot, thread: thread, runID: runID, kind: kind)
+            prefix = try revision.snapshot.verifiedClaudeHistoryPrefix(rawPrefix, evidence: evidence, threadID: threadID, fork: kind == .forkAfterRun)
+            claude = evidence; native = nil; openCodeV1 = nil; openCodeV2 = nil
+        } else if thread.provider == .opencode, thread.openCodeConfiguration?.generation == .v1 {
+            claude = nil
             guard openCodeHistoryScopeIsolated(thread: thread), let nativeID = thread.providerThreadID else { throw ProviderHistoryError(.notIdle) }
             let observed = try await readHistory(thread: thread) { try await $0.openCodeV1HistorySnapshot(threadID: nativeID) }
             guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: fingerprint),
@@ -443,6 +462,7 @@ extension WorkspaceEngine {
             native = .init(snapshot: try .init(reference: observed.reference, workspacePath: observed.workspacePath,
                 historyMode: .messageOrdered, openCodeV1: observed), boundary: evidence.boundary, resultingHead: nil)
         } else if thread.provider == .opencode, thread.openCodeConfiguration?.generation == .v2 {
+            claude = nil
             guard openCodeHistoryScopeIsolated(thread: thread), let nativeID = thread.providerThreadID else { throw ProviderHistoryError(.notIdle) }
             let observed = try await readHistory(thread: thread) { try await $0.openCodeV2HistorySnapshot(threadID: nativeID) }
             guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: fingerprint),
@@ -453,7 +473,7 @@ extension WorkspaceEngine {
             native = .init(snapshot: try .init(reference: observed.reference, workspacePath: observed.workspacePath,
                 historyMode: .messageOrdered, openCodeV2: observed), boundary: evidence.boundary, resultingHead: nil)
         } else {
-            openCodeV1 = nil; openCodeV2 = nil
+            claude = nil; openCodeV1 = nil; openCodeV2 = nil
             native = try await readHistory(thread: thread) { session in
                 try await Self.readReviewedNativeHistory(session: session, thread: thread, runID: runID, kind: kind)
             }
@@ -462,17 +482,19 @@ extension WorkspaceEngine {
               revision.snapshot.canReviewConversationHistory(threadID: threadID) else { throw ProviderHistoryError(.historyChanged) }
         let activeRecords = (thread.runHistory ?? []).filter { $0.removedByHistoryOperationID == nil }
         guard let index = activeRecords.firstIndex(where: { $0.id == runID }),
-              native.snapshot.headTurnID != nil || openCodeV2 != nil || openCodeV1 != nil else { throw ProviderHistoryError(.boundaryUnavailable) }
+              native?.snapshot.headTurnID != nil || openCodeV2 != nil || openCodeV1 != nil || claude != nil else { throw ProviderHistoryError(.boundaryUnavailable) }
+        guard let sourceReference = claude?.source.reference ?? native?.snapshot.reference,
+              let boundary = claude?.boundary.providerBoundary ?? native?.boundary else { throw ProviderHistoryError(.boundaryUnavailable) }
         let review = try ConversationHistoryReview(kind: kind, sourceThreadID: threadID, projectID: thread.projectID,
             runID: runID, sourceIncarnation: incarnation, sourceConfiguration: .init(thread: thread),
-            targetConfiguration: record.configuration, sourceReference: native.snapshot.reference,
-            reviewedHeadTurnID: native.snapshot.headTurnID, boundary: native.boundary, expectedResultHeadTurnID: native.resultingHead,
+            targetConfiguration: record.configuration, sourceReference: sourceReference,
+            reviewedHeadTurnID: native?.snapshot.headTurnID, boundary: boundary, expectedResultHeadTurnID: native?.resultingHead,
             prefix: prefix, removedRunIDs: kind == .rewindBeforeRun ? activeRecords[index...].map(\.id) : [],
             removedMessageIDs: kind == .rewindBeforeRun ? thread.visibleMessages.dropFirst(prefix.count).map(\.id) : [],
             sourceFingerprint: fingerprint, targetThreadID: kind == .forkAfterRun ? UUID() : nil,
             suggestedTitle: String((thread.title + " — Fork").prefix(200)),
             recallPromptOnSuccess: kind == .rewindBeforeRun && recallPromptOnSuccess ? true : nil,
-            openCodeV2: openCodeV2, openCodeV1: openCodeV1)
+            openCodeV2: openCodeV2, openCodeV1: openCodeV1, claude: claude)
         historyReviews[review.id] = .init(review: review, digest: try historyReviewDigest(review))
         return review
     }
@@ -490,7 +512,7 @@ extension WorkspaceEngine {
             kind: .rewindBeforeRun, recallPromptOnSuccess: keepReview.recallPromptOnSuccess == true)
         var prepared: GitCheckpointRestoreReview?
         do {
-            guard fresh.boundary == keepReview.boundary, fresh.reviewedHeadTurnID == keepReview.reviewedHeadTurnID,
+            guard (fresh.boundary == keepReview.boundary || (fresh.claude.map { value in keepReview.claude.map { value.sameLogicalBoundary(as: $0) } == true } == true)), fresh.reviewedHeadTurnID == keepReview.reviewedHeadTurnID,
                   let thread = revision.snapshot.threads.first(where: { $0.id == fresh.sourceThreadID }),
                   revision.snapshot.canReviewCheckpointRestore(threadID: thread.id),
                   case .available(let target) = try revision.snapshot.conversationHistoryFileTarget(for: fresh),
@@ -507,12 +529,12 @@ extension WorkspaceEngine {
                 sourceThreadID: fresh.sourceThreadID, projectID: fresh.projectID, runID: fresh.runID,
                 sourceIncarnation: fresh.sourceIncarnation, sourceConfiguration: fresh.sourceConfiguration,
                 targetConfiguration: fresh.targetConfiguration, sourceReference: fresh.sourceReference,
-                reviewedHeadTurnID: fresh.reviewedHeadTurnID, boundary: fresh.boundary,
+                reviewedHeadTurnID: fresh.reviewedHeadTurnID, boundary: keepReview.claude != nil ? keepReview.boundary : fresh.boundary,
                 expectedResultHeadTurnID: fresh.expectedResultHeadTurnID, prefix: fresh.prefix,
                 removedRunIDs: fresh.removedRunIDs, removedMessageIDs: fresh.removedMessageIDs,
                 sourceFingerprint: fresh.sourceFingerprint, targetThreadID: fresh.targetThreadID,
                 suggestedTitle: fresh.suggestedTitle, files: files, recallPromptOnSuccess: fresh.recallPromptOnSuccess,
-                openCodeV2: fresh.openCodeV2, openCodeV1: fresh.openCodeV1)
+                openCodeV2: fresh.openCodeV2, openCodeV1: fresh.openCodeV1, claude: keepReview.claude ?? fresh.claude)
             guard ownsHistorySource(threadID: review.sourceThreadID, incarnation: review.sourceIncarnation, fingerprint: review.sourceFingerprint),
                   restoreRuntimeScopeIsolated(thread: thread, path: git.currentPlan.repositoryPath) else { throw CancellationError() }
             try revision.snapshot.validateConversationHistoryFilesReview(review)
@@ -566,12 +588,13 @@ extension WorkspaceEngine {
         _ = try await load()
         guard !closing, !stoppingEffects, fatalError == nil,
               let operation = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == operationID }),
-              operation.phase == .unconfirmed, operation.review.kind == .rewindBeforeRun,
+              operation.phase == .unconfirmed, revision.snapshot.canInspectConversationHistory(operationID: operationID),
               let thread = revision.snapshot.threads.first(where: { $0.id == operation.review.sourceThreadID }),
               let incarnation = threadIncarnations[thread.id], !thread.isBusy, thread.queuedTurns.isEmpty,
               thread.runtimeRequests.isEmpty,
               try revision.snapshot.historySourceFingerprint(threadID: thread.id) == operation.review.sourceFingerprint else { throw ProviderHistoryError(.historyChanged) }
         let expected = operation.review
+        if expected.claude != nil { return try await reconcileClaudeHistory(operation: operation, thread: thread, incarnation: incarnation) }
         if expected.openCodeV1 != nil { return try await reconcileOpenCodeV1History(operation: operation, thread: thread, incarnation: incarnation) }
         if expected.openCodeV2 != nil { return try await reconcileOpenCodeV2History(operation: operation, thread: thread, incarnation: incarnation) }
         let snapshot = try await readHistory(thread: thread) { session in
@@ -671,10 +694,11 @@ extension WorkspaceEngine {
     }
     private func ownsHistoryEvent(_ command: EngineCommand) -> Bool {
         switch command {
+        case .claudeResumeInspected(let thread, let incarnation, _, _, _): return threadIncarnations[thread] == incarnation
         case .conversationHistoryAccepted(let review, _):
             return threadIncarnations[review.sourceThreadID] == review.sourceIncarnation
         case .conversationHistoryDispatching(let thread, _, let incarnation): return threadIncarnations[thread] == incarnation
-        case .conversationHistoryCandidateObserved(let id, _, let incarnation):
+        case .conversationHistoryCandidateObserved(let id, _, let incarnation), .conversationHistoryClaudeForkReserved(let id, _, let incarnation):
             guard let operation = revision.snapshot.conversationHistoryOperation(id) else { return false }
             return operation.review.sourceIncarnation == incarnation && threadIncarnations[operation.review.sourceThreadID] == incarnation
         case .conversationHistoryEffectResult(let request, _, let incarnation): return request.threadID.map { threadIncarnations[$0] == incarnation } ?? false
@@ -704,7 +728,7 @@ extension WorkspaceEngine {
               let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
         let token = UUID(), metadataID: UUID?, session: any ProviderSession
         if !forceOwnedMetadata, let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
-           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding {
+           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeRuntimeMatches(runtime, thread: thread) {
             metadataID = nil; session = runtime.session
         } else {
             var configured = thread
@@ -801,6 +825,7 @@ extension WorkspaceEngine {
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
               ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint) else { return .cancelled }
         let review = operation.review
+        if review.claude != nil { return await performClaudeConversationHistory(request, operation: operation, thread: thread, incarnation: incarnation) }
         if review.openCodeV1 != nil || review.openCodeV2 != nil {
             do { try await drainOpenCodeHistoryCleanup(thread: thread) }
             catch { return .failed(ConversationHistoryOperation.failureMessage) }
@@ -820,7 +845,7 @@ extension WorkspaceEngine {
         }
         let metadataID: UUID?, session: any ProviderSession
         if review.kind == .rewindBeforeRun, let runtime = runtimes[threadID], runtime.id == thread.runtimeID,
-           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding {
+           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeRuntimeMatches(runtime, thread: thread) {
             metadataID = nil; session = runtime.session
         } else {
             var configured = thread
@@ -1665,6 +1690,9 @@ public actor WorkspaceEngine {
         var museBinding: MuseRuntimeBinding?
         var antigravityBinding: AntigravityRuntimeBinding?
         var codexBinding: CodexRuntimeConfiguration?
+        var claudeConfiguration: ClaudeRuntimeConfiguration?
+        var claudeLaunchSelection: ClaudeResumeSelection?
+        var claudeNativeID: String?
         var reader: Task<Void, Never>?
     }
     private struct MetadataRuntime: Sendable {
@@ -1678,11 +1706,16 @@ public actor WorkspaceEngine {
         var operationDrain: Task<Void, Never>?
         var closeTask: Task<Void, Never>?
     }
+    private struct ClaudeHistoryScope: Sendable, Hashable {
+        let configurationDirectory: String
+        let nativeSessionID: String
+    }
     private struct Cleanup: Sendable {
         var projectIDs: Set<UUID>
         var threadIDs: Set<UUID>
         var workspacePaths: Set<String>
         var codexInstances: Set<UUID>
+        var claudeScopes: Set<ClaudeHistoryScope>
         var task: Task<Void, Never>
     }
     private struct IdentityRefresh: Sendable {
@@ -1816,7 +1849,13 @@ public actor WorkspaceEngine {
     @discardableResult public func dispatch(_ command: WorkspaceCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         guard !stoppingEffects else { throw CancellationError() }
-        let receipt = try await enqueue(.client(command), id: id)
+        var capturedCommand = command
+        if case .editThread(let threadID, .workspacePath(let path)) = command,
+           let runtime = revision.snapshot.threads.first(where: { $0.id == threadID })?.claudeRuntimeConfiguration {
+            let captured = try runtime.replacingWorkspace(path, physicalPath: ClaudeRuntimeValidation.physical(path, allowMissing: false))
+            capturedCommand = .editThread(threadID, .claudeWorkspace(captured))
+        }
+        let receipt = try await enqueue(.client(capturedCommand), id: id)
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
         return receipt
     }
@@ -1849,7 +1888,7 @@ public actor WorkspaceEngine {
             throw WorkspaceCommandError("Stop this conversation's setup or background jobs before choosing another worktree.")
         }
         let request = GitWorktreeRequest(sourcePath: source, destinationRoot: worktreesRoot.path, selection: selection, submodules: submodules)
-        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: nil, incarnation: incarnation, reviewSetup: reviewSetup))
+        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: nil, incarnation: incarnation, reviewSetup: reviewSetup, claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true))))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
     @discardableResult public func cancelWorktreePreparation(_ threadID: UUID) async throws -> WorkspaceCommandReceipt {
@@ -1889,7 +1928,7 @@ public actor WorkspaceEngine {
         }
         guard ownsWorktree(threadID: threadID, attemptID: state.id, incarnation: incarnation) else { throw CancellationError() }
         let request = GitWorktreeRequest(sourcePath: state.request.sourcePath, destinationRoot: worktreesRoot.path, selection: state.request.selection, submodules: state.request.submodules)
-        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation, reviewSetup: state.setup != nil))
+        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation, reviewSetup: state.setup != nil, claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true))))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
     private func enqueue(_ command: EngineCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
@@ -1938,7 +1977,7 @@ public actor WorkspaceEngine {
                        threadIncarnations[review.sourceThreadID] != review.sourceIncarnation {
                         throw WorkspaceCommandError("This conversation changed. Review its current history before continuing.")
                     }
-                    if case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation, _) = envelope.command,
+                    if case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation, _, _) = envelope.command,
                        (threadIncarnations[threadID] != incarnation || request.destinationRoot != worktreesRoot.path) {
                         throw WorkspaceCommandError("This conversation changed. Choose the worktree again in its current workspace.")
                     }
@@ -2034,6 +2073,7 @@ public actor WorkspaceEngine {
         var sessions: [any ProviderSession] = []
         var providerPaths: Set<String> = []
         var codexInstances: Set<UUID> = []
+        var claudeScopes: Set<ClaudeHistoryScope> = []
         var jobs: [Task<Void, Never>] = []
         let old = Dictionary(uniqueKeysWithValues: previous.projects.map { ($0.id, $0) })
         for project in decision.snapshot.projects where old[project.id] == nil || old[project.id]?.path != project.path {
@@ -2061,7 +2101,7 @@ public actor WorkspaceEngine {
         for (id, read) in historyReads where removedThreads.contains(read.threadID) || removedProjects.contains(read.projectID) || threads.contains(read.threadID) {
             historyReads.removeValue(forKey: id); read.cancel()
             jobs.append(read.drain); projectIDs.insert(read.projectID); cleanupThreadIDs.insert(read.threadID)
-            if let instance = read.configuration.ownedCodexInstanceID { codexInstances.insert(instance) }
+            if let instance = read.configuration.ownedCodexInstanceID { codexInstances.insert(instance) }; claudeScopes.formUnion(Self.claudeScopes(read.configuration))
         }
         beginCheckpointCleanup(previous: previous, next: decision.snapshot, projectIDs: &projectIDs, threadIDs: &cleanupThreadIDs, jobs: &jobs)
         for (id, inspection) in worktreeInspections where removedThreads.contains(inspection.threadID) || removedProjects.contains(inspection.projectID) {
@@ -2076,13 +2116,16 @@ public actor WorkspaceEngine {
             if let runtime = runtimes.removeValue(forKey: id) {
                 runtime.reader?.cancel(); sessions.append(runtime.session); projectIDs.insert(runtime.projectID); providerPaths.insert(runtime.path)
                 if let binding = runtime.codexBinding, binding.authenticationMode == .ownedChatGPT { codexInstances.insert(binding.instanceID) }
+                if let configuration = runtime.claudeConfiguration, let native = previousThreads[id]?.providerThreadID ?? runtime.claudeNativeID {
+                    claudeScopes.insert(.init(configurationDirectory: configuration.configurationDirectory, nativeSessionID: native))
+                }
             }
         }
         for (id, metadata) in metadataSessions where metadata.threadID.map({ threads.contains($0) }) == true || metadata.projectID.map({ removedProjects.contains($0) }) == true {
             metadataSessions.removeValue(forKey: id)
             providerPaths.insert(metadata.path)
             if let projectID = metadata.projectID { projectIDs.insert(projectID) }
-            if let instance = metadata.launchConfiguration.ownedCodexInstanceID { codexInstances.insert(instance) }
+            if let instance = metadata.launchConfiguration.ownedCodexInstanceID { codexInstances.insert(instance) }; claudeScopes.formUnion(Self.claudeScopes(metadata.launchConfiguration)); if let captured = metadata.configuration { claudeScopes.formUnion(Self.claudeScopes(captured)) }
             metadata.operationCancel?()
             if let task = metadata.closeTask { jobs.append(task) }
             else {
@@ -2090,7 +2133,7 @@ public actor WorkspaceEngine {
                 // Legacy metadata results are incarnation-fenced and may finish
                 // after project removal. Owned auth additionally retains every
                 // credential-bound operation until account mutation can proceed.
-                if metadata.launchConfiguration.ownedCodexInstanceID != nil, let drain = metadata.operationDrain { jobs.append(drain) }
+                if metadata.launchConfiguration.ownedCodexInstanceID != nil || metadata.launchConfiguration.claudeRuntimeConfiguration != nil, let drain = metadata.operationDrain { jobs.append(drain) }
             }
         }
         for effect in removedEffects where effect.status == .running && effect.leaseOwner == workerID {
@@ -2113,14 +2156,20 @@ public actor WorkspaceEngine {
         // Preserve its captured account scope even after the run/thread is removed.
         for thread in previous.threads where cleanupThreadIDs.contains(thread.id) {
             codexInstances.formUnion(thread.ownedCodexInstances)
+            claudeScopes.formUnion(Self.claudeScopes(.init(thread: thread)))
+            if let active = thread.activeRun {
+                var configuration = active.configuration
+                configuration.nativeThreadID = configuration.nativeThreadID ?? thread.runHistory?.first(where: { $0.id == active.id })?.providerThreadID
+                claudeScopes.formUnion(Self.claudeScopes(configuration))
+            }
         }
-        let cleanup = startCleanup(projectIDs: projectIDs, threadIDs: cleanupThreadIDs, sessions: sessions, jobs: jobs, workspacePaths: providerPaths, codexInstances: codexInstances)
+        let cleanup = startCleanup(projectIDs: projectIDs, threadIDs: cleanupThreadIDs, sessions: sessions, jobs: jobs, workspacePaths: providerPaths, codexInstances: codexInstances, claudeScopes: claudeScopes)
         for thread in decision.snapshot.threads {
             if let settlement = thread.settlement, settlement.phase == .settled,
                previousThreads[thread.id]?.settlement?.id != settlement.id, let cleanup { settlementPrerequisites[settlement.id] = cleanup }
         }
     }
-    @discardableResult private func startCleanup(projectIDs: Set<UUID>, threadIDs: Set<UUID> = [], sessions: [any ProviderSession], jobs: [Task<Void, Never>] = [], workspacePaths: Set<String> = [], codexInstances: Set<UUID> = []) -> Task<Void, Never>? {
+    @discardableResult private func startCleanup(projectIDs: Set<UUID>, threadIDs: Set<UUID> = [], sessions: [any ProviderSession], jobs: [Task<Void, Never>] = [], workspacePaths: Set<String> = [], codexInstances: Set<UUID> = [], claudeScopes: Set<ClaudeHistoryScope> = []) -> Task<Void, Never>? {
         guard !sessions.isEmpty || !jobs.isEmpty else { return nil }
         let id = UUID()
         let task: Task<Void, Never> = Task.detached { [weak self] in
@@ -2131,7 +2180,7 @@ public actor WorkspaceEngine {
             }
             await self?.cleanupFinished(id)
         }
-        cleanupTasks[id] = .init(projectIDs: projectIDs, threadIDs: threadIDs, workspacePaths: workspacePaths, codexInstances: codexInstances, task: task)
+        cleanupTasks[id] = .init(projectIDs: projectIDs, threadIDs: threadIDs, workspacePaths: workspacePaths, codexInstances: codexInstances, claudeScopes: claudeScopes, task: task)
         return task
     }
     private func cleanupFinished(_ id: UUID) { cleanupTasks.removeValue(forKey: id) }
@@ -2392,7 +2441,7 @@ public actor WorkspaceEngine {
         case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false, !isCodexAuthenticationLocked(configuration) else { return .cancelled }
-            guard !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration,
+            guard !providerHistoryScopeLocked(configuration: configuration,
                 nativeThreadID: configuration.nativeThreadID ?? thread.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? thread.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
             await awaitCheckpointDrains(threadID: thread.id)
             guard checkpointProviderReleased(threadID: thread.id, runID: runID) else { return .cancelled }
@@ -2404,7 +2453,7 @@ public actor WorkspaceEngine {
             var configured = thread
             configured.provider = configuration.provider; configured.workspacePath = configuration.workspacePath
             configured.providerThreadID = configuration.nativeThreadID; configured.model = configuration.model; configured.reasoningEffort = configuration.reasoningEffort; configured.permission = configuration.permission
-            configured.acpAgent = configuration.acpAgent; configured.openCodeConfiguration = configuration.openCodeConfiguration; configured.piConfiguration = configuration.piConfiguration; configured.museConfiguration = configuration.museConfiguration; configured.antigravityConfiguration = configuration.antigravityConfiguration; configured.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration; configured.agentModeID = configuration.agentModeID
+            configured.acpAgent = configuration.acpAgent; configured.openCodeConfiguration = configuration.openCodeConfiguration; configured.piConfiguration = configuration.piConfiguration; configured.museConfiguration = configuration.museConfiguration; configured.antigravityConfiguration = configuration.antigravityConfiguration; configured.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration; configured.claudeRuntimeConfiguration = configuration.claudeRuntimeConfiguration; configured.agentModeID = configuration.agentModeID
             configured.agentConfigValues = configuration.agentConfigValues
             configured.agentConfiguration = configuration.agentConfiguration
             let runtime = try await runtime(for: configured, runID: runID)
@@ -2414,7 +2463,7 @@ public actor WorkspaceEngine {
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false,
                   runtimes[thread.id]?.id == runtime.id else { return .cancelled }
             try Task.checkCancellation()
-            guard !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration,
+            guard !providerHistoryScopeLocked(configuration: configuration,
                 nativeThreadID: configuration.nativeThreadID ?? revision.snapshot.threads.first(where: { $0.id == thread.id })?.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? configured.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
             try await runtime.session.send(input: input, thread: configured)
             return .succeeded
@@ -2579,7 +2628,7 @@ public actor WorkspaceEngine {
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
         let configuration = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         let nativeID = configuration.nativeThreadID ?? thread.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? thread.providerThreadID
-        guard !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) else {
+        guard !providerHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID), !revision.snapshot.isClaudeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) else {
             throw WorkspaceCommandError("This provider conversation is held by a pending history action.")
         }
         if let captured = ProviderConfiguration(thread: thread).codexRuntimeBinding, captured.authenticationMode == .ownedChatGPT {
@@ -2593,17 +2642,17 @@ public actor WorkspaceEngine {
                 throw CoincideError("This queued input belongs to an earlier Antigravity account or runtime. Review it before sending with the current settings.")
             }
         }
-        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, existing.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding { return existing }
+        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, existing.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeRuntimeMatches(existing, thread: thread) { return existing }
         await closeRuntime(thread.id)
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         // Closing the previous process is an await: removal may have committed during that I/O.
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
-        guard !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) else {
+        guard !providerHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID), !revision.snapshot.isClaudeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) else {
             throw WorkspaceCommandError("This provider conversation is held by a pending history action.")
         }
         let id = UUID(), session = try factory(thread)
-        var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding, antigravityBinding: ProviderConfiguration(thread: thread).antigravityRuntimeBinding, codexBinding: ProviderConfiguration(thread: thread).codexRuntimeBinding)
+        var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding, antigravityBinding: ProviderConfiguration(thread: thread).antigravityRuntimeBinding, codexBinding: ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeConfiguration: thread.claudeRuntimeConfiguration, claudeLaunchSelection: thread.activeRun?.configuration.claudeLaunchSelection, claudeNativeID: thread.providerThreadID)
         runtimes[thread.id] = runtime
         if let native = session as? AntigravitySession {
             do {
@@ -2714,7 +2763,12 @@ public actor WorkspaceEngine {
     private func closeRuntime(_ threadID: UUID, matching expectedID: UUID? = nil) async {
         guard let runtime = runtimes[threadID], expectedID == nil || expectedID == runtime.id else { return }
         runtimes.removeValue(forKey: threadID); runtime.reader?.cancel()
-        if let task = startCleanup(projectIDs: [runtime.projectID], threadIDs: [threadID], sessions: [runtime.session], workspacePaths: [runtime.path], codexInstances: Set(runtime.codexBinding.flatMap { $0.authenticationMode == .ownedChatGPT ? $0.instanceID : nil }.map { [$0] } ?? [])) { await task.value }
+        if let task = startCleanup(projectIDs: [runtime.projectID], threadIDs: [threadID], sessions: [runtime.session], workspacePaths: [runtime.path], codexInstances: Set(runtime.codexBinding.flatMap { $0.authenticationMode == .ownedChatGPT ? $0.instanceID : nil }.map { [$0] } ?? []),
+            claudeScopes: runtime.claudeConfiguration.flatMap { configuration in
+                (revision.snapshot.threads.first(where: { $0.id == threadID })?.providerThreadID ?? runtime.claudeNativeID).map {
+                    Set([ClaudeHistoryScope(configurationDirectory: configuration.configurationDirectory, nativeSessionID: $0)])
+                }
+            } ?? []) { await task.value }
     }
     private func infrastructureFailed(_ message: String) async {
         guard fatalError == nil else { return }
@@ -2768,7 +2822,7 @@ public actor WorkspaceEngine {
         guard !closing, !stoppingEffects,
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
-              current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding else { throw CancellationError() }
+              current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, current.claudeRuntimeConfiguration == thread.claudeRuntimeConfiguration else { throw CancellationError() }
         if !revision.snapshot.providerReady(for: current) {
             throw CoincideError("Wait for the workspace to finish preparing before refreshing this agent's models.")
         }
@@ -2779,7 +2833,7 @@ public actor WorkspaceEngine {
         guard !closing, !stoppingEffects, thread.provider == .opencode,
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               current.provider == .opencode, current.workspacePath == thread.workspacePath,
-              current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding,
+              current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, current.claudeRuntimeConfiguration == thread.claudeRuntimeConfiguration,
               revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         return try await queryProviderMetadata(thread: current, owned: true) { try await $0.openCodeInventory() }
     }
@@ -2793,7 +2847,7 @@ public actor WorkspaceEngine {
               let incarnation = threadIncarnations[thread.id],
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               current.provider == .codex, current.workspacePath == thread.workspacePath,
-              ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding,
+              ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, current.claudeRuntimeConfiguration == thread.claudeRuntimeConfiguration,
               revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         let inventory = try await queryProviderMetadata(thread: current, owned: true) {
             try await $0.codexSkills(forceReload: forceReload)
@@ -2817,14 +2871,15 @@ public actor WorkspaceEngine {
         if owned {
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
             guard let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
-                  current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding,
+                  current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, current.claudeRuntimeConfiguration == thread.claudeRuntimeConfiguration,
                   revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         }
         guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(.init(thread: thread)),
-              !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: .init(thread: thread), nativeThreadID: thread.providerThreadID),
+              !providerHistoryScopeLocked(configuration: .init(thread: thread), nativeThreadID: thread.providerThreadID),
+              !revision.snapshot.isClaudeHistoryScopeLocked(configuration: .init(thread: thread), nativeThreadID: thread.providerThreadID),
               !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else { throw CancellationError() }
         var metadataLaunch = thread
-        if metadataLaunch.provider == .codex {
+        if metadataLaunch.provider == .codex || metadataLaunch.provider == .claude {
             // Metadata owns the original conversation binding, but it must not
             // ask the factory for a live turn's actor or carry its submissions.
             metadataLaunch.activeRun = nil; metadataLaunch.runtimeID = nil
@@ -2868,7 +2923,7 @@ public actor WorkspaceEngine {
         guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.projectID == metadata.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
               let configuration = metadata.configuration,
-              thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent, thread.openCodeConfiguration?.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode == configuration.effectiveGrokRuntimeMode, ProviderConfiguration(thread: thread).piRuntimeBinding == configuration.piRuntimeBinding, ProviderConfiguration(thread: thread).museRuntimeBinding == configuration.museRuntimeBinding, ProviderConfiguration(thread: thread).antigravityRuntimeBinding == configuration.antigravityRuntimeBinding, ProviderConfiguration(thread: thread).codexRuntimeBinding == configuration.codexRuntimeBinding,
+              thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent, thread.openCodeConfiguration?.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode == configuration.effectiveGrokRuntimeMode, ProviderConfiguration(thread: thread).piRuntimeBinding == configuration.piRuntimeBinding, ProviderConfiguration(thread: thread).museRuntimeBinding == configuration.museRuntimeBinding, ProviderConfiguration(thread: thread).antigravityRuntimeBinding == configuration.antigravityRuntimeBinding, ProviderConfiguration(thread: thread).codexRuntimeBinding == configuration.codexRuntimeBinding, thread.claudeRuntimeConfiguration == configuration.claudeRuntimeConfiguration,
               revision.snapshot.providerReady(for: thread) else { return false }
         return true
     }
@@ -2876,8 +2931,8 @@ public actor WorkspaceEngine {
         guard let metadata = metadataSessions[id] else { return nil }
         if let task = metadata.closeTask { return task }
         metadata.operationCancel?()
-        let ownedOperations = metadata.launchConfiguration.ownedCodexInstanceID != nil ? metadata.operationDrain.map { [$0] } ?? [] : []
-        let task = startCleanup(projectIDs: Set(metadata.projectID.map { [$0] } ?? []), threadIDs: Set(metadata.threadID.map { [$0] } ?? []), sessions: [metadata.session], jobs: ownedOperations, workspacePaths: [metadata.path], codexInstances: Set(metadata.launchConfiguration.ownedCodexInstanceID.map { [$0] } ?? []))
+        let ownedOperations = (metadata.launchConfiguration.ownedCodexInstanceID != nil || metadata.launchConfiguration.claudeRuntimeConfiguration != nil) ? metadata.operationDrain.map { [$0] } ?? [] : []
+        let task = startCleanup(projectIDs: Set(metadata.projectID.map { [$0] } ?? []), threadIDs: Set(metadata.threadID.map { [$0] } ?? []), sessions: [metadata.session], jobs: ownedOperations, workspacePaths: [metadata.path], codexInstances: Set(metadata.launchConfiguration.ownedCodexInstanceID.map { [$0] } ?? []), claudeScopes: Self.claudeScopes(metadata.launchConfiguration).union(metadata.configuration.map(Self.claudeScopes) ?? []))
         metadataSessions[id]?.closeTask = task
         return task
     }
@@ -2910,8 +2965,8 @@ public actor WorkspaceEngine {
         let metadata = Array(metadataSessions.values); metadataSessions = [:]
         for runtime in metadata { runtime.operationCancel?() }
         for runtime in metadata where runtime.closeTask == nil {
-            let ownedOperations = runtime.launchConfiguration.ownedCodexInstanceID != nil ? runtime.operationDrain.map { [$0] } ?? [] : []
-            _ = startCleanup(projectIDs: Set(runtime.projectID.map { [$0] } ?? []), threadIDs: Set(runtime.threadID.map { [$0] } ?? []), sessions: [runtime.session], jobs: ownedOperations, workspacePaths: [runtime.path], codexInstances: Set(runtime.launchConfiguration.ownedCodexInstanceID.map { [$0] } ?? []))
+            let ownedOperations = (runtime.launchConfiguration.ownedCodexInstanceID != nil || runtime.launchConfiguration.claudeRuntimeConfiguration != nil) ? runtime.operationDrain.map { [$0] } ?? [] : []
+            _ = startCleanup(projectIDs: Set(runtime.projectID.map { [$0] } ?? []), threadIDs: Set(runtime.threadID.map { [$0] } ?? []), sessions: [runtime.session], jobs: ownedOperations, workspacePaths: [runtime.path], codexInstances: Set(runtime.launchConfiguration.ownedCodexInstanceID.map { [$0] } ?? []), claudeScopes: Self.claudeScopes(runtime.launchConfiguration).union(runtime.configuration.map(Self.claudeScopes) ?? []))
         }
         for job in jobs { await job.value }
         for read in history { await read.drain.value }
@@ -2973,6 +3028,8 @@ extension WorkspaceEngine {
             guard plan.request == readRequest, plan.sourcePath == canonical, projectIncarnations[projectID] == incarnation else { throw GitHubPullRequestCheckoutError(.staleReview) }
         } else if targetBusy { throw WorkspaceCommandError("Finish work in the affected checkout before changing its files.") }
         var target = configuration; target.nativeThreadID = nil; target.workspacePath = plan.destinationPath
+        target.claudeRuntimeConfiguration = try configuration.claudeRuntimeConfiguration?.replacingWorkspace(plan.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(plan.destinationPath, allowMissing: true))
+        target.claudeLaunchSelection = nil
         let review = try PullRequestCheckoutReview(projectID: projectID, projectPath: project.path, registeredWorkspacePath: workspacePath,
             sourceIncarnation: incarnation, targetConfiguration: target, checkpointPolicy: checkpointPolicy,
             title: title ?? plan.pullRequest.title, reviewSetup: reviewSetup, plan: plan)
@@ -3363,5 +3420,205 @@ extension WorkspaceEngine {
         guard codexAuthenticationLeases[instanceID] == leaseID, !closing, !stoppingEffects, fatalError == nil else { throw Self.codexChanging() }
         let receipt = try await enqueue(.codexAccountConfigured(instanceID: instanceID, binding: binding))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+    }
+}
+
+extension WorkspaceEngine {
+    private func providerHistoryScopeLocked(configuration: ProviderConfiguration, nativeThreadID: String?) -> Bool {
+        revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeThreadID) ||
+            revision.snapshot.isClaudeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeThreadID)
+    }
+
+    private static func claudeScopes(_ configuration: ProviderConfiguration) -> Set<ClaudeHistoryScope> {
+        guard configuration.provider == .claude, let runtime = configuration.claudeRuntimeConfiguration,
+              let native = configuration.nativeThreadID ?? configuration.claudeLaunchSelection?.nativeSessionID else { return [] }
+        return [.init(configurationDirectory: runtime.configurationDirectory, nativeSessionID: native)]
+    }
+
+    private func claudeRuntimeMatches(_ runtime: Runtime, thread: CodingThread) -> Bool {
+        guard thread.provider == .claude else { return runtime.claudeConfiguration == nil }
+        return runtime.claudeConfiguration == thread.claudeRuntimeConfiguration &&
+            runtime.claudeLaunchSelection == thread.activeRun?.configuration.claudeLaunchSelection &&
+            (runtime.claudeNativeID == nil || runtime.claudeNativeID == thread.providerThreadID)
+    }
+
+    /// The native namespace is the physical configuration root and session UUID.
+    /// Different executable, cwd or registered alias spellings cannot escape it.
+    private func claudeHistoryScopeIsolated(thread: CodingThread, additionalNativeIDs: Set<String> = []) -> Bool {
+        guard thread.provider == .claude, let runtime = thread.claudeRuntimeConfiguration,
+              let native = thread.providerThreadID else { return false }
+        let ids = Set(additionalNativeIDs.union([native]).map { $0.lowercased() })
+        func captured(_ configuration: ProviderConfiguration) -> Bool {
+            configuration.provider == .claude && configuration.claudeRuntimeConfiguration?.configurationDirectory == runtime.configurationDirectory &&
+                (configuration.nativeThreadID ?? configuration.claudeLaunchSelection?.nativeSessionID).map { ids.contains($0.lowercased()) } == true
+        }
+        for other in revision.snapshot.threads where other.id != thread.id {
+            if captured(.init(thread: other)) || other.queuedTurns.contains(where: { captured($0.configuration) }) { return false }
+            if let run = other.activeRun {
+                var configuration = run.configuration
+                configuration.nativeThreadID = configuration.nativeThreadID ?? other.runHistory?.first(where: { $0.id == run.id })?.providerThreadID
+                if captured(configuration) { return false }
+            }
+        }
+        if metadataSessions.values.contains(where: {
+            $0.threadID != thread.id && (captured($0.launchConfiguration) || $0.configuration.map(captured) == true)
+        }) || historyReads.values.contains(where: { $0.threadID != thread.id && captured($0.configuration) }) { return false }
+        for (id, owner) in runtimes where id != thread.id && owner.provider == .claude &&
+            owner.claudeConfiguration?.configurationDirectory == runtime.configurationDirectory {
+            if owner.claudeNativeID.map({ ids.contains($0.lowercased()) }) == true { return false }
+        }
+        return !cleanupTasks.values.contains { cleanup in
+            cleanup.claudeScopes.contains { $0.configurationDirectory == runtime.configurationDirectory && ids.contains($0.nativeSessionID.lowercased()) }
+        }
+    }
+
+    /// All native transcript work is bounded Swift I/O, tracked and drained with
+    /// its thread. History never starts a provider or sends a hidden prompt.
+    private func readClaudeHistory<Value: Sendable>(thread: CodingThread,
+        operation: @escaping @Sendable (ClaudeHistoryService) async throws -> Value) async throws -> Value {
+        try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil, let configuration = thread.claudeRuntimeConfiguration,
+              let incarnation = threadIncarnations[thread.id], claudeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
+        let service = try ClaudeHistoryService(configuration: configuration), token = UUID()
+        let task = Task.detached { try Task.checkCancellation(); return try await operation(service) }
+        historyReads[token] = .init(threadID: thread.id, projectID: thread.projectID,
+            drain: Task { _ = try? await task.value }, cancel: { task.cancel() }, configuration: .init(thread: thread))
+        defer { historyReads.removeValue(forKey: token) }
+        do {
+            let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[thread.id] == incarnation,
+                  revision.snapshot.threads.first(where: { $0.id == thread.id })?.claudeRuntimeConfiguration == configuration,
+                  claudeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            return result
+        } catch {
+            task.cancel(); _ = try? await task.value
+            throw error
+        }
+    }
+
+    private func drainClaudeHistoryOwners(thread: CodingThread) async throws {
+        if let runtime = runtimes[thread.id] { await closeRuntime(thread.id, matching: runtime.id) }
+        for id in metadataSessions.keys.filter({ metadataSessions[$0]?.threadID == thread.id }) {
+            if let task = beginMetadataClose(id) { await task.value }
+            metadataSessions.removeValue(forKey: id)
+        }
+        let reads = historyReads.values.filter { $0.threadID == thread.id }
+        for read in reads { read.cancel() }
+        for read in reads { await read.drain.value }
+        guard let configuration = thread.claudeRuntimeConfiguration else { throw ClaudeRuntimeConfiguration.invalid() }
+        while true {
+            try Task.checkCancellation()
+            guard !closing, !stoppingEffects, fatalError == nil else { throw CancellationError() }
+            let tasks = cleanupTasks.values.filter { cleanup in
+                cleanup.threadIDs.contains(thread.id) || cleanup.claudeScopes.contains {
+                    $0.configurationDirectory == configuration.configurationDirectory && $0.nativeSessionID.lowercased() == thread.providerThreadID?.lowercased()
+                }
+            }.map(\.task)
+            if tasks.isEmpty { return }
+            for task in tasks { await task.value }
+        }
+    }
+
+    private func performClaudeConversationHistory(_ request: WorkspaceEffectRequest, operation: ConversationHistoryOperation,
+                                                  thread: CodingThread, incarnation: UUID) async -> EffectResult {
+        let review = operation.review
+        guard let evidence = review.claude else { return .failed(ConversationHistoryOperation.failureMessage) }
+        var dispatched = false
+        do {
+            try await drainClaudeHistoryOwners(thread: thread)
+            guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                  revision.snapshot.conversationHistoryOperation(operation.id) == operation,
+                  claudeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            if let files = review.files {
+                try revision.snapshot.validateConversationHistoryFilesReview(review, excludingOperationID: operation.id)
+                guard restoreRuntimeScopeIsolated(thread: thread, path: files.gitReview.currentPlan.repositoryPath),
+                      try await readCheckpointRestore(thread: thread, operation: { try await $0.inspectRestore(review: files.gitReview) }) == .notStarted else {
+                    throw ProviderHistoryError(.historyChanged)
+                }
+            }
+            let receipt = try await enqueue(.conversationHistoryDispatching(threadID: thread.id, operationID: operation.id, incarnation: incarnation))
+            guard receipt.rejection == nil, ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                  revision.snapshot.conversationHistoryOperation(operation.id)?.phase == .dispatching,
+                  claudeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            dispatched = true
+            let result = try await readClaudeHistory(thread: thread) { [self] service in
+                if review.kind == .rewindBeforeRun { return try service.prepareRewind(review: evidence, selectionID: review.id) }
+                let plan = try service.prepareFork(review: evidence, targetSessionID: UUID().uuidString.lowercased())
+                return try await service.publishFork(plan) { publication in
+                    try await self.reserveClaudeFork(publication, review: review, incarnation: incarnation)
+                }
+            }
+            guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                  claudeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [result.reference.nativeThreadID]) else { throw ProviderHistoryError(.outcomeUncertain) }
+            let snapshot = try ProviderConversationSnapshot(reference: result.reference, workspacePath: result.workspacePath,
+                historyMode: .nativeTranscript, claude: result)
+            try review.validateResult(snapshot)
+            return .conversationHistoryConfirmed(snapshot)
+        } catch {
+            // Once a publication was reserved, preserve its exact name and bytes
+            // for inspection. An inspection never retries the write.
+            if revision.snapshot.conversationHistoryOperation(operation.id)?.claudeForkPublication != nil ||
+                (dispatched && error is CancellationError) { return .conversationHistoryUnconfirmed }
+            return .failed(ConversationHistoryOperation.failureMessage)
+        }
+    }
+
+    private func reserveClaudeFork(_ publication: ClaudeTranscriptPublication, review: ConversationHistoryReview, incarnation: UUID) async throws {
+        guard ownsHistorySource(threadID: review.sourceThreadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              let thread = revision.snapshot.threads.first(where: { $0.id == review.sourceThreadID }),
+              claudeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [publication.target.sessionID]) else { throw ProviderHistoryError(.notIdle) }
+        let receipt = try await enqueue(.conversationHistoryClaudeForkReserved(operationID: review.id, publication: publication, incarnation: incarnation))
+        guard receipt.rejection == nil, ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperation(review.id)?.claudeForkPublication == publication,
+              claudeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [publication.target.sessionID]) else { throw ProviderHistoryError(.outcomeUncertain) }
+    }
+
+    private func reconcileClaudeHistory(operation: ConversationHistoryOperation, thread: CodingThread, incarnation: UUID) async throws -> WorkspaceCommandReceipt {
+        guard let evidence = operation.review.claude else { throw ProviderHistoryError(.outcomeUncertain) }
+        let publication = operation.claudeForkPublication
+        try await drainClaudeHistoryOwners(thread: thread)
+        let result: ConversationHistoryReconciliation = try await readClaudeHistory(thread: thread) { service in
+            if evidence.kind == .rewindBeforeRun {
+                let selected = try service.prepareRewind(review: evidence, selectionID: operation.review.id)
+                return .applied(try .init(reference: selected.reference, workspacePath: selected.workspacePath, historyMode: .nativeTranscript, claude: selected))
+            }
+            guard let publication else { throw ProviderHistoryError(.outcomeUncertain) }
+            switch try service.inspectFork(review: evidence, publication: publication) {
+            case .ready(let result):
+                return .applied(try .init(reference: result.reference, workspacePath: result.workspacePath, historyMode: .nativeTranscript, claude: result))
+            case .notStarted:
+                return .claudeForkNotStarted(try service.snapshot(sessionID: evidence.source.reference.nativeThreadID, selection: evidence.source.selection))
+            case .incomplete: throw ProviderHistoryError(.outcomeUncertain)
+            }
+        }
+        guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperation(operation.id) == operation,
+              claudeHistoryScopeIsolated(thread: thread, additionalNativeIDs: Set(publication.map { [$0.target.sessionID] } ?? [])) else { throw ProviderHistoryError(.historyChanged) }
+        let receipt = try await enqueue(.conversationHistoryReconciled(operationID: operation.id, incarnation: incarnation, result: result))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+
+    @discardableResult public func reconcileClaudeResumeSelection(threadID: UUID) async throws -> WorkspaceCommandReceipt {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              revision.snapshot.claudeResumeSelectionNeedsInspection(threadID: threadID),
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              let configuration = thread.claudeRuntimeConfiguration, let selection = thread.claudeResumeSelection,
+              let run = thread.runHistory?.first(where: { $0.id == thread.claudeResumeConsumerRunID }),
+              let incarnation = threadIncarnations[threadID] else { throw ProviderHistoryError(.notIdle) }
+        try await drainClaudeHistoryOwners(thread: thread)
+        let result = try await readClaudeHistory(thread: thread) { _ in
+            try ClaudeResumeInspection.inspect(configuration: configuration, selection: selection, run: run)
+        }
+        guard !closing, !stoppingEffects, threadIncarnations[threadID] == incarnation,
+              let current = revision.snapshot.threads.first(where: { $0.id == threadID }), !current.isBusy,
+              current.claudeRuntimeConfiguration == configuration, current.claudeResumeSelection == selection,
+              current.claudeResumeConsumerRunID == run.id, current.runHistory?.first(where: { $0.id == run.id }) == run,
+              claudeHistoryScopeIsolated(thread: current) else { throw ProviderHistoryError(.historyChanged) }
+        let receipt = try await enqueue(.claudeResumeInspected(threadID: threadID, incarnation: incarnation, selection: selection, run: run, result: result))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
     }
 }
