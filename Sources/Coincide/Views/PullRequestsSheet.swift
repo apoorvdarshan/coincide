@@ -192,7 +192,7 @@ struct PullRequestBranchCard: View {
                 Text(context.readiness.message ?? String(localized: "No open pull request for this published branch."))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(3)
             }
-        }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("pull-request-branch-card")
+        }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .task { await model.refresh() }
     }
 }

@@ -116,8 +116,9 @@ must each be mapped and verified before declaring parity.
   bytes/index/HEAD, with no unexpected tools or approvals. Both generated native
   conversations were archived and local cleanup passed. The hosted native Files
   inspector workflow now passes. Hosted history/restoration workflows currently
-  fail before their first synthetic provider reply; their complete GUI behavior
-  remains unverified.
+  fail in offline-provider preflight before app launch. POSIX EPERM occurred
+  inside a combined pipe-configuration/process-launch catch; the exact failing
+  statement is not established. Their complete GUI behavior remains unverified.
 - A standalone native checkpoint service prepares immutable local plans, captures
   Git working bytes into private refs, inspects owned completion receipts and
   returns bounded snapshot diffs. Captures use a separate index and a frozen

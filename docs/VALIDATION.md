@@ -1,5 +1,27 @@
 # Validation record
 
+## 2026-10-22 — hosted twelve-workflow result and precise launch diagnostics
+
+- Exact `e1184d13` [run 39729008478](https://github.com/apoorvdarshan/coincide/actions/runs/39729008478)
+  passes all 676 production tests, packaging, signing and resources. Its actual
+  desktop job executes twelve workflows: eight pass, four fail, zero skip
+  (732.06 seconds). Files/editor passes again in 89.733 seconds.
+- History, restoration and PR checkout fail before app launch in the exact
+  offline-provider preflight, with POSIX EPERM and no stderr. The catch wraps
+  both `fcntl(F_SETNOSIGPIPE)` and `Process.run`, so these results do not prove
+  which operation failed. The preflight now records the exact stage, pipe flag
+  result/errno, wrapper mode/length and a bounded shebang prefix. It preserves
+  the initialize/exit checks and all twelve required workflows. A host-only
+  owned-pipe probe succeeds; that does not establish hosted runner behavior.
+- The PR creation screenshot and accessibility tree show an enabled Pull
+  Requests button whose child identifier was overwritten by its parent card
+  identifier. Removing only that unused parent identifier preserves the child
+  controls' identifiers. The screenshot also contains a GitHub context error;
+  this change does not establish that the complete creation workflow passes.
+- All eleven GUI-free Python harness tests pass, and the strict desktop runner
+  compiles without executing local GUI tests. Hosted proof of these changes
+  remains pending. No workflow was skipped or assertion weakened.
+
 ## 2026-10-22 — independent PR worktrees and busy read-only reuse
 
 - PR checkout now holds only the affected checkout. Source provider events,

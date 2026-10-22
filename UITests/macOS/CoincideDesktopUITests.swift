@@ -1534,17 +1534,28 @@ final class CoincideDesktopUITests: XCTestCase {
         let request: [String: Any] = ["id": "native-ui-launch-preflight", "method": "initialize",
             "params": ["clientInfo": ["name": "coincide-ui-launch-preflight", "version": "1"]]]
         var payload = try JSONSerialization.data(withJSONObject: request); payload.append(10)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: executable.path)
+        let permissions = (attributes?[.posixPermissions] as? NSNumber).map { String($0.intValue, radix: 8) } ?? "unavailable"
+        let wrapper = try? Data(contentsOf: executable)
+        let prefix = wrapper?.prefix(24).map { String(format: "%02x", $0) }.joined() ?? "unavailable"
+        let identity = "wrapperMode=\(permissions) wrapperBytes=\(wrapper?.count ?? -1) wrapperPrefixHex=\(prefix)"
+        var stage = "fcntl(F_SETNOSIGPIPE)"
+        var pipeSignalResult: Int32 = -1
+        var pipeSignalErrno: Int32 = 0
         do {
-            guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            pipeSignalResult = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+            pipeSignalErrno = errno
+            guard pipeSignalResult == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(pipeSignalErrno))
             }
+            stage = "Process.run"
             try process.run()
         }
         catch {
             try? output.fileHandleForWriting.close(); try? errors.fileHandleForWriting.close()
             let failure = error as NSError
             let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile().prefix(16_384), as: UTF8.self)
-            let diagnostic = XCTAttachment(string: "Exact offline wrapper launch failed with the fixture environment.\nNSError domain=\(failure.domain) code=\(failure.code)\nstderr:\n\(stderr)")
+            let diagnostic = XCTAttachment(string: "Exact offline wrapper preflight failed with the fixture environment.\nstage=\(stage)\nfcntlResult=\(pipeSignalResult) fcntlErrno=\(pipeSignalErrno)\n\(identity)\nNSError domain=\(failure.domain) code=\(failure.code)\nstderr:\n\(stderr)")
             diagnostic.name = name + "-offline-provider-launch-preflight"; diagnostic.lifetime = .keepAlways; add(diagnostic)
             throw error
         }
