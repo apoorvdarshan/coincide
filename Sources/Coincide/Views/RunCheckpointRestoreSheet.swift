@@ -125,7 +125,6 @@ struct RunCheckpointRestoreContent<Status: View>: View {
             }.padding(16)
         }.frame(minWidth: 320, idealWidth: 580, maxWidth: 760)
             .onExitCommand { if !accepting { close() } }
-            .accessibilityIdentifier("checkpoint-restore-review")
     }
 }
 

@@ -167,7 +167,6 @@ struct PullRequestCheckoutContent: View {
             }.padding(16)
         }.frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
             .background { geometry("bounds") }.coordinateSpace(name: "pull-request-checkout-layout")
-            .accessibilityIdentifier("pull-request-checkout-form")
     }
     private func geometry(_ region: String) -> some View {
         GeometryReader { proxy in

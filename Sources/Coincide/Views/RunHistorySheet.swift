@@ -80,7 +80,6 @@ struct RunHistoryContent: View {
         }
         .frame(minWidth: 320, idealWidth: 560, maxWidth: 680)
         .onExitCommand { dismiss() }
-        .accessibilityIdentifier("run-history")
     }
 
     @ViewBuilder private func history(_ thread: CodingThread) -> some View {
@@ -287,7 +286,6 @@ private struct RunHistoryRow: View {
                     .accessibilityIdentifier("run-history-changes-\(record.id)")
             }
         }.font(.caption)
-            .accessibilityIdentifier("run-history-checkpoints-\(record.id)")
     }
 
     private func restoreButton(_ attempt: ThreadRunCheckpointAttempt, stage: RunCheckpointStage, action: @escaping (UUID, RunCheckpointStage, UUID) -> Void) -> some View {

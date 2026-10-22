@@ -167,6 +167,6 @@ struct PullRequestCreateContent: View {
                     .disabled(busy || !canPrepare || (review == nil && (title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || baseBranch.isEmpty)))
                     .accessibilityIdentifier("pull-request-create")
             }.padding(16)
-        }.accessibilityIdentifier("pull-request-create-form")
+        }
     }
 }

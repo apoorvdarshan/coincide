@@ -47,7 +47,7 @@ struct RunCheckpointRestoreOperationView: View {
                 }
             }
             if let error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
-        }.accessibilityIdentifier("checkpoint-restore-operation-\(operation.id)")
+        }
             .onChange(of: operation.phase) { error = nil }
             .alert("Keep Current Files?", isPresented: $confirmingKeep) {
                 Button("Cancel", role: .cancel) { }

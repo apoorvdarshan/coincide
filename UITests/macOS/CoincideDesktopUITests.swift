@@ -65,7 +65,11 @@ final class CoincideDesktopUITests: XCTestCase {
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 2]).write(to: state, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: state.path)
         openNativeProviderMenu(in: app); app.menuItems["Refresh Models"].click()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Offline Future Refreshed", "Offline Future Refreshed")).firstMatch.waitForExistence(timeout: 10), "The current model label must reflect the refreshed catalog before opening its new effort menu.")
+        let modelSummary = app.menuButtons["provider-model-menu"]
+        let refreshedSummary = XCTNSPredicateExpectation(predicate: NSPredicate(
+            format: "exists == true AND value CONTAINS %@", "Offline Future Refreshed"), object: modelSummary)
+        XCTAssertEqual(XCTWaiter.wait(for: [refreshedSummary], timeout: 10), .completed,
+                       "The current model menu's exposed summary must reflect the refreshed catalog before opening its new effort menu.")
         openNativeProviderMenu(in: app)
         let reasoning = app.menuItems["codex-reasoning-menu"]
         XCTAssertTrue(reasoning.waitForExistence(timeout: 10)); reasoning.click()
@@ -274,9 +278,9 @@ final class CoincideDesktopUITests: XCTestCase {
         let transcript = app.scrollViews.containing(.staticText, identifier: "Offline steering acknowledged the literal follow-up").firstMatch
         XCTAssertTrue(transcript.exists)
         for prompt in [firstPrompt, literal] {
-            XCTAssertEqual(transcript.staticTexts.matching(NSPredicate(format: "label == %@", prompt)).count, 1)
+            XCTAssertEqual(transcript.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).count, 1)
         }
-        XCTAssertFalse(transcript.staticTexts.matching(NSPredicate(format: "label == %@", queuedPrompt)).firstMatch.exists)
+        XCTAssertFalse(transcript.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", queuedPrompt, queuedPrompt)).firstMatch.exists)
         let completed = try waitForPrivateWorkspace(root, timeout: 20) { snapshot in
             guard let thread = (snapshot["threads"] as? [[String: Any]])?.first,
                   let run = (thread["runHistory"] as? [[String: Any]])?.first,
@@ -1112,7 +1116,7 @@ final class CoincideDesktopUITests: XCTestCase {
         var confirm = reviewOwner.buttons["conversation-history-confirm"], close = reviewOwner.buttons["conversation-history-close"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Workspace files and staging stay as they are."].exists)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", prompts[1])).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompts[1], prompts[1])).firstMatch.exists)
         XCTAssertTrue(close.isEnabled && close.isHittable)
         close.click() // Cancel performs only reads.
         XCTAssertEqual(try historyWire(wire).filter { $0["method"] as? String == "thread/fork" }.count, 0)
@@ -1411,7 +1415,7 @@ final class CoincideDesktopUITests: XCTestCase {
         // both original messages survived this Files-only operation.
         let transcript = app.scrollViews.containing(.staticText, identifier: "Offline history reply 1").firstMatch
         XCTAssertTrue(transcript.waitForExistence(timeout: 5))
-        XCTAssertTrue(transcript.staticTexts.matching(NSPredicate(format: "label == %@", prompt)).firstMatch.exists)
+        XCTAssertTrue(transcript.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch.exists)
         XCTAssertTrue(transcript.staticTexts["Offline history reply 1"].exists)
     }
 
@@ -1662,7 +1666,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10)); assertConversationWorkspace(app, path: project.path)
         let transcript = app.scrollViews.containing(.staticText, identifier: "Offline history reply 1").firstMatch
         XCTAssertTrue(transcript.waitForExistence(timeout: 5))
-        XCTAssertTrue(transcript.staticTexts.matching(NSPredicate(format: "label == %@", prompt)).firstMatch.exists)
+        XCTAssertTrue(transcript.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch.exists)
         try openNativePullRequests(in: app)
         sheet = try nativeHistorySheet(owning: "pull-requests-close", in: app)
         let status = sheet.staticTexts["pull-request-checkout-status"]
@@ -1744,8 +1748,8 @@ final class CoincideDesktopUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "conversation-workspace").element.click()
         let history = app.menuItems["Run History…"]
         XCTAssertTrue(history.waitForExistence(timeout: 5)); XCTAssertTrue(history.isEnabled); history.click()
-        XCTAssertTrue(app.sheets.containing(.button, identifier: "run-history-done").firstMatch.waitForExistence(timeout: 10))
-        _ = try nativeHistoryDone(in: app)
+        XCTAssertTrue(app.sheets.containing(.scrollView, identifier: "run-history-records").firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(try nativeHistoryDone(in: app).exists)
     }
 
     @MainActor private func revealNativeHistoryRun(prompt: String, in app: XCUIApplication) throws -> String {
@@ -1753,7 +1757,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let scroll = app.scrollViews["run-history-records"]
         XCTAssertTrue(scroll.exists); scroll.scroll(byDeltaX: 0, deltaY: 10_000)
         for _ in 0..<5 {
-            if let row = rows.allElementsBoundByIndex.first(where: { $0.staticTexts.matching(NSPredicate(format: "label == %@", prompt)).firstMatch.exists }) {
+            if let row = rows.allElementsBoundByIndex.first(where: { $0.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch.exists }) {
                 let id = String(row.identifier.dropFirst("run-history-record-".count))
                 let actions = app.menuButtons["run-history-actions-\(id)"]
                 let frame = actions.frame

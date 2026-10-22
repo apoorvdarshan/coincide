@@ -170,7 +170,6 @@ struct ConversationHistoryReviewContent<Status: View>: View {
         }
         .frame(minWidth: 320, idealWidth: 560, maxWidth: 680)
         .onExitCommand { if !accepting { close() } }
-        .accessibilityIdentifier("conversation-history-review")
     }
     private var closeButton: some View {
         Button(operation == nil ? "Cancel" : "Done", action: close).keyboardShortcut(.defaultAction)

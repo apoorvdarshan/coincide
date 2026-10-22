@@ -11,7 +11,8 @@ func nativeProviderMenuHugsShortLabelsAndBoundsLongModelsInNarrowHeaders() async
     let store = WorkspaceStore(databaseURL: root.appendingPathComponent("workspace.sqlite"))
     defer { try? FileManager.default.removeItem(at: root) }
     for model in ["", "GPT-6 Astra", String(repeating: "An advertised long model name ", count: 12)] {
-        let thread = CodingThread(project: .init(path: root.path), model: model)
+        var thread = CodingThread(project: .init(path: root.path), model: model)
+        if !model.isEmpty { thread.reasoningEffort = "medium" }
         let host = NSHostingController(rootView: ProviderMenu(store: store, thread: thread))
         let wide = host.sizeThatFits(in: .init(width: 1_000, height: 100))
         #expect(wide.width <= 300 && wide.height <= 100)

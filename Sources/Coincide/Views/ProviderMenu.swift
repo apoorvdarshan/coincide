@@ -6,9 +6,19 @@ struct ProviderMenu: View {
     let thread: CodingThread
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            menu.fixedSize()
+            menu.frame(maxWidth: 280, alignment: .leading).fixedSize()
             menu.frame(maxWidth: 280, alignment: .leading)
         }
+    }
+    private var summary: String {
+        var parts = [thread.providerName]
+        if !thread.model.isEmpty {
+            parts.append(store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? thread.model)
+        }
+        if thread.provider == .codex, let effort = thread.reasoningEffort {
+            parts.append(String(localized: "Reasoning: \(ReasoningEffortPresentation.title(effort))"))
+        }
+        return parts.joined(separator: " · ")
     }
     private var menu: some View {
         Menu {
@@ -81,13 +91,15 @@ struct ProviderMenu: View {
             Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
                 .disabled(thread.provider == .acp && !store.workspaceReady(for: thread))
         } label: {
-            ProviderModelLabel(provider: thread.providerName,
-                model: thread.model.isEmpty ? nil : store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? thread.model,
-                effort: thread.provider == .codex ? thread.reasoningEffort : nil)
+            // AppKit's native menu button derives its title from a single Text.
+            // Nested label stacks otherwise lose the selected model and effort.
+            Text(summary).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
         }
         .menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
         .accessibilityLabel("Provider and model")
+        .accessibilityValue(summary)
         .accessibilityIdentifier("provider-model-menu")
+        .help(summary)
     }
     private func reasoningMenu(_ model: ProviderModel) -> some View {
         Menu("Reasoning") {

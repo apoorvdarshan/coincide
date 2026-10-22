@@ -190,10 +190,12 @@ must each be mapped and verified before declaring parity.
   turns, exact native fork/rewind heads, retained audit/draft and unchanged working
   bytes/index/HEAD, with no unexpected tools or approvals. Both generated native
   conversations were archived and local cleanup passed. The hosted native Files
-  inspector workflow now passes. Hosted history/restoration workflows currently
-  fail in offline-provider preflight before app launch. POSIX EPERM occurred
-  inside a combined pipe-configuration/process-launch catch; the exact failing
-  statement is not established. Their complete GUI behavior remains unverified.
+  inspector workflow now passes. The signed immutable helper also passes all
+  five formerly blocked provider preflights. Hosted run `39746111640` executed
+  all 14 GUI scenarios with eight passes, six failures and zero skips. Container
+  accessibility identifiers, native menu title content and transcript lookups
+  have subsequent source/harness repairs, but complete hosted history/restoration
+  and pull-request workflow verification remains pending.
 - A standalone native checkpoint service prepares immutable local plans, captures
   Git working bytes into private refs, inspects owned completion receipts and
   returns bounded snapshot diffs. Captures use a separate index and a frozen

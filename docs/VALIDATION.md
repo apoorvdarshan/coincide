@@ -1,5 +1,42 @@
 # Validation record
 
+## 2026-10-22 — native workflow accessibility and model summary repairs
+
+- Hosted run `39746111640` reached all 14 GUI scenarios (eight passed, six
+  failed, zero skipped). Its attachments showed nonsemantic container identifiers
+  replacing descendant Run History, history-review, checkpoint and pull-request
+  control identifiers. Those container identifiers are removed; input, action,
+  status, scroll-view and explicit history-row identifiers remain independent.
+- The provider Menu now uses one native text title containing provider, selected
+  advertised model and captured reasoning effort. Catalog changes update that
+  title and its accessibility value without changing future configuration or an
+  active run's separately captured settings. A regression hosts the full actual
+  Menu and checks the backing AppKit title, bounded geometry and live refresh.
+- GUI assertions now inspect the model menu's exposed value and accept exact
+  transcript text in either AX label or value. They still require one authored
+  row, absence of the queued prompt and the original wire/state evidence. Run
+  History waits for its records scroll view and unique innermost Done owner.
+  All 14 scenario methods and the zero-skip result gate remain unchanged.
+- `swift test --no-parallel --filter CoincideUITests` passed all 130 native
+  view/store tests in 48.662 seconds, including the new complete-menu regression.
+  The initial local invocation used Swift's parallel default and exposed six
+  selection assertions across three existing store tests; verification uses the
+  repository's existing serialized CI invocation rather than adding retries.
+  Nineteen Python harness/fixture checks also passed. The native GUI runner and
+  signed immutable helper compiled and passed initialize/GitHub/descriptor checks
+  without executing GUI tests locally.
+- Native Cua inspection of the rebuilt development bundle confirmed the actual
+  menu exposes `Provider and model` with the current `Codex` value. This read
+  changed no conversation or provider settings. Offscreen AppKit backing controls
+  do not directly expose SwiftUI's semantic AX overrides, so the refreshed-value
+  assertion remains part of hosted GUI execution. Packaging, strict/deep
+  signatures and bundled math rendering passed. SQLite integrity and canonical
+  content stayed unchanged (three conversations, 25 messages).
+- These are repairs with native component evidence, not a successful rerun of
+  all 14 hosted GUI workflows. Full T3 functionality and provider parity remain
+  incomplete; the preceding integration suite and installed-provider limitations
+  below still apply.
+
 ## 2026-10-22 — native Cursor and Copilot ACP integrations
 
 - Explicit vendor profiles are captured with each invocation, conversation and
@@ -61,7 +98,7 @@
   seconds. The immutable helper passed the five formerly blocked initialize
   preflights, so those workflows now reach actual app/provider interaction.
   Remaining failures concern Run History sheet opening, refreshed model labeling,
-  PR creation/checkout button lookup and a missing steering wire submission.
+  PR creation/checkout button lookup and literal steering transcript lookup.
   Attachment inspection confirms container accessibility IDs overwriting semantic
   history/PR controls, a native Menu label losing its model/effort content, and a
   steering assertion checking only AX labels although the exact text is in AX

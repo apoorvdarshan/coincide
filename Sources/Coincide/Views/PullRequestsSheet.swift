@@ -25,7 +25,7 @@ struct PullRequestsSheet: View {
                 Spacer(minLength: 8)
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .accessibilityLabel("Refresh pull requests").help("Refresh pull requests").disabled(model.isBusy || model.isLoading)
-            }.padding(20).accessibilityIdentifier("pull-requests-header")
+            }.padding(20)
             Divider()
             if mode != .list {
                 Button("Back to Pull Requests") { mode = .list }.disabled(model.isBusy).padding(.horizontal, 20).padding(.top, 12)
