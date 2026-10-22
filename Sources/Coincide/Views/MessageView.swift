@@ -33,11 +33,13 @@ struct MessageView: View {
                 } label: {
                     HStack {
                         Label(message.providerEntity?.fields["title"].string ?? (message.role == .tool ? "Tool activity" : "Reasoning"), systemImage: message.role == .tool ? "terminal" : "brain")
+                        if let title = copilotTaskTitle { Text("Copilot task · \(title)").lineLimit(2) }
                         if let status = message.providerEntity?.fields["status"].string { Text(status.replacingOccurrences(of: "_", with: " ")).foregroundStyle(.tertiary) }
                     }.font(.caption).foregroundStyle(.secondary)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
+                    if let title = copilotTaskTitle { Label("Copilot task · \(title)", systemImage: "person.crop.square.badge.ellipsis").font(.caption).foregroundStyle(.secondary) }
                     if message.role == .system { Label("Notice", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
                     MarkdownView(message.text, workspace: URL(fileURLWithPath: workspacePath), openFile: openFile)
                     Button {
@@ -48,6 +50,12 @@ struct MessageView: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+    private var copilotTaskTitle: String? {
+        guard let owner = message.runReference, let metadata = message.providerEntity?.fields["_meta"]["github.com/copilot"],
+              metadata["parentRunID"].string == owner.runID.uuidString,
+              metadata["parentToolCallId"].string != nil else { return nil }
+        return metadata["taskTitle"].string ?? "Background task"
     }
     private func entityDetail(_ title: String, value: JSONValue) -> some View {
         VStack(alignment: .leading, spacing: 4) {

@@ -654,9 +654,21 @@ struct WorkspaceDecision: Sendable {
                     guard request.method == "session/request_permission", (request.params["options"].array ?? []).contains(where: { $0["optionId"].string == id }) else {
                         throw WorkspaceCommandError("This permission option is no longer available.")
                     }
-                case .decision: guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") }
+                case .decision(let allow):
+                    if let method = CursorACPMethod.canonical(request.method) {
+                        guard thread.provider == .acp, thread.acpAgent?.integration == .cursor,
+                              method == CursorACPMethod.question ? (!allow && request.cursorQuestion != nil) : request.cursorPlan != nil else {
+                            throw WorkspaceCommandError("This Cursor request is no longer valid.")
+                        }
+                    } else { guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") } }
                 case .answers(let answers):
-                    guard request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
+                    guard CursorACPMethod.canonical(request.method) == nil, request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
+                case .selections(let selections):
+                    guard thread.provider == .acp, thread.acpAgent?.integration == .cursor, let question = request.cursorQuestion else {
+                        throw WorkspaceCommandError("This selectable question is no longer valid.")
+                    }
+                    do { _ = try question.response(for: selections) }
+                    catch { throw WorkspaceCommandError("Select valid answers for every required question.") }
                 }
                 thread.runtimeRequests[i].responding = true
                 if sessionScoped, let runtimeID = thread.runtimeID {
@@ -774,7 +786,7 @@ struct WorkspaceDecision: Sendable {
         if let run = thread.activeRun, thread.runHistory?.first(where: { $0.id == run.id })?.checkpoints?.providerReleased == false {
             // Idle-session metadata may arrive while a baseline is being saved. It cannot
             // acknowledge, finish or append content to a provider turn never dispatched.
-            switch event { case .sessionApproval, .sessionApprovalDismissed, .configuration, .thread: break; default: return }
+            switch event { case .sessionApproval, .sessionApprovalDismissed, .configuration, .thread, .runEntity: break; default: return }
         }
         switch event {
         case .steeringCapabilitiesChanged:
@@ -817,9 +829,20 @@ struct WorkspaceDecision: Sendable {
         case .sessionApproval(let request):
             if !thread.runtimeRequests.contains(where: { $0.id == request.id }) { thread.runtimeRequests.append(.init(request: request, sessionScoped: true)) }
         case .sessionApprovalDismissed(let id): thread.runtimeRequests.removeAll { $0.id == id && $0.sessionScoped == true }
-        case .entity(let update):
+        case .entity(let update), .runEntity(_, let update):
+            let attributedRun: UUID?
+            if case .runEntity(let owner, _) = event {
+                // Typed adapter attribution is checked against the journal's
+                // recorded provider/run. Raw entity metadata cannot retarget it.
+                guard let record = thread.runHistory?.first(where: { $0.id == owner }),
+                      record.removedByHistoryOperationID == nil, record.checkpoints?.providerReleased != false,
+                      record.configuration.provider == .acp, record.configuration.acpAgent?.integration == .copilot,
+                      record.providerThreadID == thread.providerThreadID else { return }
+                attributedRun = owner
+            } else { attributedRun = thread.activeRun?.id }
             if let i = thread.messages.firstIndex(where: { $0.providerEntity?.key == update.key }) {
                 guard thread.messages[i].removedByHistoryOperationID == nil else { return }
+                if case .runEntity = event, thread.messages[i].runReference?.runID != attributedRun { return }
                 let entity = try update.apply(to: thread.messages[i].providerEntity)
                 thread.messages[i].providerEntity = entity
                 if thread.messages[i].role != .user || !thread.messages[i].id.hasPrefix("user-") { thread.messages[i].text = entity.text }
@@ -827,7 +850,7 @@ struct WorkspaceDecision: Sendable {
                 let entity = try update.apply(to: nil)
                 var message = ChatMessage(id: entity.key.messageID, role: entity.role, text: entity.text)
                 message.createdAt = now; message.providerEntity = entity
-                message.runReference = thread.activeRun.map { .init(threadID: thread.id, runID: $0.id) }
+                message.runReference = attributedRun.map { .init(threadID: thread.id, runID: $0) }
                 thread.messages.append(message)
             }
         case .associateEntity(let key, let clientID):

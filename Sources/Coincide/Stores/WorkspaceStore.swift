@@ -106,6 +106,7 @@ final class WorkspaceStore {
     var isLoading = true
     var isRefreshingModels = false
     let codexAccount = CodexAccountStore()
+    let acpConnections = ACPConnectionStore()
     var inspectorVisible = false
     var fileNavigation: FileNavigation?
     private var engine: WorkspaceEngine?
@@ -748,6 +749,7 @@ final class WorkspaceStore {
         projectScriptService?.invalidate(threadIDs: changedScriptThreads)
         let previous = snapshot
         lastSequence = update.sequence; snapshot = update.snapshot
+        acpConnections.invalidate(validAgents: snapshot.acpAgents)
         for model in pullRequestStores.values { model.apply(snapshot) }
         closeUnreferencedFileServices(previous: previous)
         if !removedThreads.isEmpty || !removedProjects.isEmpty { reconcileRemovedResources(threadIDs: removedThreads, projectIDs: removedProjects) }
@@ -1313,6 +1315,10 @@ final class WorkspaceStore {
         let task = enqueue(.respond(threadID: id, requestID: request.id, response: .answers(answers)))
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
     }
+    func selectAnswers(_ request: ApprovalRequest, threadID id: UUID, selections: [String: [String]]) async {
+        let task = enqueue(.respond(threadID: id, requestID: request.id, response: .selections(selections)))
+        do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
+    }
     func choose(_ request: ApprovalRequest, threadID id: UUID, optionID: String) async {
         let task = enqueue(.respond(threadID: id, requestID: request.id, response: .option(optionID)))
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
@@ -1354,6 +1360,11 @@ final class WorkspaceStore {
     func refreshCodexAccount() async {
         guard !terminating, let engine else { return }
         await codexAccount.refresh { try await engine.codexAccountSnapshot() }
+    }
+    func refreshACPConnection(agent: ACPAgentConfiguration) async {
+        guard !terminating, let engine, snapshot.acpAgents.contains(agent) else { return }
+        acpConnections.invalidate(validAgents: snapshot.acpAgents)
+        await acpConnections.refresh(agent: agent) { try await engine.acpConnectionInfo(agent: agent) }
     }
     /// Completed worktree assignments share the UI command order with confirmations and drafts.
     func setWorkspacePath(_ path: String, threadID: UUID) -> Task<WorkspaceCommandReceipt, any Error> {
@@ -1963,6 +1974,7 @@ final class WorkspaceStore {
     func shutdown() async {
         terminating = true
         await codexAccount.cancel()
+        await acpConnections.cancel()
         let modelReads = codexModelDefaultsReads.values.map(\.task); codexModelDefaultsReads.removeAll()
         for task in modelReads { task.cancel() }; for task in modelReads { _ = await task.value }
         let recalls = Array(automaticHistoryRecallTasks.values)

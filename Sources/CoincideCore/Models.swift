@@ -291,7 +291,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var id: JSONValue
     public var method: String
     public var params: JSONValue
-    public var isQuestion: Bool { method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") }
+    public var isQuestion: Bool { method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
     public var questions: [JSONValue] {
         if method == "can_use_tool" {
             return (params["input"]["questions"].array ?? []).map { question in
@@ -303,11 +303,14 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
+        if let question = cursorQuestion { return question.title ?? "Answer Cursor questions" }
+        if let plan = cursorPlan { return plan.name ?? "Review Cursor plan" }
         if method == "session/request_permission" { return params["title"].string ?? params["toolCall"]["title"].string ?? "Approve agent tool" }
         if method == "can_use_tool" { return "Approve \(params["tool_name"].string ?? "tool")" }
         return method.contains("fileChange") ? "Approve file changes" : "Approve command"
     }
     public var detail: String {
+        if let plan = cursorPlan { return plan.plan }
         if method == "session/request_permission" {
             if params.object?["subject"] != nil { return [params["description"].string, params["subject"].pretty].compactMap { $0 }.joined(separator: "\n") }
             return params["description"].string ?? params["toolCall"]["rawInput"].pretty

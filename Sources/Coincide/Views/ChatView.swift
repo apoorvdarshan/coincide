@@ -139,7 +139,8 @@ struct ChatView: View {
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },
-                                     onOption: { option in Task { await store.choose(request, threadID: threadID, optionID: option) } })
+                                     onOption: { option in Task { await store.choose(request, threadID: threadID, optionID: option) } },
+                                     onSelections: { selections in Task { await store.selectAnswers(request, threadID: threadID, selections: selections) } })
                     }
                     if !thread.queuedTurns.isEmpty { QueuedTurnsView(store: store, thread: thread) }
                     if !thread.draftAttachments.isEmpty { AttachmentShelf(store: store, attachments: thread.draftAttachments, remove: { store.removeAttachment($0, threadID: threadID) }) }

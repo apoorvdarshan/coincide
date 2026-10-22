@@ -20,6 +20,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     case connectionClosed(String)
     case configuration(JSONValue)
     case entity(ProviderEntityUpdate)
+    case runEntity(runID: UUID, update: ProviderEntityUpdate)
     case associateEntity(ProviderEntityKey, clientMessageID: String)
     case activity(ProviderActivity)
     case sessionApproval(ApprovalRequest)
@@ -34,6 +35,7 @@ public protocol ProviderSession: Actor {
     func models() async throws -> [ProviderModel]
     func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection
     func codexAccountSnapshot() async throws -> CodexAccountSnapshot
+    func acpConnectionInfo() async throws -> ACPConnectionInfo
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
     func interrupt() async throws
@@ -41,6 +43,7 @@ public protocol ProviderSession: Actor {
     func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt
     func respond(_ request: ApprovalRequest, allow: Bool) async throws
     func answer(_ request: ApprovalRequest, answers: [String: String]) async throws
+    func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws
     func choose(_ request: ApprovalRequest, optionID: String) async throws
     func close() async
     func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities
@@ -51,6 +54,12 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func acpConnectionInfo() async throws -> ACPConnectionInfo {
+        throw CoincideError("This provider does not expose an ACP connection.")
+    }
+    public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws {
+        throw CoincideError("This provider does not expose selectable question answers.")
+    }
     public func codexAccountSnapshot() async throws -> CodexAccountSnapshot {
         throw CoincideError("This provider does not expose a Codex account.")
     }
@@ -82,8 +91,8 @@ public enum ProviderSessions {
                 throw CoincideError("The executable for \(agent.name) is not installed or executable.")
             }
             let cwd = URL(fileURLWithPath: thread.workspacePath)
-            if agent.experimentalV2 == true { return try ACP2Session(executable: executable, arguments: agent.arguments, cwd: cwd) }
-            return try ACPSession(executable: executable, arguments: agent.arguments, cwd: cwd)
+            if agent.experimentalV2 == true { return try ACP2Session(executable: executable, arguments: agent.arguments, cwd: cwd, integration: agent.integration) }
+            return try ACPSession(executable: executable, arguments: agent.arguments, cwd: cwd, integration: agent.integration)
         }
         guard let executable = ProcessChannel.findExecutable(thread.provider.executable) else {
             throw CoincideError("Install and sign in to \(thread.provider.name) CLI before sending a message.")

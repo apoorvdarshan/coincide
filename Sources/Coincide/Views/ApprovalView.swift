@@ -7,11 +7,17 @@ struct ApprovalView: View {
     let onDecision: (Bool) -> Void
     let onAnswer: ([String: String]) -> Void
     var onOption: (String) -> Void = { _ in }
+    var onSelections: ([String: [String]]) -> Void = { _ in }
     @State private var answers: [String: String] = [:]
     private var questions: [JSONValue] { request.questions }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if request.isQuestion {
+            if let question = request.cursorQuestion {
+                CursorQuestionApprovalView(request: question, isResponding: isResponding,
+                    onSelections: onSelections, onSkip: { onDecision(false) })
+            } else if let plan = request.cursorPlan {
+                CursorPlanApprovalView(request: plan, isResponding: isResponding, onDecision: onDecision)
+            } else if request.isQuestion {
                 Text("Your agent needs input").font(.headline)
                 ForEach(questions, id: \.self) { question in
                     if let id = question["id"].string {

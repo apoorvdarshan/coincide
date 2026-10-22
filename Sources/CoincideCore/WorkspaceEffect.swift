@@ -3,6 +3,7 @@ import Foundation
 public enum ProviderApprovalResponse: Codable, Sendable, Equatable {
     case decision(Bool)
     case answers([String: String])
+    case selections([String: [String]])
     case option(String)
 }
 

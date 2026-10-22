@@ -20,16 +20,25 @@ struct SettingsView: View {
                 }
                 Section("ACP Agents") {
                     ForEach(store.snapshot.acpAgents) { agent in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(agent.name)
-                                Text(ProcessChannel.findExecutable(agent.executable)?.path ?? "Executable unavailable")
-                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(agent.name)
+                                    Text(ProcessChannel.findExecutable(agent.executable)?.path ?? "Executable unavailable")
+                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Button("Edit") { editingAgent = agent }
+                                Button("Remove", role: .destructive) { store.removeACPAgent(agent.id) }
                             }
-                            Spacer()
-                            Button("Edit") { editingAgent = agent }
-                            Button("Remove", role: .destructive) { store.removeACPAgent(agent.id) }
+                            ACPConnectionSection(agent: agent, connections: store.acpConnections) {
+                                await store.refreshACPConnection(agent: agent)
+                            }
                         }
+                    }
+                    HStack {
+                        Button("Add Cursor…") { editingAgent = ACPIntegration.cursor.configuration() }
+                        Button("Add GitHub Copilot…") { editingAgent = ACPIntegration.copilot.configuration() }
                     }
                     HStack {
                         Button("Add Agent…") { editingAgent = .init(name: "", executable: "") }
@@ -73,6 +82,7 @@ private struct ACPAgentEditor: View {
     @State private var executable: String
     @State private var arguments: String
     @State private var experimentalV2: Bool
+    @State private var integration: ACPIntegration?
     @State private var saving = false
     @State private var error: String?
     init(agent: ACPAgentConfiguration, save: @escaping (ACPAgentConfiguration) async throws -> Void, cancel: @escaping () -> Void) {
@@ -80,21 +90,33 @@ private struct ACPAgentEditor: View {
         _name = State(initialValue: agent.name); _executable = State(initialValue: agent.executable)
         _arguments = State(initialValue: agent.arguments.joined(separator: "\n"))
         _experimentalV2 = State(initialValue: agent.experimentalV2 == true)
+        _integration = State(initialValue: agent.integration)
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("ACP Agent").font(.title2)
             Form {
+                Picker("Integration", selection: $integration) {
+                    Text("Custom ACP").tag(Optional<ACPIntegration>.none)
+                    ForEach(ACPIntegration.allCases) { Text($0.name).tag(Optional($0)) }
+                }
                 TextField("Name", text: $name)
                 TextField("Executable", text: $executable)
                 LabeledContent("Arguments") {
                     TextEditor(text: $arguments).font(.system(.body, design: .monospaced)).frame(height: 90)
                         .accessibilityLabel("Arguments, one per line")
+                        .disabled(integration != nil)
                 }
                 Toggle("Use ACP v2 (experimental)", isOn: $experimentalV2)
             }
-            Text("Put each argument on its own line. Spaces are passed literally. Use the agent’s own sign-in for credentials.")
-                .font(.caption).foregroundStyle(.secondary)
+            if let integration {
+                Text("This profile uses the documented stdio arguments. An absolute executable path ending in \(integration.executable) is supported. Choose Custom ACP for other arguments.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ACPIntegrationGuidance(integration: integration)
+            } else {
+                Text("Put each argument on its own line. Spaces are passed literally. Use the agent’s own sign-in for credentials.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
             HStack {
                 Spacer(); Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
@@ -103,6 +125,7 @@ private struct ACPAgentEditor: View {
                     updated.executable = executable.trimmingCharacters(in: .whitespacesAndNewlines)
                     updated.arguments = arguments.isEmpty ? [] : arguments.components(separatedBy: "\n")
                     updated.experimentalV2 = experimentalV2 ? true : nil
+                    updated.integration = integration
                     saving = true
                     Task {
                         defer { saving = false }
@@ -111,5 +134,13 @@ private struct ACPAgentEditor: View {
                 }.keyboardShortcut(.defaultAction).disabled(saving || name.isEmpty || executable.isEmpty)
             }
         }.padding(24).frame(width: 500)
+            .onChange(of: integration) { _, selected in
+                guard let selected else { return }
+                arguments = selected.arguments.joined(separator: "\n")
+                if URL(fileURLWithPath: executable).lastPathComponent != selected.executable {
+                    executable = selected.executable
+                }
+                if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { name = selected.name }
+            }
     }
 }

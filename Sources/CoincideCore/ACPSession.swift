@@ -8,6 +8,11 @@ public actor ACPSession: ProviderSession {
     private let rpc: JSONRPCConnection
     private let cwd: URL
     private let cancellationTimeout: Duration
+    private let integration: ACPIntegration?
+    private var copilot = CopilotACPBridge()
+    private var copilotRunID: UUID?
+    private var copilotChildren: [String: CopilotACPChildUpdate] = [:]
+    private var copilotChildSegments: [String: Int] = [:]
     private var reader: Task<Void, Never>?
     private var connecting: Task<JSONValue, any Error>?
     private var sessionSetup: Task<Void, any Error>?
@@ -27,21 +32,25 @@ public actor ACPSession: ProviderSession {
     private var promptTask: Task<Void, Never>?
     private var cancellationTimer: Task<Void, Never>?
     private var pending: [JSONValue: ApprovalRequest] = [:]
+    private var cursorWireIDs: [JSONValue: JSONValue] = [:]
+    private var cursorNotifications = CursorACPNotifications()
     private var tools: [String: JSONValue] = [:]
 
-    public init(executable: URL, arguments: [String], cwd: URL, cancellationTimeout: Duration = .seconds(10)) throws {
+    public init(executable: URL, arguments: [String], cwd: URL, cancellationTimeout: Duration = .seconds(10), integration: ACPIntegration? = nil) throws {
         let pair = AsyncStream<ProviderEvent>.makeStream()
         events = pair.stream; continuation = pair.continuation; self.cwd = cwd
         self.cancellationTimeout = cancellationTimeout
+        self.integration = integration
         rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd,
                                     dialect: .jsonRPC2, maximumFrameSize: 128 * 1_024 * 1_024)
     }
     /// A negotiated v1 fallback adopts the existing transport; it never launches
     /// another process or consumes the same stream as a second adapter.
-    init(adopting rpc: JSONRPCConnection, cwd: URL, initialization: JSONValue) {
+    init(adopting rpc: JSONRPCConnection, cwd: URL, initialization: JSONValue, integration: ACPIntegration? = nil) {
         let pair = AsyncStream<ProviderEvent>.makeStream()
         events = pair.stream; continuation = pair.continuation; self.cwd = cwd
         self.rpc = rpc; self.initialization = initialization; cancellationTimeout = .seconds(10)
+        self.integration = integration
     }
     @discardableResult public func connect() async throws -> JSONValue {
         guard !closing else { throw CancellationError() }
@@ -54,10 +63,10 @@ public actor ACPSession: ProviderSession {
             let result = try await connecting.value; guard !closing else { throw CancellationError() }
             initialization = result; return result
         }
-        let rpc = rpc
+        let rpc = rpc, capabilities = integration?.clientCapabilities ?? .object([:])
         let task = Task<JSONValue, any Error> {
             let result = try await rpc.request("initialize", params: .object([
-                "protocolVersion": .number(1), "clientCapabilities": .object([:]),
+                "protocolVersion": .number(1), "clientCapabilities": capabilities,
                 "clientInfo": .object(["name": .string("coincide"), "title": .string("Coincide"), "version": .string("0.1.0")])
             ]), timeout: .seconds(60))
             guard result["protocolVersion"] == .number(1) else {
@@ -107,6 +116,12 @@ public actor ACPSession: ProviderSession {
         try await ensureSession(resumeID: nil)
         return ACPConfigurationOptions.models(setup)
     }
+    public func acpConnectionInfo() async throws -> ACPConnectionInfo {
+        try Task.checkCancellation()
+        let value = try await connect()
+        try Task.checkCancellation()
+        return try ACPConnectionInfo(value)
+    }
     public func configuration() async throws -> JSONValue {
         try await ensureSession(resumeID: nil); return setup
     }
@@ -116,6 +131,7 @@ public actor ACPSession: ProviderSession {
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard !working, !closing else { throw CoincideError("A turn is already running or the agent is closed.") }
         working = true; interrupted = false; runID = thread.activeRun?.id; generation = UUID(); segment = 0; announcedTurn = false; tools = [:]
+        cursorNotifications = CursorACPNotifications()
         let token = generation
         do {
             try await ensureSession(resumeID: thread.providerThreadID)
@@ -124,7 +140,14 @@ public actor ACPSession: ProviderSession {
                 throw CoincideError("This agent does not advertise image input support.")
             }
             try await configure(thread, sessionID: sessionID)
-            guard !closing else { throw CancellationError() }
+            // A configuration reply can resume its waiter before earlier wire
+            // notifications have drained. They still belong to the old work.
+            if integration == .copilot { await rpc.flushEvents() }
+            guard !closing, !interrupted else { throw CancellationError() }
+            if integration == .copilot {
+                let owner = runID ?? token
+                try copilot.beginRun(sessionID: sessionID, runID: owner); copilotRunID = owner
+            }
             var blocks: [JSONValue] = input.images.map {
                 .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())])
             }
@@ -146,15 +169,15 @@ public actor ACPSession: ProviderSession {
             // finishes. Permission responses and stops keep their reserved capacity.
             try await dispatch.wait()
             if generation == token, working { announceTurn() }
-        } catch { if generation == token { working = false }; throw error }
+        } catch { if generation == token { working = false; finishCopilotRun() }; throw error }
     }
     public func interrupt() async throws {
         guard working, let sessionID, !closing else { throw CoincideError("There is no active agent turn to stop.") }
         interrupted = true
         try await rpc.notify("session/cancel", params: .object(["sessionId": .string(sessionID)]))
-        let requests = pending; pending = [:]
+        let requests = pending, wireIDs = cursorWireIDs; pending = [:]; cursorWireIDs = [:]
         for (id, _) in requests {
-            try await rpc.respond(id: id, result: .object(["outcome": .object(["outcome": .string("cancelled")])]))
+            try await rpc.respond(id: wireIDs[id] ?? id, result: .object(["outcome": .object(["outcome": .string("cancelled")])]))
             emit(.approvalDismissed(id))
         }
         // Agents must resolve the prompt after cancellation. A stalled agent must
@@ -168,6 +191,18 @@ public actor ACPSession: ProviderSession {
         }
     }
     public func respond(_ request: ApprovalRequest, allow: Bool) async throws {
+        if let method = CursorACPMethod.canonical(request.method) {
+            guard integration == .cursor else { throw ACPIntegrationValidation.failure() }
+            let outcome: String
+            if method == CursorACPMethod.question {
+                guard !allow, request.cursorQuestion != nil else { throw ACPIntegrationValidation.failure() }
+                outcome = "skipped"
+            } else {
+                guard request.cursorPlan != nil else { throw ACPIntegrationValidation.failure() }
+                outcome = allow ? "accepted" : "rejected"
+            }
+            try await finishCursorRequest(request, result: CursorACPMethod.outcome(outcome)); return
+        }
         let kind = allow ? "allow_once" : "reject_once"
         if let id = request.params["options"].array?.first(where: { $0["kind"].string == kind })?["optionId"].string {
             try await choose(request, optionID: id)
@@ -180,30 +215,73 @@ public actor ACPSession: ProviderSession {
     }
     private func finishPermission(_ request: ApprovalRequest, outcome: JSONValue) async throws {
         guard pending[request.id] == request, !closing, !interrupted else { throw CoincideError("This permission request is no longer pending.") }
+        let token = generation
         try await rpc.respond(id: request.id, result: .object(["outcome": outcome]))
-        pending.removeValue(forKey: request.id); emit(.approvalDismissed(request.id))
+        if generation == token, pending[request.id] == request {
+            pending.removeValue(forKey: request.id); emit(.approvalDismissed(request.id))
+        }
     }
     public func answer(_ request: ApprovalRequest, answers: [String: String]) async throws {
         throw CoincideError("This agent did not negotiate native question support.")
     }
+    public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws {
+        guard integration == .cursor, let question = request.cursorQuestion else { throw ACPIntegrationValidation.failure() }
+        try await finishCursorRequest(request, result: question.response(for: selections))
+    }
+    private func finishCursorRequest(_ request: ApprovalRequest, result: JSONValue) async throws {
+        guard integration == .cursor, working, !closing, !interrupted, pending[request.id] == request,
+              let wireID = cursorWireIDs[request.id] else {
+            throw CoincideError("This Cursor request is no longer pending.")
+        }
+        let token = generation
+        try await rpc.respond(id: wireID, result: result)
+        if generation == token, pending[request.id] == request {
+            pending.removeValue(forKey: request.id); cursorWireIDs.removeValue(forKey: request.id); emit(.approvalDismissed(request.id))
+        }
+    }
     public func close() async {
         guard !closing else { return }; closing = true
         promptTask?.cancel(); connecting?.cancel(); sessionSetup?.cancel(); cancellationTimer?.cancel(); await rpc.close()
-        reader?.cancel(); reader = nil; pending = [:]; continuation.finish()
+        reader?.cancel(); reader = nil; pending = [:]; cursorWireIDs = [:]; copilot.reset(); copilotChildren = [:]; copilotChildSegments = [:]; continuation.finish()
     }
     private func consume(_ event: RPCEvent) async {
         switch event {
-        case .callback(let work): await work()
+        case .callback(let work):
+            if integration == .copilot { copilot.invalidatePendingDeltas() }
+            await work()
         case .barrier(let complete): complete()
         case .disconnected(let reason):
             if !closing { continuation.yield(.connectionClosed(reason)) }
             working = false; continuation.finish()
         case .request(let id, let method, let params):
+            if integration == .copilot { copilot.invalidatePendingDeltas() }
+            if integration == .cursor, let canonical = CursorACPMethod.canonical(method) {
+                guard working, !closing, !loadingHistory, !interrupted, sessionReady,
+                      params["sessionId"] == .null || params["sessionId"].string == sessionID else {
+                    try? await rpc.respond(id: id, result: CursorACPMethod.outcome("cancelled")); return
+                }
+                guard pending.count < 1_024, pending[id] == nil, !cursorWireIDs.values.contains(id) else {
+                    continuation.yield(.connectionClosed("Cursor reused a pending request identity.")); await close(); return
+                }
+                do {
+                    var safe = canonical == CursorACPMethod.question
+                        ? try CursorACPQuestionRequest(params: params).parameters.object!
+                        : try CursorACPPlanRequest(params: params).parameters.object!
+                    safe["sessionId"] = sessionID.map(JSONValue.string)
+                    let localID: JSONValue = .string("cursor-request-\(UUID())")
+                    let request = ApprovalRequest(id: localID, method: canonical, params: .object(safe))
+                    announceTurn(); pending[localID] = request; cursorWireIDs[localID] = id; emit(.approval(request))
+                } catch { try? await rpc.reject(id: id, message: "Cursor sent an unsupported question or plan request.") }
+                return
+            }
             guard method == "session/request_permission", params["sessionId"].string == sessionID, working, !loadingHistory, !interrupted else {
                 if method == "session/request_permission" {
                     try? await rpc.respond(id: id, result: .object(["outcome": .object(["outcome": .string("cancelled")])]))
                 } else { try? await rpc.reject(id: id, message: "This client capability was not negotiated.") }
                 return
+            }
+            guard pending.count < 1_024, pending[id] == nil, !cursorWireIDs.values.contains(id) else {
+                continuation.yield(.connectionClosed("The agent reused a pending request identity.")); await close(); return
             }
             announceTurn()
             var enriched = params.object ?? [:]
@@ -215,8 +293,39 @@ public actor ACPSession: ProviderSession {
             let request = ApprovalRequest(id: id, method: method, params: .object(enriched))
             pending[id] = request; emit(.approval(request))
         case .notification(let method, let params):
-            guard method == "session/update", params["sessionId"].string == sessionID, !loadingHistory else { return }
-            let update = params["update"], kind = update["sessionUpdate"].string ?? ""
+            if method == "$/cancel_request" {
+                let wireID = params["requestId"]
+                if let localID = cursorWireIDs.first(where: { $0.value == wireID })?.key {
+                    cursorWireIDs.removeValue(forKey: localID); pending.removeValue(forKey: localID)
+                    emit(.approvalDismissed(localID))
+                } else if pending.removeValue(forKey: wireID) != nil { emit(.approvalDismissed(wireID)) }
+                return
+            }
+            if integration == .cursor, CursorACPNotifications.handles(method) {
+                guard working, !closing, !loadingHistory, !interrupted, sessionReady, let sessionID,
+                      params["sessionId"] == .null || params["sessionId"].string == sessionID else { return }
+                do {
+                    if let update = try cursorNotifications.consume(method: method, params: params, sessionID: sessionID, runID: runID ?? generation) {
+                        emit(.entity(update))
+                    }
+                } catch { emit(.failure("Cursor returned an invalid activity notification.")); await close() }
+                return
+            }
+            var notification = params
+            if integration == .copilot {
+                do {
+                    for child in try copilot.consumeNotification(method: method, params: params) { publishCopilotChild(child) }
+                    guard method == "session/update", params["sessionId"].string == sessionID, !loadingHistory else { return }
+                    guard let routed = try copilot.routeSessionUpdate(params) else { return }
+                    for child in routed.children { publishCopilotChild(child) }
+                    if routed.child { try publishCopilotUpdate(routed); return }
+                    var fields = params.object ?? [:]; fields["update"] = routed.update; notification = .object(fields)
+                } catch {
+                    continuation.yield(.connectionClosed(CopilotACPBridge.failureMessage)); await close(); return
+                }
+            }
+            guard method == "session/update", notification["sessionId"].string == sessionID, !loadingHistory else { return }
+            let update = notification["update"], kind = update["sessionUpdate"].string ?? ""
             if kind == "current_mode_update" { setMetadata(section: "modes", field: "currentModeId", value: update["currentModeId"]); return }
             if kind == "config_option_update" { setMetadata(field: "configOptions", value: update["configOptions"]); return }
             if kind == "available_commands_update" { setMetadata(field: "availableCommands", value: update["availableCommands"]); return }
@@ -253,8 +362,9 @@ public actor ACPSession: ProviderSession {
     private func promptFinished(_ result: JSONValue, token: UUID) {
         guard generation == token, working, !closing else { return }
         working = false; promptTask = nil
+        finishCopilotRun()
         cancellationTimer?.cancel(); cancellationTimer = nil
-        for id in pending.keys { emit(.approvalDismissed(id)) }; pending = [:]
+        for id in pending.keys { emit(.approvalDismissed(id)) }; pending = [:]; cursorWireIDs = [:]
         let reason = result["stopReason"].string ?? "unknown"
         if interrupted || reason == "cancelled" { emit(.completed(.interrupted)) }
         else if ["end_turn", "max_tokens", "max_turn_requests", "refusal"].contains(reason) {
@@ -264,6 +374,8 @@ public actor ACPSession: ProviderSession {
     }
     private func promptFailed(_ error: any Error, token: UUID) {
         guard generation == token, working, !closing else { return }; working = false; promptTask = nil
+        finishCopilotRun()
+        for id in pending.keys { emit(.approvalDismissed(id)) }; pending = [:]; cursorWireIDs = [:]
         cancellationTimer?.cancel(); cancellationTimer = nil
         emit(.failure(error.localizedDescription))
     }
@@ -274,6 +386,38 @@ public actor ACPSession: ProviderSession {
     }
     private func announceTurn() {
         guard !announcedTurn else { return }; announcedTurn = true; emit(.turn(generation.uuidString))
+    }
+    private func finishCopilotRun() {
+        if let sessionID, let owner = copilotRunID { copilot.finishRun(sessionID: sessionID, runID: owner) }
+        copilotRunID = nil
+    }
+    private func publishCopilotChild(_ child: CopilotACPChildUpdate) {
+        copilotChildren[child.childSessionID] = child
+        emit(.runEntity(runID: child.runID, update: child.entityUpdate))
+    }
+    private func publishCopilotUpdate(_ routed: CopilotACPRoutedUpdate) throws {
+        guard let child = copilotChildren[routed.sessionID], child.runID == routed.runID, child.sessionID == sessionID,
+              child.status == .running else { return }
+        let kind = routed.update["sessionUpdate"].string ?? ""
+        var update = routed.update.object ?? [:]
+        let metadata: JSONValue = .object(["github.com/copilot": .object([
+            "parentSessionId": .string(child.sessionID), "parentRunID": .string(child.runID.uuidString),
+            "parentToolCallId": .string(child.toolCallID), "taskTitle": .string(child.title ?? "Copilot task")])])
+        if kind == "tool_call" || kind == "tool_call_update" {
+            if kind == "tool_call" { copilotChildSegments[routed.sessionID, default: 0] += 1 }
+            update["sessionUpdate"] = .string("tool_call_update")
+            var fields = update["_meta"]?.object ?? [:]; fields["github.com/copilot"] = metadata["github.com/copilot"]
+            update["_meta"] = .object(fields)
+        } else if kind == "agent_message_chunk" || kind == "agent_thought_chunk" {
+            guard routed.update["content"]["type"] == .string("text") else { return }
+            let messageID = try ACPIntegrationValidation.string(routed.update["messageId"], maximum: 4_096)
+                ?? "copilot-\(child.runID)-segment-\(copilotChildSegments[routed.sessionID, default: 0])"
+            update["messageId"] = .string(messageID)
+            let type = kind == "agent_message_chunk" ? "agent_message" : "agent_thought"
+            let key = ProviderEntityKey(sessionID: routed.sessionID, type: type, id: messageID)
+            emit(.runEntity(runID: child.runID, update: .patch(key, .object(["_meta": metadata]))))
+        } else { return }
+        emit(.runEntity(runID: child.runID, update: try .acp(.object(update), sessionID: routed.sessionID)))
     }
     private func configure(_ thread: CodingThread, sessionID: String) async throws {
         // Unrecognized option types keep their agent defaults; they cannot hide
@@ -326,7 +470,7 @@ public actor ACPSession: ProviderSession {
         // Session configuration and connection lifecycle remain meaningful while
         // idle. The engine still fences them by the owning runtime identity.
         switch event {
-        case .configuration, .thread, .connectionClosed, .entity, .associateEntity: continuation.yield(event); return
+        case .configuration, .thread, .connectionClosed, .entity, .runEntity, .associateEntity: continuation.yield(event); return
         default: break
         }
         if let runID { continuation.yield(.context(runID: runID, event: event)) }

@@ -8,6 +8,7 @@ public struct ACPAgentConfiguration: Codable, Identifiable, Sendable, Equatable,
     public var executable: String
     public var arguments: [String]
     public var experimentalV2: Bool?
+    public var integration: ACPIntegration?
     public init(id: UUID = UUID(), name: String, executable: String, arguments: [String] = []) {
         self.id = id; self.name = name; self.executable = executable; self.arguments = arguments
     }
@@ -17,6 +18,12 @@ public struct ACPAgentConfiguration: Codable, Identifiable, Sendable, Equatable,
               !executable.utf8.contains(0), arguments.count <= 100,
               arguments.allSatisfy({ !$0.utf8.contains(0) && $0.utf8.count <= 16_384 }) else {
             throw CoincideError("Enter an agent name, executable, and valid arguments.")
+        }
+        if let integration {
+            guard URL(fileURLWithPath: executable).lastPathComponent == integration.executable,
+                  arguments == integration.arguments else {
+                throw CoincideError("Use this integration's stdio command, or choose Custom ACP for a different invocation.")
+            }
         }
     }
 }

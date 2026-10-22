@@ -282,6 +282,18 @@ unconfirmed submissions remain visible and are never automatically resent.
 Managed registry installs, client-side filesystem/terminal delegation, and native
 agent authentication flows are still pending.
 
+**Add Cursor** and **Add Copilot** save explicit vendor profiles using `agent acp`
+and `copilot --acp --stdio`. **Check Connection** reads initialization on its own
+temporary connection; it does not sign in, start a conversation, or prove model
+access. Existing CLI credentials remain with the CLI. Cursor questions support
+single and multiple selections by option ID, plus Skip. Plans require explicit
+Accept or Decline; todo, task and image notifications appear as activity without
+running client tools or opening provider-supplied image paths. Copilot's raw-event
+bridge keeps child output and background completion attached to the original
+run. These extensions also work with the experimental v2 adapter and its v1
+fallback. Full SDK equivalence, native authentication, usage and all-provider
+parity remain unfinished; see [provider evidence](docs/PROVIDER_PARITY.md).
+
 Send another message during a turn to queue it. Each queued message keeps its
 chosen model and permissions, and can be edited or removed before it starts.
 **Stop** interrupts the current turn and holds the queue. Use **Resume Queue** to

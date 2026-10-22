@@ -1,5 +1,73 @@
 # Validation record
 
+## 2026-10-22 — native Cursor and Copilot ACP integrations
+
+- Explicit vendor profiles are captured with each invocation, conversation and
+  queued input. Settings adds native setup and initialize-only connection checks
+  on separate owned transports. Observations stay in memory, require the exact
+  saved configuration and drain replaced/cancelled work at shutdown. They do not
+  authenticate, send a prompt or prove model entitlement.
+- Cursor questions retain exact option IDs and multiple selections. Plans use
+  explicit Accept/Decline; Skip, Stop, remote cancellation and reused wire IDs
+  cannot accidentally answer an earlier request. Known payloads are bounded and
+  unknown fields discarded. Todo notifications merge/replace; task/image events
+  display activity without executing client tools or reading supplied paths.
+- Copilot negotiates its documented raw-event metadata. Exact raw/chunk pairing,
+  task/agent identity and original-run attribution keep child text/reasoning/tools
+  separate from root output. Background launcher completion does not finish the
+  child. Old children can finish while another run or baseline capture is active;
+  invalid runtime/session/owner updates are discarded and replay retains ownership.
+  Both ACP versions and same-transport v1 adoption retain the vendor flavor.
+  Experimental v2 also opens a distinct owner before agent-initiated output and
+  closes that exact activity. Its children retain it after idle, and an old
+  activity ending during a new user's configuration cannot consume the unsent
+  user's owner. Both normal and held-configuration sequences are covered.
+- Review found pre-dispatch ownership and cancellation bugs: configuration replies
+  can resume before preceding notifications drain, and Stop can arrive during a
+  held configuration RPC. Both adapters now drain pre-dispatch events before
+  assigning Copilot ownership; v1 also rechecks Stop before writing a prompt.
+  Bounded fixtures verify resumed-running/idle transitions and zero prompts after
+  cancellation, along with malformed child IDs failing without a process trap.
+- The final full integration suite executed 844 Swift test declarations: 836
+  passed and eight optional installed-provider checks were skipped. The core
+  target reports 696 declarations including those skips (252.280 seconds); all
+  129 native view/store (48.588 seconds), six terminal and 13 Markdown tests passed.
+  The full run includes late configuration cancellation and both autonomous-wake
+  regressions. All 89 focused protocol/view/store/history tests also passed before
+  that final wake regression was added. Nineteen Python fixture/configuration
+  checks passed.
+- The actual installed Cursor CLI (`2026.10.19-6bbf2c4`) completed initialization,
+  session creation and model discovery; the independent metadata-only test passed
+  in 7.057 seconds. Its implementation-name field is optional and absent. A real
+  marker turn returned `Upgrade your plan to continue` instead of the marker:
+  successful model execution remains blocked by that provider plan, and no more
+  model calls were attempted after identifying it. Copilot is not installed here;
+  its evidence is protocol fixtures, not a live authenticated turn.
+- Native Cua inspection of the packaged application verified both setup sheets,
+  literal commands, existing-login guidance, experimental-v2 default off and
+  visible Save/Cancel controls. Both sheets were cancelled without saving. Eight
+  narrow/wide/light/dark component captures and geometry assertions verified
+  bounded scrolling/action placement; offscreen PNGs do not establish WindowServer
+  glass/vibrancy or a complete GUI interaction workflow.
+- Packaging, strict/deep signatures and native math resources passed. The existing
+  database was privately backed up before opening storage 25; SQLite integrity
+  passed and canonical workspace content stayed identical (three conversations,
+  25 messages). Staged/outgoing secret scans accompany the pushed implementation.
+  This does not complete native authentication, full vendor SDK/control/history
+  parity, installed Copilot verification or the full T3 Code port.
+- The preceding account commit `a3ad449` completed hosted run `39746111640`:
+  production passed its 792-declaration test run plus packaging/resources. Native GUI execution
+  ran all 14 scenarios with eight passes, six failures and zero skips in 1454.225
+  seconds. The immutable helper passed the five formerly blocked initialize
+  preflights, so those workflows now reach actual app/provider interaction.
+  Remaining failures concern Run History sheet opening, refreshed model labeling,
+  PR creation/checkout button lookup and a missing steering wire submission.
+  Attachment inspection confirms container accessibility IDs overwriting semantic
+  history/PR controls, a native Menu label losing its model/effort content, and a
+  steering assertion checking only AX labels although the exact text is in AX
+  values. Wire and state artifacts prove the single steering request was sent.
+  These GUI repairs remain separate work; no full GUI success is claimed.
+
 ## 2026-10-22 — native Codex account and allowance status
 
 - Settings now reads the existing CLI account/plan and allowance windows on an

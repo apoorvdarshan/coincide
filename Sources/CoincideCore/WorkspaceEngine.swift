@@ -2028,6 +2028,7 @@ public actor WorkspaceEngine {
             case .option(let id): try await runtime.session.choose(request, optionID: id)
             case .decision(let allow): try await runtime.session.respond(request, allow: allow)
             case .answers(let answers): try await runtime.session.answer(request, answers: answers)
+            case .selections(let selections): try await runtime.session.selectAnswers(request, selections: selections)
             }
             return .succeeded
         case .providerSessionRespond(_, let runtimeID, let request, let response):
@@ -2037,6 +2038,7 @@ public actor WorkspaceEngine {
             case .option(let id): try await runtime.session.choose(request, optionID: id)
             case .decision(let allow): try await runtime.session.respond(request, allow: allow)
             case .answers(let answers): try await runtime.session.answer(request, answers: answers)
+            case .selections(let selections): try await runtime.session.selectAnswers(request, selections: selections)
             }
             return .succeeded
         }
@@ -2228,6 +2230,12 @@ public actor WorkspaceEngine {
         var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path))
         thread.provider = .codex
         return try await queryProviderMetadata(thread: thread, owned: false) { try await $0.codexAccountSnapshot() }
+    }
+    public func acpConnectionInfo(agent: ACPAgentConfiguration) async throws -> ACPConnectionInfo {
+        try agent.validate(); try Task.checkCancellation()
+        var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path))
+        thread.provider = .acp; thread.acpAgent = agent
+        return try await queryProviderMetadata(thread: thread, owned: false) { try await $0.acpConnectionInfo() }
     }
     public func models(thread: CodingThread) async throws -> [ProviderModel] {
         _ = try await load()
