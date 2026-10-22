@@ -1,5 +1,53 @@
 # Validation record
 
+## 2026-10-22 — native Pi RPC and atomic creation regression
+
+- Added a dedicated Pi JSONL actor, typed durable provider/model/thinking captures,
+  native confirm/select/input/editor controls and captured tool-approval policy.
+  Native session-file resume validates an existing regular header and workspace
+  before switching. Storage 28 preserves the new captures through queue/reopen
+  and journal replay; older provider conversations retain their settings.
+- Real stdio peers exercise command correlation, exact Unicode/tool projection,
+  lost replies, lifecycle/compaction, cancellation, extension expiry and native
+  abort. Only settled-plus-idle evidence releases a turn; ACK and `agent_end`
+  alone do not. Run-owned waiter retirement prevents a completed run's deadlines
+  or Stop replies from terminating its successor. Unresolved pre-start Stop
+  retires the runtime rather than claiming a confirmed native interruption.
+- The production factory-to-Engine fixture verifies captured FIFO settings,
+  policy-driven process replacement, native session continuation, actual abort,
+  source-file preservation and durable restart without resending. These are
+  offline peers, not installed Pi or model-access verification. No Pi login,
+  installation or vendor turn was performed. Steering, native history changes,
+  broader extension behavior, setup/auth and usage remain unfinished.
+- All 29 focused declarations passed: 26 Core declarations (3.193 seconds) and
+  three native view/store declarations (0.176 seconds). A stale thinking choice
+  now receives a normal rejected command; the engine stays healthy and accepts
+  a subsequent valid default selection. Native dialog rendering preserves empty
+  values/prefill and never answers merely because the view appeared.
+- The isolated managed-project registration test reproducibly exited with
+  signal 10 before its dispatch returned. Removing the compound creation path's
+  recursive entry into the large reducer made that same test pass, including
+  all journal/rebuild/atomicity assertions (0.017 seconds). Registration, clone
+  and standalone creation now share the original insertion guards and runtime
+  normalization. Validation/effect ordering remains unchanged. Binary inspection
+  shows substantial fixed and dynamic stack allocation; no debugger stack was
+  available, so stack exhaustion is a supported hypothesis, not a confirmed
+  low-level fault diagnosis. Full-suite and hosted acceptance follow separately.
+- The complete local run reached its end: 1034 declarations across 873 Core,
+  142 native view/store, six terminal and 13 Markdown tests. There was one
+  failing Pi fixture observation and eight optional installed-provider skips;
+  all other declarations passed. The failure read the peer's response log before
+  the peer consumed the completed pipe write. The test now waits for a complete
+  received frame and observed dismissal under its unchanged deadline, and ignores
+  a partially appended final log record. All 29 Pi declarations then passed again
+  (Core 3.218 seconds, native 0.187 seconds). This is not a claim that the earlier
+  full run was green; final hosted verification remains pending.
+- Rebuilt packaging, strict/deep signature verification and native math-resource
+  rendering passed. The development app reopened and a fresh window screenshot
+  was captured. A private consistent backup preceded migration from 27 to 28;
+  SQLite integrity and canonical workspace content remain unchanged, with three
+  conversations and 25 messages.
+
 ## 2026-10-22 — delayed hosted crash reports and phase evidence
 
 - Exact `2ec0a087`, run `39772129599`, reproduced the production test process's

@@ -34,6 +34,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case codexModel(ProviderModel), codexReasoning(model: ProviderModel, effort: String?), codexDefaultModel(CodexDefaultModelSelection)
     case openCodeModel(ProviderModel?), openCodeVariant(model: ProviderModel, variant: String?), openCodeAgent(String)
     case openCodeGeneration(OpenCodeGeneration), grokRuntimeMode(GrokACPRuntimeMode)
+    case piModel(ProviderModel?), piThinking(model: ProviderModel, level: String?)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -547,6 +548,12 @@ struct WorkspaceDecision: Sendable {
                 case .codexReasoning(let model, let effort): try thread.selectCodexReasoning(model: model, effort: effort)
                 case .codexDefaultModel(let selection): try thread.selectCodexDefaultModel(selection)
                 case .openCodeModel(let model): try thread.selectOpenCodeModel(model)
+                case .piModel(let model):
+                    do { try thread.selectPiModel(model) }
+                    catch { throw WorkspaceCommandError(error.localizedDescription) }
+                case .piThinking(let model, let level):
+                    do { try thread.selectPiThinking(model: model, level: level) }
+                    catch { throw WorkspaceCommandError(error.localizedDescription) }
                 case .openCodeVariant(let model, let variant): try thread.selectOpenCodeVariant(model: model, variant: variant)
                 case .openCodeAgent(let agent):
                     guard thread.provider == .opencode, let native = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
@@ -568,6 +575,10 @@ struct WorkspaceDecision: Sendable {
                     let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !title.isEmpty else { throw WorkspaceCommandError("A conversation title cannot be empty.") }; thread.title = title
                 case .model(let model):
+                    if thread.provider == .pi {
+                        guard model.isEmpty else { throw WorkspaceCommandError("Choose an advertised Pi model.") }
+                        try thread.selectPiModel(nil); break
+                    }
                     if thread.provider == .opencode {
                         guard model.isEmpty else { throw WorkspaceCommandError("Choose an advertised native OpenCode model.") }
                         try thread.selectOpenCodeModel(nil); break
@@ -596,11 +607,13 @@ struct WorkspaceDecision: Sendable {
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
                     decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.openCodeConfiguration = kind == .opencode ? .init(instanceID: id) : nil
+                    thread.piConfiguration = kind == .pi ? .init(instanceID: id) : nil
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
                     guard decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Save this agent in Settings first.") }
                     decision.closeRuntimes.insert(thread.id); thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
                     thread.openCodeConfiguration = nil
+                    thread.piConfiguration = nil
                     thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value
@@ -679,12 +692,22 @@ struct WorkspaceDecision: Sendable {
                 let request = thread.runtimeRequests[i].request
                 switch response {
                 case .option(let id):
+                    if request.method == "pi/extension" {
+                        guard thread.provider == .pi, let input = request.piExtension, input.method == .select, input.options.contains(id) else {
+                            throw WorkspaceCommandError("This Pi choice is no longer available.")
+                        }
+                        break
+                    }
                     guard (request.method == "session/request_permission" || (thread.provider == .opencode && request.method == "opencode/permission")),
                           (request.params["options"].array ?? []).contains(where: { $0["optionId"].string == id }) else {
                         throw WorkspaceCommandError("This permission option is no longer available.")
                     }
                 case .decision(let allow):
-                    if GrokACP.questionMethod(request.method) {
+                    if request.method == "pi/extension" {
+                        guard thread.provider == .pi, !allow || request.piExtension?.method == .confirm else {
+                            throw WorkspaceCommandError("Answer the Pi request or cancel it.")
+                        }
+                    } else if GrokACP.questionMethod(request.method) {
                         guard thread.provider == .acp, thread.acpAgent?.integration == .grok, !allow else {
                             throw WorkspaceCommandError("Answer the Grok question or cancel it.")
                         }
@@ -699,7 +722,13 @@ struct WorkspaceDecision: Sendable {
                         }
                     } else { guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") } }
                 case .answers(let answers):
-                    if GrokACP.questionMethod(request.method) {
+                    if request.method == "pi/extension" {
+                        guard thread.provider == .pi, let input = request.piExtension,
+                              input.method == .input || input.method == .editor, Set(answers.keys) == ["value"],
+                              let value = answers["value"], value.utf8.count <= 1_048_576, !value.contains("\u{0}") else {
+                            throw WorkspaceCommandError("This Pi input is no longer valid.")
+                        }
+                    } else if GrokACP.questionMethod(request.method) {
                         guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else { throw ACPIntegrationValidation.failure() }
                         _ = try question.response(answers: answers)
                     } else if request.method == "opencode/question" {

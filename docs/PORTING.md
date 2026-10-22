@@ -86,6 +86,14 @@ must each be mapped and verified before declaring parity.
   installed Grok execution are pending. Initialize-only status is not an auth or
   model receipt; normal sessions may use only the CLI's existing noninteractive
   sign-in. Exact owned-parent shutdown makes no descendant-exit guarantee.
+- Native Pi uses its own LF-delimited RPC subprocess, captured provider/model/
+  thinking selections, and an app-owned tool-approval extension. Native model
+  discovery and confirm/select/input/editor dialogs retain exact values. Session
+  continuation uses a validated native session file. A command ACK or `agent_end`
+  does not release the queue: a native settled event and a fresh idle observation
+  must agree. Stop is fenced to the app run; unresolved pre-start work retires
+  the connection. Offline stdio/Engine and native view/store checks pass; installed
+  Pi execution, steering, history mutation, setup/auth and usage remain pending.
 - Transcript entities retain their session, type, opaque ID, structured fields,
   and chunk annotations. The native reducer applies replacements, null clearing,
   metadata patches, independently decoded terminal bytes, and typed user-message
@@ -119,8 +127,8 @@ must each be mapped and verified before declaring parity.
   unfinished.
 - Queued turns capture their model, reasoning effort, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 27 protects these fields,
-  native generation/profile captures and typed question-with-notes effects
+  hold it for explicit resumption. Database storage version 28 protects these fields,
+  native generation/profile/Pi captures and typed question-with-notes effects
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
 - Direct steering durably accepts one authored input into the active local run,
   preserving its captured settings, exact runtime/native thread/turn, attachments,

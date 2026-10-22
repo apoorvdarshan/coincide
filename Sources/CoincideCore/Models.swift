@@ -69,6 +69,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var provider: ProviderKind
     public var acpAgent: ACPAgentConfiguration?
     public var openCodeConfiguration: OpenCodeConfiguration?
+    public var piConfiguration: PiConfiguration?
     public var agentModeID: String?
     public var agentConfigValues: [String: String]?
     public var providerMetadata: JSONValue?
@@ -107,7 +108,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
         case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
-        case acpAgent, openCodeConfiguration, agentModeID, agentConfigValues, providerMetadata
+        case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
     }
     public init(from decoder: any Decoder) throws {
@@ -122,6 +123,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
         acpAgent = try values.decodeIfPresent(ACPAgentConfiguration.self, forKey: .acpAgent)
         openCodeConfiguration = try values.decodeIfPresent(OpenCodeConfiguration.self, forKey: .openCodeConfiguration)
+        piConfiguration = try values.decodeIfPresent(PiConfiguration.self, forKey: .piConfiguration)
         agentModeID = try values.decodeIfPresent(String.self, forKey: .agentModeID)
         agentConfigValues = try values.decodeIfPresent([String: String].self, forKey: .agentConfigValues)
         providerMetadata = try values.decodeIfPresent(JSONValue.self, forKey: .providerMetadata)
@@ -298,6 +300,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var openCodeQuestion: OpenCodeV1Question? { try? OpenCodeV1Question.presentation(self) }
     public var grokQuestion: GrokACPQuestionRequest? { GrokACP.questionMethod(method) ? try? .init(params: params) : nil }
     public var isGrokQuestion: Bool { GrokACP.questionMethod(method) }
+    public var piExtension: PiExtensionRequest? { try? PiExtensionRequest.presentation(self) }
     public var questions: [JSONValue] {
         if method == "can_use_tool" {
             return (params["input"]["questions"].array ?? []).map { question in
@@ -309,6 +312,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
+        if method == "pi/extension" { return piExtension?.title ?? "Pi needs your input" }
         if method == "opencode/question" { return "Answer OpenCode questions" }
         if GrokACP.questionMethod(method) { return "Answer Grok questions" }
         if method == "opencode/form" || method == "opencode/permission" { return params["title"].string ?? "OpenCode needs your input" }
@@ -319,6 +323,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return method.contains("fileChange") ? "Approve file changes" : "Approve command"
     }
     public var detail: String {
+        if method == "pi/extension" { return piExtension?.message ?? "Review Pi's request." }
         if method == "opencode/permission" { return params["description"].string ?? "Review the requested action." }
         if let plan = cursorPlan { return plan.plan }
         if method == "session/request_permission" {

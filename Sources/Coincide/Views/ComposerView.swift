@@ -97,6 +97,17 @@ struct ComposerView: View {
                 .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
                 .accessibilityIdentifier("grok-runtime-mode-menu")
                 .help("Grok's native launch policy applies to future inputs. Active and queued inputs retain their captured policy.")
+        } else if provider == .pi {
+            Menu {
+                ForEach([PermissionMode.supervised, .autoAcceptEdits, .fullAccess]) { mode in
+                    Button { setPermission(mode) } label: {
+                        if mode.piTitle == permission.piTitle { Label(mode.piTitle, systemImage: "checkmark") } else { Text(mode.piTitle) }
+                    }
+                }
+            } label: { Label(permission.piTitle, systemImage: "slider.horizontal.3").font(.caption) }
+                .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
+                .accessibilityIdentifier("pi-permission-menu")
+                .help("Pi tool approvals apply to future inputs. Active and queued inputs keep their captured policy. This does not sandbox the process.")
         } else if provider == .acp {
             Label("Agent permissions", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
                 .help("The agent enforces its own sandbox. Coincide shows the permission requests it sends.")

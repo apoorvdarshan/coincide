@@ -1,11 +1,11 @@
 import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case codex, claude, opencode, acp
-    public static var builtIn: [Self] { [.codex, .claude, .opencode] }
+    case codex, claude, opencode, pi, acp
+    public static var builtIn: [Self] { [.codex, .claude, .opencode, .pi] }
     public var id: String { rawValue }
-    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .acp: "ACP Agent" } }
-    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .acp: "" } }
+    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .pi: "Pi"; case .acp: "ACP Agent" } }
+    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .pi: "pi"; case .acp: "" } }
 }
 
 public enum ProviderEvent: Codable, Sendable, Equatable {
@@ -40,6 +40,7 @@ public protocol ProviderSession: Actor {
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
     func interrupt() async throws
+    func interrupt(expectedRunID: UUID) async throws
     func steeringCapabilities() async -> ProviderSteeringCapabilities
     func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt
     func respond(_ request: ApprovalRequest, allow: Bool) async throws
@@ -56,6 +57,9 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    /// The default retains older adapters' behavior. Adapters with weak native
+    /// turn identities can additionally fence interruption by the local run.
+    public func interrupt(expectedRunID: UUID) async throws { try await interrupt() }
     public func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
         throw CoincideError("This provider does not expose a native OpenCode catalog.")
     }
@@ -92,6 +96,13 @@ extension ProviderSession {
 
 public enum ProviderSessions {
     public static func make(for thread: CodingThread) throws -> any ProviderSession {
+        if thread.provider == .pi {
+            try PiConfigurationValidation.configuration(.init(thread: thread))
+            guard let configuration = thread.piConfiguration, let executable = ProcessChannel.findExecutable(configuration.executable) else {
+                throw CoincideError("Install and sign in to Pi before sending a message.")
+            }
+            return PiSession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration, permission: thread.permission)
+        }
         if thread.provider == .opencode {
             guard let configuration = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
             try OpenCodeConfigurationValidation.thread(thread)
@@ -123,6 +134,7 @@ public enum ProviderSessions {
         case .codex: return try CodexSession(executable: executable, cwd: cwd)
         case .claude: return try ClaudeSession(executable: executable, cwd: cwd, resumeID: thread.providerThreadID)
         case .opencode: throw OpenCodeConfiguration.invalid()
+        case .pi: throw PiConfiguration.invalid()
         case .acp: throw CoincideError("Choose an ACP agent.")
         }
     }

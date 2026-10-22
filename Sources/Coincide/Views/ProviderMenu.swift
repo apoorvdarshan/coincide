@@ -13,7 +13,8 @@ struct ProviderMenu: View {
     private var summary: String {
         var parts = [thread.providerName]
         if !thread.model.isEmpty {
-            parts.append(store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? thread.openCodeConfiguration?.model?.id ?? thread.model)
+            let piName = thread.piConfiguration?.model.map { $0.provider + " / " + $0.modelID }
+            parts.append(store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? piName ?? thread.openCodeConfiguration?.model?.id ?? thread.model)
         }
         if thread.provider == .codex, let effort = thread.reasoningEffort {
             parts.append(String(localized: "Reasoning: \(ReasoningEffortPresentation.title(effort))"))
@@ -22,6 +23,7 @@ struct ProviderMenu: View {
             if let variant = thread.openCodeConfiguration?.model?.variant { parts.append(variant) }
             if let agent = thread.openCodeConfiguration?.agentID { parts.append(agent) }
         }
+        if thread.provider == .pi, let level = thread.piConfiguration?.thinkingLevel { parts.append("Thinking: \(level)") }
         return parts.joined(separator: " · ")
     }
     private var menu: some View {
@@ -61,6 +63,20 @@ struct ProviderMenu: View {
             if thread.provider == .opencode {
                 openCodeOptions
             }
+            if thread.provider == .pi, let model = store.models(for: thread).first(where: { $0.id == thread.model }),
+               let levels = model.piThinkingLevels, !levels.isEmpty {
+                Divider()
+                Menu("Thinking") {
+                    Button { _ = store.setPiThinking(nil, model: model, threadID: thread.id) } label: {
+                        choice("Pi Default", selected: thread.piConfiguration?.thinkingLevel == nil)
+                    }
+                    ForEach(levels, id: \.self) { level in
+                        Button { _ = store.setPiThinking(level, model: model, threadID: thread.id) } label: {
+                            choice(level.capitalized, selected: thread.piConfiguration?.thinkingLevel == level)
+                        }
+                    }
+                }.accessibilityIdentifier("pi-thinking-menu")
+            }
             if thread.provider == .acp {
                 Divider()
                 Button("Reset Agent Options") { store.resetAgentOptions(thread.id) }
@@ -96,7 +112,7 @@ struct ProviderMenu: View {
             }
             Divider()
             Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
-                .disabled((thread.provider == .acp || thread.provider == .opencode) && !store.workspaceReady(for: thread))
+                .disabled((thread.provider == .acp || thread.provider == .opencode || thread.provider == .pi) && !store.workspaceReady(for: thread))
         } label: {
             // AppKit's native menu button derives its title from a single Text.
             // Nested label stacks otherwise lose the selected model and effort.

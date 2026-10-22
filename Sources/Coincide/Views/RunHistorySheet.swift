@@ -349,6 +349,11 @@ enum RunHistoryPresentation {
         configuration.provider == .acp ? configuration.acpAgent?.name ?? configuration.provider.name : configuration.provider.name
     }
     static func model(_ configuration: ProviderConfiguration) -> String {
+        if configuration.provider == .pi, let native = configuration.piConfiguration {
+            var parts = [native.model.map { $0.provider + " / " + $0.modelID } ?? String(localized: "Pi default model")]
+            if let level = native.thinkingLevel { parts.append("Thinking: \(level)") }
+            return parts.joined(separator: " · ")
+        }
         if configuration.provider == .opencode, let native = configuration.openCodeConfiguration {
             var parts = [native.model.map { $0.providerID + " / " + $0.id } ?? String(localized: "Default model")]
             if let variant = native.model?.variant { parts.append(variant) }

@@ -64,6 +64,13 @@ their captured launch policy. Questions submit exact selected choices and notes
 together. The integration can use the CLI's existing sign-in, with offline
 protocol verification so far; installed Grok execution remains unverified.
 
+Pi conversations use an installed, authenticated Pi 0.80.5+ CLI over its native
+RPC protocol. **Refresh Models** loads provider/model and advertised thinking
+choices. Inputs retain their captured settings and tool approval policy; native
+confirm, select, input and editor requests appear in the conversation. Existing
+sessions resume from their native session files. Offline protocol checks pass;
+installed Pi execution, steering, history mutation and usage remain unfinished.
+
 **Settings → Providers → Codex Account** reads the existing CLI sign-in, plan,
 and available allowance windows. Email stays hidden until revealed. Refresh
 checks account identity before and after reading usage; switching accounts clears

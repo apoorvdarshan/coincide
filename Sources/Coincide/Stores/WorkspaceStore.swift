@@ -104,6 +104,7 @@ final class WorkspaceStore {
     var providerModels: [ProviderKind: [ProviderModel]] = [:]
     var acpModels: [UUID: [ProviderModel]] = [:]
     var openCodeCatalogs: [UUID: OpenCodeMetadataSnapshot] = [:]
+    var piModels: [UUID: [ProviderModel]] = [:]
     var isLoading = true
     var isRefreshingModels = false
     let codexAccount = CodexAccountStore()
@@ -746,6 +747,13 @@ final class WorkspaceStore {
                 openCodeCatalogs.removeValue(forKey: id)
             }
         }
+        for id in Array(piModels.keys) {
+            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
+            if next?.provider != .pi || old?.workspacePath != next?.workspacePath ||
+                old?.piConfiguration?.runtimeIdentity != next?.piConfiguration?.runtimeIdentity || old?.permission != next?.permission {
+                piModels.removeValue(forKey: id)
+            }
+        }
         let removedThreads = Set(snapshot.threads.map(\.id)).subtracting(update.snapshot.threads.map(\.id))
         let removedProjects = Set(snapshot.projects.map(\.id)).subtracting(update.snapshot.projects.map(\.id))
         let changedScriptThreads = Set(snapshot.threads.compactMap { old -> UUID? in
@@ -953,6 +961,14 @@ final class WorkspaceStore {
     }
     func setModel(_ model: String, id: UUID) {
         cancelCodexModelDefaultsRead(id)
+        if thread(id)?.provider == .pi {
+            _ = enqueuePiEdit(threadID: id) { [weak self] current in
+                if model.isEmpty { return .piModel(nil) }
+                guard let row = self?.models(for: current).first(where: { $0.id == model }) else { throw CoincideError("Refresh Pi models before choosing a model.") }
+                return .piModel(row)
+            }
+            return
+        }
         if let current = thread(id), current.provider == .opencode {
             _ = enqueueOpenCodeEdit(threadID: id) { [weak self] current in
                 if model.isEmpty { return .openCodeModel(nil) }
@@ -991,6 +1007,25 @@ final class WorkspaceStore {
     }
     func setOpenCodeGeneration(_ generation: OpenCodeGeneration, threadID: UUID) {
         _ = enqueueOpenCodeEdit(threadID: threadID) { _ in .openCodeGeneration(generation) }
+    }
+    @discardableResult func setPiThinking(_ level: String?, model: ProviderModel, threadID: UUID) -> Task<Bool, Never> {
+        enqueuePiEdit(threadID: threadID) { [weak self] current in
+            guard current.model == model.id, let row = self?.models(for: current).first(where: { $0.id == model.id }) else { throw CoincideError("The selected Pi model changed. Refresh models and choose again.") }
+            return .piThinking(model: row, level: level)
+        }
+    }
+    private func enqueuePiEdit(threadID: UUID, prepare: @escaping @MainActor (CodingThread) throws -> ThreadEdit) -> Task<Bool, Never> {
+        guard !terminating, let captured = thread(threadID), captured.provider == .pi else { return Task { false } }
+        let task = enqueuePreparing { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == .pi,
+                  current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
+                  current.piConfiguration?.runtimeIdentity == captured.piConfiguration?.runtimeIdentity else { throw CancellationError() }
+            return .editThread(threadID, try prepare(current))
+        }
+        return Task {
+            do { _ = try await task.value; return true }
+            catch { if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription }; return false }
+        }
     }
     func setGrokRuntimeMode(_ mode: GrokACPRuntimeMode, threadID: UUID) {
         guard let captured = thread(threadID), captured.provider == .acp, captured.acpAgent?.integration == .grok else { return }
@@ -1100,13 +1135,14 @@ final class WorkspaceStore {
     func saveACPAgent(_ agent: ACPAgentConfiguration) async throws { _ = try await enqueue(.saveACPAgent(agent)).value }
     func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] {
-        if provider == .opencode {
-            guard let selectedThread, selectedThread.provider == .opencode else { return [] }
+        if provider == .opencode || provider == .pi {
+            guard let selectedThread, selectedThread.provider == provider else { return [] }
             return models(for: selectedThread)
         }
         return providerModels[provider] ?? []
     }
     func models(for thread: CodingThread) -> [ProviderModel] {
+        if thread.provider == .pi { return piModels[thread.id] ?? [] }
         if thread.provider == .opencode {
             guard let inventory = openCodeCatalogs[thread.id] else { return [] }
             return inventory.models.filter(\.enabled).map { descriptor in
@@ -1259,7 +1295,7 @@ final class WorkspaceStore {
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
-        let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.openCodeConfiguration?.executable ?? thread.provider.executable
+        let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.piConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable
         guard !executable.isEmpty, ProcessChannel.findExecutable(executable) != nil else {
             errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
             return Task { false }
@@ -1440,6 +1476,13 @@ final class WorkspaceStore {
                       current.projectID == thread.projectID, current.workspacePath == thread.workspacePath,
                       current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity else { return }
                 openCodeCatalogs[thread.id] = catalog
+            } else if kind == .pi {
+                guard let thread = selectedThread, thread.provider == .pi else { throw CoincideError("Choose Pi in a conversation before refreshing its models.") }
+                let models = try await engine.models(thread: thread)
+                guard let current = self.thread(thread.id), current.projectID == thread.projectID, current.provider == .pi,
+                      current.workspacePath == thread.workspacePath,
+                      ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding else { return }
+                piModels[thread.id] = models
             } else if kind == .acp, let thread = selectedThread, thread.acpAgent != nil {
                 let models = try await engine.models(thread: thread)
                 guard let current = self.thread(thread.id), current.provider == thread.provider,

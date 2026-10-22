@@ -13,7 +13,15 @@ struct ApprovalView: View {
     private var questions: [JSONValue] { request.questions }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if request.method == "opencode/form" {
+            if request.method == "pi/extension" {
+                if let input = request.piExtension {
+                    PiExtensionApprovalView(request: input, isResponding: isResponding,
+                        onDecision: onDecision, onAnswer: onAnswer, onOption: onOption)
+                } else {
+                    Text("This Pi request cannot be displayed safely.")
+                    Button("Cancel Request") { onDecision(false) }
+                }
+            } else if request.method == "opencode/form" {
                 if let form = request.openCodeForm {
                     OpenCodeFormApprovalView(form: form, isResponding: isResponding,
                         onSelections: onSelections, onCancel: { onDecision(false) })
