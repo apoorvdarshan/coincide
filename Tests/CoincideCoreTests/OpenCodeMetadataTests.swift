@@ -225,6 +225,7 @@ func openCodeV2IdentityRequiresAnActualPositiveBoundedProcessID(kind: String) as
     let client = try fixture.client()
     let connection = OpenCodeMetadataConnection(client: client, expectedGeneration: .v2)
     let events = try await client.openEvents(path: ["api", "event"])
+    let observationDeadline = ContinuousClock.now.advanced(by: .seconds(3))
     let metadata = Task { try await connection.identify() }
     for _ in 0..<300 {
         if fixture.requests.contains(where: { $0.url?.path == "/api/info" }) { break }
@@ -236,6 +237,7 @@ func openCodeV2IdentityRequiresAnActualPositiveBoundedProcessID(kind: String) as
     #expect(!fixture.stoppedPaths.contains("/api/event"))
     #expect(try await client.request(path: ["other-read"]).status == 200)
     await events.close(); await client.close()
+    try await fixture.stopped(path: "/api/event", before: observationDeadline)
     #expect(fixture.stoppedPaths.contains("/api/event"))
 }
 
@@ -253,6 +255,16 @@ private final class OpenCodeMetadataFixture: @unchecked Sendable {
     var requests: [URLRequest] { lock.withLock { recorded } }
     var stoppedPaths: [String] { lock.withLock { stopped } }
     func didStop(_ request: URLRequest) { lock.withLock { stopped.append(request.url?.path ?? "") } }
+    func stopped(path: String, before deadline: ContinuousClock.Instant) async throws {
+        // URLSession's completion/invalidation and URLProtocol.stopLoading run
+        // on separate queues. Observe that exact callback within the existing
+        // three-second metadata observation budget, rather than retrying a test.
+        while ContinuousClock.now < deadline {
+            if stoppedPaths.contains(path) { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard stoppedPaths.contains(path) else { throw CoincideError("The synthetic OpenCode request did not report its stop callback.") }
+    }
     func remove() { _ = Self.registryLock.withLock { Self.registry.removeValue(forKey: host) } }
     static func find(_ host: String?) -> OpenCodeMetadataFixture? { registryLock.withLock { host.flatMap { registry[$0] } } }
     func respond(_ request: URLRequest) -> OpenCodeHTTPResponse? {
@@ -280,14 +292,20 @@ private final class OpenCodeMetadataFixture: @unchecked Sendable {
 }
 
 private final class OpenCodeMetadataProtocol: URLProtocol, @unchecked Sendable {
+    private let ownerLock = NSLock()
+    private var owner: OpenCodeMetadataFixture?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         guard let fixture = OpenCodeMetadataFixture.find(request.url?.host) else { client?.urlProtocol(self, didFailWithError: OpenCodeProtocolError.closed); return }
+        ownerLock.withLock { owner = fixture }
         guard let reply = fixture.respond(request), let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers) else { return }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: reply.body)
         if reply.headers["Content-Type"] != "text/event-stream" { client?.urlProtocolDidFinishLoading(self) }
     }
-    override func stopLoading() { OpenCodeMetadataFixture.find(request.url?.host)?.didStop(request) }
+    override func stopLoading() {
+        let fixture = ownerLock.withLock { let value = owner; owner = nil; return value }
+        fixture?.didStop(request)
+    }
 }

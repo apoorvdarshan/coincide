@@ -72,7 +72,9 @@ func groupedCheckoutControlsPreserveRunningOwnershipAndRouteOnlyNewConversations
         store.selectedThreadID = threadA; store.selectedProjectID = a.id
         // Opening another checkout selects that project without rebinding the visible thread.
         store.selectedProjectID = b.id; store.newThread()
-        try await waitGroupingUI { store.snapshot.threads.count == 4 }
+        try await waitGroupingUI {
+            store.snapshot.threads.count == 4 && store.selectedThread?.projectID == b.id && store.selectedThread?.workspacePath == b.path
+        }
         #expect(store.selectedThread?.projectID == b.id && store.selectedThread?.workspacePath == b.path)
         store.selectedThreadID = threadA; store.selectedProjectID = a.id
         let agent = ACPAgentConfiguration(name: "Grouping Fixture Agent", executable: "/usr/bin/true")
