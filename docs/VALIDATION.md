@@ -1,5 +1,24 @@
 # Validation record
 
+## 2026-10-22 — bounded hosted test crash diagnostics
+
+- Exact head `d33e7c7`, run `39766284863`, built successfully but its production
+  Swift test process exited with Darwin signal 10 (`SIGBUS`). No test assertion,
+  completed test summary, crash stack or uploaded report established a cause.
+  Buffered output cannot identify the crashing test from its last printed name.
+  Packaging did not run and the dependent 14-scenario GUI job was skipped.
+- The production workflow now records its test-start time and, only after test
+  failure, attempts to export recent allowlisted test-helper crash stacks. Reports
+  retain bounded exception enums, termination code, relative code offsets and
+  symbol/image identity. Raw reports, absolute addresses, registers, environment,
+  assertion payloads, private paths and memory are excluded. Both capture and
+  upload are best effort and cannot change the original test outcome.
+- Synthetic parsing/privacy checks cover two-object Apple IPS, compact timezones,
+  malformed/stale/foreign/symlink inputs, stable fault-stack fingerprinting and
+  input/output bounds. All 28 Python harness/configuration checks passed in
+  2.110 seconds. This change adds diagnostics without retries, deadline changes,
+  test removal or an inferred fix for the unlocalized crash.
+
 ## 2026-10-22 — native OpenCode 2 conversations
 
 - Added a dedicated native HTTP/SSE conversation adapter, durable captured

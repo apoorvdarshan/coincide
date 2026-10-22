@@ -44,9 +44,25 @@ jobs:
           key: swift-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
           restore-keys: swift-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
       - name: Build and test
+        id: swift_tests
         # Process/PTY and deadline regressions share a small hosted runner. Keep
         # every test, while avoiding simultaneous fixture launches starving timers.
-        run: swift test --no-parallel
+        run: |
+          python3 -c 'import os, pathlib, time; pathlib.Path(os.environ["RUNNER_TEMP"], "coincide-swift-tests-started").write_text(str(time.time()))'
+          swift test --no-parallel
+      - name: Collect sanitized Swift test crash stacks
+        if: failure() && steps.swift_tests.outcome == 'failure'
+        continue-on-error: true
+        run: python3 script/collect_test_crashes.py --since-file "$RUNNER_TEMP/coincide-swift-tests-started" --output "$RUNNER_TEMP/coincide-test-crashes"
+      - name: Keep sanitized Swift test crash stacks
+        if: failure() && steps.swift_tests.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coincide-test-crashes-${{ github.sha }}
+          path: ${{ runner.temp }}/coincide-test-crashes/*.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Package the native app
         run: ./script/build_and_run.sh --build-only
       - name: Verify app signature
