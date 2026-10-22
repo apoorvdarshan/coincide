@@ -10,7 +10,7 @@ struct WorktreeSetupSheet: View {
     let store: WorkspaceStore
     let threadID: UUID
     let cancel: () -> Void
-    let choose: (GitWorktreeSelection, ProjectWorktreeSubmoduleMode) -> Void
+    let choose: (GitWorktreeSelection, ProjectWorktreeSubmoduleMode, Bool) -> Void
     private enum Mode: String, CaseIterable, Identifiable {
         case newBranch, existingBranch, registeredWorktree
         var id: Self { self }
@@ -28,6 +28,7 @@ struct WorktreeSetupSheet: View {
     @State private var existingBranch = ""
     @State private var worktreePath = ""
     @State private var submodules = ProjectWorktreeSubmoduleMode.none
+    @State private var reviewSetup = true
     @State private var options: WorktreeSetupOptions?
     @State private var loadError: String?
     @State private var loading = true
@@ -50,62 +51,70 @@ struct WorktreeSetupSheet: View {
             Text("Choose a Worktree").font(.title2)
             Text("Give this conversation a separate checkout, or use a registered checkout from this repository.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Picker("Checkout", selection: $mode) {
-                ForEach(Mode.allCases) { Text($0.title).tag($0) }
-            }.pickerStyle(.segmented)
-            switch mode {
-            case .newBranch:
-                TextField("New branch name", text: $branchName)
-                    .accessibilityIdentifier("worktree-new-branch")
-                TextField("Local base ref or commit", text: $baseRef)
-                    .accessibilityIdentifier("worktree-base-ref")
-                Text("The base must already be available locally. This does not fetch from a remote.")
-                    .font(.caption).foregroundStyle(.secondary)
-            case .existingBranch:
-                Picker("Local branch", selection: $existingBranch) {
-                    Text("Choose a branch").tag("")
-                    ForEach(options?.branches ?? [], id: \.self) { Text($0).tag($0) }
-                }
-                Text("If the branch is already checked out, choose its Registered Worktree instead.")
-                    .font(.caption).foregroundStyle(.secondary)
-            case .registeredWorktree:
-                Picker("Registered checkout", selection: $worktreePath) {
-                    Text("Choose a checkout").tag("")
-                    ForEach(options?.worktrees ?? []) { worktree in
-                        Text("\(worktree.branch ?? "") — \(worktree.path)").tag(worktree.path)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Picker("Checkout", selection: $mode) {
+                        ForEach(Mode.allCases) { Text($0.title).tag($0) }
+                    }.pickerStyle(.segmented)
+                    switch mode {
+                    case .newBranch:
+                        TextField("New branch name", text: $branchName)
+                            .accessibilityIdentifier("worktree-new-branch")
+                        TextField("Local base ref or commit", text: $baseRef)
+                            .accessibilityIdentifier("worktree-base-ref")
+                        Text("The base must already be available locally. This does not fetch from a remote.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    case .existingBranch:
+                        Picker("Local branch", selection: $existingBranch) {
+                            Text("Choose a branch").tag("")
+                            ForEach(options?.branches ?? [], id: \.self) { Text($0).tag($0) }
+                        }
+                        Text("If the branch is already checked out, choose its Registered Worktree instead.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    case .registeredWorktree:
+                        Picker("Registered checkout", selection: $worktreePath) {
+                            Text("Choose a checkout").tag("")
+                            ForEach(options?.worktrees ?? []) { worktree in
+                                Text("\(worktree.branch ?? "") — \(worktree.path)").tag(worktree.path)
+                            }
+                        }
+                        if !worktreePath.isEmpty {
+                            Text(worktreePath).font(.caption).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("Existing edits stay in that checkout. Coincide verifies it still belongs to this repository before using it.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                }
-                if !worktreePath.isEmpty {
-                    Text(worktreePath).font(.caption).textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text("Existing edits stay in that checkout. Coincide verifies it still belongs to this repository before using it.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if mode != .registeredWorktree {
-                Picker("Initialize submodules", selection: $submodules) {
-                    Text("None").tag(ProjectWorktreeSubmoduleMode.none)
-                    Text("Top level").tag(ProjectWorktreeSubmoduleMode.topLevel)
-                    Text("Recursive").tag(ProjectWorktreeSubmoduleMode.recursive)
-                }.accessibilityIdentifier("worktree-submodules")
-                Text("Initialization may download repositories using your Git configuration. None leaves submodules empty. If initialization fails, the checkout remains available with a warning.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            if loading { ProgressView().controlSize(.small).accessibilityLabel("Loading local worktrees") }
-            if let loadError {
-                Text(loadError).font(.caption).foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("Messages wait until setup finishes. Cancelling setup keeps queued messages paused and preserves local files and branches; Git may clean its own unfinished checkout.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text("Save or discard file edits and close this conversation's terminal tabs in every window before changing its checkout.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if mode != .registeredWorktree {
+                        Picker("Initialize submodules", selection: $submodules) {
+                            Text("None").tag(ProjectWorktreeSubmoduleMode.none)
+                            Text("Top level").tag(ProjectWorktreeSubmoduleMode.topLevel)
+                            Text("Recursive").tag(ProjectWorktreeSubmoduleMode.recursive)
+                        }.accessibilityIdentifier("worktree-submodules")
+                        Text("Initialization may download repositories using your Git configuration. None leaves submodules empty. If initialization fails, the checkout remains available with a warning.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Toggle("Review checkout setup script", isOn: $reviewSetup)
+                        .accessibilityIdentifier("worktree-review-setup")
+                    Text("When t3.json declares a setup script, review its command before running it. Messages wait for your choice. Turning this off skips setup discovery for this checkout.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if loading { ProgressView().controlSize(.small).accessibilityLabel("Loading local worktrees") }
+                    if let loadError {
+                        Text(loadError).font(.caption).foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("Messages wait until setup finishes. Cancelling setup keeps queued messages paused and preserves local files and branches; Git may clean its own unfinished checkout.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text("Save or discard file edits and close this conversation's terminal tabs in every window before changing its checkout.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.trailing, 4)
+            }.frame(maxHeight: 330)
             HStack {
                 Button("Refresh") { Task { await loadOptions() } }.disabled(loading)
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
                 Button(mode == .registeredWorktree ? "Use Worktree" : "Prepare Worktree") {
-                    if let selection { choose(selection, mode == .registeredWorktree ? .none : submodules) }
+                    if let selection { choose(selection, mode == .registeredWorktree ? .none : submodules, reviewSetup) }
                 }.keyboardShortcut(.defaultAction).disabled(selection == nil || loading)
             }
         }

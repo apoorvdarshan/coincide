@@ -34,20 +34,25 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     case projectClone(projectID: UUID, plan: GitClonePlan)
     case resolveWorktree(threadID: UUID, request: GitWorktreeRequest)
     case prepareWorktree(threadID: UUID, plan: GitWorktreePlan)
+    case resolveProjectScript(threadID: UUID, attemptID: UUID, runID: UUID)
+    case startProjectScript(threadID: UUID, attemptID: UUID, plan: ProjectScriptExecutionPlan)
     public var threadID: UUID? {
         switch self {
         case .projectClone: nil
-        case .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
+        case .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }
     var worktreeAttemptID: UUID? {
         switch self { case .resolveWorktree(_, let request): request.id; case .prepareWorktree(_, let plan): plan.id; default: nil }
     }
+    var projectScriptRunID: UUID? {
+        switch self { case .resolveProjectScript(_, _, let id): id; case .startProjectScript(_, _, let plan): plan.id; default: nil }
+    }
     public var projectID: UUID? { if case .projectClone(let id, _) = self { id } else { nil } }
     public var targetID: UUID {
         switch self {
         case .projectClone(let id, _): id
-        case .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
+        case .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
     }
 }

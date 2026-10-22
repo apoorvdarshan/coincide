@@ -9,7 +9,8 @@ public enum ThreadWorkspacePreparationPhase: String, Codable, Sendable {
 public struct ThreadWorkspacePreparationAttempt: Codable, Sendable, Equatable {
     public let request: GitWorktreeRequest
     public let plan: GitWorktreePlan?
-    public init(request: GitWorktreeRequest, plan: GitWorktreePlan?) { self.request = request; self.plan = plan }
+    public let setup: ThreadProjectScriptRun?
+    public init(request: GitWorktreeRequest, plan: GitWorktreePlan?, setup: ThreadProjectScriptRun? = nil) { self.request = request; self.plan = plan; self.setup = setup }
 }
 
 public struct ThreadWorkspacePreparation: Codable, Sendable, Equatable, Identifiable {
@@ -23,14 +24,27 @@ public struct ThreadWorkspacePreparation: Codable, Sendable, Equatable, Identifi
     public var updatedAt: Date
     public var endedAt: Date?
     public var previousAttempts: [ThreadWorkspacePreparationAttempt]
+    public var setup: ThreadProjectScriptRun?
     public var id: UUID { request.id }
     public var destinationPath: String { request.destinationPath }
     public var isReady: Bool { phase == .completed }
     public var isRunning: Bool { phase == .queued || phase == .resolving || phase == .preparing }
     public var canRetry: Bool { phase == .failed || phase == .cancelled || phase == .interrupted }
-    public init(request: GitWorktreeRequest, now: Date = Date(), previousAttempts: [ThreadWorkspacePreparationAttempt] = []) {
+    /// The main checkout is registered in Git's inventory, but selecting it is not
+    /// a dedicated-worktree creation and must never invoke the setup role.
+    var permitsProjectSetup: Bool { Self.isDedicatedWorktree(plan) }
+    private static func isDedicatedWorktree(_ plan: GitWorktreePlan?) -> Bool {
+        guard let plan else { return false }
+        if case .reuse = plan.request.selection {
+            return plan.worktreeGitDirectoryPath != plan.commonDirectoryPath &&
+                plan.worktreeGitDirectoryIdentity != plan.commonDirectoryIdentity
+        }
+        return true
+    }
+    public init(request: GitWorktreeRequest, now: Date = Date(), previousAttempts: [ThreadWorkspacePreparationAttempt] = [], reviewSetup: Bool = false) {
         self.request = request; phase = .queued; cancelRequested = false
         createdAt = now; updatedAt = now; self.previousAttempts = previousAttempts
+        setup = reviewSetup ? .init(now: now) : nil
     }
     public func validate(thread: CodingThread) throws {
         try request.validate()
@@ -43,8 +57,12 @@ public struct ThreadWorkspacePreparation: Codable, Sendable, Equatable, Identifi
               result == nil || isReady else { throw CoincideError("This conversation has inconsistent workspace preparation state.") }
         try Self.validate(plan: plan, request: request)
         if let result { try Self.validate(result: result, plan: plan) }
+        try setup?.validate(workspacePath: destinationPath)
+        guard setup?.plan == nil || permitsProjectSetup else { throw CoincideError("Project setup requires a dedicated worktree.") }
         for previous in previousAttempts {
             try previous.request.validate(); try Self.validate(plan: previous.plan, request: previous.request)
+            try previous.setup?.validate(workspacePath: previous.request.destinationPath)
+            guard previous.setup?.plan == nil || Self.isDedicatedWorktree(previous.plan) else { throw CoincideError("Project setup history requires a dedicated worktree.") }
             guard previous.request.destinationRoot == request.destinationRoot else { throw CoincideError("Workspace preparation history belongs to another managed root.") }
         }
         if !isReady {

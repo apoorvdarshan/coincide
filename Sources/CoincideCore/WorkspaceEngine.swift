@@ -6,12 +6,207 @@ public struct WorkspaceUpdate: Sendable {
     public var error: String?
 }
 
+extension WorkspaceEngine {
+    @discardableResult public func approveProjectScript(threadID: UUID, runID: UUID, expectedPlan: ProjectScriptExecutionPlan) async throws -> WorkspaceCommandReceipt {
+        try await dispatch(.approveProjectScript(threadID: threadID, runID: runID, expectedPlan: expectedPlan))
+    }
+    @discardableResult public func stopProjectScript(threadID: UUID, runID: UUID) async throws -> WorkspaceCommandReceipt {
+        try await dispatch(.stopProjectScript(threadID: threadID, runID: runID))
+    }
+    @discardableResult public func skipProjectScript(threadID: UUID, runID: UUID) async throws -> WorkspaceCommandReceipt {
+        try await dispatch(.skipProjectScript(threadID: threadID, runID: runID))
+    }
+    @discardableResult public func retryProjectScript(threadID: UUID, runID: UUID) async throws -> WorkspaceCommandReceipt {
+        try await dispatch(.retryProjectScript(threadID: threadID, runID: runID))
+    }
+    public func awaitProjectScriptCleanup(threadID: UUID, runID: UUID) async {
+        while let task = scriptClosures[runID] { await task.value }
+    }
+    public func projectScriptOutput(threadID: UUID, runID: UUID) async throws -> AsyncStream<ProjectScriptOutputSnapshot> {
+        _ = try await load()
+        guard let setup = revision.snapshot.threads.first(where: { $0.id == threadID })?.workspacePreparation?.setup, setup.id == runID else { throw CancellationError() }
+        let log: ProjectScriptRunLog
+        if let existing = scriptLogs[runID] { log = existing }
+        else {
+            log = .init(id: runID); scriptLogs[runID] = log
+            if ![.waitingForCheckout, .discovering, .awaitingApproval, .starting, .running].contains(setup.phase) { await log.close() }
+        }
+        let stream = await log.stream()
+        guard revision.snapshot.threads.first(where: { $0.id == threadID })?.workspacePreparation?.setup?.id == runID else { throw CancellationError() }
+        return stream
+    }
+    private func ownsScript(threadID: UUID, attemptID: UUID, runID: UUID, incarnation: UUID, phases: [ThreadProjectScriptRunPhase]? = nil,
+                            allowArchived: Bool = false, requireReady: Bool = true) -> Bool {
+        guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[threadID] == incarnation,
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), allowArchived || !thread.isArchived,
+              let preparation = thread.workspacePreparation, preparation.id == attemptID, !requireReady || preparation.isReady,
+              let setup = preparation.setup, setup.id == runID, phases.map({ $0.contains(setup.phase) }) ?? true,
+              !requireReady || revision.snapshot.workspaceReady(for: thread), thread.workspacePath == preparation.destinationPath else { return false }
+        return true
+    }
+    private func ownsScriptEvent(_ command: EngineCommand) -> Bool {
+        switch command {
+        case .projectScriptStarted(let thread, let attempt, let run, let incarnation),
+             .projectScriptExited(let thread, let attempt, let run, let incarnation, _):
+            return ownsScript(threadID: thread, attemptID: attempt, runID: run, incarnation: incarnation)
+        case .projectScriptStopped(let thread, let attempt, let run, let incarnation):
+            return ownsScript(threadID: thread, attemptID: attempt, runID: run, incarnation: incarnation, allowArchived: true, requireReady: false)
+        case .projectScriptEffectResult(let request, _, let incarnation):
+            guard let thread = request.threadID, let run = request.projectScriptRunID,
+                  let attempt = revision.snapshot.threads.first(where: { $0.id == thread })?.workspacePreparation?.id else { return false }
+            return ownsScript(threadID: thread, attemptID: attempt, runID: run, incarnation: incarnation)
+        default: return true
+        }
+    }
+    private func waitForScriptCommit(_ runID: UUID) async {
+        while scriptCommitRuns.contains(runID) { await withCheckedContinuation { scriptCommitWaiters.append($0) } }
+    }
+    private func performProjectScript(_ request: WorkspaceEffectRequest) async throws -> EffectResult {
+        guard let threadID = request.threadID, let runID = request.projectScriptRunID, let incarnation = threadIncarnations[threadID] else { return .cancelled }
+        await waitForScriptCommit(runID)
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), let preparation = thread.workspacePreparation else { return .cancelled }
+        let attemptID = preparation.id
+        switch request {
+        case .resolveProjectScript(_, let expectedAttempt, _):
+            guard expectedAttempt == attemptID, ownsScript(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, phases: [.discovering]),
+                  let project = revision.snapshot.projects.first(where: { $0.id == thread.projectID }) else { return .cancelled }
+            guard preparation.permitsProjectSetup else { return .projectScriptResolved(nil) }
+            do {
+                let plan = try await projectScriptPlanner(.init(id: runID, projectRoot: URL(fileURLWithPath: project.path), workspacePath: URL(fileURLWithPath: thread.workspacePath)))
+                if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
+                await waitForScriptCommit(runID)
+                guard ownsScript(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, phases: [.discovering]) else { throw CancellationError() }
+                try Task.checkCancellation()
+                if let plan {
+                    try plan.validate()
+                    guard plan.id == runID, plan.workspacePath == thread.workspacePath, plan.script.runOnWorktreeCreate else { throw ProjectScriptExecutionError(.invalidPlan) }
+                }
+                return .projectScriptResolved(plan)
+            } catch {
+                if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
+                await waitForScriptCommit(runID)
+                guard ownsScript(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, phases: [.discovering]) else { throw CancellationError() }
+                try Task.checkCancellation(); throw CoincideError(ThreadProjectScriptRun.discoveryError)
+            }
+        case .startProjectScript(_, let expectedAttempt, let plan):
+            guard expectedAttempt == attemptID, ownsScript(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, phases: [.starting]),
+                  preparation.setup?.plan == plan, scriptRuntimes[runID] == nil else { return .cancelled }
+            let log = scriptLogs[runID] ?? ProjectScriptRunLog(id: runID); scriptLogs[runID] = log
+            let session: any ProjectScriptExecutionSession
+            do { session = try projectScriptFactory(plan) }
+            catch { await log.close(); throw CoincideError(ThreadProjectScriptRun.executionError) }
+            let output: Task<Void, Never> = Task {
+                do { try await session.consumeOutput { chunk in await log.append(chunk.data) } } catch { }
+                await session.close()
+                await log.close()
+            }
+            scriptRuntimes[runID] = .init(threadID: threadID, projectID: thread.projectID, attemptID: attemptID,
+                incarnation: incarnation, session: session, output: output, monitor: nil)
+            do {
+                try await session.prepare()
+                if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
+                await waitForScriptCommit(runID)
+                guard ownsScript(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, phases: [.starting]), scriptRuntimes[runID] != nil else { throw CancellationError() }
+                try Task.checkCancellation()
+                // No actor suspension between the final owner check and the one-shot START.
+                try session.start()
+                try await session.waitUntilStarted()
+                if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
+                await waitForScriptCommit(runID)
+                guard ownsScript(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, phases: [.starting]) else { throw CancellationError() }
+                try Task.checkCancellation()
+                _ = try await enqueue(.projectScriptStarted(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation))
+                guard ownsScript(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, phases: [.running]), scriptRuntimes[runID] != nil else { throw CancellationError() }
+                let monitor = Task { [weak self] in
+                    let result: ProjectScriptCommandExit?
+                    do { result = try await session.waitForCommandExit() } catch { result = nil }
+                    guard !Task.isCancelled, let self else { return }
+                    _ = try? await self.enqueue(.projectScriptExited(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, result: result))
+                }
+                scriptRuntimes[runID]?.monitor = monitor
+                return .succeeded
+            } catch {
+                await session.close(); output.cancel(); await log.close()
+                if scriptRuntimes[runID]?.incarnation == incarnation { scriptRuntimes.removeValue(forKey: runID)?.monitor?.cancel() }
+                try Task.checkCancellation()
+                if !ownsScript(threadID: threadID, attemptID: attemptID, runID: runID, incarnation: incarnation, phases: [.starting]) { throw CancellationError() }
+                throw CoincideError(ThreadProjectScriptRun.executionError)
+            }
+        default: return .cancelled
+        }
+    }
+    private func beginScriptDecisionCleanup(previous: WorkspaceSnapshot, next: WorkspaceSnapshot, removedEffects: [WorkspaceEffect], projectIDs: inout Set<UUID>) -> [Task<Void, Never>] {
+        var jobs: [Task<Void, Never>] = []
+        for old in previous.threads {
+            guard let preparation = old.workspacePreparation, let setup = preparation.setup else { continue }
+            let current = next.threads.first(where: { $0.id == old.id })
+            let stopping = current?.workspacePreparation?.setup?.id == setup.id && current?.workspacePreparation?.setup?.phase == .stopping
+            let retired = current == nil || current?.workspacePath != old.workspacePath || current?.workspacePreparation?.setup?.id != setup.id || (current?.isArchived == true && !old.isArchived)
+            if !stopping, !retired, let terminal = current?.workspacePreparation?.setup,
+               terminal.phase != setup.phase, [.skipped, .failed, .interrupted, .cancelled].contains(terminal.phase),
+               scriptRuntimes[setup.id] == nil, scriptClosures[setup.id] == nil, let log = scriptLogs[setup.id] {
+                projectIDs.insert(old.projectID)
+                jobs.append(Task { await log.close() })
+            }
+            guard stopping || retired, scriptClosures[setup.id] == nil else { continue }
+            projectIDs.insert(old.projectID)
+            let runtime = scriptRuntimes.removeValue(forKey: setup.id), log = scriptLogs[setup.id]
+            runtime?.monitor?.cancel(); runtime?.output.cancel()
+            let effectIDs = removedEffects.filter { $0.request.projectScriptRunID == setup.id && $0.status == .running && $0.leaseOwner == workerID }.map(\.id)
+            let incarnation = threadIncarnations[old.id]
+            let task: Task<Void, Never> = Task.detached { [weak self] in
+                if let runtime { await runtime.session.close() }
+                for effect in effectIDs { await self?.awaitRetiringEffect(effect) }
+                await log?.close()
+                // A later Retry/Skip can join an archive's already-running close.
+                // The current owner/phase decides whether this drained run needs an acknowledgement.
+                if let self, let incarnation {
+                    _ = try? await self.enqueue(.projectScriptStopped(threadID: old.id, attemptID: preparation.id, runID: setup.id, incarnation: incarnation))
+                }
+                await self?.projectScriptCleanupFinished(setup.id, threadID: old.id)
+            }
+            scriptClosures[setup.id] = task; jobs.append(task)
+        }
+        return jobs
+    }
+    private func projectScriptCleanupFinished(_ id: UUID, threadID: UUID) {
+        scriptClosures.removeValue(forKey: id)
+        if revision.snapshot.threads.first(where: { $0.id == threadID })?.workspacePreparation?.setup?.id != id { scriptLogs.removeValue(forKey: id) }
+    }
+    private func closeAllProjectScripts() async {
+        let runtimes = scriptRuntimes; scriptRuntimes = [:]
+        for runtime in runtimes.values { runtime.monitor?.cancel(); runtime.output.cancel() }
+        await withTaskGroup(of: Void.self) { group in
+            for runtime in runtimes.values { group.addTask { await runtime.session.close() } }
+            await group.waitForAll()
+        }
+        // A Stop/removal may already have detached its session into a tracked close.
+        // That cleanup owns the final snapshot until the transport actually drains.
+        for (id, log) in scriptLogs where scriptClosures[id] == nil { await log.close() }
+    }
+}
+
 /// Serial command decisions and durable commits are independent of provider I/O.
 public actor WorkspaceEngine {
     public typealias ProviderFactory = @Sendable (CodingThread) throws -> any ProviderSession
     public typealias WorktreeFactory = @Sendable (GitWorktreeRequest) throws -> any WorkspaceWorktreeSession
     public typealias CloneFactory = @Sendable (GitClonePlan) throws -> any ProjectCloneSession
     public typealias IdentityResolver = @Sendable (URL) async throws -> RepositoryIdentity?
+    public typealias ProjectScriptPlanner = @Sendable (ProjectScriptPlanningContext) async throws -> ProjectScriptExecutionPlan?
+    public typealias ProjectScriptFactory = @Sendable (ProjectScriptExecutionPlan) throws -> any ProjectScriptExecutionSession
+    private struct ScriptRuntime: Sendable {
+        let threadID: UUID, projectID: UUID, attemptID: UUID, incarnation: UUID
+        let session: any ProjectScriptExecutionSession
+        let output: Task<Void, Never>
+        var monitor: Task<Void, Never>?
+    }
+    private let projectScriptPlanner: ProjectScriptPlanner
+    private let projectScriptFactory: ProjectScriptFactory
+    private var scriptRuntimes: [UUID: ScriptRuntime] = [:]
+    private var scriptLogs: [UUID: ProjectScriptRunLog] = [:]
+    private var scriptClosures: [UUID: Task<Void, Never>] = [:]
+    private var scriptCommitRuns: Set<UUID> = []
+    private var scriptCommitWaiters: [CheckedContinuation<Void, Never>] = []
     private struct Envelope: Sendable {
         var id: UUID
         var command: EngineCommand
@@ -95,7 +290,9 @@ public actor WorkspaceEngine {
     public init(url: URL, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
                 cloneFactory: @escaping CloneFactory = { GitCloneService(plan: $0) },
                 identityResolver: @escaping IdentityResolver = { try await RepositoryIdentityResolver(root: $0).resolve() },
-                worktreeFactory: @escaping WorktreeFactory = { GitWorktreeService(request: $0) }) throws {
+                worktreeFactory: @escaping WorktreeFactory = { GitWorktreeService(request: $0) },
+                projectScriptPlanner: @escaping ProjectScriptPlanner = { try await ProjectScriptSetupPlanner.plan($0) },
+                projectScriptFactory: @escaping ProjectScriptFactory = { _ in throw ProjectScriptExecutionError(.helperUnavailable) }) throws {
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
@@ -103,6 +300,7 @@ public actor WorkspaceEngine {
         self.cloneFactory = cloneFactory
         self.identityResolver = identityResolver
         self.worktreeFactory = worktreeFactory
+        self.projectScriptPlanner = projectScriptPlanner; self.projectScriptFactory = projectScriptFactory
         worktreesRoot = url.deletingLastPathComponent().appendingPathComponent("Worktrees", isDirectory: true).standardizedFileURL
         try FileManager.default.createDirectory(at: worktreesRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let pair = AsyncStream<Envelope>.makeStream()
@@ -176,15 +374,18 @@ public actor WorkspaceEngine {
     /// Record the destination before resolving Git references. The command rechecks the source
     /// and first-turn boundary after any UI command that was already queued.
     @discardableResult public func beginWorktreePreparation(threadID: UUID, selection: GitWorktreeSelection,
-                                                          submodules: ProjectWorktreeSubmoduleMode = .none) async throws -> WorkspaceCommandReceipt {
+                                                          submodules: ProjectWorktreeSubmoduleMode = .none, reviewSetup: Bool = false) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
         try Task.checkCancellation()
         guard !stoppingEffects, let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
               let incarnation = threadIncarnations[threadID] else { throw CancellationError() }
         let source = thread.workspacePreparation.flatMap { $0.canRetry ? $0.request.sourcePath : nil } ?? thread.workspacePath
+        if let setup = thread.workspacePreparation?.setup, scriptRuntimes[setup.id] != nil || scriptClosures[setup.id] != nil {
+            throw WorkspaceCommandError("Stop this conversation's setup or background jobs before choosing another worktree.")
+        }
         let request = GitWorktreeRequest(sourcePath: source, destinationRoot: worktreesRoot.path, selection: selection, submodules: submodules)
-        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: nil, incarnation: incarnation))
+        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: nil, incarnation: incarnation, reviewSetup: reviewSetup))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
     @discardableResult public func cancelWorktreePreparation(_ threadID: UUID) async throws -> WorkspaceCommandReceipt {
@@ -224,7 +425,7 @@ public actor WorkspaceEngine {
         }
         guard ownsWorktree(threadID: threadID, attemptID: state.id, incarnation: incarnation) else { throw CancellationError() }
         let request = GitWorktreeRequest(sourcePath: state.request.sourcePath, destinationRoot: worktreesRoot.path, selection: state.request.selection, submodules: state.request.submodules)
-        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation))
+        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation, reviewSetup: state.setup != nil))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
     private func enqueue(_ command: EngineCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
@@ -250,11 +451,13 @@ public actor WorkspaceEngine {
                 if let fatalError { throw CoincideError(fatalError) }
                 let decision: WorkspaceDecision
                 do {
-                    if case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation) = envelope.command,
+                    if case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation, _) = envelope.command,
                        (threadIncarnations[threadID] != incarnation || request.destinationRoot != worktreesRoot.path) {
                         throw WorkspaceCommandError("This conversation changed. Choose the worktree again in its current workspace.")
                     }
-                    if case .worktreeRecovered(let threadID, let attemptID, let incarnation, _) = envelope.command,
+                    if !ownsScriptEvent(envelope.command) {
+                        decision = WorkspaceDecision(snapshot: base.snapshot)
+                    } else if case .worktreeRecovered(let threadID, let attemptID, let incarnation, _) = envelope.command,
                        !ownsWorktree(threadID: threadID, attemptID: attemptID, incarnation: incarnation) {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else if case .repositoryIdentityResolved(let projectID, let path, let incarnation, let requestID, _) = envelope.command,
@@ -272,6 +475,10 @@ public actor WorkspaceEngine {
                     completedDuringCommit = []
                     removalCommitProjects = Set(base.snapshot.projects.map(\.id)).subtracting(decision.snapshot.projects.map(\.id))
                     removalCommitThreads = Set(base.snapshot.threads.map(\.id)).subtracting(decision.snapshot.threads.map(\.id))
+                    scriptCommitRuns = Set(base.snapshot.threads.compactMap { old in
+                        let next = decision.snapshot.threads.first(where: { $0.id == old.id })
+                        return next?.workspacePreparation?.setup != old.workspacePreparation?.setup ? old.workspacePreparation?.setup?.id : nil
+                    })
                     var committed = false
                     defer { finishCommitFence(removed: committed) }
                     let outcome = try await database.commitWithRemovedEffects(decision.snapshot, event: "workspace.command", commandID: envelope.id,
@@ -324,6 +531,7 @@ public actor WorkspaceEngine {
     }
     private func finishCommitFence(removed: Bool) {
         completedDuringCommit = nil; removalCommitProjects = []; removalCommitThreads = []
+        scriptCommitRuns = []; let scriptWaiters = scriptCommitWaiters; scriptCommitWaiters = []; for waiter in scriptWaiters { waiter.resume() }
         let waiters = removalCommitWaiters; removalCommitWaiters = []
         for waiter in waiters { waiter.resume(returning: removed) }
     }
@@ -370,6 +578,7 @@ public actor WorkspaceEngine {
             retiringEffects.insert(effect.id); effects[effect.id]?.cancel()
             jobs.append(Task { await self.awaitRetiringEffect(effect.id) })
         }
+        jobs.append(contentsOf: beginScriptDecisionCleanup(previous: previous, next: decision.snapshot, removedEffects: removedEffects, projectIDs: &projectIDs))
         _ = startCleanup(projectIDs: projectIDs, sessions: sessions, jobs: jobs)
     }
     @discardableResult private func startCleanup(projectIDs: Set<UUID>, sessions: [any ProviderSession], jobs: [Task<Void, Never>] = []) -> Task<Void, Never>? {
@@ -511,6 +720,7 @@ public actor WorkspaceEngine {
         } catch { await infrastructureFailed(error.localizedDescription) }
     }
     private func execute(_ effect: WorkspaceEffect) async {
+        let scriptIncarnation = effect.request.projectScriptRunID == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
         defer {
             effects.removeValue(forKey: effect.id); effectRequests.removeValue(forKey: effect.id)
             completedDuringCommit?.insert(effect.id)
@@ -532,7 +742,7 @@ public actor WorkspaceEngine {
         }
         catch is CancellationError { result = .cancelled }
         catch {
-            let message = effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
+            let message = effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
             result = .failed(message)
         }
         heartbeat.cancel()
@@ -540,12 +750,16 @@ public actor WorkspaceEngine {
             do {
                 let owned: Bool
                 switch result {
-                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared: owned = try await database.settleEffect(effect.id, workerID: workerID)
+                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved: owned = try await database.settleEffect(effect.id, workerID: workerID)
                 case .failed(let message): owned = try await database.settleEffect(effect.id, workerID: workerID, error: message)
                 case .cancelled: owned = try await database.cancelEffect(effect.id, workerID: workerID, reason: "The targeted run or request is no longer active.")
                 }
                 guard owned else { await infrastructureFailed("Provider execution lost its workspace lease."); return }
-                _ = try await enqueue(.effectResult(effect.request, result))
+                if effect.request.projectScriptRunID != nil {
+                    if !retiringEffects.contains(effect.id), let scriptIncarnation {
+                        _ = try await enqueue(.projectScriptEffectResult(effect.request, result, incarnation: scriptIncarnation))
+                    }
+                } else { _ = try await enqueue(.effectResult(effect.request, result)) }
             } catch { if !closing { await infrastructureFailed(error.localizedDescription) } }
         }
     }
@@ -562,6 +776,7 @@ public actor WorkspaceEngine {
         guard !stoppingEffects, fatalError == nil else { throw CancellationError() }
         if await waitForRemovalCommit(threadID: request.threadID, projectID: request.projectID) { return .cancelled }
         try Task.checkCancellation()
+        if request.projectScriptRunID != nil { return try await performProjectScript(request) }
         if request.worktreeAttemptID != nil { return try await performWorktree(request) }
         if case .projectClone(let projectID, let plan) = request {
             guard let clone = revision.snapshot.projects.first(where: { $0.id == projectID })?.clone,
@@ -584,7 +799,7 @@ public actor WorkspaceEngine {
         }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
-        case .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
+        case .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
             let input = try await attachments.prepare(text: prompt, attachments: references ?? [])
@@ -798,6 +1013,7 @@ public actor WorkspaceEngine {
             _ = startCleanup(projectIDs: [inspection.projectID], sessions: [], jobs: [Task { _ = try? await inspection.task.value }])
         }
         for id in Array(runtimes.keys) { await closeRuntime(id) }
+        await closeAllProjectScripts()
     }
     private func cancelIdentityRefreshes() {
         let refreshes = identityRefreshes; identityRefreshes = [:]
@@ -816,7 +1032,7 @@ public actor WorkspaceEngine {
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
               current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent else { throw CancellationError() }
-        if !revision.snapshot.workspaceReady(for: current) {
+        if !revision.snapshot.providerReady(for: current) {
             throw CoincideError("Wait for the workspace to finish preparing before refreshing this agent's models.")
         }
         return try await queryModels(thread: current, owned: true)
@@ -826,7 +1042,7 @@ public actor WorkspaceEngine {
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
             guard let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
                   current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent,
-                  revision.snapshot.workspaceReady(for: current) else { throw CancellationError() }
+                  revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         }
         guard !closing, !stoppingEffects else { throw CancellationError() }
         let id = UUID(), session = try factory(thread)
@@ -858,7 +1074,7 @@ public actor WorkspaceEngine {
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
               let configuration = metadata.configuration,
               thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent,
-              revision.snapshot.workspaceReady(for: thread) else { return false }
+              revision.snapshot.providerReady(for: thread) else { return false }
         return true
     }
     private func beginMetadataClose(_ id: UUID) -> Task<Void, Never>? {
@@ -883,6 +1099,7 @@ public actor WorkspaceEngine {
         for inspection in inspections { inspection.task.cancel() }
         cancelIdentityRefreshes()
         let jobs = Array(effects.values); for job in jobs { job.cancel() }
+        await closeAllProjectScripts()
         for id in Array(runtimes.keys) { await closeRuntime(id) }
         let metadata = Array(metadataSessions.values); metadataSessions = [:]
         for runtime in metadata where runtime.closeTask == nil {

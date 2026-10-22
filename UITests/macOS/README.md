@@ -31,6 +31,11 @@ Bar duplicates cannot satisfy a query. For the pinned XCTest runtime's observed
 the actual alert screenshot; the image and recognized text remain in the result.
 Full checkout paths use exact menu-title predicates because XCTest's convenience
 identifier queries reject strings longer than 128 characters.
+Folder imports wait for the native location popup to name the requested folder,
+then assert the Add Project button is enabled and hittable. This keeps navigation
+readiness separate from expensive hit-testing of the panel's column hierarchy.
+Script launch uses the visible toolbar button or the native overflow's Run Script…
+menu item when the display cannot fit every toolbar control.
 After an observed OutlineRow hit-testing failure, conversation selection targets
 the row's identified native title, requires it to be hittable, and verifies
 the containing row becomes selected.
@@ -77,10 +82,19 @@ The cwd records intent before Git finishes; native Terminal and Reveal Workspace
 must become enabled before any completed-checkout file or Git assertions.
 The source checkout's newer commit, dirty tracked file, untracked sentinel and
 HEAD bytes must remain intact.
+The seventh test creates a private checkout with a blocking setup role. It checks
+setup review is enabled by default, the exact command and new worktree cwd are
+shown, and Cancel starts nothing. An explicit Run must report exit7 and retained
+output while preserving the selected conversation and unsent draft. Continue
+Without Setup must clear the blocking banner without changing the source
+checkout's README, configuration, or Git HEAD. A second declared setup role must
+never run. The test sends no message; provider queue ordering and release remain
+engine/store test evidence. Files and Terminal intentionally remain available
+while setup blocks provider messages.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all six tests to pass with zero
+gate requires all seven tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 

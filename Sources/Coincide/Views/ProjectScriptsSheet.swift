@@ -41,10 +41,6 @@ struct ProjectScriptsSheet: View {
                     }.frame(minHeight: 70, maxHeight: 170)
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
                         .accessibilityIdentifier("project-script-command")
-                    if selected.runOnWorktreeCreate || selected.runOnSettle {
-                        Text("Setup and settle scripts run only when selected here.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
                 }
             }
             if let warning = context?.document.warning {

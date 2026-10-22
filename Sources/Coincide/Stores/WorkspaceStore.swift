@@ -114,10 +114,10 @@ final class WorkspaceStore {
         worktreesRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Worktrees", isDirectory: true)
         projectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }
         do {
-            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL); return }
+            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, projectScriptFactory: Self.managedScriptFactory); return }
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Coincide", isDirectory: true)
-            engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"))
+            engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), projectScriptFactory: Self.managedScriptFactory)
         } catch { errorMessage = error.localizedDescription }
     }
     init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil,
@@ -133,6 +133,10 @@ final class WorkspaceStore {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
         return support.appendingPathComponent("Coincide", isDirectory: true)
+    }
+    private static var managedScriptFactory: WorkspaceEngine.ProjectScriptFactory {
+        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/CoincideScriptHelper")
+        return { try NativeProjectScriptExecutionSession(plan: $0, helperURL: helper) }
     }
     func thread(_ id: UUID) -> CodingThread? {
         guard var value = snapshot.threads.first(where: { $0.id == id }) else { return nil }
@@ -830,7 +834,8 @@ final class WorkspaceStore {
     func createWorktree(for id: UUID, branch: String) async {
         await prepareWorktree(for: id, selection: .createBranch(name: branch, baseRef: "HEAD"))
     }
-    func prepareWorktree(for id: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode = .none) async {
+    func prepareWorktree(for id: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode = .none,
+                         reviewSetup: Bool = false) async {
         guard let thread = thread(id), thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty else {
             errorMessage = "Choose the worktree before sending the first message."; return
         }
@@ -839,7 +844,7 @@ final class WorkspaceStore {
         }
         guard thread.workspacePreparation?.isRunning != true else { return }
         await performWorktreeCommand(for: id, changesWorkspace: true) { engine in
-            try await engine.beginWorktreePreparation(threadID: id, selection: selection, submodules: submodules)
+            try await engine.beginWorktreePreparation(threadID: id, selection: selection, submodules: submodules, reviewSetup: reviewSetup)
         }
     }
     func cancelWorktreePreparation(_ id: UUID) {
@@ -847,6 +852,35 @@ final class WorkspaceStore {
     }
     func retryWorktreePreparation(_ id: UUID) {
         Task { await performWorktreeCommand(for: id) { try await $0.retryWorktreePreparation(id) } }
+    }
+    func approveProjectScript(threadID: UUID, runID: UUID, expectedPlan: ProjectScriptExecutionPlan) async throws {
+        try await performProjectScriptCommand(.approveProjectScript(threadID: threadID, runID: runID, expectedPlan: expectedPlan),
+                                             threadID: threadID, runID: runID)
+    }
+    func stopProjectScript(threadID: UUID, runID: UUID) async throws {
+        try await performProjectScriptCommand(.stopProjectScript(threadID: threadID, runID: runID), threadID: threadID, runID: runID)
+    }
+    func skipProjectScript(threadID: UUID, runID: UUID) async throws {
+        try await performProjectScriptCommand(.skipProjectScript(threadID: threadID, runID: runID), threadID: threadID, runID: runID)
+    }
+    func retryProjectScript(threadID: UUID, runID: UUID) async throws {
+        try await performProjectScriptCommand(.retryProjectScript(threadID: threadID, runID: runID), threadID: threadID, runID: runID)
+    }
+    func projectScriptOutput(threadID: UUID, runID: UUID) async throws -> AsyncStream<ProjectScriptOutputSnapshot> {
+        guard !terminating, let engine, thread(threadID)?.workspacePreparation?.setup?.id == runID else { throw CancellationError() }
+        return try await engine.projectScriptOutput(threadID: threadID, runID: runID)
+    }
+    private func performProjectScriptCommand(_ command: WorkspaceCommand, threadID: UUID, runID: UUID) async throws {
+        guard !terminating, let captured = thread(threadID), captured.workspacePreparation?.setup?.id == runID else { throw CancellationError() }
+        flushDrafts()
+        let task = enqueue(command) { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(threadID),
+                  current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
+                  current.workspacePreparation?.id == captured.workspacePreparation?.id,
+                  current.workspacePreparation?.setup?.id == runID,
+                  self.canEditWorkspace(current.workspacePath) else { throw CancellationError() }
+        }
+        _ = try await task.value
     }
     private func performWorktreeCommand(for id: UUID, changesWorkspace: Bool = false,
                                         operation: @escaping @MainActor (WorkspaceEngine) async throws -> WorkspaceCommandReceipt) async {

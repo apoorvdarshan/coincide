@@ -148,8 +148,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         let draft = "Keep this unsent discussion while running project scripts"
         composer.click(); composer.typeText(draft)
-        let launcher = app.buttons["project-scripts"]
-        XCTAssertTrue(launcher.waitForExistence(timeout: 5)); launcher.click()
+        openProjectScripts(in: app)
         let review = app.sheets.containing(.button, identifier: "run-project-script").element
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         let cwd = review.staticTexts["project-script-cwd"]
@@ -161,7 +160,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let discovery = XCTAttachment(screenshot: review.screenshot()); discovery.name = "scripts-discovery-without-execution"; discovery.lifetime = .keepAlways; add(discovery)
         review.buttons["Cancel"].click()
         XCTAssertTrue(waitForAbsence(review, timeout: 5)); XCTAssertEqual(composer.value as? String, draft)
-        launcher.click()
+        openProjectScripts(in: app)
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", staleCommand, staleCommand)).element.waitForExistence(timeout: 10))
         try writeConfiguration(inspectedCommand)
@@ -191,7 +190,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-holding.txt").path))
         XCTAssertEqual(composer.value as? String, draft)
         capture(app, name: "scripts-reviewed-command-cwd-and-exit-status")
-        launcher.click(); XCTAssertTrue(review.waitForExistence(timeout: 5))
+        openProjectScripts(in: app); XCTAssertTrue(review.waitForExistence(timeout: 5))
         let picker = review.descendants(matching: .any).matching(identifier: "project-script-picker").element
         XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.click()
         let holdChoice = app.menuItems["Hold Workspace"]
@@ -397,6 +396,121 @@ final class CoincideDesktopUITests: XCTestCase {
         let emptyDescription = "Your projects and coding agents, in a native Mac workspace."
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", emptyDescription, emptyDescription)).element.waitForExistence(timeout: 5))
         capture(app, name: "grouping-removed-empty-workspace")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
+    @MainActor func testReviewedBlockingSetupKeepsDraftUntilExplicitContinue() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "setup")
+        let app = fixture.app
+        app.launchEnvironment["SHELL"] = "/bin/sh"
+        let project = fixture.root.appendingPathComponent("Native Setup", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let command = "pwd -P > setup-cwd.txt; printf 'native-blocking-setup-output\\n'; exit 7"
+        let scripts: [[String: Any]] = [
+            ["name": "Reviewed Blocking Setup", "command": command, "runOnWorktreeCreate": true, "async": false],
+            ["name": "Unselected Setup", "command": "printf 'unexpected\\n' > setup-unselected.txt", "runOnWorktreeCreate": true]
+        ]
+        let configuration = project.appendingPathComponent("t3.json")
+        try JSONSerialization.data(withJSONObject: ["scripts": scripts], options: [.sortedKeys, .prettyPrinted]).write(to: configuration, options: .atomic)
+        let readme = project.appendingPathComponent("README.md"), readmeBytes = Data("Synthetic reviewed checkout setup\n".utf8)
+        try readmeBytes.write(to: readme)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "t3.json", "README.md"], ["commit", "--message", "Reviewed setup fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "setup-fixture-\(arguments[0])")
+        }
+        let sourceHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "setup-source-head")
+        let sourceHeadBytes = try Data(contentsOf: project.appendingPathComponent(".git/HEAD"))
+        let configurationBytes = try Data(contentsOf: configuration)
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        try openProject(project, in: app)
+        XCTAssertTrue(app.buttons["Collapse Native Setup"].waitForExistence(timeout: 10))
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"], draft = "Keep this unsent discussion through reviewed setup"
+        XCTAssertTrue(composer.waitForExistence(timeout: 10)); composer.click(); composer.typeText(draft)
+        let threadID = try selectedThreadIdentifier(in: app)
+        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
+        workspace.click()
+        let choose = app.menuItems["Choose Worktree…"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5)); choose.click()
+        let checkout = app.sheets.containing(.textField, identifier: "worktree-new-branch").element
+        XCTAssertTrue(checkout.waitForExistence(timeout: 10))
+        let branch = checkout.textFields["worktree-new-branch"]
+        branch.click(); branch.typeText("ui-reviewed-setup")
+        let reviewChoice = checkout.checkBoxes["worktree-review-setup"]
+        XCTAssertTrue(reviewChoice.exists)
+        XCTAssertEqual((reviewChoice.value as? NSNumber)?.intValue ?? Int((reviewChoice.value as? String) ?? ""), 1, "Reviewing checkout setup must be the default choice.")
+        let prepare = checkout.buttons["Prepare Worktree"]
+        let prepared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: prepare)
+        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 10), .completed)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(checkout.frame))
+        prepare.click()
+        XCTAssertTrue(waitForAbsence(checkout, timeout: 5))
+        let reviewSetup = app.buttons["workspace-setup-review"]
+        XCTAssertTrue(reviewSetup.waitForExistence(timeout: 20), "A declared setup command must wait for explicit review after checkout.")
+        assertWorkspaceReady(in: app) // Files and Terminal stay available while provider messages wait for setup.
+        let worktreePath = try XCTUnwrap(workspace.value as? String)
+        XCTAssertTrue(worktreePath.hasPrefix(fixture.root.appendingPathComponent("Worktrees").path + "/"))
+        let worktree = URL(fileURLWithPath: worktreePath, isDirectory: true)
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(composer.value as? String, draft)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("setup-cwd.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("setup-unselected.txt").path))
+        reviewSetup.click()
+        let review = app.sheets.containing(.button, identifier: "workspace-setup-run").element
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForValue(review.staticTexts["workspace-setup-review-cwd"], value: worktreePath, timeout: 5))
+        let reviewedCommand = review.descendants(matching: .any).matching(identifier: "workspace-setup-review-command").element
+        XCTAssertTrue(reviewedCommand.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", command, command)).element.exists)
+        let blockingNotice = "Messages wait for this command to exit successfully. Background jobs may keep running afterward."
+        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", blockingNotice, blockingNotice)).element.exists)
+        XCTAssertTrue(review.buttons["workspace-setup-run"].isHittable && review.buttons["Cancel"].isHittable)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
+        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "setup-explicit-blocking-command-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
+        review.buttons["Cancel"].click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        XCTAssertTrue(reviewSetup.exists)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("setup-cwd.txt").path), "Cancelling review must never start setup.")
+        XCTAssertEqual(composer.value as? String, draft)
+        reviewSetup.click(); XCTAssertTrue(review.waitForExistence(timeout: 5))
+        review.buttons["workspace-setup-run"].click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        let status = app.staticTexts["workspace-setup-status"]
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Checkout setup needs attention", "Checkout setup needs attention"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 15), .completed)
+        let exitDetail = "Command exited with status 7."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", exitDetail, exitDetail)).element.exists)
+        let outputDisclosure = app.descendants(matching: .any).matching(NSPredicate(
+            format: "(elementType == %d OR elementType == %d) AND (identifier == %@ OR label == %@ OR title == %@)",
+            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue,
+            "workspace-setup-output-disclosure", "Setup Output", "Setup Output"
+        )).element
+        XCTAssertTrue(outputDisclosure.waitForExistence(timeout: 10)); XCTAssertTrue(outputDisclosure.isHittable); outputDisclosure.click()
+        let output = app.staticTexts["workspace-setup-output"]
+        let receivedOutput = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label CONTAINS %@ OR value CONTAINS %@)", "native-blocking-setup-output", "native-blocking-setup-output"), object: output)
+        XCTAssertEqual(XCTWaiter.wait(for: [receivedOutput], timeout: 10), .completed)
+        XCTAssertEqual(try String(contentsOf: worktree.appendingPathComponent("setup-cwd.txt"), encoding: .utf8), worktreePath + "\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("setup-unselected.txt").path), "Only the reviewed first setup role may run.")
+        XCTAssertTrue(app.buttons["workspace-setup-retry"].exists)
+        let continueWithoutSetup = app.buttons["workspace-setup-skip"]
+        XCTAssertTrue(continueWithoutSetup.exists && continueWithoutSetup.isEnabled && continueWithoutSetup.isHittable)
+        XCTAssertEqual(composer.value as? String, draft)
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        capture(app, name: "setup-failed-with-exit-output-and-retained-draft")
+        continueWithoutSetup.click()
+        XCTAssertTrue(waitForAbsence(status, timeout: 10))
+        assertWorkspaceReady(in: app)
+        XCTAssertEqual(composer.value as? String, draft)
+        assertConversationWorkspace(app, path: worktreePath)
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(try Data(contentsOf: readme), readmeBytes)
+        XCTAssertEqual(try Data(contentsOf: configuration), configurationBytes)
+        XCTAssertEqual(try Data(contentsOf: project.appendingPathComponent(".git/HEAD")), sourceHeadBytes)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "setup-source-final-head"), sourceHead)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("setup-cwd.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("setup-unselected.txt").path))
+        capture(app, name: "setup-explicitly-continued-without-changing-source")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
@@ -696,11 +810,15 @@ final class CoincideDesktopUITests: XCTestCase {
         app.typeKey("g", modifierFlags: [.command, .shift])
         app.typeText(directory.path)
         app.typeKey(.return, modifierFlags: [])
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: add)
+        // Wait for folder navigation, then make each expensive hit-test assertion once.
+        // A combined readiness predicate can exceed its deadline inside one AX evaluation.
+        let location = panel.popUpButtons["where popup"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", directory.lastPathComponent), object: location)
         let result = XCTWaiter.wait(for: [ready], timeout: 10)
         let diagnostic = XCTAttachment(string: "Requested checkout: \(directory.path)\nPanel frame: \(panel.frame)\nConfirm frame: \(add.frame)\nEnabled: \(add.isEnabled)\nHittable: \(add.isHittable)\n\n\(panel.debugDescription)")
         diagnostic.name = "open-panel-\(directory.lastPathComponent)"; diagnostic.lifetime = .keepAlways; self.add(diagnostic)
         XCTAssertEqual(result, .completed)
+        XCTAssertTrue(add.isEnabled && add.isHittable)
         add.click()
         XCTAssertTrue(waitForAbsence(add, timeout: 10), "The native folder panel must accept the chosen local checkout.")
     }
@@ -711,6 +829,18 @@ final class CoincideDesktopUITests: XCTestCase {
 
     @MainActor private func projectHeaders(in app: XCUIApplication) -> XCUIElementQuery {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "Collapse ", "Expand "))
+    }
+
+    @MainActor private func openProjectScripts(in app: XCUIApplication) {
+        let launcher = app.buttons["project-scripts"]
+        if launcher.exists {
+            XCTAssertTrue(launcher.isEnabled && launcher.isHittable); launcher.click()
+        } else {
+            let overflow = app.toolbars.popUpButtons["more toolbar items"]
+            XCTAssertTrue(overflow.waitForExistence(timeout: 5)); XCTAssertTrue(overflow.isHittable); overflow.click()
+            let script = app.menuItems["Run Script…"]
+            XCTAssertTrue(script.waitForExistence(timeout: 5)); XCTAssertTrue(script.isEnabled && script.isHittable); script.click()
+        }
     }
 
     @MainActor private func toggleInspector(in app: XCUIApplication) {

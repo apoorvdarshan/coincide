@@ -51,12 +51,22 @@ Git configuration; queued messages wait for the selected step to finish. A norma
 initialization failure leaves a usable checkout with a visible warning. Cancellation
 keeps the queue paused. Registered-worktree reuse preserves its existing submodules.
 
+**Review checkout setup script** is enabled when choosing a worktree. For a separate
+checkout, Coincide finds the first `runOnWorktreeCreate` script in its `t3.json`, then
+waits for you to review its exact command and choose **Run Setup** or **Continue
+Without Setup**. Files and Terminal remain available during review. Blocking
+scripts release queued messages only after exit status 0; asynchronous scripts
+release them once startup is confirmed. Output and exit status appear in the
+conversation. **Stop Setup**, **Stop Background Jobs**, and **Review Again** manage
+the app-owned job across windows. Retry requires a fresh review; interrupted jobs
+never run automatically after restart. Turn off the checkbox to skip discovery.
+
 Use **Run Script…** in the toolbar to choose a script declared in the current
 checkout's `t3.json`. Review its command and checkout, then run it in a dedicated
 native terminal tab. Scripts receive `T3CODE_PROJECT_ROOT` and, for a separate
 checkout, `T3CODE_WORKTREE_PATH`. Changing the configuration requires reloading
-the list. Setup/settle flags are imported as data; scripts currently run only
-when explicitly selected. Output and exit status stay in the terminal, and
+the list. This manual action can run any declared script; settle and preview
+flags do not yet trigger their own workflows. Output and exit status stay in the terminal, and
 closing a running script asks before stopping it.
 
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored

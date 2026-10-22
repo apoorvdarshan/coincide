@@ -97,11 +97,17 @@ public enum WorkspaceJournal {
             }
         }
         var preparationIDs: Set<UUID> = []
+        var scriptIDs: Set<UUID> = []
         for thread in snapshot.threads {
             if let preparation = thread.workspacePreparation {
                 try preparation.validate(thread: thread)
                 for id in preparation.previousAttempts.map({ $0.request.id }) + [preparation.id] {
-                    guard preparationIDs.insert(id).inserted, !cloneIDs.contains(id) else { throw CoincideError("Workspace preparation attempts must have unique identities.") }
+                    guard preparationIDs.insert(id).inserted, !cloneIDs.contains(id), !scriptIDs.contains(id) else { throw CoincideError("Workspace preparation attempts must have unique identities.") }
+                }
+                for setup in preparation.previousAttempts.compactMap(\.setup) + (preparation.setup.map { [$0] } ?? []) {
+                    for id in setup.previousPlans.map(\.id) + [setup.id] {
+                        guard scriptIDs.insert(id).inserted, !cloneIDs.contains(id), !preparationIDs.contains(id) else { throw CoincideError("Project setup attempts must have unique identities.") }
+                    }
                 }
             }
             guard snapshot.workspaceReady(for: thread) || !thread.isBusy else { throw CoincideError("A conversation cannot run before its repository is ready.") }

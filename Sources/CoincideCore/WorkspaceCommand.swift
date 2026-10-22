@@ -63,6 +63,10 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case cancelWorktreePreparation(UUID)
     case cancelProjectClone(UUID)
     case retryProjectClone(projectID: UUID, plan: GitClonePlan)
+    case approveProjectScript(threadID: UUID, runID: UUID, expectedPlan: ProjectScriptExecutionPlan)
+    case stopProjectScript(threadID: UUID, runID: UUID)
+    case skipProjectScript(threadID: UUID, runID: UUID)
+    case retryProjectScript(threadID: UUID, runID: UUID)
 }
 
 enum EngineCommand: Codable, Sendable {
@@ -70,15 +74,19 @@ enum EngineCommand: Codable, Sendable {
     case runtimeOpened(threadID: UUID, runID: UUID, runtimeID: UUID)
     case provider(threadID: UUID, runtimeID: UUID, event: ProviderEvent)
     case effectResult(WorkspaceEffectRequest, EffectResult)
-    case beginWorktreePreparation(threadID: UUID, request: GitWorktreeRequest, expectedSourcePath: String, previousAttemptID: UUID?, incarnation: UUID)
+    case beginWorktreePreparation(threadID: UUID, request: GitWorktreeRequest, expectedSourcePath: String, previousAttemptID: UUID?, incarnation: UUID, reviewSetup: Bool = false)
     case worktreeStarted(threadID: UUID, attemptID: UUID)
     case worktreeRecovered(threadID: UUID, attemptID: UUID, incarnation: UUID, result: GitWorktreeResult)
     case pauseQueues
     case cloneStarted(projectID: UUID, attemptID: UUID)
     case cloneProgress(projectID: UUID, attemptID: UUID, progress: GitCloneProgress)
     case repositoryIdentityResolved(projectID: UUID, path: String, incarnation: UUID, requestID: UUID, identity: RepositoryIdentity?)
+    case projectScriptStarted(threadID: UUID, attemptID: UUID, runID: UUID, incarnation: UUID)
+    case projectScriptExited(threadID: UUID, attemptID: UUID, runID: UUID, incarnation: UUID, result: ProjectScriptCommandExit?)
+    case projectScriptStopped(threadID: UUID, attemptID: UUID, runID: UUID, incarnation: UUID)
+    case projectScriptEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
 }
-enum EffectResult: Codable, Sendable { case succeeded, failed(String), cancelled, stopped, worktreeResolved(GitWorktreePlan), worktreePrepared(GitWorktreeResult) }
+enum EffectResult: Codable, Sendable { case succeeded, failed(String), cancelled, stopped, worktreeResolved(GitWorktreePlan), worktreePrepared(GitWorktreeResult), projectScriptResolved(ProjectScriptExecutionPlan?) }
 
 struct WorkspaceDecision: Sendable {
     var snapshot: WorkspaceSnapshot
@@ -92,7 +100,7 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         switch command {
-        case .beginWorktreePreparation(let threadID, let request, let expectedSourcePath, let previousAttemptID, _):
+        case .beginWorktreePreparation(let threadID, let request, let expectedSourcePath, let previousAttemptID, _, let reviewSetup):
             do { try request.validate() } catch { throw WorkspaceCommandError("Choose a valid local worktree destination and branch.") }
             guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
             var thread = decision.snapshot.threads[i]
@@ -106,19 +114,19 @@ struct WorkspaceDecision: Sendable {
                       old.request.sourcePath == request.sourcePath, old.request.selection == request.selection,
                       old.request.submodules == request.submodules,
                       old.request.destinationRoot == request.destinationRoot else { throw WorkspaceCommandError("This workspace preparation changed. Refresh its status before retrying.") }
-                history = old.previousAttempts + [.init(request: old.request, plan: old.plan)]
+                history = old.previousAttempts + [.init(request: old.request, plan: old.plan, setup: old.setup)]
             } else {
                 guard thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Clear queued messages before choosing another workspace.") }
                 if let old = thread.workspacePreparation {
                     guard !old.isRunning, request.sourcePath == (old.canRetry ? old.request.sourcePath : expectedSourcePath) else { throw WorkspaceCommandError("Wait for the current workspace preparation to finish or cancel it first.") }
-                    history = old.previousAttempts + [.init(request: old.request, plan: old.plan)]
+                    history = old.previousAttempts + [.init(request: old.request, plan: old.plan, setup: old.setup)]
                 } else {
                     guard request.sourcePath == expectedSourcePath else { throw WorkspaceCommandError("The source workspace changed. Choose the worktree again.") }
                 }
             }
             let allIDs = decision.snapshot.threads.compactMap(\.workspacePreparation).flatMap { $0.previousAttempts.map { $0.request.id } + [$0.id] }
             guard !allIDs.contains(request.id), !decision.snapshot.cloneAttemptIDs.contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is already in use.") }
-            thread.workspacePreparation = .init(request: request, now: now, previousAttempts: history)
+            thread.workspacePreparation = .init(request: request, now: now, previousAttempts: history, reviewSetup: reviewSetup)
             thread.workspacePath = request.destinationPath; thread.providerThreadID = nil; thread.runtimeID = nil
             thread.runtimeRequests = []; thread.providerMetadata = nil; thread.providerActivity = nil
             for j in thread.queuedTurns.indices {
@@ -127,6 +135,62 @@ struct WorkspaceDecision: Sendable {
             }
             thread.updatedAt = now; decision.snapshot.threads[i] = thread; decision.closeRuntimes.insert(thread.id)
             decision.effects.append(.init(id: request.id, request: .resolveWorktree(threadID: threadID, request: request)))
+        case .client(.approveProjectScript(let threadID, let runID, let expected)):
+            guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }), var preparation = decision.snapshot.threads[i].workspacePreparation,
+                  var setup = preparation.setup, setup.id == runID, setup.canApprove, setup.plan == expected,
+                  expected.id == runID, preparation.isReady, preparation.permitsProjectSetup, !decision.snapshot.threads[i].isArchived else {
+                throw WorkspaceCommandError("This setup script changed. Review its current command before running.")
+            }
+            do { try expected.validate() } catch { throw WorkspaceCommandError("The setup script plan is invalid. Review it again.") }
+            setup.phase = .starting; setup.error = nil; setup.updatedAt = now; preparation.setup = setup
+            decision.snapshot.threads[i].workspacePreparation = preparation
+            decision.effects.append(.init(request: .startProjectScript(threadID: threadID, attemptID: preparation.id, plan: expected)))
+        case .client(.stopProjectScript(let threadID, let runID)), .client(.skipProjectScript(let threadID, let runID)), .client(.retryProjectScript(let threadID, let runID)):
+            guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }), var preparation = decision.snapshot.threads[i].workspacePreparation,
+                  var setup = preparation.setup, setup.id == runID, setup.phase != .stopping else { throw WorkspaceCommandError("This setup attempt changed. Refresh its status.") }
+            let action: ProjectScriptStopAction
+            switch command {
+            case .client(.skipProjectScript):
+                guard setup.canSkip else { throw WorkspaceCommandError("This setup attempt no longer needs to be skipped.") }; action = .skip
+            case .client(.retryProjectScript):
+                guard setup.canRetry, preparation.isReady, !decision.snapshot.threads[i].isBusy, !decision.snapshot.threads[i].isArchived else { throw WorkspaceCommandError("Stop the current turn before reviewing setup again.") }; action = .retry
+            default: action = .cancel
+            }
+            setup.phase = .stopping; setup.pendingAction = action; setup.updatedAt = now
+            if setup.commandExit != .exited(0) { decision.snapshot.threads[i].queuePaused = true }
+            preparation.setup = setup; decision.snapshot.threads[i].workspacePreparation = preparation
+        case .projectScriptStarted(let threadID, let attemptID, let runID, _):
+            if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }), var preparation = decision.snapshot.threads[i].workspacePreparation,
+               preparation.id == attemptID, var setup = preparation.setup, setup.id == runID, setup.phase == .starting {
+                setup.phase = .running; setup.startedAt = now; setup.updatedAt = now; preparation.setup = setup
+                decision.snapshot.threads[i].workspacePreparation = preparation
+                var thread = decision.snapshot.threads[i]; decision.startNext(in: &thread, now: now); decision.snapshot.threads[i] = thread
+            }
+        case .projectScriptExited(let threadID, let attemptID, let runID, _, let result):
+            if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }), var preparation = decision.snapshot.threads[i].workspacePreparation,
+               preparation.id == attemptID, var setup = preparation.setup, setup.id == runID, setup.phase == .running {
+                setup.commandExit = result; setup.phase = result == .exited(0) ? .succeeded : .failed
+                setup.error = result == .exited(0) ? nil : ThreadProjectScriptRun.executionError; setup.endedAt = now; setup.updatedAt = now
+                preparation.setup = setup; decision.snapshot.threads[i].workspacePreparation = preparation
+                if !setup.providerReleased { decision.snapshot.threads[i].queuePaused = true }
+                var thread = decision.snapshot.threads[i]; decision.startNext(in: &thread, now: now); decision.snapshot.threads[i] = thread
+            }
+        case .projectScriptStopped(let threadID, let attemptID, let runID, _):
+            if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }), var preparation = decision.snapshot.threads[i].workspacePreparation,
+               preparation.id == attemptID, var setup = preparation.setup, setup.id == runID, setup.phase == .stopping, let action = setup.pendingAction {
+                setup.pendingAction = nil; setup.updatedAt = now; setup.endedAt = now; setup.error = nil
+                switch action {
+                case .cancel: setup.phase = setup.commandExit == .exited(0) ? .succeeded : .cancelled
+                case .skip: setup.phase = .skipped; decision.snapshot.threads[i].queuePaused = false
+                case .retry:
+                    let previous = setup.previousPlans + (setup.plan.map { [$0] } ?? [])
+                    setup = .init(now: now); setup.phase = .discovering; setup.previousPlans = previous
+                    decision.snapshot.threads[i].queuePaused = false
+                    decision.effects.append(.init(request: .resolveProjectScript(threadID: threadID, attemptID: attemptID, runID: setup.id)))
+                }
+                preparation.setup = setup; decision.snapshot.threads[i].workspacePreparation = preparation
+                var thread = decision.snapshot.threads[i]; decision.startNext(in: &thread, now: now); decision.snapshot.threads[i] = thread
+            }
         case .worktreeRecovered(let threadID, let attemptID, _, let result):
             if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
                let state = decision.snapshot.threads[i].workspacePreparation, state.id == attemptID, !state.isReady, let plan = state.plan {
@@ -339,7 +403,15 @@ struct WorkspaceDecision: Sendable {
                 case .archived(let value):
                     guard !thread.isBusy else { throw WorkspaceCommandError("Stop the running turn before archiving this conversation.") }
                     thread.isArchived = value
-                    if value { thread.queuePaused = true; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil }
+                    if value {
+                        thread.queuePaused = true; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil
+                        if var preparation = thread.workspacePreparation, var setup = preparation.setup {
+                            if setup.commandExit != .exited(0) { setup.phase = .cancelled }
+                            else { setup.phase = .succeeded }
+                            setup.pendingAction = nil; setup.error = nil; setup.updatedAt = now; setup.endedAt = now
+                            preparation.setup = setup; thread.workspacePreparation = preparation
+                        }
+                    }
                 case .workspacePath(let path):
                     if thread.workspacePreparation != nil {
                         guard path == thread.workspacePath else { throw WorkspaceCommandError("Use Choose Worktree to change a prepared conversation's workspace.") }
@@ -356,8 +428,9 @@ struct WorkspaceDecision: Sendable {
                 let queued = QueuedTurn(id: id, text: text, configuration: .init(thread: thread), createdAt: now,
                                         attachments: thread.draftAttachments.isEmpty ? nil : thread.draftAttachments)
                 thread.draft = ""; thread.draftAttachments = []
-                if thread.isBusy || !decision.snapshot.workspaceReady(for: thread) {
-                    if thread.queuedTurns.isEmpty, !thread.isBusy, thread.workspacePreparation?.cancelRequested != true, thread.workspacePreparation?.phase != .cancelled, thread.workspacePreparation?.phase != .interrupted { thread.queuePaused = false }
+                if thread.isBusy || !decision.snapshot.providerReady(for: thread) {
+                    if thread.queuedTurns.isEmpty, !thread.isBusy, thread.workspacePreparation?.cancelRequested != true, thread.workspacePreparation?.phase != .cancelled, thread.workspacePreparation?.phase != .interrupted,
+                       ![.interrupted, .cancelled, .stopping].contains(thread.workspacePreparation?.setup?.phase) { thread.queuePaused = false }
                     thread.queuedTurns.append(queued)
                 }
                 else {
@@ -405,7 +478,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
+            case .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -420,7 +493,7 @@ struct WorkspaceDecision: Sendable {
             catch let error as CoincideError {
                 try decision.receive(.failure(error.localizedDescription), threadID: threadID, runtimeID: runtimeID, now: now)
             }
-        case .effectResult(let request, let result):
+        case .effectResult(let request, let result), .projectScriptEffectResult(let request, let result, _):
             decision.finished(request, result: result, now: now)
         case .pauseQueues:
             for i in decision.snapshot.threads.indices where !decision.snapshot.threads[i].queuedTurns.isEmpty { decision.snapshot.threads[i].queuePaused = true }
@@ -472,7 +545,7 @@ struct WorkspaceDecision: Sendable {
         effects.append(.init(id: queued.id, request: .providerStart(threadID: thread.id, runID: queued.id, configuration: configuration, prompt: queued.text, attachments: queued.attachments)))
     }
     private mutating func startNext(in thread: inout CodingThread, now: Date) {
-        guard snapshot.workspaceReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
+        guard snapshot.providerReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
         let queued = thread.queuedTurns.removeFirst(); start(queued, in: &thread, now: now)
     }
     private mutating func receive(_ event: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
@@ -571,7 +644,7 @@ struct WorkspaceDecision: Sendable {
             case .succeeded:
                 clone.phase = .completed; clone.error = nil; clone.progress = .init(stage: .checkout, percent: 100, detail: nil, stalled: false)
             case .failed(let message): clone.phase = .failed; clone.error = String(GitService.redactURLs(message).prefix(4_000))
-            case .worktreeResolved, .worktreePrepared: return
+            case .worktreeResolved, .worktreePrepared, .projectScriptResolved: return
             case .cancelled, .stopped:
                 clone.phase = clone.cancelRequested ? .cancelled : .interrupted; clone.error = nil
             }
@@ -586,6 +659,22 @@ struct WorkspaceDecision: Sendable {
         }
         guard let index = snapshot.threads.firstIndex(where: { $0.id == request.threadID }) else { return }
         var thread = snapshot.threads[index]
+        if let runID = request.projectScriptRunID {
+            guard var preparation = thread.workspacePreparation, var setup = preparation.setup, setup.id == runID else { return }
+            switch (request, result) {
+            case (.resolveProjectScript(_, let attemptID, _), .projectScriptResolved(let plan)) where preparation.id == attemptID && setup.phase == .discovering:
+                setup.plan = plan; setup.phase = plan == nil ? .skipped : .awaitingApproval; setup.error = nil
+                if plan == nil { setup.endedAt = now }
+            case (_, .failed) where [.discovering, .starting].contains(setup.phase):
+                setup.phase = .failed; setup.error = setup.plan == nil ? ThreadProjectScriptRun.discoveryError : ThreadProjectScriptRun.executionError
+                setup.endedAt = now; thread.queuePaused = true
+            case (_, .cancelled) where [.discovering, .starting].contains(setup.phase):
+                setup.phase = .interrupted; setup.error = ThreadProjectScriptRun.interruptedError; setup.endedAt = now; thread.queuePaused = true
+            default: return
+            }
+            setup.updatedAt = now; preparation.setup = setup; thread.workspacePreparation = preparation
+            snapshot.threads[index] = thread; startNext(in: &thread, now: now); snapshot.threads[index] = thread; return
+        }
         if let attemptID = request.worktreeAttemptID {
             guard var state = thread.workspacePreparation, state.id == attemptID, !state.isReady else { return }
             switch (request, result) {
@@ -596,6 +685,13 @@ struct WorkspaceDecision: Sendable {
             case (.prepareWorktree(_, let plan), .worktreePrepared(let result)) where state.plan == plan:
                 state.result = result; state.phase = .completed; state.error = nil
                 if state.cancelRequested || thread.workspacePreparation?.phase == .cancelled || thread.workspacePreparation?.phase == .interrupted { thread.queuePaused = true }
+                if var setup = state.setup, setup.phase == .waitingForCheckout {
+                    setup.phase = state.permitsProjectSetup ? .discovering : .skipped
+                    setup.updatedAt = now
+                    if setup.phase == .skipped { setup.endedAt = now }
+                    state.setup = setup
+                    if state.permitsProjectSetup { effects.append(.init(request: .resolveProjectScript(threadID: thread.id, attemptID: state.id, runID: setup.id))) }
+                }
             case (_, .failed(let error)) where state.isRunning:
                 state.phase = state.cancelRequested ? .cancelled : .failed
                 state.error = String(GitService.redactURLs(error).prefix(4_000))
@@ -611,7 +707,7 @@ struct WorkspaceDecision: Sendable {
             snapshot.threads[index] = thread; return
         }
         switch request {
-        case .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
+        case .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
             if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
@@ -650,7 +746,7 @@ private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
         case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
-        case .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
+        case .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }
 }

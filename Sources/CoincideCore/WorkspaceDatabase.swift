@@ -44,7 +44,7 @@ public actor WorkspaceDatabase {
         let versionStatus = sqlite3_step(version)
         let storageVersion = sqlite3_column_int(version, 0)
         sqlite3_finalize(version)
-        guard versionStatus == SQLITE_ROW, (0...11).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
+        guard versionStatus == SQLITE_ROW, (0...12).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
         let setup = """
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=FULL;
@@ -55,7 +55,7 @@ public actor WorkspaceDatabase {
         CREATE TABLE IF NOT EXISTS workspace_receipts (id TEXT PRIMARY KEY, fingerprint BLOB NOT NULL, payload BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS workspace_effects (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, command_id TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, payload BLOB NOT NULL);
         CREATE INDEX IF NOT EXISTS workspace_effects_pending ON workspace_effects(status,sequence);
-        PRAGMA user_version=11;
+        PRAGMA user_version=12;
         """
         guard sqlite3_exec(connection, setup, nil, nil, nil) == SQLITE_OK else { throw CoincideError("Could not initialize the workspace database.") }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -96,6 +96,12 @@ public actor WorkspaceDatabase {
         else { fingerprint = Data(SHA256.hash(data: try encoder.encode(EffectFingerprintInput(snapshot: snapshot, event: event, effects: effects)))) }
         guard Set(effects.map(\.id)).count == effects.count,
               effects.allSatisfy({ effect in
+                  if case .resolveProjectScript(let id, let attemptID, let runID) = effect.request {
+                      return snapshot.threads.contains { $0.id == id && $0.workspacePreparation?.id == attemptID && $0.workspacePreparation?.setup?.id == runID && $0.workspacePreparation?.setup?.phase == .discovering }
+                  }
+                  if case .startProjectScript(let id, let attemptID, let plan) = effect.request {
+                      return snapshot.threads.contains { $0.id == id && $0.workspacePreparation?.id == attemptID && $0.workspacePreparation?.setup?.plan == plan && $0.workspacePreparation?.setup?.phase == .starting }
+                  }
                   if case .resolveWorktree(let id, let request) = effect.request {
                       return snapshot.threads.contains { $0.id == id && $0.workspacePreparation?.request == request && $0.workspacePreparation?.isRunning == true && $0.workspacePreparation?.plan == nil }
                   }
@@ -322,11 +328,18 @@ extension WorkspaceDatabase {
     private func cancelPendingEffectsOfRemovedEntities(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot, now: Date) throws -> [WorkspaceEffect] {
         let threads = Set(previous.threads.map(\.id)).subtracting(next.threads.map(\.id))
         let projects = Set(previous.projects.map(\.id)).subtracting(next.projects.map(\.id))
-        guard !threads.isEmpty || !projects.isEmpty else { return [] }
+        let scripts = Set(previous.threads.compactMap { old -> UUID? in
+            guard let setup = old.workspacePreparation?.setup else { return nil }
+            let current = next.threads.first(where: { $0.id == old.id })
+            if current?.workspacePreparation?.setup?.id != setup.id || current?.isArchived == true ||
+                [.stopping, .cancelled, .interrupted, .skipped].contains(current?.workspacePreparation?.setup?.phase) { return setup.id }
+            return nil
+        })
+        guard !threads.isEmpty || !projects.isEmpty || !scripts.isEmpty else { return [] }
         let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects WHERE status IN ('pending','running') ORDER BY sequence")
         defer { sqlite3_finalize(statement) }
         let removed = try readEffects(statement).filter { effect in
-            effect.request.threadID.map { threads.contains($0) } == true || effect.request.projectID.map { projects.contains($0) } == true
+            effect.request.threadID.map { threads.contains($0) } == true || effect.request.projectID.map { projects.contains($0) } == true || effect.request.projectScriptRunID.map { scripts.contains($0) } == true
         }
         for var effect in removed where effect.status == .pending {
             effect.status = .cancelled; effect.leaseOwner = nil; effect.leaseExpiresAt = nil

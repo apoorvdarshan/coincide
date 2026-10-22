@@ -49,4 +49,8 @@ extension WorkspaceSnapshot {
         let preparation = threads.first(where: { $0.id == thread.id })?.workspacePreparation ?? thread.workspacePreparation
         return (project.clone?.isReady ?? true) && (preparation?.isReady ?? true)
     }
+    public func providerReady(for thread: CodingThread) -> Bool {
+        let current = threads.first(where: { $0.id == thread.id }) ?? thread
+        return workspaceReady(for: current) && (current.workspacePreparation?.setup?.providerReleased ?? true)
+    }
 }

@@ -192,8 +192,10 @@ private final class ScriptHelperLoop {
         env.merge(invocation.environment) { _, new in new }
         env["TERM"] = "xterm-256color"; env["COLORTERM"] = ""; env["NO_COLOR"] = "1"; env["FORCE_COLOR"] = "0"
         env["PWD"] = plan.workspacePath; env["SHELL"] = plan.shellPath
-        let argv = [plan.shellPath, "-c", plan.script.command].map { strdup($0) } + [nil]
-        let environment = env.sorted(by: { $0.key < $1.key }).map { strdup($0.key + "=" + $0.value) } + [nil]
+        let argumentStrings: [String] = [plan.shellPath, "-c", plan.script.command]
+        let environmentStrings: [String] = env.sorted(by: { $0.key < $1.key }).map { $0.key + "=" + $0.value }
+        let argv: [UnsafeMutablePointer<CChar>?] = argumentStrings.map { value in value.withCString { strdup($0) } } + [nil]
+        let environment: [UnsafeMutablePointer<CChar>?] = environmentStrings.map { value in value.withCString { strdup($0) } } + [nil]
         defer { for value in argv + environment { free(value) } }
         // Nothing suspends between the complete anchored revision check and descriptor-based spawn.
         do { try pinned.validate() } catch { throw ProjectScriptExecutionError(.configurationChanged) }

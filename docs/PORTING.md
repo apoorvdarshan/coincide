@@ -52,7 +52,7 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 11 protects these fields
+  hold it for explicit resumption. Database storage version 12 protects these fields
   from older binaries. No exactly-once provider execution is claimed.
 - Background clones are project-owned outbox actions. The project and conversation
   appear as soon as their intent is saved; submitted messages retain their captured
@@ -160,17 +160,24 @@ must each be mapped and verified before declaring parity.
   window and anchored root before creating a dedicated PTY. The user's login
   shell receives the command as one argument and the T3 project/worktree variables.
   Tabs retain output and exit status, and running scripts use close confirmation
-  even when the shell execs its command into its own process group. Imported setup,
-  settle, async and preview fields do not yet trigger automatic behavior. Parsed
+  even when the shell execs its command into its own process group. Imported
+  settle and preview fields do not yet trigger their own workflows. Parsed
   icon/environment/submodule fields do not yet override native project settings.
-- A native managed-script helper provides the process primitive for future
-  setup/settle integration. It separates actual command exit from background-job
+- A separately signed native managed-script helper provides app-owned checkout
+  setup execution. It separates actual command exit from background-job
   lifetime, retains ownership independently of windows, and uses bounded private
   control/status/raw-output pipes. A captured plan pins the command, configuration,
   checkout, project root and shell; preparation does not execute the command.
-  This primitive is tested with synthetic local scripts. Automatic role discovery,
-  durable approval/readiness gates and native lifecycle controls remain pending;
-  existing user scripts still run only through the explicit Run Script sheet.
+  Worktree requests capture a review gate before Git starts. After checkout
+  readiness, anchored discovery selects the first run-on-create script and stores
+  its exact plan for explicit native review. Missing roles skip setup; malformed
+  or changed configuration holds provider work for a visible decision. Files and
+  Terminal use checkout readiness independently. Blocking setup releases providers
+  only on actual exit 0; asynchronous setup releases them after a durable startup
+  acknowledgment. One Core output consumer feeds bounded complete snapshots to
+  every window. Stop, Continue Without Setup and Retry drain the owned group;
+  Retry captures a new plan and requires review. Interrupted jobs are never
+  replayed after process loss. The existing manual script path stays separate.
 
 ## Current implementation and evidence requirements
 
@@ -183,9 +190,9 @@ must each be mapped and verified before declaring parity.
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, legacy migration | Complete provider recovery, checkpoints/finalization and run history, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
-| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings | PRs/stacks/host integrations, checkpoints/revert, automatic worktree setup/settle scripts, worktree removal, automatic pull policies, broader credential and network failure coverage |
+| Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates | PRs/stacks/host integrations, checkpoints/revert, settle scripts, worktree removal, automatic pull policies, broader credential and network failure coverage |
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
-| Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup, bounded t3.json script discovery with explicit native selection and dedicated command tabs/cwd/environment/exit status | Automatic trusted setup/settle and preview behavior, project-script settings/editing, durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
+| Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup, bounded t3.json script discovery with explicit native selection and dedicated command tabs/cwd/environment/exit status, app-owned setup jobs with shared output and separate command/background lifetime | Settle and preview behavior, project-script settings/editing, durable terminal restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |
 | Desktop integration | App bundle, commands/shortcuts, appearance | Notifications, deep links, updates, browser/preview, screenshot/import features, power/resources, accessibility QA |
 | Distribution | Local development-identity or ad-hoc signed bundle | Release signing/notarization, installer/update validation, full notices |

@@ -1,5 +1,52 @@
 # Validation record
 
+## 2026-10-22 — reviewed checkout setup and provider readiness
+
+- Worktree requests persist the setup-review choice before Git starts. Discovery
+  reads the ready checkout's anchored configuration and selects the first
+  run-on-create role. It captures a complete plan for explicit native review;
+  Cancel never starts it. Missing roles skip setup, while malformed or changing
+  configuration requires a visible retry/continue decision. Reusing the main
+  checkout skips the role, including when the source is a linked checkout.
+- Files and Terminal use checkout readiness independently of the provider gate.
+  Blocking setup releases captured queued messages only after actual exit 0;
+  asynchronous setup requires a durably recorded startup acknowledgment. Later
+  asynchronous failure does not cancel provider work already accepted.
+- The Core owns one raw-output consumer and the managed job across windows.
+  Bounded Unicode text snapshots fan out to independent listeners without storing
+  raw output in the workspace journal. Stop, Continue Without Setup, Retry,
+  archive, removal and shutdown drain the owned session; a closed output snapshot
+  cannot precede that drain. Retry creates a new run and review. Restart marks
+  uncertain work interrupted and never replays the command automatically.
+- Sixteen focused Core cases pass, including exact approval, first-role selection,
+  blocking/async readiness, FIFO provider settings, commit failure before launch,
+  claimed-outbox recovery, retained background jobs after exit 0, held cleanup,
+  Stop followed by removal/shutdown, archive/unarchive/retry joining an existing
+  drain, no-runtime log closure, stale owner IDs and main-checkout reuse. Three new native Store/view cases pass with actual local
+  Git worktrees and the native helper executable: two-window output/cleanup, real
+  exit 7 and environment/cwd, changed configuration, fresh retry, restart review,
+  unsent drafts/source-file preservation and small-display form geometry.
+- Full `swift test --no-parallel`: **375 passed** (301 Core, 6 terminal,
+  13 Markdown, 55 native UI/Store). Offscreen setup-review and worktree-form
+  previews were inspected in light and dark appearances. The first light capture
+  mixed SwiftUI's light scheme with the host's dark AppKit semantic background;
+  scoping the capture window and drawing appearance fixed the harness. The
+  focused render check passes again; no product colors changed.
+- The repository-owned app packages and launches with deep strict signature,
+  separate helper signature and native math-resource checks passing. Storage
+  upgrades from 11 to 12, with the entire saved workspace unchanged against its
+  private SQLite checkpoint: three conversations and 25 messages.
+- CI run `39701358026` at the preceding helper-only commit failed compilation
+  under Apple Swift 6.3.3 before tests could execute. The local Swift 6.4 compiler
+  accepted C argument-vector inference that the hosted compiler rejected. The
+  helper and launcher now use explicit String and C-pointer array types, with an
+  unambiguous filesystem path. All 375 local tests pass again; the seven-workflow
+  native runner also compiles and verifies its signature. Exact-head hosted
+  compilation and actual GUI execution still need to establish their results.
+- Actual setup GUI workflow verification remains separate from these focused
+  tests. The existing manual script workflow and its terminal ownership remain
+  unchanged. Settle/resume generations and settle-script execution remain pending.
+
 ## 2026-10-22 — managed native script process primitive
 
 - A separately signed native helper owns a PTY and remains its process-group
@@ -64,9 +111,22 @@
   worktree workflow passed its complete local-base/branch/submodule-choice,
   draft/cwd/restart and source-preservation checks (93.905 seconds). Project scripts
   passed again (93.121 seconds). Actual six-test execution took 647.088 seconds.
-- The unchanged six-workflow GUI suite follows in run `39699875038`. The layout
-  change is not yet claimed to resolve the hosted crash; actual GUI execution must
-  establish that result.
+- The unchanged six-workflow GUI suite in run `39699875038` passed four, failed
+  two and skipped none (534.352 seconds). Files stopped before opening the
+  inspector: the combined readiness predicate timed out, while the exported
+  native location, screenshot and accessibility diagnostic showed the requested
+  folder with Add Project enabled and hittable. Scripts stopped because Run Script
+  had moved into the native toolbar overflow, visible in both pixels and the
+  accessibility tree. No inspector execution occurred, so this run does not
+  establish whether the layout change resolves the crash.
+- Harness navigation now waits for the observed native folder-location value
+  before directly asserting Add Project's enabled/hittable state, and follows
+  the actual toolbar overflow when Run Script is hidden there. Existing workflow
+  assertions remain. A seventh workflow adds reviewed setup/Cancel, exact command
+  and cwd, first-role execution, exit/output, explicit Continue and retained draft
+  and source checks; the result gate rejects fewer than seven tests or any skips.
+  Its execution allowance is 20 minutes, reflecting the earlier six-workflow
+  647-second test-only duration plus the new workflow and complete Files body.
 
 ## 2026-10-22 — explicit submodule initialization for new worktrees
 

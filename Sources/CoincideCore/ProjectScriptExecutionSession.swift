@@ -210,12 +210,15 @@ final class ScriptHelperProcess: @unchecked Sendable {
                 posix_spawnattr_setsigmask(&attributes, &mask), posix_spawnattr_setsigdefault(&attributes, &defaults),
                 posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))]
             guard codes.allSatisfy({ $0 == 0 }) else { throw ProjectScriptExecutionError(.launchFailed) }
-            let argv = [helper.path, "--run-id", id.uuidString].map { strdup($0) } + [nil]
-            let env = environment.sorted(by: { $0.key < $1.key }).map { strdup($0.key + "=" + $0.value) } + [nil]
+            let helperPath: String = helper.path(percentEncoded: false)
+            let argumentStrings: [String] = [helperPath, "--run-id", id.uuidString]
+            let environmentStrings: [String] = environment.sorted(by: { $0.key < $1.key }).map { $0.key + "=" + $0.value }
+            let argv: [UnsafeMutablePointer<CChar>?] = argumentStrings.map { value in value.withCString { strdup($0) } } + [nil]
+            let env: [UnsafeMutablePointer<CChar>?] = environmentStrings.map { value in value.withCString { strdup($0) } } + [nil]
             defer { for pointer in argv + env { free(pointer) } }
             var child: pid_t = 0
             let code = argv.withUnsafeBufferPointer { args in env.withUnsafeBufferPointer { values in
-                posix_spawn(&child, helper.path, &actions, &attributes, UnsafeMutablePointer(mutating: args.baseAddress!), UnsafeMutablePointer(mutating: values.baseAddress!))
+                posix_spawn(&child, helperPath, &actions, &attributes, UnsafeMutablePointer(mutating: args.baseAddress!), UnsafeMutablePointer(mutating: values.baseAddress!))
             } }
             guard code == 0 else { throw ProjectScriptExecutionError(.launchFailed) }
             let result = (child, descriptors[1], descriptors[2], descriptors[4])

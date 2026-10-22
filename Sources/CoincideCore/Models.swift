@@ -157,6 +157,14 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             projects[i].clone = clone
         }
         for i in threads.indices {
+            if var preparation = threads[i].workspacePreparation, var setup = preparation.setup,
+               [.discovering, .starting, .running, .stopping].contains(setup.phase) {
+                let provenSuccess = setup.phase == .stopping && setup.pendingAction == .cancel && setup.commandExit == .exited(0)
+                setup.phase = provenSuccess ? .succeeded : .interrupted; setup.pendingAction = nil
+                setup.error = provenSuccess ? nil : ThreadProjectScriptRun.interruptedError
+                setup.updatedAt = Date(); setup.endedAt = Date(); preparation.setup = setup
+                threads[i].workspacePreparation = preparation; threads[i].queuePaused = true
+            }
             if var preparation = threads[i].workspacePreparation, preparation.isRunning {
                 preparation.phase = .interrupted; preparation.cancelRequested = false
                 preparation.error = "The app closed during workspace preparation. Retry when ready; existing files are preserved."

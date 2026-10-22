@@ -7,7 +7,7 @@ struct ChatView: View {
     @State private var sending = false
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
-    @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode)?
+    @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode, reviewSetup: Bool)?
     private var thread: CodingThread? { store.thread(threadID) }
     private var draft: Binding<String> {
         Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
@@ -84,6 +84,9 @@ struct ChatView: View {
                         WorktreePreparationBanner(preparation: preparation, cancel: { store.cancelWorktreePreparation(threadID) },
                                                   retry: { store.retryWorktreePreparation(threadID) },
                                                   retrying: store.isPreparingWorkspace(threadID))
+                        if preparation.isReady, let setup = preparation.setup {
+                            WorkspaceSetupBanner(store: store, threadID: threadID, run: setup)
+                        }
                     }
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
@@ -122,10 +125,10 @@ struct ChatView: View {
             .sheet(isPresented: $worktreeSheet, onDismiss: {
                 guard let pending = pendingWorktree else { return }
                 pendingWorktree = nil
-                Task { await store.prepareWorktree(for: pending.threadID, selection: pending.selection, submodules: pending.submodules) }
+                Task { await store.prepareWorktree(for: pending.threadID, selection: pending.selection, submodules: pending.submodules, reviewSetup: pending.reviewSetup) }
             }) {
-                WorktreeSetupSheet(store: store, threadID: threadID, cancel: { worktreeSheet = false }) { selection, submodules in
-                    pendingWorktree = (threadID, selection, submodules); worktreeSheet = false
+                WorktreeSetupSheet(store: store, threadID: threadID, cancel: { worktreeSheet = false }) { selection, submodules, reviewSetup in
+                    pendingWorktree = (threadID, selection, submodules, reviewSetup); worktreeSheet = false
                 }
             }
         }
