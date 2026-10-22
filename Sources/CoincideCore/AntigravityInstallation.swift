@@ -101,16 +101,19 @@ public final class AntigravityInstallation: @unchecked Sendable {
     }
 
     public init(rootURL: URL = AntigravityInstallation.defaultRoot, release: AntigravityManagedRelease? = .current,
-                downloader: @escaping Downloader = { try await AntigravityArchiveDownloader.download(release: $0, to: $1, progress: $2) },
-                extractor: @escaping Extractor = { try await AntigravityArchiveExtractor.extract(release: $0, archive: $1, to: $2) },
-                verifier: @escaping Verifier = { try await AntigravityInstallationVerifier.verify(release: $0, pair: $1, scratch: $2) },
+                downloader: Downloader? = nil,
+                extractor: Extractor? = nil,
+                verifier: Verifier? = nil,
                 diskSpace: @escaping DiskSpace = { url in
                     let attributes = try FileManager.default.attributesOfFileSystem(forPath: url.path)
                     guard let bytes = attributes[.systemFreeSize] as? NSNumber else { throw AntigravityInstallationError(.insufficientDiskSpace) }
                     return bytes.int64Value
                 }) {
         self.rootURL = rootURL.standardizedFileURL.resolvingSymlinksInPath(); self.release = release
-        self.downloader = downloader; self.extractor = extractor; self.verifier = verifier; self.diskSpace = diskSpace
+        self.downloader = downloader ?? { try await AntigravityArchiveDownloader.download(release: $0, to: $1, progress: $2) }
+        self.extractor = extractor ?? { try await AntigravityArchiveExtractor.extract(release: $0, archive: $1, to: $2) }
+        self.verifier = verifier ?? { try await AntigravityInstallationVerifier.verify(release: $0, pair: $1, scratch: $2) }
+        self.diskSpace = diskSpace
         current = .init(totalBytes: release?.archiveBytes, version: release?.version)
         if FileManager.default.fileExists(atPath: self.rootURL.path) {
             do {

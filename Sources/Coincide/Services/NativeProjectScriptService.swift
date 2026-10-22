@@ -34,8 +34,9 @@ struct ProjectScriptContext {
     init(resolve: @escaping (CodingThread) throws -> ProjectScriptWorkspace,
          authorize: @escaping (CodingThread, ProjectScriptWorkspace) -> Bool,
          authorizeWindow: @escaping (TerminalWorkspaceStore) -> Bool,
-         read: @escaping Reader = { try await ProjectConfigurationService.load(using: $0) }) {
-        self.resolve = resolve; self.authorize = authorize; self.authorizeWindow = authorizeWindow; self.read = read
+         read: Reader? = nil) {
+        self.resolve = resolve; self.authorize = authorize; self.authorizeWindow = authorizeWindow
+        self.read = read ?? { try await ProjectConfigurationService.load(using: $0) }
     }
     func load(for thread: CodingThread) async throws -> ProjectScriptContext {
         guard !stopping else { throw CancellationError() }

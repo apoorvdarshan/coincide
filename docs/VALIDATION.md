@@ -1,5 +1,51 @@
 # Validation record
 
+## 2026-10-23 — async default closure context isolation
+
+- Hosted run `39830400064` at `7513330` passes the direct public verifier check
+  in 4.386 seconds, while the isolated managed-install inspection and unchanged
+  full suite both terminate with SIGBUS. Its sanitized stack still reaches
+  `CodexInstallationVerifier.inspect`, `memset_s` and the task allocator. The
+  displayed isolated-step conclusion remains masked by `continue-on-error`;
+  the raw failure and final gate are authoritative. Native GUI checks skip.
+- Swift's [default async closure issue](https://github.com/swiftlang/swift/issues/92017)
+  documents incompatible library/client async context records and reports the
+  same Swift 6.3.3 toolchain. Inspection of this project's existing Swift 6.4
+  objects independently finds the default Codex Inspector's weak record declares
+  48 bytes in Core and 32 bytes in a client. Their entries also differ, at 40 and
+  31 instructions. Downloader/extractor/verifier defaults declare 64 versus 32
+  bytes. The local linked product retains distinct matching copies; a bad pair
+  has not been measured in the hosted binary, so this is evidence of the compiler
+  trigger rather than proof of the exact corrupting hosted instruction.
+- Thirteen public async closure defaults across six Core initializers and five
+  app-internal defaults now use optional parameters with `nil` defaults. Identical
+  fallback closures are constructed inside their defining initializer. Supplied
+  callbacks, production operations, timing, ownership and cancellation remain
+  covered by their existing behavior tests. Synchronous defaults and named
+  function references remain separate. No runtime permission or persisted model
+  changed as part of this mitigation.
+- The focused direct/managed pair passes locally. A read-only scan of 551 rebuilt
+  objects finds seventeen local/private async-default records, zero weak records
+  and zero parse errors. A native-object CI guard now checks this actual compiled
+  property with explicit Core/app coverage; source text and a passing narrow test
+  do not substitute for that evidence. The full suite and both fresh diagnostic
+  checks remain enforced; hosted mitigation acceptance is still pending.
+- The production guard passes on 807 existing Mach-O objects, with defined app
+  coverage in 216 objects, Core coverage in 503 and zero weak default records.
+  Eleven synthetic parser/CLI checks cover 48/32-byte records, weak private
+  external versus local definitions, malformed/missing coverage, both build
+  layouts and bounded private-data-free diagnostics. Their first run exposed the
+  test fixtures' `/var` versus `/private/var` aliases; canonical fixture roots
+  preserve the unreadable-file and deduplication assertions on macOS. All 60
+  Python harness checks now pass in 2.408 seconds.
+- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` succeeds with
+  1428 declarations: 1418 pass and ten optional installed-provider checks skip.
+  Core reports 1221 declarations across eight suites in 291.564 seconds; all 188
+  native view/store declarations pass in 64.073 seconds, terminal six in 1.365
+  seconds and Markdown 13 in 0.133 seconds. No test deadlines or verification
+  assertions were weakened. Hosted crash resolution and native GUI acceptance
+  still require the new hosted run; complete T3 Code parity remains unfinished.
+
 ## 2026-10-22 — native OpenCode v2 history and staged-revert recovery
 
 - OpenCode v2 history uses ordered native messages and exact deterministic local

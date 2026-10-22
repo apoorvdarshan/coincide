@@ -196,13 +196,14 @@ final class WorkspaceStore {
 
     init(databaseURL: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
          codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
-         codexListenerFactory: @escaping CodexAuthentication.ListenerFactory = { try await CodexOAuthLoopback.start() },
+         codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot, installation: codexInstallation)
         codexAuthentication = .init(configuration: codexRuntime.configuration)
         self.codexOwnedRuntime = codexOwnedRuntime; self.codexHostID = codexHostID ?? Self.savedCodexHostID()
-        self.codexAuthorization = codexAuthorization; self.codexListenerFactory = codexListenerFactory
+        self.codexAuthorization = codexAuthorization
+        self.codexListenerFactory = codexListenerFactory ?? { try await CodexOAuthLoopback.start() }
         let runtimeRoot = databaseURL.map { $0.deletingLastPathComponent().appendingPathComponent("Providers/Antigravity", isDirectory: true) } ?? AntigravityRuntime.defaultStateRoot
         antigravityRuntimeInstallation = runtimeInstallation
         antigravityInstallation = .init(installation: runtimeInstallation)
@@ -231,15 +232,16 @@ final class WorkspaceStore {
     }
     init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
          codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
-         codexListenerFactory: @escaping CodexAuthentication.ListenerFactory = { try await CodexOAuthLoopback.start() },
+         codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization,
-         projectScriptReader: @escaping NativeProjectScriptService.Reader = { try await ProjectConfigurationService.load(using: $0) },
-         projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
+         projectScriptReader: NativeProjectScriptService.Reader? = nil,
+         projectCreator: ProjectCreator? = nil) {
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
         codexAuthentication = .init(configuration: codexRuntime.configuration)
         self.codexOwnedRuntime = codexOwnedRuntime; self.codexHostID = codexHostID ?? Self.savedCodexHostID()
-        self.codexAuthorization = codexAuthorization; self.codexListenerFactory = codexListenerFactory
+        self.codexAuthorization = codexAuthorization
+        self.codexListenerFactory = codexListenerFactory ?? { try await CodexOAuthLoopback.start() }
         antigravityRuntimeInstallation = runtimeInstallation
         antigravityInstallation = .init(installation: runtimeInstallation)
         antigravityAccount = .init(stateRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AntigravitySettings", isDirectory: true),
@@ -247,8 +249,8 @@ final class WorkspaceStore {
         self.engine = engine
         self.managedProjectsRoot = managedProjectsRoot ?? Self.applicationDataRoot.appendingPathComponent("Projects", isDirectory: true)
         self.worktreesRoot = engine.worktreesRoot
-        self.projectCreator = projectCreator
-        self.projectScriptReader = projectScriptReader
+        self.projectCreator = projectCreator ?? { name, root in try await ManagedProjectService(root: root).create(name: name) }
+        self.projectScriptReader = projectScriptReader ?? { try await ProjectConfigurationService.load(using: $0) }
         antigravityAccount.bind(engine: engine)
         bindAntigravityInstallation(); bindCodexRuntime()
     }

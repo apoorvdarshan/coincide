@@ -87,12 +87,12 @@ public actor AntigravityAuthentication {
 
     public init(sessionFactory: @escaping SessionFactory = AntigravityAuthentication.nativeSessionFactory(),
                 credentials: AntigravityCredentialAccess = .keychain,
-                timeout: Duration = .seconds(300), invalidateAccess: @escaping Apply = { _ in }, beginLease: @escaping BeginLease,
+                timeout: Duration = .seconds(300), invalidateAccess: Apply? = nil, beginLease: @escaping BeginLease,
                 endLease: @escaping EndLease, apply: @escaping Apply) {
         self.sessionFactory = sessionFactory; self.credentials = credentials
         self.timeout = min(max(timeout, .milliseconds(1)), .seconds(300))
         self.beginLease = beginLease; self.endLease = endLease; self.apply = apply
-        self.invalidateAccess = invalidateAccess
+        self.invalidateAccess = invalidateAccess ?? { _ in }
     }
 
     public func updates() -> AsyncStream<AntigravityAuthenticationState> {

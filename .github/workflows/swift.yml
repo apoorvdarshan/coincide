@@ -73,6 +73,11 @@ jobs:
         # every test, while avoiding simultaneous fixture launches starving timers.
         run: |
           swift test --no-parallel
+      - name: Verify async default closure contexts
+        if: always()
+        # Inspect actual objects from either SwiftPM build system. A weak async
+        # default closure can have incompatible library/client frame records.
+        run: python3 script/check_async_default_contexts.py .build
       - name: Collect sanitized Swift test crash stacks
         if: always() && (steps.swift_tests.outcome == 'failure' || steps.codex_inspection.outcome == 'failure' || steps.codex_direct_inspection.outcome == 'failure')
         continue-on-error: true

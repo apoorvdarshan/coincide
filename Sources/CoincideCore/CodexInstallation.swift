@@ -100,16 +100,22 @@ public final class CodexInstallation: @unchecked Sendable {
         let device: UInt64, inode: UInt64, bytes: Int64, modified: Int64, nanoseconds: Int64, changed: Int64, changedNanoseconds: Int64
     }
     public init(rootURL: URL = CodexInstallation.defaultRoot, release: CodexManagedRelease? = .current,
-                downloader: @escaping Downloader = { try await CodexArchiveDownloader.download(release: $0, to: $1, progress: $2) },
-                extractor: @escaping Extractor = { try await CodexArchiveExtractor.extract(release: $0, archive: $1, to: $2) },
-                verifier: @escaping Verifier = { try await CodexInstallationVerifier.verify(release: $0, executable: $1, scratch: $2) },
-                inspector: @escaping Inspector = { try await CodexInstallationVerifier.inspect(executable: $0, scratch: $1) },
+                downloader: Downloader? = nil,
+                extractor: Extractor? = nil,
+                verifier: Verifier? = nil,
+                inspector: Inspector? = nil,
                 diskSpace: @escaping DiskSpace = { url in
                     let values = try FileManager.default.attributesOfFileSystem(forPath: url.path)
                     guard let count = values[.systemFreeSize] as? NSNumber else { throw CodexInstallationError(.insufficientDiskSpace) }; return count.int64Value
                 }, localResolver: @escaping LocalResolver = ProcessChannel.findExecutable) {
         self.rootURL = rootURL.standardizedFileURL.resolvingSymlinksInPath(); self.release = release
-        self.downloader = downloader; self.extractor = extractor; self.verifier = verifier; self.inspector = inspector; self.diskSpace = diskSpace; self.localResolver = localResolver
+        // Emit async defaults only in this module. Some Swift toolchains emit
+        // incompatible async contexts for default-argument closures in clients.
+        self.downloader = downloader ?? { try await CodexArchiveDownloader.download(release: $0, to: $1, progress: $2) }
+        self.extractor = extractor ?? { try await CodexArchiveExtractor.extract(release: $0, archive: $1, to: $2) }
+        self.verifier = verifier ?? { try await CodexInstallationVerifier.verify(release: $0, executable: $1, scratch: $2) }
+        self.inspector = inspector ?? { try await CodexInstallationVerifier.inspect(executable: $0, scratch: $1) }
+        self.diskSpace = diskSpace; self.localResolver = localResolver
         current = .init(totalBytes: release?.archiveBytes, version: release?.version)
         if FileManager.default.fileExists(atPath: self.rootURL.path) {
             do {

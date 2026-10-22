@@ -41,12 +41,14 @@ public actor AntigravitySession: ProviderSession {
     private var modelsTask: Task<[ProviderModel], any Error>?
 
     public init(executable: URL, cwd: URL, configuration: AntigravityConfiguration, permission: PermissionMode = .supervised,
-                fileAccessGuard: @escaping AntigravityFileAccessGuard = { _, _ in throw CoincideError("This Antigravity file request is not authorized for the workspace.") },
-                credentialProvider: @escaping @Sendable () async throws -> AntigravityRuntimeCredential? = { nil },
+                fileAccessGuard: AntigravityFileAccessGuard? = nil,
+                credentialProvider: (@Sendable () async throws -> AntigravityRuntimeCredential?)? = nil,
                 authorizationURLHandler: (@Sendable (AntigravityAuthorizationURL) async throws -> Void)? = nil,
                 stateRoot: URL? = nil, installation: AntigravityInstallation = .shared) {
         self.executable = executable; self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath(); self.configuration = configuration
-        self.permission = permission; self.fileAccessGuard = fileAccessGuard; self.credentialProvider = credentialProvider
+        self.permission = permission
+        self.fileAccessGuard = fileAccessGuard ?? { _, _ in throw CoincideError("This Antigravity file request is not authorized for the workspace.") }
+        self.credentialProvider = credentialProvider ?? { nil }
         self.authorizationURLHandler = authorizationURLHandler; self.stateRoot = stateRoot ?? AntigravityRuntime.defaultStateRoot
         self.installation = installation
         (events, output) = AsyncStream.makeStream()

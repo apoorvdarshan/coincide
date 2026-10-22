@@ -1563,9 +1563,9 @@ public actor WorkspaceEngine {
 
     public init(url: URL, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
                 cloneFactory: @escaping CloneFactory = { GitCloneService(plan: $0) },
-                identityResolver: @escaping IdentityResolver = { try await RepositoryIdentityResolver(root: $0).resolve() },
+                identityResolver: IdentityResolver? = nil,
                 worktreeFactory: @escaping WorktreeFactory = { GitWorktreeService(request: $0) },
-                projectScriptPlanner: @escaping ProjectScriptPlanner = { try await ProjectScriptSetupPlanner.plan($0) },
+                projectScriptPlanner: ProjectScriptPlanner? = nil,
                 projectScriptFactory: @escaping ProjectScriptFactory = { _ in throw ProjectScriptExecutionError(.helperUnavailable) },
                 checkpointFactory: @escaping CheckpointFactory = { GitCheckpointService(root: $0) },
                 pullRequestFactory: @escaping PullRequestFactory = { GitHubPullRequestService(root: $0) },
@@ -1575,9 +1575,10 @@ public actor WorkspaceEngine {
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
         factory = providerFactory
         self.cloneFactory = cloneFactory
-        self.identityResolver = identityResolver
+        self.identityResolver = identityResolver ?? { try await RepositoryIdentityResolver(root: $0).resolve() }
         self.worktreeFactory = worktreeFactory
-        self.projectScriptPlanner = projectScriptPlanner; self.projectScriptFactory = projectScriptFactory
+        self.projectScriptPlanner = projectScriptPlanner ?? { try await ProjectScriptSetupPlanner.plan($0) }
+        self.projectScriptFactory = projectScriptFactory
         self.checkpointFactory = checkpointFactory; self.pullRequestFactory = pullRequestFactory
         self.pullRequestCheckoutFactory = pullRequestCheckoutFactory
         worktreesRoot = url.deletingLastPathComponent().appendingPathComponent("Worktrees", isDirectory: true).standardizedFileURL

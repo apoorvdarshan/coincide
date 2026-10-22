@@ -74,12 +74,13 @@ public actor CodexAuthentication {
     public private(set) var state: CodexAuthenticationState
 
     public init(instanceID: UUID, hostID: UUID, vault: CodexAccountVault, client: CodexOAuthClient,
-                listenerFactory: @escaping ListenerFactory = { try await CodexOAuthLoopback.start() },
+                listenerFactory: ListenerFactory? = nil,
                 authorizationHandler: @escaping AuthorizationHandler, timeout: Duration = .seconds(300),
                 beginLease: @escaping BeginLease, endLease: @escaping EndLease, apply: @escaping Apply,
                 invalidate: @escaping Invalidate) {
         self.instanceID = instanceID; self.hostID = hostID; self.vault = vault; self.client = client
-        self.listenerFactory = listenerFactory; self.authorizationHandler = authorizationHandler
+        self.listenerFactory = listenerFactory ?? { try await CodexOAuthLoopback.start() }
+        self.authorizationHandler = authorizationHandler
         self.beginLease = beginLease; self.endLease = endLease; self.apply = apply; self.invalidate = invalidate
         self.timeout = min(max(timeout, .milliseconds(1)), .seconds(300))
         state = .init(instanceID: instanceID)
