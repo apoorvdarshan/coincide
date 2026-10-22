@@ -7,6 +7,16 @@ import SwiftUI
 @main
 enum CoincideMain {
     @MainActor static func main() {
+        if CommandLine.arguments.dropFirst() == ["--verify-owned-codex-keychain"] {
+            do {
+                try CodexKeychainVerification.run()
+                print("Owned Codex Data Protection Keychain create/read/update/delete passed; synthetic item removed.")
+            } catch {
+                FileHandle.standardError.write(Data("Owned Codex Data Protection Keychain acceptance failed; no saved account was accessed.\n".utf8))
+                exit(EXIT_FAILURE)
+            }
+            return
+        }
         if CommandLine.arguments.dropFirst() == ["--verify-resources"] {
             guard let image = NativeMath.image(#"x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}"#, dark: false),
                   image.cgImage(forProposedRect: nil, context: nil, hints: nil) != nil else {

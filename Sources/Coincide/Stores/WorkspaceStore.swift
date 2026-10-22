@@ -58,6 +58,12 @@ private struct CodexModelDefaultsRead {
     let task: Task<Bool, Never>
 }
 
+private struct CodexWorkspaceAuthenticationLease {
+    let instanceID: UUID
+    let engineLeaseID: UUID
+    let runtimeLease: CodexRuntimeAdmissionLease
+}
+
 private struct CheckpointRestoreRead {
     let threadID: UUID
     let task: Task<RunCheckpointRestoreReview, any Error>
@@ -114,7 +120,15 @@ final class WorkspaceStore {
     var isRefreshingModels = false
     let codexAccount = CodexAccountStore()
     let codexRuntime: CodexRuntimeStore
+    let codexAuthentication: CodexAuthenticationStore
     @ObservationIgnored private let codexRuntimeInstallation: CodexInstallation
+    @ObservationIgnored private let codexOwnedRuntime: CodexOwnedRuntimeBroker
+    @ObservationIgnored private let codexAuthorization: CodexAuthentication.AuthorizationHandler
+    @ObservationIgnored private let codexListenerFactory: CodexAuthentication.ListenerFactory
+    @ObservationIgnored private let codexHostID: UUID
+    @ObservationIgnored private var codexAuthenticationBinding: Task<Void, Never>?
+    @ObservationIgnored private var codexAuthenticationChanges: Set<UUID> = []
+    @ObservationIgnored private var codexAuthenticationLeases: [UUID: CodexWorkspaceAuthenticationLease] = [:]
     var codexModels: [UUID: [ProviderModel]] = [:]
     @ObservationIgnored private var codexCatalogReads: [UUID: Task<[ProviderModel], any Error>] = [:]
     @ObservationIgnored private var codexMetadataScope = UUID()
@@ -178,9 +192,15 @@ final class WorkspaceStore {
     private var lastSequence: Int64 = -1
     private var terminating = false
 
-    init(databaseURL: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared) {
+    init(databaseURL: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
+         codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
+         codexListenerFactory: @escaping CodexAuthentication.ListenerFactory = { try await CodexOAuthLoopback.start() },
+         codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot, installation: codexInstallation)
+        codexAuthentication = .init(configuration: codexRuntime.configuration)
+        self.codexOwnedRuntime = codexOwnedRuntime; self.codexHostID = codexHostID ?? Self.savedCodexHostID()
+        self.codexAuthorization = codexAuthorization; self.codexListenerFactory = codexListenerFactory
         let runtimeRoot = databaseURL.map { $0.deletingLastPathComponent().appendingPathComponent("Providers/Antigravity", isDirectory: true) } ?? AntigravityRuntime.defaultStateRoot
         antigravityRuntimeInstallation = runtimeInstallation
         antigravityInstallation = .init(installation: runtimeInstallation)
@@ -197,7 +217,8 @@ final class WorkspaceStore {
         let accountRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AntigravitySettings", isDirectory: true)
         let providers: WorkspaceEngine.ProviderFactory = {
             try ProviderSessions.make(for: $0, antigravityStateRoot: runtimeRoot,
-                antigravityInstallation: runtimeInstallation, antigravityAccountRoot: accountRoot, codexInstallation: codexInstallation)
+                antigravityInstallation: runtimeInstallation, antigravityAccountRoot: accountRoot, codexInstallation: codexInstallation,
+                codexOwnedRuntime: codexOwnedRuntime)
         }
         do {
             if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory); return }
@@ -207,10 +228,16 @@ final class WorkspaceStore {
         } catch { errorMessage = error.localizedDescription }
     }
     init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
+         codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
+         codexListenerFactory: @escaping CodexAuthentication.ListenerFactory = { try await CodexOAuthLoopback.start() },
+         codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization,
          projectScriptReader: @escaping NativeProjectScriptService.Reader = { try await ProjectConfigurationService.load(using: $0) },
          projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
+        codexAuthentication = .init(configuration: codexRuntime.configuration)
+        self.codexOwnedRuntime = codexOwnedRuntime; self.codexHostID = codexHostID ?? Self.savedCodexHostID()
+        self.codexAuthorization = codexAuthorization; self.codexListenerFactory = codexListenerFactory
         antigravityRuntimeInstallation = runtimeInstallation
         antigravityInstallation = .init(installation: runtimeInstallation)
         antigravityAccount = .init(stateRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AntigravitySettings", isDirectory: true),
@@ -224,9 +251,16 @@ final class WorkspaceStore {
         bindAntigravityInstallation(); bindCodexRuntime()
     }
     private func bindCodexRuntime() {
+        let initial = codexRuntime.configuration
+        codexAuthenticationBinding = Task { [weak self] in await self?.bindCodexAuthentication(configuration: initial) }
         codexRuntime.bind(apply: { [weak self] configuration in
             try configuration.validate()
-            guard let self, !self.terminating else { throw CancellationError() }
+            guard let self, !self.terminating || !self.codexAuthenticationLeases.isEmpty else { throw CancellationError() }
+            await self.codexAuthenticationBinding?.value
+            let sameScope = CodexAuthenticationStore.sameControllerScope(self.codexAuthentication.configuration, configuration)
+            guard sameScope || (!self.codexAuthentication.isWorking && self.codexAuthenticationChanges.isEmpty) else {
+                throw CoincideError("Finish the ChatGPT account change before selecting another runtime.")
+            }
             self.codexMetadataScope = UUID()
             self.codexModels.removeAll(); self.providerModels.removeValue(forKey: .codex)
             let catalogs = Array(self.codexCatalogReads.values)
@@ -237,7 +271,9 @@ final class WorkspaceStore {
             await self.codexAccount.invalidate()
             for task in catalogs { _ = try? await task.value }
             for task in defaults { _ = await task.value }
-            guard !self.terminating else { throw CancellationError() }
+            guard !self.terminating || !self.codexAuthenticationLeases.isEmpty else { throw CancellationError() }
+            if sameScope { self.codexAuthentication.updateConfiguration(configuration) }
+            else { await self.bindCodexAuthentication(configuration: configuration) }
         }, protectedCustomPaths: { [weak self] in
             guard let self else { return [] }
             var configurations = [self.codexRuntime.configuration]
@@ -248,6 +284,82 @@ final class WorkspaceStore {
             }
             return configurations.filter { $0.selection == .custom }.map(\.executable)
         })
+    }
+    private static func savedCodexHostID() -> UUID {
+        let key = "Coincide.CodexAuthentication.hostID"
+        if let value = UserDefaults.standard.string(forKey: key), let id = UUID(uuidString: value) { return id }
+        let id = UUID(); UserDefaults.standard.set(id.uuidString.lowercased(), forKey: key); return id
+    }
+    nonisolated static func openCodexAuthorization(_ authorization: CodexOAuthAuthorization) async throws {
+        let opened = await MainActor.run { NSWorkspace.shared.open(authorization.authorizationURL) }
+        guard opened else { throw CoincideError("The ChatGPT sign-in page could not be opened. Try the sign-in link again.") }
+    }
+    private func bindCodexAuthentication(configuration: CodexRuntimeConfiguration) async {
+        guard !terminating, !Task.isCancelled else { return }
+        let components = await codexOwnedRuntime.components(instanceID: configuration.instanceID)
+        guard !terminating, !Task.isCancelled else { return }
+        let controller = CodexAuthentication(instanceID: configuration.instanceID, hostID: codexHostID,
+            vault: components.vault, client: components.client, listenerFactory: codexListenerFactory,
+            authorizationHandler: codexAuthorization,
+            beginLease: { [weak self] instance in
+                guard let self, instance == configuration.instanceID else { throw CancellationError() }
+                return try await self.beginCodexAccountChange(configuration: configuration)
+            }, endLease: { [weak self] id in await self?.endCodexAccountChange(id) },
+            apply: { [weak self] overview in
+                guard let self else { throw CancellationError() }
+                try await self.publishCodexAccount(overview.binding, instanceID: configuration.instanceID)
+            }, invalidate: { [weak self] in
+                try? await self?.publishCodexAccount(nil, instanceID: configuration.instanceID)
+            })
+        await codexAuthentication.bind(client: .init(instanceID: configuration.instanceID, controller: controller, vault: components.vault),
+                                       configuration: configuration)
+    }
+    private func beginCodexAccountChange(configuration: CodexRuntimeConfiguration) async throws -> UUID {
+        guard !terminating, !codexRuntime.isApplying, let engine,
+              configuration.authenticationMode == .ownedChatGPT,
+              CodexAuthenticationStore.sameControllerScope(configuration, codexRuntime.configuration),
+              codexAuthenticationChanges.insert(configuration.instanceID).inserted else { throw CancellationError() }
+        let instanceID = configuration.instanceID
+        codexMetadataScope = UUID(); codexModels.removeAll(); providerModels.removeValue(forKey: .codex)
+        let catalogs = Array(codexCatalogReads.values), defaults = codexModelDefaultsReads.values.map(\.task)
+        codexModelDefaultsReads.removeAll()
+        catalogs.forEach { $0.cancel() }; defaults.forEach { $0.cancel() }
+        var engineLease: UUID?, runtimeLease: CodexRuntimeAdmissionLease?
+        do {
+            // Engine cancellation owns native metadata close. Join app readers
+            // only after that close has unblocked cancellation-resistant work.
+            let id = try await engine.beginCodexAuthentication(configuration: configuration); engineLease = id
+            try Task.checkCancellation()
+            runtimeLease = try await codexOwnedRuntime.beginMutation(instanceID: instanceID)
+            for task in catalogs { _ = try? await task.value }
+            for task in defaults { _ = await task.value }
+            await codexAccount.invalidate()
+            try Task.checkCancellation()
+            guard !terminating, CodexAuthenticationStore.sameControllerScope(configuration, codexRuntime.configuration),
+                  let runtimeLease else { throw CancellationError() }
+            codexAuthenticationLeases[id] = .init(instanceID: instanceID, engineLeaseID: id, runtimeLease: runtimeLease)
+            return id
+        } catch {
+            runtimeLease?.release()
+            if let engineLease { await engine.endCodexAuthentication(leaseID: engineLease) }
+            codexAuthenticationChanges.remove(instanceID)
+            throw error
+        }
+    }
+    private func publishCodexAccount(_ binding: CodexAccountBinding?, instanceID: UUID) async throws {
+        guard let engine, let lease = codexAuthenticationLeases.values.first(where: { $0.instanceID == instanceID }),
+              codexRuntime.configuration.instanceID == instanceID,
+              codexRuntime.configuration.authenticationMode == .ownedChatGPT else { throw CancellationError() }
+        try await engine.applyCodexAccountBinding(instanceID: instanceID, binding: binding, leaseID: lease.engineLeaseID)
+        apply(await engine.current())
+        try await codexRuntime.publishAccountBinding(binding, expectedInstanceID: instanceID)
+    }
+    private func endCodexAccountChange(_ id: UUID) async {
+        guard let lease = codexAuthenticationLeases[id] else { return }
+        lease.runtimeLease.release()
+        await engine?.endCodexAuthentication(leaseID: lease.engineLeaseID)
+        codexAuthenticationLeases.removeValue(forKey: id)
+        codexAuthenticationChanges.remove(lease.instanceID)
     }
     private func newCodingThread(project: WorkspaceProject) -> CodingThread {
         var thread = CodingThread(project: project)
@@ -1101,13 +1213,13 @@ final class WorkspaceStore {
     }
     func setProvider(_ provider: ProviderKind, id: UUID) {
         let previousProvider = thread(id)?.provider
-        cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .provider(provider)))
-        if provider == .codex, previousProvider != .codex {
-            _ = enqueuePreparing { [weak self] in
-                guard let self, !self.terminating, self.thread(id)?.provider == .codex else { throw CancellationError() }
-                return .editThread(id, .codexRuntimeConfiguration(self.codexRuntime.configuration))
-            }
+        guard provider != previousProvider else { return }
+        if provider == .codex {
+            cancelCodexModelDefaultsRead(id)
+            sendCommand(.editThread(id, .codexProvider(codexRuntime.configuration)))
+            return
         }
+        cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .provider(provider)))
         if provider == .antigravity {
             _ = enqueuePreparing { [weak self] in
                 guard let self, !self.terminating, self.thread(id)?.provider == .antigravity else { throw CancellationError() }
@@ -1638,6 +1750,7 @@ final class WorkspaceStore {
                 guard !codexRuntime.isApplying else { return }
                 let captured = selectedThread.flatMap { $0.provider == .codex ? $0 : nil }
                 let configuration = captured?.codexRuntimeConfiguration ?? (captured == nil ? codexRuntime.configuration : .init())
+                guard configuration.authenticationMode != .ownedChatGPT || !codexAuthenticationChanges.contains(configuration.instanceID) else { return }
                 let scope = codexMetadataScope, id = UUID()
                 let task = Task {
                     if let captured { return try await engine.models(thread: captured) }
@@ -1694,7 +1807,7 @@ final class WorkspaceStore {
         catch { if !terminating { errorMessage = error.localizedDescription } }
     }
     func refreshCodexAccount() async {
-        guard !terminating, !codexRuntime.isApplying, let engine else { return }
+        guard !terminating, !codexRuntime.isApplying, codexRuntime.configuration.authenticationMode == .cliDefault, let engine else { return }
         let configuration = codexRuntime.configuration
         await codexAccount.refresh { try await engine.codexAccountSnapshot(configuration: configuration) }
     }
@@ -2310,6 +2423,9 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        codexAuthenticationBinding?.cancel()
+        await codexAuthenticationBinding?.value
+        await codexAuthentication.shutdown()
         await antigravityAccount.shutdown()
         await antigravityInstallation.shutdown()
         await codexAccount.cancel()

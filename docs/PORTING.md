@@ -59,8 +59,9 @@ must each be mapped and verified before declaring parity.
   OpenCode ACP conversations retain their original path.
 - Native Codex Settings reads existing CLI account/plan and subscription allowance
   with identity consistency, sparse update and stale/unsupported handling. Email
-  is hidden by default and observations stay outside persistence. Native sign-in,
-  managed account profiles and broader usage telemetry still remain.
+  is hidden by default and observations stay outside persistence. Explicit owned
+  ChatGPT sign-in and saved-account controls now have a separate Settings path;
+  installed owned sign-in/model acceptance and broader usage telemetry remain.
 - Codex Runtime Settings saves an explicit installed/managed/custom selection and
   optional absolute home in private bounded preferences. Existing CLI behavior is
   the default; no home contents or authentication are migrated. New conversations
@@ -75,8 +76,9 @@ must each be mapped and verified before declaring parity.
   `app-server --help` checks, reporting the observed executable/source/version
   separately from account access. The existing 0.163.x history/steering and
   inferred CLI-default guards remain unchanged. A managed binary is not managed
-  ChatGPT authentication: native OAuth, account profiles, broader usage, skills
-  and MCP/configuration parity remain unfinished. Installed managed-package and
+  ChatGPT authentication: owned OAuth/account controls are a separate explicit
+  mode; real sign-in/model acceptance, broader usage, skills and MCP/configuration
+  parity remain unfinished. Installed managed-package and
   conversation evidence must be recorded separately from offline checks.
 - The Codex owned-auth Core layer now implements PKCE, verified RS256/ES256
   identity, a bounded native loopback callback listener, saved registrations and
@@ -87,10 +89,13 @@ must each be mapped and verified before declaring parity.
   Native home overlays share T3's history/configuration entries while preserving
   private auth and model-cache data; fixed token-sharing arguments place the
   access token only in the child environment. These are offline-tested Core
-  components, not enabled managed account support: captured auth identity,
-  Engine admission/drain integration, lazy session launch, native Settings,
-  signed-app Keychain acceptance, profile transfer and installed sign-in/model
-  verification remain required before the account feature is complete.
+  components now connected to captured account identity, Engine admission/drain,
+  lazy process launch and native Settings. Account changes pause retained input
+  and join native readers/processes before credential mutation; accepted queues
+  keep their original binding. A provisioned development bundle passes the real
+  synthetic-item Keychain create/read/update/delete check without accessing saved
+  accounts. Profile transfer and installed sign-in/model verification remain
+  required before the account feature is complete.
 - Custom installed ACP agents use a native JSON-RPC 2.0 adapter. Saved named
   invocations pass literal arguments and are captured in each conversation/queue.
   Config options take precedence over legacy model/mode fields. Permissions keep

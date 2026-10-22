@@ -98,10 +98,14 @@ public enum ProviderSessions {
     public static func make(for thread: CodingThread, antigravityStateRoot: URL? = nil,
                             antigravityInstallation: AntigravityInstallation = .shared,
                             antigravityAccountRoot: URL? = nil,
-                            codexInstallation: CodexInstallation = .shared) throws -> any ProviderSession {
+                            codexInstallation: CodexInstallation = .shared,
+                            codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared) throws -> any ProviderSession {
         if thread.provider == .codex {
             try CodexRuntimeConfigurationValidation.configuration(.init(thread: thread))
             let configuration = thread.codexRuntimeConfiguration ?? .init()
+            if configuration.authenticationMode == .ownedChatGPT {
+                return try codexOwnedRuntime.makeSession(configuration: configuration, cwd: URL(fileURLWithPath: thread.workspacePath), installation: codexInstallation)
+            }
             let lease = try codexInstallation.acquire(configuration: configuration)
             let environment = try CodexRuntimeEnvironment.make(configuration: configuration)
             return try CodexSession(executable: lease.resolved.executable, cwd: URL(fileURLWithPath: thread.workspacePath),

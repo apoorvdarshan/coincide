@@ -27,6 +27,7 @@ extension WorkspaceEngine {
             throw WorkspaceCommandError("Choose an available Codex conversation before reading its CLI defaults.")
         }
         let configuration = ProviderConfiguration(thread: thread)
+        guard !isCodexAuthenticationLocked(configuration) else { throw Self.codexChanging() }
         let observed = try await readHistory(thread: thread, forceOwnedMetadata: true) { try await $0.codexDefaultModelSelection() }
         try observed.validate()
         let physicalWorkspace = URL(fileURLWithPath: thread.workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
@@ -46,7 +47,7 @@ extension WorkspaceEngine {
         return selection
     }
     private func ownsCodexDefaultSource(_ reviewed: ReviewedCodexDefault, threadID: UUID, snapshot: WorkspaceSnapshot) -> Bool {
-        guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[threadID] == reviewed.incarnation,
+        guard !closing, !stoppingEffects, fatalError == nil, !isCodexAuthenticationLocked(reviewed.configuration), threadIncarnations[threadID] == reviewed.incarnation,
               let thread = snapshot.threads.first(where: { $0.id == threadID }), !thread.isArchived,
               thread.provider == .codex, thread.projectID == reviewed.projectID,
               thread.provider == reviewed.configuration.provider, thread.workspacePath == reviewed.configuration.workspacePath,
@@ -71,6 +72,7 @@ extension WorkspaceEngine {
         if let reason = revision.snapshot.promptSteeringTargetReason(threadID: threadID, queuedID: queuedID) { return .init(unavailableReason: reason) }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), let run = thread.activeRun,
               let runtime = runtimes[threadID], runtime.id == thread.runtimeID else { return .init(unavailableReason: "Wait for the active provider connection.") }
+        guard !isCodexAuthenticationLocked(run.configuration) else { return .init(unavailableReason: Self.codexChanging().localizedDescription) }
         let incarnation = threadIncarnations[threadID]
         let capabilities = await runtime.session.steeringCapabilities()
         guard !closing, !stoppingEffects, threadIncarnations[threadID] == incarnation,
@@ -121,7 +123,7 @@ extension WorkspaceEngine {
         }
     }
     private func steeringTargetIsActive(_ operation: PromptSteeringOperation) -> Bool {
-        guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[operation.threadID] == operation.sourceIncarnation,
+        guard !closing, !stoppingEffects, fatalError == nil, !isCodexAuthenticationLocked(operation.configuration), threadIncarnations[operation.threadID] == operation.sourceIncarnation,
               let thread = revision.snapshot.threads.first(where: { $0.id == operation.threadID }), !thread.isArchived,
               thread.runtimeRequests.isEmpty, thread.settlement == nil, revision.snapshot.workspaceReady(for: thread),
               !revision.snapshot.isConversationHistoryLocked(threadID: thread.id), !revision.snapshot.isCheckpointRestoreLocked(threadID: thread.id),
@@ -319,7 +321,7 @@ extension WorkspaceEngine {
     private func readCheckpointRestore<Value: Sendable>(thread: CodingThread,
         onRejected: @escaping @Sendable (any RunCheckpointSession, Value) async -> Void = { _, _ in },
         operation: @escaping @Sendable (any RunCheckpointSession) async throws -> Value) async throws -> Value {
-        guard !closing, !stoppingEffects, fatalError == nil, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
+        guard !closing, !stoppingEffects, fatalError == nil, !isCodexAuthenticationLocked(.init(thread: thread)), let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
         let session = try checkpointFactory(URL(fileURLWithPath: thread.workspacePath)), token = UUID()
         let task = Task {
             let value = try await operation(session)
@@ -624,6 +626,7 @@ extension WorkspaceEngine {
     }
     private func ownsHistorySource(threadID: UUID, incarnation: UUID, fingerprint: String) -> Bool {
         !closing && !stoppingEffects && fatalError == nil && threadIncarnations[threadID] == incarnation &&
+            revision.snapshot.threads.first(where: { $0.id == threadID }).map { !isCodexAuthenticationLocked(.init(thread: $0)) } == true &&
             (try? revision.snapshot.historySourceFingerprint(threadID: threadID)) == fingerprint
     }
     private func ownsHistoryEvent(_ command: EngineCommand) -> Bool {
@@ -647,7 +650,8 @@ extension WorkspaceEngine {
     private func readHistory<Value: Sendable>(thread: CodingThread, forceOwnedMetadata: Bool = false,
                                               operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
         try Task.checkCancellation()
-        guard !closing, !stoppingEffects, fatalError == nil, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
+        guard !closing, !stoppingEffects, fatalError == nil, !isCodexAuthenticationLocked(.init(thread: thread)),
+              let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
         let token = UUID(), metadataID: UUID?, session: any ProviderSession
         if !forceOwnedMetadata, let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
            runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding {
@@ -659,11 +663,11 @@ extension WorkspaceEngine {
                 configured.providerActivity = nil; configured.state = .idle
             }
             let id = UUID(); metadataID = id; session = try factory(configured)
-            metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: thread.id, projectID: thread.projectID, configuration: .init(thread: thread))
+            metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: thread.id, projectID: thread.projectID, configuration: .init(thread: thread), launchConfiguration: .init(thread: configured))
         }
         let task = Task { try await operation(session) }
         historyReads[token] = .init(threadID: thread.id, projectID: thread.projectID,
-            drain: Task { _ = try? await task.value }, cancel: { task.cancel() })
+            drain: Task { _ = try? await task.value }, cancel: { task.cancel() }, configuration: .init(thread: thread))
         defer { historyReads.removeValue(forKey: token) }
         do {
             let value = try await withTaskCancellationHandler { try await task.value } onCancel: {
@@ -673,14 +677,14 @@ extension WorkspaceEngine {
                 }
             }
             try Task.checkCancellation()
-            guard !task.isCancelled, !closing, !stoppingEffects, fatalError == nil, threadIncarnations[thread.id] == incarnation else { throw CancellationError() }
+            guard !task.isCancelled, !closing, !stoppingEffects, fatalError == nil, !isCodexAuthenticationLocked(.init(thread: thread)), threadIncarnations[thread.id] == incarnation else { throw CancellationError() }
             if let metadataID {
                 if let close = beginMetadataClose(metadataID) { await close.value }
                 guard metadataSessions[metadataID] != nil else { throw CancellationError() }
                 metadataSessions.removeValue(forKey: metadataID)
             }
             try Task.checkCancellation()
-            guard !closing, !stoppingEffects, threadIncarnations[thread.id] == incarnation else { throw CancellationError() }
+            guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(.init(thread: thread)), threadIncarnations[thread.id] == incarnation else { throw CancellationError() }
             return value
         } catch {
             task.cancel()
@@ -772,7 +776,7 @@ extension WorkspaceEngine {
                 configured.agentConfigValues = review.targetConfiguration.agentConfigValues; configured.agentConfiguration = review.targetConfiguration.agentConfiguration
             }
             let id = UUID(); metadataID = id; session = try factory(configured)
-            metadataSessions[id] = .init(session: session, path: configured.workspacePath, threadID: threadID, projectID: thread.projectID, configuration: .init(thread: thread))
+            metadataSessions[id] = .init(session: session, path: configured.workspacePath, threadID: threadID, projectID: thread.projectID, configuration: .init(thread: thread), launchConfiguration: .init(thread: configured))
         }
         var dispatched = false
         let result: EffectResult
@@ -1221,6 +1225,7 @@ public actor WorkspaceEngine {
         let projectID: UUID
         let drain: Task<Void, Never>
         let cancel: @Sendable () -> Void
+        let configuration: ProviderConfiguration
     }
     private var historyReads: [UUID: HistoryRead] = [:]
     private struct PreparedHistoryReview: Sendable {
@@ -1310,12 +1315,16 @@ public actor WorkspaceEngine {
         var threadID: UUID?
         var projectID: UUID?
         var configuration: ProviderConfiguration?
+        let launchConfiguration: ProviderConfiguration
+        var operationCancel: (@Sendable () -> Void)?
+        var operationDrain: Task<Void, Never>?
         var closeTask: Task<Void, Never>?
     }
     private struct Cleanup: Sendable {
         var projectIDs: Set<UUID>
         var threadIDs: Set<UUID>
         var workspacePaths: Set<String>
+        var codexInstances: Set<UUID>
         var task: Task<Void, Never>
     }
     private struct IdentityRefresh: Sendable {
@@ -1337,6 +1346,8 @@ public actor WorkspaceEngine {
     private var threadIncarnations: [UUID: UUID] = [:]
     private var codexDefaultReviews: [UUID: ReviewedCodexDefault] = [:]
     private var antigravityAuthenticationLeases: [UUID: UUID] = [:]
+    private var codexAuthenticationLeases: [UUID: UUID] = [:]
+    private var codexAuthenticationOwners: [UUID: Set<UUID>] = [:]
     private let ownership: WorkspaceRuntimeLock
     private let factory: ProviderFactory
     private let cloneFactory: CloneFactory
@@ -1547,6 +1558,7 @@ public actor WorkspaceEngine {
                 do {
                     try validateCodexDefaultCommand(envelope.command, snapshot: base.snapshot)
                     try validateAntigravityAdmission(envelope.command, snapshot: base.snapshot)
+                    try validateCodexAuthenticationAdmission(envelope.command, snapshot: base.snapshot)
                     if case .promptSteeringAccepted(let operation) = envelope.command,
                        threadIncarnations[operation.threadID] != operation.sourceIncarnation {
                         throw WorkspaceCommandError("The active provider turn changed before steering was accepted.")
@@ -1662,6 +1674,7 @@ public actor WorkspaceEngine {
         var projectIDs = removedProjects
         var sessions: [any ProviderSession] = []
         var providerPaths: Set<String> = []
+        var codexInstances: Set<UUID> = []
         var jobs: [Task<Void, Never>] = []
         let old = Dictionary(uniqueKeysWithValues: previous.projects.map { ($0.id, $0) })
         for project in decision.snapshot.projects where old[project.id] == nil || old[project.id]?.path != project.path {
@@ -1689,6 +1702,7 @@ public actor WorkspaceEngine {
         for (id, read) in historyReads where removedThreads.contains(read.threadID) || removedProjects.contains(read.projectID) || threads.contains(read.threadID) {
             historyReads.removeValue(forKey: id); read.cancel()
             jobs.append(read.drain); projectIDs.insert(read.projectID); cleanupThreadIDs.insert(read.threadID)
+            if let instance = read.configuration.ownedCodexInstanceID { codexInstances.insert(instance) }
         }
         beginCheckpointCleanup(previous: previous, next: decision.snapshot, projectIDs: &projectIDs, threadIDs: &cleanupThreadIDs, jobs: &jobs)
         for (id, inspection) in worktreeInspections where removedThreads.contains(inspection.threadID) || removedProjects.contains(inspection.projectID) {
@@ -1702,13 +1716,23 @@ public actor WorkspaceEngine {
         for id in threads {
             if let runtime = runtimes.removeValue(forKey: id) {
                 runtime.reader?.cancel(); sessions.append(runtime.session); projectIDs.insert(runtime.projectID); providerPaths.insert(runtime.path)
+                if let binding = runtime.codexBinding, binding.authenticationMode == .ownedChatGPT { codexInstances.insert(binding.instanceID) }
             }
         }
         for (id, metadata) in metadataSessions where metadata.threadID.map({ threads.contains($0) }) == true || metadata.projectID.map({ removedProjects.contains($0) }) == true {
             metadataSessions.removeValue(forKey: id)
             providerPaths.insert(metadata.path)
             if let projectID = metadata.projectID { projectIDs.insert(projectID) }
-            if metadata.closeTask == nil { sessions.append(metadata.session) }
+            if let instance = metadata.launchConfiguration.ownedCodexInstanceID { codexInstances.insert(instance) }
+            metadata.operationCancel?()
+            if let task = metadata.closeTask { jobs.append(task) }
+            else {
+                sessions.append(metadata.session)
+                // Legacy metadata results are incarnation-fenced and may finish
+                // after project removal. Owned auth additionally retains every
+                // credential-bound operation until account mutation can proceed.
+                if metadata.launchConfiguration.ownedCodexInstanceID != nil, let drain = metadata.operationDrain { jobs.append(drain) }
+            }
         }
         for effect in removedEffects where effect.status == .running && effect.leaseOwner == workerID {
             // Shutdown/failure can finish an executor while the commit awaits SQLite. Its ID
@@ -1726,13 +1750,18 @@ public actor WorkspaceEngine {
             let prior = cleanupTasks.values.filter { $0.threadIDs.contains(thread.id) }.map(\.task)
             if !prior.isEmpty { jobs.append(contentsOf: prior); projectIDs.insert(thread.projectID); cleanupThreadIDs.insert(thread.id) }
         }
-        let cleanup = startCleanup(projectIDs: projectIDs, threadIDs: cleanupThreadIDs, sessions: sessions, jobs: jobs, workspacePaths: providerPaths)
+        // Baseline/checkpoint cleanup may precede creation of a provider actor.
+        // Preserve its captured account scope even after the run/thread is removed.
+        for thread in previous.threads where cleanupThreadIDs.contains(thread.id) {
+            codexInstances.formUnion(thread.ownedCodexInstances)
+        }
+        let cleanup = startCleanup(projectIDs: projectIDs, threadIDs: cleanupThreadIDs, sessions: sessions, jobs: jobs, workspacePaths: providerPaths, codexInstances: codexInstances)
         for thread in decision.snapshot.threads {
             if let settlement = thread.settlement, settlement.phase == .settled,
                previousThreads[thread.id]?.settlement?.id != settlement.id, let cleanup { settlementPrerequisites[settlement.id] = cleanup }
         }
     }
-    @discardableResult private func startCleanup(projectIDs: Set<UUID>, threadIDs: Set<UUID> = [], sessions: [any ProviderSession], jobs: [Task<Void, Never>] = [], workspacePaths: Set<String> = []) -> Task<Void, Never>? {
+    @discardableResult private func startCleanup(projectIDs: Set<UUID>, threadIDs: Set<UUID> = [], sessions: [any ProviderSession], jobs: [Task<Void, Never>] = [], workspacePaths: Set<String> = [], codexInstances: Set<UUID> = []) -> Task<Void, Never>? {
         guard !sessions.isEmpty || !jobs.isEmpty else { return nil }
         let id = UUID()
         let task: Task<Void, Never> = Task.detached { [weak self] in
@@ -1743,7 +1772,7 @@ public actor WorkspaceEngine {
             }
             await self?.cleanupFinished(id)
         }
-        cleanupTasks[id] = .init(projectIDs: projectIDs, threadIDs: threadIDs, workspacePaths: workspacePaths, task: task)
+        cleanupTasks[id] = .init(projectIDs: projectIDs, threadIDs: threadIDs, workspacePaths: workspacePaths, codexInstances: codexInstances, task: task)
         return task
     }
     private func cleanupFinished(_ id: UUID) { cleanupTasks.removeValue(forKey: id) }
@@ -1998,11 +2027,11 @@ public actor WorkspaceEngine {
         switch request {
         case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
-            guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
+            guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false, !isCodexAuthenticationLocked(configuration) else { return .cancelled }
             await awaitCheckpointDrains(threadID: thread.id)
             guard checkpointProviderReleased(threadID: thread.id, runID: runID) else { return .cancelled }
             let input = try await attachments.prepare(text: prompt, attachments: references ?? [])
-            guard !closing, !stoppingEffects,
+            guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(configuration),
                   revision.snapshot.workspaceReady(for: thread),
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false else { return .cancelled }
@@ -2014,7 +2043,7 @@ public actor WorkspaceEngine {
             configured.agentConfiguration = configuration.agentConfiguration
             let runtime = try await runtime(for: configured, runID: runID)
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { return .cancelled }
-            guard !closing, !stoppingEffects, revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
+            guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(configuration), revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
                   revision.snapshot.workspaceReady(for: thread),
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false,
                   runtimes[thread.id]?.id == runtime.id else { return .cancelled }
@@ -2042,7 +2071,8 @@ public actor WorkspaceEngine {
         case .providerRespond(_, let runID, let request, let response):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false,
                   thread.runtimeRequests.contains(where: { $0.id == request.id && $0.responding }),
-                  let runtime = runtimes[thread.id], runtime.id == thread.runtimeID else { return .cancelled }
+                  let runtime = runtimes[thread.id], runtime.id == thread.runtimeID,
+                  thread.activeRun.map({ !isCodexAuthenticationLocked($0.configuration) }) == true else { return .cancelled }
             switch response {
             case .option(let id): try await runtime.session.choose(request, optionID: id)
             case .decision(let allow): try await runtime.session.respond(request, allow: allow)
@@ -2054,6 +2084,7 @@ public actor WorkspaceEngine {
         case .providerSessionRespond(_, let runtimeID, let request, let response):
             guard thread.runtimeID == runtimeID, thread.runtimeRequests.contains(where: { $0.id == request.id && $0.responding && $0.sessionScoped == true }),
                   let runtime = runtimes[thread.id], runtime.id == runtimeID else { return .cancelled }
+            if let binding = runtime.codexBinding, binding.authenticationMode == .ownedChatGPT, codexAuthenticationLeases[binding.instanceID] != nil { return .cancelled }
             switch response {
             case .option(let id): try await runtime.session.choose(request, optionID: id)
             case .decision(let allow): try await runtime.session.respond(request, allow: allow)
@@ -2178,6 +2209,10 @@ public actor WorkspaceEngine {
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
+        if let captured = ProviderConfiguration(thread: thread).codexRuntimeBinding, captured.authenticationMode == .ownedChatGPT {
+            guard captured.accountBinding != nil, let current = revision.snapshot.threads.first(where: { $0.id == thread.id }),
+                  ProviderConfiguration(thread: current).codexRuntimeBinding == captured else { throw CodexAccountError.staleAccount }
+        }
         if thread.provider == .antigravity {
             guard let captured = thread.antigravityConfiguration,
                   let current = revision.snapshot.threads.first(where: { $0.id == thread.id })?.antigravityConfiguration,
@@ -2237,6 +2272,7 @@ public actor WorkspaceEngine {
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.projectID == projectID }),
               thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false,
               !isAntigravityAuthenticationLocked(thread),
+              thread.activeRun.map({ !isCodexAuthenticationLocked($0.configuration) }) == true,
               revision.snapshot.workspaceReady(for: thread) else { return false }
         return true
     }
@@ -2302,7 +2338,7 @@ public actor WorkspaceEngine {
     private func closeRuntime(_ threadID: UUID, matching expectedID: UUID? = nil) async {
         guard let runtime = runtimes[threadID], expectedID == nil || expectedID == runtime.id else { return }
         runtimes.removeValue(forKey: threadID); runtime.reader?.cancel()
-        if let task = startCleanup(projectIDs: [runtime.projectID], threadIDs: [threadID], sessions: [runtime.session], workspacePaths: [runtime.path]) { await task.value }
+        if let task = startCleanup(projectIDs: [runtime.projectID], threadIDs: [threadID], sessions: [runtime.session], workspacePaths: [runtime.path], codexInstances: Set(runtime.codexBinding.flatMap { $0.authenticationMode == .ownedChatGPT ? $0.instanceID : nil }.map { [$0] } ?? [])) { await task.value }
     }
     private func infrastructureFailed(_ message: String) async {
         guard fatalError == nil else { return }
@@ -2376,6 +2412,7 @@ public actor WorkspaceEngine {
     }
     private func queryProviderMetadata<Value: Sendable>(thread: CodingThread, owned: Bool,
                                                        operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
+        guard !isCodexAuthenticationLocked(.init(thread: thread)) else { throw Self.codexChanging() }
         guard !isAntigravityAuthenticationLocked(thread) else { throw WorkspaceCommandError("Wait for the Antigravity account change before refreshing models.") }
         if owned {
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
@@ -2383,7 +2420,8 @@ public actor WorkspaceEngine {
                   current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding,
                   revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         }
-        guard !closing, !stoppingEffects, !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else { throw CancellationError() }
+        guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(.init(thread: thread)),
+              !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else { throw CancellationError() }
         var metadataLaunch = thread
         if metadataLaunch.provider == .codex {
             // Metadata owns the original conversation binding, but it must not
@@ -2394,10 +2432,14 @@ public actor WorkspaceEngine {
         }
         let id = UUID(), session = try factory(metadataLaunch)
         metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: owned ? thread.id : nil,
-                                     projectID: owned ? thread.projectID : nil, configuration: owned ? .init(thread: thread) : nil)
+                                     projectID: owned ? thread.projectID : nil, configuration: owned ? .init(thread: thread) : nil,
+                                     launchConfiguration: .init(thread: metadataLaunch))
         do {
-            let result = try await withTaskCancellationHandler { try await operation(session) } onCancel: {
-                Task { [weak self] in await self?.cancelOwnedHistoryRead(id) }
+            let task = Task { try await operation(session) }
+            metadataSessions[id]?.operationCancel = { task.cancel() }
+            metadataSessions[id]?.operationDrain = Task { _ = try? await task.value }
+            let result = try await withTaskCancellationHandler { try await task.value } onCancel: {
+                task.cancel(); Task { [weak self] in await self?.cancelOwnedHistoryRead(id) }
             }
             try Task.checkCancellation()
             if owned, await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
@@ -2420,7 +2462,7 @@ public actor WorkspaceEngine {
         }
     }
     private func metadataOwnerIsCurrent(_ metadata: MetadataRuntime) -> Bool {
-        guard !closing, !stoppingEffects else { return false }
+        guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(metadata.launchConfiguration) else { return false }
         guard let threadID = metadata.threadID else { return true } // Neutral provider discovery.
         guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.projectID == metadata.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
@@ -2432,7 +2474,9 @@ public actor WorkspaceEngine {
     private func beginMetadataClose(_ id: UUID) -> Task<Void, Never>? {
         guard let metadata = metadataSessions[id] else { return nil }
         if let task = metadata.closeTask { return task }
-        let task = startCleanup(projectIDs: Set(metadata.projectID.map { [$0] } ?? []), threadIDs: Set(metadata.threadID.map { [$0] } ?? []), sessions: [metadata.session], workspacePaths: [metadata.path])
+        metadata.operationCancel?()
+        let ownedOperations = metadata.launchConfiguration.ownedCodexInstanceID != nil ? metadata.operationDrain.map { [$0] } ?? [] : []
+        let task = startCleanup(projectIDs: Set(metadata.projectID.map { [$0] } ?? []), threadIDs: Set(metadata.threadID.map { [$0] } ?? []), sessions: [metadata.session], jobs: ownedOperations, workspacePaths: [metadata.path], codexInstances: Set(metadata.launchConfiguration.ownedCodexInstanceID.map { [$0] } ?? []))
         metadataSessions[id]?.closeTask = task
         return task
     }
@@ -2463,8 +2507,10 @@ public actor WorkspaceEngine {
         await closeAllProjectScripts()
         for id in Array(runtimes.keys) { await closeRuntime(id) }
         let metadata = Array(metadataSessions.values); metadataSessions = [:]
+        for runtime in metadata { runtime.operationCancel?() }
         for runtime in metadata where runtime.closeTask == nil {
-            _ = startCleanup(projectIDs: Set(runtime.projectID.map { [$0] } ?? []), threadIDs: Set(runtime.threadID.map { [$0] } ?? []), sessions: [runtime.session], workspacePaths: [runtime.path])
+            let ownedOperations = runtime.launchConfiguration.ownedCodexInstanceID != nil ? runtime.operationDrain.map { [$0] } ?? [] : []
+            _ = startCleanup(projectIDs: Set(runtime.projectID.map { [$0] } ?? []), threadIDs: Set(runtime.threadID.map { [$0] } ?? []), sessions: [runtime.session], jobs: ownedOperations, workspacePaths: [runtime.path], codexInstances: Set(runtime.launchConfiguration.ownedCodexInstanceID.map { [$0] } ?? []))
         }
         for job in jobs { await job.value }
         for read in history { await read.drain.value }
@@ -2786,5 +2832,135 @@ extension WorkspaceEngine {
         } catch let error as GitHubPullRequestError {
             return error.mayHaveCreated ? .pullRequestCreationUnconfirmed : .failed(PullRequestCreationOperation.failureMessage)
         } catch { return apiStarted ? .pullRequestCreationUnconfirmed : .failed(PullRequestCreationOperation.failureMessage) }
+    }
+}
+
+extension WorkspaceEngine {
+    private func isCodexAuthenticationLocked(_ configuration: ProviderConfiguration) -> Bool {
+        configuration.ownedCodexInstanceID.map { codexAuthenticationLeases[$0] != nil } ?? false
+    }
+    private func isCodexAuthenticationLocked(_ thread: CodingThread) -> Bool {
+        isCodexAuthenticationLocked(.init(thread: thread)) || thread.activeRun.map { isCodexAuthenticationLocked($0.configuration) } == true
+    }
+    private func validateCodexAuthenticationAdmission(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
+        var configurations: [ProviderConfiguration] = []
+        switch command {
+        case .client(.submit(let id, _)):
+            if let thread = snapshot.threads.first(where: { $0.id == id }) {
+                let capture = ProviderConfiguration(thread: thread); configurations = [capture]
+                if capture.ownedCodexInstanceID != nil, capture.codexRuntimeBinding?.accountBinding == nil {
+                    throw WorkspaceCommandError(CodexAccountError.signInRequired.localizedDescription)
+                }
+            }
+        case .client(.resumeQueue(let id)):
+            if let thread = snapshot.threads.first(where: { $0.id == id }), let first = thread.queuedTurns.first {
+                configurations = [first.configuration]
+                if first.configuration.ownedCodexInstanceID != nil,
+                   first.configuration.codexRuntimeBinding != ProviderConfiguration(thread: thread).codexRuntimeBinding {
+                    throw WorkspaceCommandError("This queued message belongs to an earlier Codex account. Edit it to review and send with the current account. Its original input was kept.")
+                }
+            }
+        case .client(.respond(let id, _, _)):
+            if let thread = snapshot.threads.first(where: { $0.id == id }) {
+                if let active = thread.activeRun { configurations = [active.configuration] }
+                else if let binding = runtimes[id]?.codexBinding {
+                    var actual = ProviderConfiguration(thread: thread); actual.provider = .codex; actual.codexRuntimeConfiguration = binding; configurations = [actual]
+                }
+            }
+        case .client(.editThread(let id, let edit)):
+            switch edit {
+            case .draft, .title, .pinned, .archived: return
+            default:
+                if codexAuthenticationOwners.values.contains(where: { $0.contains(id) }) { throw Self.codexChanging() }
+                if let thread = snapshot.threads.first(where: { $0.id == id }) { configurations = [.init(thread: thread)] + [thread.activeRun?.configuration].compactMap { $0 } }
+                let target: CodexRuntimeConfiguration?
+                switch edit {
+                case .codexRuntimeConfiguration(let value), .codexProvider(let value): target = value
+                default: target = nil
+                }
+                if let target {
+                    var value = ProviderConfiguration(thread: CodingThread(project: WorkspaceProject(path: "/")))
+                    value.provider = .codex; value.codexRuntimeConfiguration = target; configurations.append(value)
+                }
+            }
+        case .promptSteeringAccepted(let operation): configurations = [operation.configuration]
+        case .conversationHistoryAccepted(let review, _): configurations = [review.sourceConfiguration, review.targetConfiguration]
+        case .provider(let id, let runtimeID, _):
+            if let runtime = runtimes[id], runtime.id == runtimeID, let binding = runtime.codexBinding,
+               binding.authenticationMode == .ownedChatGPT, codexAuthenticationLeases[binding.instanceID] != nil { throw Self.codexChanging() }
+        default: return
+        }
+        guard !configurations.contains(where: isCodexAuthenticationLocked) else { throw Self.codexChanging() }
+    }
+    private static func codexChanging() -> WorkspaceCommandError {
+        .init("Wait for the Codex account change before sending or changing provider settings. Drafts and queued messages were kept.")
+    }
+    public func beginCodexAuthentication(configuration: CodexRuntimeConfiguration) async throws -> UUID {
+        try configuration.validate()
+        guard configuration.authenticationMode == .ownedChatGPT else { throw CodexRuntimeConfiguration.invalid() }
+        _ = try await load(); try Task.checkCancellation()
+        let instanceID = configuration.instanceID
+        guard !closing, !stoppingEffects, fatalError == nil, codexAuthenticationLeases[instanceID] == nil else { throw Self.codexChanging() }
+        var actualOwners = Set(runtimes.compactMap { id, runtime in
+            runtime.codexBinding.flatMap { $0.authenticationMode == .ownedChatGPT && $0.instanceID == instanceID ? id : nil }
+        })
+        for metadata in metadataSessions.values where metadata.launchConfiguration.ownedCodexInstanceID == instanceID {
+            if let id = metadata.threadID { actualOwners.insert(id) }
+        }
+        for request in effectRequests.values {
+            if case .providerStart(let id, _, let capture, _, _) = request, capture.ownedCodexInstanceID == instanceID { actualOwners.insert(id) }
+        }
+        let affected = revision.snapshot.threads.filter { $0.ownedCodexInstances.contains(instanceID) || actualOwners.contains($0.id) }
+        guard affected.allSatisfy({ !revision.snapshot.isConversationHistoryLocked(threadID: $0.id) && !revision.snapshot.isCheckpointRestoreLocked(path: $0.workspacePath) && !revision.snapshot.isPullRequestCreationLocked(path: $0.workspacePath) && !revision.snapshot.isPullRequestCheckoutLocked(path: $0.workspacePath) }) else {
+            throw WorkspaceCommandError("Finish Codex history and workspace operations before changing the account.")
+        }
+        let leaseID = UUID()
+        codexAuthenticationLeases[instanceID] = leaseID
+        codexAuthenticationOwners[instanceID] = Set(affected.map(\.id)).union(actualOwners)
+        do {
+            let receipt = try await enqueue(.codexAuthenticationPreparing(instanceID: instanceID, threadIDs: actualOwners))
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+            historyReviews = historyReviews.filter { $0.value.review.sourceConfiguration.ownedCodexInstanceID != instanceID && $0.value.review.targetConfiguration.ownedCodexInstanceID != instanceID }
+            codexDefaultReviews = codexDefaultReviews.filter { $0.value.configuration.ownedCodexInstanceID != instanceID }
+            let reads = historyReads.filter { $0.value.configuration.ownedCodexInstanceID == instanceID }
+            for read in reads.values { read.cancel() }
+            let metadata = metadataSessions.filter { $0.value.launchConfiguration.ownedCodexInstanceID == instanceID }
+            var closes: [Task<Void, Never>] = []
+            for id in metadata.keys { if let task = beginMetadataClose(id) { closes.append(task) } }
+            let providerJobs = effectRequests.compactMap { id, request -> Task<Void, Never>? in
+                let matches: Bool
+                switch request {
+                case .providerStart(_, _, let captured, _, _): matches = captured.ownedCodexInstanceID == instanceID
+                case .providerRespond(let threadID, _, _, _), .providerSessionRespond(let threadID, _, _, _), .promptSteering(let threadID, _): matches = actualOwners.contains(threadID)
+                default: matches = false
+                }
+                guard matches, let task = effects[id] else { return nil }; task.cancel(); return task
+            }
+            for task in closes { await task.value }
+            for read in reads.values { await read.drain.value }
+            for task in providerJobs { await task.value }
+            for id in metadata.keys { metadataSessions.removeValue(forKey: id) }
+            while true {
+                let cleanups = cleanupTasks.values.filter { $0.codexInstances.contains(instanceID) }.map(\.task)
+                if cleanups.isEmpty { break }; for task in cleanups { await task.value }
+            }
+            try Task.checkCancellation()
+            guard !closing, !stoppingEffects, fatalError == nil, codexAuthenticationLeases[instanceID] == leaseID else { throw CancellationError() }
+            return leaseID
+        } catch {
+            if codexAuthenticationLeases[instanceID] == leaseID {
+                codexAuthenticationLeases.removeValue(forKey: instanceID); codexAuthenticationOwners.removeValue(forKey: instanceID)
+            }
+            throw error
+        }
+    }
+    public func endCodexAuthentication(leaseID: UUID) async {
+        guard let instance = codexAuthenticationLeases.first(where: { $0.value == leaseID })?.key else { return }
+        codexAuthenticationLeases.removeValue(forKey: instance); codexAuthenticationOwners.removeValue(forKey: instance)
+    }
+    public func applyCodexAccountBinding(instanceID: UUID, binding: CodexAccountBinding?, leaseID: UUID) async throws {
+        guard codexAuthenticationLeases[instanceID] == leaseID, !closing, !stoppingEffects, fatalError == nil else { throw Self.codexChanging() }
+        let receipt = try await enqueue(.codexAccountConfigured(instanceID: instanceID, binding: binding))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
     }
 }

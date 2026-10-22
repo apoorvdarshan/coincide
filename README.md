@@ -33,6 +33,18 @@ The script uses an existing Apple Development signing identity when available,
 so macOS can retain file-access consent across local rebuilds. Set
 `COINCIDE_SIGN_IDENTITY=-` to use ad-hoc signing, or set it to a specific identity.
 CI uses ad-hoc signing. Local signing does not notarize or publish the app.
+For Coincide-owned ChatGPT authentication, use a matching macOS development
+provisioning profile at `~/Library/Application Support/Coincide/Signing/development.provisionprofile`
+or set `COINCIDE_PROVISIONING_PROFILE` to its path. Packaging validates the
+profile against the selected signing certificate, bundle ID and current Mac,
+then embeds it with the app's own identifier entitlement. It grants no shared
+Keychain group. Existing CLI authentication works in unprovisioned/ad-hoc builds;
+owned secure storage needs a provisioned app. An explicit synthetic-item check
+runs without loading the workspace or accessing saved accounts:
+
+```sh
+dist/Coincide.app/Contents/MacOS/Coincide --verify-owned-codex-keychain
+```
 
 Add a project folder, start a thread, and send a message. Coincide connects directly
 to the selected provider's native CLI protocol. Each conversation owns its
@@ -65,10 +77,19 @@ The managed installer pins the complete Codex **0.156.1** package, verifies its
 archive and package layout, and retains active-session leases across updates.
 Removal protects running sessions and custom paths into the installation. The
 reviewed **0.163.x** gates for native fork/rewind and in-flight steering remain
-unchanged; installing 0.156.1 does not enable those capabilities. Managed binary
-installation uses the selected CLI home's authentication. Native ChatGPT OAuth,
-managed account profiles, broader usage history, skills and MCP controls remain
-unfinished.
+unchanged; installing 0.156.1 does not enable those capabilities. Authentication
+is selected separately under **Codex Authentication**. The default remains the
+existing CLI account. **ChatGPT through Coincide** requires an absolute shared
+home and an explicit **Use Authentication**, followed by **Sign In with ChatGPT**.
+Saved accounts offer refresh, reconnect, selection and sign-out; emails stay
+hidden until revealed. Credentials live in the provisioned app's device-only
+Keychain, and its native child receives a private authentication environment.
+Account changes pause affected input and join its existing runtime. Drafts and
+accepted queues are preserved; an old-account queue requires explicit review
+rather than silent replay under a different account. Owned auth has offline
+OAuth/runtime and real synthetic-item Keychain verification; actual ChatGPT
+sign-in/model execution, portable profiles, broader usage, skills and MCP
+controls remain unfinished.
 
 For native OpenCode, **Refresh Models** reads the current workspace's models,
 variants and primary agents. These choices apply to future inputs; queued turns

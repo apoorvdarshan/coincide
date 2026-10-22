@@ -1,5 +1,76 @@
 # Validation record
 
+## 2026-10-22 — native owned Codex account and runtime integration
+
+- Production Settings now connects the explicit owned ChatGPT mode to the actual
+  auth coordinator and vault. Existing CLI authentication remains the default.
+  Construction and saving a mode perform no account read or browser/network
+  authentication. Explicit refresh/sign-in/reconnect/select/logout own their
+  work; terminal cancellation/failure retires the sign-in UI even if a saved
+  vault binding differs from the selected runtime. Emails remain concealed.
+- Storage 33 retains only opaque profile/generation bindings in headers, accepted
+  inputs and the journal. Schema-32 migration/reopen/replay keeps old CLI captures
+  and accepted queue/run records intact. An atomic provider change cannot leave
+  an intermediate ambient CLI selection when an owned account change rejects it.
+  An unsigned owned send is an ordinary rejection; other conversations stay live.
+- Engine reservation fences new sends, metadata/history/default reads, steering
+  and responses for the captured instance. It drains active/idle actors, neutral
+  metadata operations, pending checkpoint/provider starts and already detached
+  cleanup, including deleted or retargeted owners. Account mutation then takes a
+  separate cross-process exclusive lease; native children retain shared leases
+  until their actual process/readers finish. Ending auth never replays a queue.
+- The first complete run exposed a cleanup wait cycle in the unchanged project
+  removal regression: a stale legacy model read is deliberately released only
+  after project cleanup returns. Strict operation draining now applies to owned
+  Codex credential scopes; legacy removed-reader results retain their incarnation
+  fence. The original removal regression and all owned auth drain cases pass
+  together after this fix. No deadline or assertion was weakened.
+- The production factory lazily acquires the vault credential and private native
+  home, then launches the real stdio adapter with literal token-sharing overrides.
+  Idle renewal preserves the native conversation and never retries an uncertain
+  history mutation. Physical shared-home scoping lets one account use A/B/A homes
+  without mixing private caches or weakening existing layout receipts.
+- Synthetic verified OAuth -> vault -> production factory -> stdio -> Engine
+  checks cover model discovery, exact child environment/arguments, vault-only
+  account identity, unsupported quota, marker turns and persisted native resume.
+  CLI auth/history sentinels stay unchanged; credential/JWT/identity bytes are
+  absent from wire logs, snapshots, SQLite and WAL. These peers do not contact a
+  vendor or establish real ChatGPT sign-in/model access.
+- The original development signature had no profile or entitlements and failed
+  the real Data Protection Keychain acceptance probe. A project-only macOS
+  development profile now reuses the existing certificate and registered Mac;
+  no new certificate/device, App Store app or release was created. Packaging
+  validates exact bundle/prefix/team/certificate/expiry/Mac ownership, embeds the
+  validated bytes and signs only the main app with its own app identifier and
+  authorized team entitlement. No custom sharing, sandbox or unrelated profile
+  entitlements are granted. The provisioned app passes actual synthetic-item
+  create/read/update/delete and removes that item without reading saved accounts.
+  See Apple's [Keychain implementation requirements](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains).
+- Hosted run `39810214461` at `619b198` still fails with signal 10 in run-history
+  processing; all GUI checks skip. Its stack contains recursive context-event
+  receive frames. Context scopes now unwrap iteratively before copying the
+  mutable thread. Six regression cases preserve exact FIFO/completion and ignore
+  foreign nested scopes without partial mutation. This reduces retained frames;
+  the metadata-lookup crash cause and hosted resolution remain unproven.
+- The native 16-workflow runner compiles locally without GUI execution; its
+  signed offline launcher's initialize/metadata/descriptor checks also pass.
+  The packaged development app passes strict/deep signature verification,
+  bundled math rendering and the real Keychain probe. A consistent private
+  schema-32 backup precedes reopening. The actual workspace migrates to 33 with
+  integrity `ok`, all four threads/25 messages, and exactly unchanged canonical
+  payload SHA-256 `1f595b380cbaac36002f066679ee510fdd052c7009c660bce32e0c626538a22a`.
+- The final canonical `swift test --no-parallel` completes successfully with
+  1333 declarations: 1323 pass and ten optional installed-provider checks skip.
+  Core reports 1135 declarations across eight suites in 280.230 seconds; all 179
+  native view/store declarations pass in 62.152 seconds, terminal six in 1.381
+  seconds, and Markdown 13 in 0.130 seconds. Both new legacy cancellation/shutdown
+  regressions and all owned auth scope/drain cases pass. All 42 Python harness,
+  signing and offline-peer checks pass. The staged patch passes the secret scan.
+- Actual native light/dark Settings acceptance adds two workflows, preserving all
+  fourteen existing workflows. The result gate now requires at least sixteen
+  passes with zero skips/failures. Local native GUI execution remains disabled;
+  hosted results are recorded separately.
+
 ## 2026-10-22 — bounded reducer validation and owned Codex auth Core
 
 - Hosted run `39804247499` at `d6ffea5` fails with signal 10/SIGBUS during

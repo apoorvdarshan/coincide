@@ -38,6 +38,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case museModel(ProviderModel?), museReasoning(model: ProviderModel, effort: String?)
     case antigravityConfiguration(AntigravityConfiguration)
     case codexRuntimeConfiguration(CodexRuntimeConfiguration)
+    case codexProvider(CodexRuntimeConfiguration)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -101,6 +102,8 @@ enum EngineCommand: Codable, Sendable {
     case pauseQueues
     case antigravityAuthenticationPreparing(instanceID: UUID)
     case antigravityAccountConfigured(AntigravityConfiguration)
+    case codexAuthenticationPreparing(instanceID: UUID, threadIDs: Set<UUID>)
+    case codexAccountConfigured(instanceID: UUID, binding: CodexAccountBinding?)
     case cloneStarted(projectID: UUID, attemptID: UUID)
     case cloneProgress(projectID: UUID, attemptID: UUID, progress: GitCloneProgress)
     case repositoryIdentityResolved(projectID: UUID, path: String, incarnation: UUID, requestID: UUID, identity: RepositoryIdentity?)
@@ -179,6 +182,8 @@ struct WorkspaceDecision: Sendable {
             reduced = .init(decision: try reduceCheckpointRestore(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.addProjectWithThread), .client(.startProjectClone):
             reduced = .init(decision: try reduceProjectRegistration(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .codexAuthenticationPreparing, .codexAccountConfigured:
+            reduced = .init(decision: try reduceCodexAuthentication(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .projectScriptStarted(let thread, let attempt, let run, let token):
             return try make(.threadScriptStarted(threadID: thread, owner: .setup(attemptID: attempt), runID: run, incarnation: token), id: id, snapshot: snapshot, now: now)
         case .projectScriptExited(let thread, let attempt, let run, let token, let result):
@@ -306,6 +311,7 @@ struct WorkspaceDecision: Sendable {
              .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
              .checkpointRestoreInspected, .client(.acknowledgeCheckpointRestore),
              .client(.addProjectWithThread), .client(.startProjectClone),
+             .codexAuthenticationPreparing, .codexAccountConfigured,
              .projectScriptStarted, .projectScriptExited, .projectScriptStopped:
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
         case .promptSteeringAccepted(let operation): try decision.acceptPromptSteering(operation)
@@ -728,7 +734,14 @@ struct WorkspaceDecision: Sendable {
                 case .resetAgentOptions:
                     guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
                     thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.agentModeID = nil; thread.model = ""
-                case .provider(let kind):
+                case .provider, .codexProvider:
+                    let kind: ProviderKind, codexConfiguration: CodexRuntimeConfiguration?
+                    if case .provider(let value) = edit { kind = value; codexConfiguration = nil }
+                    else if case .codexProvider(let value) = edit {
+                        do { try value.validate() }
+                        catch { throw WorkspaceCommandError(CodexRuntimeConfiguration.invalid().localizedDescription) }
+                        kind = .codex; codexConfiguration = value
+                    } else { throw WorkspaceCommandError("The provider selection is invalid.") }
                     guard kind != .acp else { throw WorkspaceCommandError("Choose a configured ACP agent.") }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
                     decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
@@ -736,7 +749,7 @@ struct WorkspaceDecision: Sendable {
                     thread.piConfiguration = kind == .pi ? .init(instanceID: id) : nil
                     thread.museConfiguration = kind == .muse ? .init(instanceID: id) : nil
                     thread.antigravityConfiguration = kind == .antigravity ? .init() : nil
-                    thread.codexRuntimeConfiguration = nil
+                    thread.codexRuntimeConfiguration = codexConfiguration
                     if kind == .muse, thread.permission != .supervised && thread.permission != .fullAccess { thread.permission = .supervised }
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
@@ -1098,14 +1111,17 @@ struct WorkspaceDecision: Sendable {
         guard !snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), snapshot.providerReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
         let queued = thread.queuedTurns.removeFirst(); start(queued, in: &thread, now: now)
     }
-    private mutating func receive(_ event: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
+    private mutating func receive(_ scopedEvent: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
         guard !snapshot.isConversationHistoryLocked(threadID: threadID) else { return }
         guard let index = snapshot.threads.firstIndex(where: { $0.id == threadID }), snapshot.threads[index].runtimeID == runtimeID else { return }
-        var thread = snapshot.threads[index]
-        if case .context(let runID, let inner) = event {
-            guard thread.activeRun?.id == runID else { return }
-            try receive(inner, threadID: threadID, runtimeID: runtimeID, now: now); return
+        // Validate every scope before taking the mutable thread copy. Unwrapping
+        // metadata does not mutate the snapshot or need another reducer frame.
+        var event = scopedEvent
+        while case .context(let runID, let inner) = event {
+            guard snapshot.threads[index].activeRun?.id == runID else { return }
+            event = inner
         }
+        var thread = snapshot.threads[index]
         if let run = thread.activeRun, thread.runHistory?.first(where: { $0.id == run.id })?.checkpoints?.providerReleased == false {
             // Idle-session metadata may arrive while a baseline is being saved. It cannot
             // acknowledge, finish or append content to a provider turn never dispatched.
@@ -1386,5 +1402,63 @@ private extension WorkspaceCommand {
         case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
         case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
+    }
+}
+
+private extension WorkspaceDecision {
+    @inline(never)
+    static func reduceCodexAuthentication(_ command: EngineCommand, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        switch command {
+        case .codexAuthenticationPreparing(let instanceID, let retainedOwners):
+            for index in decision.snapshot.threads.indices {
+                var thread = decision.snapshot.threads[index]
+                guard retainedOwners.contains(thread.id) || thread.ownedCodexInstances.contains(instanceID) else { continue }
+                guard !decision.snapshot.isConversationHistoryLocked(threadID: thread.id),
+                      !decision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath),
+                      !decision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath),
+                      !decision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else {
+                    throw WorkspaceCommandError("Finish Codex history and workspace operations before changing the account.")
+                }
+                let ownsActiveRun = thread.activeRun?.configuration.ownedCodexInstanceID == instanceID
+                if var run = thread.activeRun, ownsActiveRun {
+                    run.stopRequested = true; thread.activeRun = run; thread.updateRunRecord()
+                    if thread.runHistory?.first(where: { $0.id == run.id })?.checkpoints?.providerReleased == false {
+                        thread.updateCheckpoint(runID: run.id, stage: .baseline) {
+                            $0.phase = .interrupted; $0.error = ThreadRunCheckpointAttempt.interruptedMessage; $0.updatedAt = now
+                        }
+                        if let record = thread.runHistory?.firstIndex(where: { $0.id == run.id }) {
+                            thread.runHistory?[record].checkpoints?.pendingStart = nil
+                        }
+                    }
+                    thread.finishRunRecord(status: .interrupted, reason: .forcedStop, now: now)
+                    decision.requestPostRunCheckpoint(runID: run.id, in: &thread, now: now)
+                    thread.activeRun = nil; thread.state = .interrupted
+                }
+                // Accepted input keeps its exact account capture. Ending an
+                // account mutation never replays or recaptures this queue.
+                thread.queuePaused = true
+                if retainedOwners.contains(thread.id) || ownsActiveRun {
+                    thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil
+                    decision.closeRuntimes.insert(thread.id)
+                }
+                thread.updatedAt = now; decision.snapshot.threads[index] = thread
+            }
+            for index in (decision.snapshot.promptSteerings ?? []).indices {
+                guard decision.snapshot.promptSteerings?[index].configuration.ownedCodexInstanceID == instanceID else { continue }
+                decision.snapshot.promptSteerings?[index].fallbackAllowed = false
+            }
+        case .codexAccountConfigured(let instanceID, let binding):
+            for index in decision.snapshot.threads.indices {
+                var thread = decision.snapshot.threads[index]
+                guard thread.provider == .codex, let configuration = thread.codexRuntimeConfiguration,
+                      configuration.authenticationMode == .ownedChatGPT, configuration.instanceID == instanceID else { continue }
+                guard thread.activeRun?.configuration.ownedCodexInstanceID != instanceID else { throw WorkspaceCommandError("Wait for Codex sessions to close before changing the account.") }
+                thread.codexRuntimeConfiguration = configuration.replacingAccountBinding(binding)
+                thread.queuePaused = true; thread.updatedAt = now; decision.snapshot.threads[index] = thread
+            }
+        default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
+        }
+        return decision
     }
 }

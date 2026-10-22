@@ -160,6 +160,13 @@ private func waitRemoval(_ condition: () async throws -> Bool) async throws {
         try await Task.sleep(for: .milliseconds(10))
     }
 }
+private func waitRemovalBoundary(_ probe: RemovalCleanupProbe) async throws {
+    let deadline = ContinuousClock.now + .seconds(3)
+    while !(await probe.finished) {
+        guard ContinuousClock.now < deadline else { throw CoincideError("Legacy metadata cleanup awaited a withheld result after its session closed.") }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}
 private func expectRemovalRejection(_ command: WorkspaceCommand, fixture f: RemovalFixture) async throws {
     let before = await f.engine.current(), database = try WorkspaceDatabase(url: f.databaseURL), id = UUID()
     let eventCount = try await database.journalEventCount()
@@ -413,6 +420,92 @@ private func expectRemovalRejection(_ command: WorkspaceCommand, fixture f: Remo
         #expect(await f.engine.current().snapshot.projects == [project])
         #expect(f.harness.providers(thread.id).count == 1)
         #expect(await f.engine.current().error == nil)
+    }
+}
+
+@Test(.timeLimit(.minutes(1))) func removalOfAlreadyClosingLegacyModelReadJoinsSessionButNotWithheldValue() async throws {
+    try await withRemoval { f in
+        let project = try f.project("cancelled-models"), thread = CodingThread(project: project)
+        try await f.engine.dispatch(.addProjectWithThread(project: project, thread: thread))
+        f.harness.configure(thread.id, .init(holdModels: true))
+        let readProbe = RemovalCleanupProbe(), cleanupProbe = RemovalCleanupProbe()
+        let models = Task<[ProviderModel], any Error> {
+            do {
+                let value = try await f.engine.models(thread: thread)
+                await readProbe.complete(); return value
+            } catch { await readProbe.complete(); throw error }
+        }
+        var cleanup: Task<Void, Never>?
+        do {
+            try await waitRemoval { await f.harness.providers(thread.id).first?.modelsStarted == 1 }
+            let metadata = try #require(f.harness.providers(thread.id).first)
+            models.cancel()
+            // Cancellation registers a close before project removal. Its task
+            // must not carry the independently held legacy read into cleanup.
+            try await waitRemoval { await metadata.closeFinished }
+            #expect(await readProbe.finished == false)
+            try await f.engine.dispatch(.removeProject(projectID: project.id, expectedThreadIDs: [thread.id]))
+            cleanup = Task {
+                await cleanupProbe.begin()
+                await f.engine.awaitProjectRemovalCleanup(projectID: project.id)
+                await cleanupProbe.complete()
+            }
+            try await waitRemovalBoundary(cleanupProbe)
+            let closeCount = await metadata.closeStarted, closeFinished = await metadata.closeFinished
+            #expect(closeCount == 1 && closeFinished)
+            #expect(await readProbe.finished == false)
+            try await f.engine.dispatch(.addProjectWithThread(project: project, thread: thread))
+            try await f.engine.dispatch(.editThread(thread.id, .draft("A reopened conversation owns this newer draft")))
+            let reopened = await f.engine.current()
+            await metadata.release()
+            await #expect(throws: CancellationError.self) { try await models.value }
+            await cleanup?.value
+            let afterLateResult = await f.engine.current()
+            #expect(afterLateResult.snapshot == reopened.snapshot && afterLateResult.sequence == reopened.sequence)
+            #expect(afterLateResult.error == nil && f.harness.providers(thread.id).count == 1)
+        } catch {
+            await f.harness.releaseAll(); _ = await models.result; await cleanup?.value
+            throw error
+        }
+    }
+}
+
+@Test(.timeLimit(.minutes(1))) func shutdownClosesLegacyMetadataSessionBeforeItsWithheldLateResultAndRejectsPublication() async throws {
+    try await withRemoval { f in
+        let project = try f.project("shutdown-models"), thread = CodingThread(project: project)
+        try await f.engine.dispatch(.addProjectWithThread(project: project, thread: thread))
+        f.harness.configure(thread.id, .init(holdModels: true))
+        let readProbe = RemovalCleanupProbe(), shutdownProbe = RemovalCleanupProbe()
+        let models = Task<[ProviderModel], any Error> {
+            do {
+                let value = try await f.engine.models(thread: thread)
+                await readProbe.complete(); return value
+            } catch { await readProbe.complete(); throw error }
+        }
+        var shutdown: Task<Void, Never>?
+        do {
+            try await waitRemoval { await f.harness.providers(thread.id).first?.modelsStarted == 1 }
+            let metadata = try #require(f.harness.providers(thread.id).first)
+            shutdown = Task {
+                await shutdownProbe.begin()
+                await f.engine.shutdown()
+                await shutdownProbe.complete()
+            }
+            try await waitRemovalBoundary(shutdownProbe)
+            let closeCount = await metadata.closeStarted, closeFinished = await metadata.closeFinished
+            #expect(closeCount == 1 && closeFinished)
+            #expect(await readProbe.finished == false)
+            let closed = await f.engine.current()
+            await metadata.release()
+            await #expect(throws: CancellationError.self) { try await models.value }
+            await shutdown?.value
+            let afterLateResult = await f.engine.current()
+            #expect(afterLateResult.snapshot == closed.snapshot && afterLateResult.sequence == closed.sequence)
+            #expect(afterLateResult.error == nil && f.harness.providers(thread.id).count == 1)
+        } catch {
+            await f.harness.releaseAll(); _ = await models.result; await shutdown?.value
+            throw error
+        }
     }
 }
 

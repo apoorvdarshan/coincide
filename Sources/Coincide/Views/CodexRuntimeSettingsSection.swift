@@ -18,7 +18,9 @@ struct CodexRuntimeSettingsSection: View {
                 }.accessibilityIdentifier("codex-runtime-selection")
                     .disabled(runtime.isApplying)
                 if runtime.selection == .existingCLI {
-                    Text("Uses codex from the existing command-line environment. Your current CLI account and configuration remain in place.")
+                    Text(runtime.authenticationMode == .cliDefault
+                         ? String(localized: "Uses codex from the existing command-line environment. Your current CLI account and configuration remain in place.")
+                         : String(localized: "Uses codex from the existing command-line environment. ChatGPT authentication is configured separately below."))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 } else if runtime.selection == .custom {
                     ViewThatFits(in: .horizontal) {
@@ -30,9 +32,13 @@ struct CodexRuntimeSettingsSection: View {
                 }
                 DisclosureGroup("Advanced: Codex Home", isExpanded: $advanced) {
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("Codex home (optional absolute folder)", text: $runtime.homeDirectory)
+                        TextField(runtime.authenticationMode == .ownedChatGPT
+                                  ? String(localized: "Shared Codex home (absolute folder)")
+                                  : String(localized: "Codex home (optional absolute folder)"), text: $runtime.homeDirectory)
                             .accessibilityIdentifier("codex-runtime-home")
-                        Text("Leave empty to inherit the CLI’s CODEX_HOME. Choosing another folder does not copy accounts, settings, or conversation history.")
+                        Text(runtime.authenticationMode == .cliDefault
+                             ? String(localized: "Leave empty to inherit the CLI’s CODEX_HOME. Choosing another folder does not copy accounts, settings, or conversation history.")
+                             : String(localized: "An absolute shared home is required for Coincide-owned authentication. Choosing a folder does not migrate CLI accounts or history."))
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }.disabled(runtime.isApplying)
                 }

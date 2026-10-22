@@ -2,7 +2,8 @@
 
 The native job has a 45-minute whole-suite budget after the fourteen-workflow
 run used 29m59s with five paths still failing early. Individual test/command
-deadlines, all fourteen scenarios and the zero-skip result gate stay unchanged.
+deadlines and all fourteen scenarios stay unchanged. Two explicit authentication
+settings scenarios bring the zero-skip result gate to sixteen.
 After a failed production suite, diagnostic-only report arrival polling is
 capped at thirty seconds; it never reruns tests or changes their result.
 """
@@ -41,13 +42,17 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertNotIn(forbidden, launcher)
 
     def test_change_filter_keeps_product_and_harness_paths_and_skips_unrelated_unit_docs(self):
-        for path in ["Sources/Coincide/Views/ChatView.swift", "Sources/CoincideCore/WorkspaceEngine.swift", "UITests/macOS/Example.swift", "script/test_macos_ui.sh", "Package.resolved"]:
+        for path in ["Sources/Coincide/Views/ChatView.swift", "Sources/CoincideCore/WorkspaceEngine.swift", "UITests/macOS/Example.swift", "script/test_macos_ui.sh", "script/prepare_macos_signing.py", "Package.resolved"]:
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_fourteen_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=14, passedTests=14, failedTests=0, skippedTests=0)), 14)
-        for summary in [dict(totalTestCount=14, passedTests=13, failedTests=0, skippedTests=1),
+    def test_results_require_sixteen_real_tests_without_silent_skips(self):
+        self.assertEqual(ci.verify_results(dict(totalTestCount=16, passedTests=16, failedTests=0, skippedTests=0)), 16)
+        for summary in [dict(totalTestCount=16, passedTests=15, failedTests=0, skippedTests=1),
+                        dict(totalTestCount=16, passedTests=15, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=15, passedTests=15, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=14, passedTests=14, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=14, passedTests=13, failedTests=0, skippedTests=1),
                         dict(totalTestCount=14, passedTests=13, failedTests=1, skippedTests=0),
                         dict(totalTestCount=13, passedTests=13, failedTests=0, skippedTests=0),
                         dict(totalTestCount=13, passedTests=12, failedTests=0, skippedTests=1),

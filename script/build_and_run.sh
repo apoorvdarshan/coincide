@@ -47,8 +47,33 @@ SIGN_IDENTITY="${COINCIDE_SIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" ]]; then
   SIGN_IDENTITY="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null | /usr/bin/awk '/"Apple Development:/ && !found { print $2; found=1 }')"
 fi
+PROFILE_PATH="${COINCIDE_PROVISIONING_PROFILE:-}"
+DEFAULT_PROFILE="$HOME/Library/Application Support/Coincide/Signing/development.provisionprofile"
+if [[ -z "$PROFILE_PATH" && "$SIGN_IDENTITY" != "-" && ( -e "$DEFAULT_PROFILE" || -L "$DEFAULT_PROFILE" ) ]]; then PROFILE_PATH="$DEFAULT_PROFILE"; fi
+SIGNING_TEMP=""
+cleanup_signing() { if [[ -n "$SIGNING_TEMP" ]]; then /bin/rm -rf "$SIGNING_TEMP"; fi; }
+trap cleanup_signing EXIT
+if [[ -n "$PROFILE_PATH" ]]; then
+  SIGNING_TEMP="$(/usr/bin/mktemp -d /private/tmp/coincide-signing.XXXXXX)"
+  /bin/chmod 700 "$SIGNING_TEMP"
+  python3 "$ROOT_DIR/script/prepare_macos_signing.py" \
+    --profile "$PROFILE_PATH" --bundle-id "$BUNDLE_ID" --identity "${SIGN_IDENTITY:--}" \
+    --output-entitlements "$SIGNING_TEMP/entitlements.plist" --output-profile "$SIGNING_TEMP/embedded.provisionprofile"
+  # Embed the bytes actually validated, rather than reopening a mutable source.
+  /bin/rm -f "$APP_BUNDLE/Contents/embedded.provisionprofile"
+  /usr/bin/install -m 600 "$SIGNING_TEMP/embedded.provisionprofile" "$APP_BUNDLE/Contents/embedded.provisionprofile"
+else
+  # This bundle is rebuilt by this script. Remove its stale prior profile only;
+  # the user's source profile, other apps and signing setup are untouched.
+  /bin/rm -f "$APP_BUNDLE/Contents/embedded.provisionprofile"
+fi
 codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE/Contents/Helpers/CoincideScriptHelper" >/dev/null
-codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE" >/dev/null
+if [[ -n "$SIGNING_TEMP" ]]; then
+  codesign --force --sign "$SIGN_IDENTITY" --entitlements "$SIGNING_TEMP/entitlements.plist" "$APP_BUNDLE" >/dev/null
+else
+  codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE" >/dev/null
+fi
+cleanup_signing; SIGNING_TEMP=""
 case "$MODE" in
   --build-only) echo "$APP_BUNDLE" ;;
   --debug) lldb -- "$APP_BUNDLE/Contents/MacOS/$APP_NAME" ;;

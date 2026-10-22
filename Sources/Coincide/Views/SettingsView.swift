@@ -14,10 +14,12 @@ struct SettingsView: View {
                 if provider == .antigravity {
                     AntigravitySettingsSection(account: store.antigravityAccount, installation: store.antigravityInstallation)
                 } else {
-                LabeledContent("CLI", value: ProcessChannel.findExecutable(provider.executable)?.path ?? "Not installed")
-                Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)
+                if provider != .codex || store.codexRuntime.configuration.authenticationMode == .cliDefault {
+                    LabeledContent("CLI", value: ProcessChannel.findExecutable(provider.executable)?.path ?? "Not installed")
+                    Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)
+                }
                 Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels(provider: provider) } }
-                    .disabled(store.isRefreshingModels || ((provider == .opencode || provider == .pi || provider == .muse) && store.selectedThread?.provider != provider))
+                    .disabled(store.isRefreshingModels || (provider == .codex && (store.codexRuntime.isApplying || store.codexAuthentication.isWorking)) || ((provider == .opencode || provider == .pi || provider == .muse) && store.selectedThread?.provider != provider))
                 if provider == .opencode {
                     Text("Choose OpenCode in a new conversation, select the installed server generation, and refresh the models and agents available in that workspace.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -33,8 +35,11 @@ struct SettingsView: View {
                 LabeledContent("Available models", value: "\(store.models(for: provider).count)")
                 if provider == .codex {
                     CodexRuntimeSettingsSection(runtime: store.codexRuntime)
-                    CodexAccountSection(account: store.codexAccount, runtimeConfiguration: store.codexRuntime.configuration) { await store.refreshCodexAccount() }
-                        .id(store.codexRuntime.configuration)
+                    CodexAuthenticationSection(authentication: store.codexAuthentication, runtime: store.codexRuntime)
+                    if store.codexRuntime.configuration.authenticationMode == .cliDefault {
+                        CodexAccountSection(account: store.codexAccount, runtimeConfiguration: store.codexRuntime.configuration) { await store.refreshCodexAccount() }
+                            .id(store.codexRuntime.configuration)
+                    }
                 }
                 }
                 Section("ACP Agents") {
@@ -88,7 +93,7 @@ struct SettingsView: View {
             }.formStyle(.grouped).tabItem { Label("General", systemImage: "gear") }
         }.padding().frame(width: 650, height: 520)
             .task(id: provider) {
-                if provider == .codex { await store.refreshCodexAccount() }
+                if provider == .codex, store.codexRuntime.configuration.authenticationMode == .cliDefault { await store.refreshCodexAccount() }
             }
             .sheet(item: $editingAgent) { agent in ACPAgentEditor(agent: agent, save: { try await store.saveACPAgent($0); editingAgent = nil }, cancel: { editingAgent = nil }) }
     }

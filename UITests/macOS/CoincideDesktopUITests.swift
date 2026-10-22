@@ -8,6 +8,169 @@ import XCTest
 final class CoincideDesktopUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
+    @MainActor func testLightCodexOwnedAuthenticationSettingsPreserveUnsentConversation() throws {
+        try exerciseCodexAuthenticationSettings(appearance: "light")
+    }
+
+    @MainActor func testDarkCodexOwnedAuthenticationSettingsPreserveUnsentConversation() throws {
+        try exerciseCodexAuthenticationSettings(appearance: "dark")
+    }
+
+    @MainActor private func exerciseCodexAuthenticationSettings(appearance: String) throws {
+        let prefix = "codex-auth-" + appearance
+        let fixture = try prepareApplication(appearance: appearance, diagnosticPrefix: prefix)
+        let app = fixture.app, root = fixture.root
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
+        let project = root.appendingPathComponent("Authentication Workspace", isDirectory: true)
+        let bin = root.appendingPathComponent("private-bin", isDirectory: true)
+        let cliHome = root.appendingPathComponent("private-cli-home", isDirectory: true)
+        let sharedHome = root.appendingPathComponent("explicit-shared-home", isDirectory: true)
+        for directory in [project, bin, cliHome, sharedHome] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        let document = project.appendingPathComponent("README.md"), original = Data("Preserve the existing conversation and working files.\n".utf8)
+        try original.write(to: document)
+        let cliSentinel = cliHome.appendingPathComponent("existing-cli-sentinel"), sharedSentinel = sharedHome.appendingPathComponent("shared-home-sentinel")
+        try Data("Synthetic existing CLI state.\n".utf8).write(to: cliSentinel)
+        try Data("Synthetic shared history state.\n".utf8).write(to: sharedSentinel)
+        let cliBytes = try Data(contentsOf: cliSentinel), sharedBytes = try Data(contentsOf: sharedSentinel)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Native authentication fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: prefix + "-git-" + arguments[0])
+        }
+        let originalHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: prefix + "-original-head")
+        let state = root.appendingPathComponent("auth-metadata-peer.json"), wire = root.appendingPathComponent("auth-metadata-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 1]).write(to: state, options: .atomic)
+        let peer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_models_ui", withExtension: "py"))
+        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["CODEX_HOME"] = cliHome.path
+        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: prefix)
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let threadID = try selectedThreadIdentifier(in: app), draft = "Preserve this unsent draft while explicitly choosing ChatGPT authentication."
+        composer.click(); composer.typeText(draft); XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        let before = try waitForPrivateWorkspace(root, timeout: 5) { snapshot in
+            guard let threads = snapshot["threads"] as? [[String: Any]], threads.count == 1 else { return false }
+            return threads[0]["draft"] as? String == draft
+        }
+        let originalThreads = try JSONSerialization.data(withJSONObject: XCTUnwrap(before["threads"]), options: .sortedKeys)
+
+        app.typeKey(",", modifierFlags: .command)
+        var settings = app.windows.containing(.any, identifier: "codex-authentication-mode").firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        let picker = settings.descendants(matching: .any).matching(identifier: "codex-authentication-mode").firstMatch
+        revealAuthenticationControl(picker, in: settings)
+        picker.click()
+        let ownedChoice = app.menuItems["ChatGPT through Coincide"]
+        XCTAssertTrue(ownedChoice.waitForExistence(timeout: 5)); ownedChoice.click()
+        let home = settings.textFields["codex-authentication-home"]
+        XCTAssertTrue(home.waitForExistence(timeout: 5)); revealAuthenticationControl(home, in: settings)
+        let apply = settings.buttons["codex-authentication-apply"]
+        XCTAssertTrue(apply.waitForExistence(timeout: 5)); XCTAssertFalse(apply.isEnabled, "Owned mode requires an explicit shared home before it can be saved.")
+        XCTAssertFalse(settings.buttons["codex-authentication-sign-in"].exists, "Editing an unsaved mode must not initiate or expose an active account flow.")
+        home.click(); home.typeKey("a", modifierFlags: .command); home.typeText(sharedHome.path)
+        XCTAssertTrue(waitForValue(home, value: sharedHome.path, timeout: 5))
+        revealAuthenticationControl(apply, in: settings); XCTAssertTrue(apply.isEnabled); apply.click()
+        let saved = try waitForCodexAuthenticationPreference(root, mode: "ownedChatGPT", home: sharedHome.path)
+        XCTAssertEqual(saved["selection"] as? String, "existingCLI"); XCTAssertEqual(saved["executable"] as? String, "codex")
+        XCTAssertNil(saved["accountBinding"], "Choosing owned authentication must never fabricate a signed-in account.")
+        try assertUnsignedOwnedAuthenticationControls(in: settings, name: prefix + "-explicit-owned-mode")
+        settings.typeKey("w", modifierFlags: .command); XCTAssertTrue(waitForAbsence(settings, timeout: 5))
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: XCTUnwrap(privateWorkspaceSnapshot(root)["threads"]), options: .sortedKeys), originalThreads)
+        let beforeRestart = try JSONSerialization.data(withJSONObject: historyWire(wire), options: .sortedKeys)
+
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        app.typeKey(",", modifierFlags: .command)
+        settings = app.windows.containing(.any, identifier: "codex-authentication-mode").firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        let restoredHome = settings.textFields["codex-authentication-home"]
+        XCTAssertTrue(restoredHome.waitForExistence(timeout: 5)); XCTAssertEqual(restoredHome.value as? String, sharedHome.path)
+        try assertUnsignedOwnedAuthenticationControls(in: settings, name: prefix + "-reopened-owned-mode")
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: historyWire(wire), options: .sortedKeys), beforeRestart,
+                       "Reopening saved owned mode must not launch a CLI probe, sign in, read saved credentials or submit input.")
+
+        let restoredPicker = settings.descendants(matching: .any).matching(identifier: "codex-authentication-mode").firstMatch
+        revealAuthenticationControl(restoredPicker, in: settings); restoredPicker.click()
+        let cliChoice = app.menuItems["Existing CLI account"]
+        XCTAssertTrue(cliChoice.waitForExistence(timeout: 5)); cliChoice.click()
+        let restore = settings.buttons["codex-authentication-apply"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 5)); revealAuthenticationControl(restore, in: settings)
+        XCTAssertTrue(restore.isEnabled); restore.click()
+        let restored = try waitForCodexAuthenticationPreference(root, mode: "cliDefault", home: sharedHome.path)
+        XCTAssertNil(restored["accountBinding"])
+        XCTAssertTrue(waitForAbsence(settings.buttons["codex-authentication-sign-in"], timeout: 5))
+        XCTAssertFalse(settings.buttons["codex-authentication-open-browser"].exists)
+        settings.typeKey("w", modifierFlags: .command); XCTAssertTrue(waitForAbsence(settings, timeout: 5))
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5)); XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: XCTUnwrap(privateWorkspaceSnapshot(root)["threads"]), options: .sortedKeys), originalThreads,
+                       "Global authentication preferences must not retarget, recapture, enqueue or rewrite an existing conversation.")
+        let frames = try historyWire(wire), allowed: Set<String> = ["initialize", "account/read", "account/rateLimits/read"]
+        XCTAssertTrue(frames.allSatisfy { allowed.contains($0["method"] as? String ?? "") }, "Only closed-world read-only CLI metadata is allowed; no native turn, auth or configuration mutation may occur.")
+        for frame in frames where frame["method"] as? String == "account/read" {
+            let params = try XCTUnwrap(frame["params"] as? [String: Any])
+            XCTAssertEqual(Set(params.keys), ["refreshToken"]); XCTAssertEqual(params["refreshToken"] as? Bool, false)
+        }
+        XCTAssertEqual(try Data(contentsOf: document), original)
+        XCTAssertEqual(try Data(contentsOf: cliSentinel), cliBytes); XCTAssertEqual(try Data(contentsOf: sharedSentinel), sharedBytes)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: sharedHome.path), [sharedSentinel.lastPathComponent], "Saving a mode must not initialize, migrate or overwrite the selected shared home.")
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: prefix + "-preserved-head"), originalHead)
+        capture(app, name: prefix + "-cli-restored-conversation-and-draft")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
+    @MainActor private func revealAuthenticationControl(_ control: XCUIElement, in settings: XCUIElement) {
+        XCTAssertTrue(control.waitForExistence(timeout: 5))
+        let area = settings.scrollViews.firstMatch, scroll = area.exists ? area : settings
+        if control.isHittable && scroll.frame.contains(control.frame) { return }
+        scroll.scroll(byDeltaX: 0, deltaY: 1_200)
+        for _ in 0..<8 {
+            if control.isHittable && scroll.frame.contains(control.frame) { break }
+            scroll.scroll(byDeltaX: 0, deltaY: -150)
+        }
+        XCTAssertTrue(control.isEnabled && control.isHittable && scroll.frame.contains(control.frame),
+                      "The semantic account control must fit and remain reachable in the native Settings form: \(control.identifier).")
+    }
+
+    @MainActor private func assertUnsignedOwnedAuthenticationControls(in settings: XCUIElement, name: String) throws {
+        let status = settings.descendants(matching: .any).matching(identifier: "codex-authentication-status").firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        let unsigned = "Sign in or refresh the saved ChatGPT accounts."
+        let currentStatus = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", unsigned, unsigned), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [currentStatus], timeout: 5), .completed)
+        let signIn = settings.buttons["codex-authentication-sign-in"], refresh = settings.buttons["codex-authentication-refresh"]
+        revealAuthenticationControl(signIn, in: settings); revealAuthenticationControl(refresh, in: settings)
+        XCTAssertTrue(signIn.isEnabled && refresh.isEnabled)
+        let usage = settings.descendants(matching: .any).matching(identifier: "codex-authentication-usage-unsupported").firstMatch
+        XCTAssertTrue(usage.exists)
+        XCTAssertFalse(settings.buttons["codex-authentication-open-browser"].exists)
+        XCTAssertFalse(settings.buttons["codex-authentication-cancel"].exists)
+        XCTAssertFalse(settings.descendants(matching: .any).matching(identifier: "codex-authentication-reveal-email").firstMatch.exists)
+        XCTAssertFalse(settings.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "codex-authentication-sign-out-")).firstMatch.exists)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(settings.frame))
+        let screenshot = XCTAttachment(screenshot: settings.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
+        let tree = XCTAttachment(string: settings.debugDescription); tree.name = name + "-accessibility"; tree.lifetime = .keepAlways; add(tree)
+        // Deliberately do not activate Sign In or Refresh Saved Accounts: these
+        // are real auth/storage actions, outside this offline Settings scenario.
+    }
+
+    @MainActor private func waitForCodexAuthenticationPreference(_ root: URL, mode: String, home: String) throws -> [String: Any] {
+        let path = root.appendingPathComponent("CodexSettings/runtime.json")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let bytes = try? Data(contentsOf: path), let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return false }
+            return value["authenticationMode"] as? String == mode && value["homeDirectory"] as? String == home
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed, "Only the explicit Apply action may save the selected account mode and shared home.")
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any])
+    }
+
     @MainActor func testNativeModelReasoningMenusResolveAdvertisedAndCLIDefaultsWithoutSending() throws {
         let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "models")
         let app = fixture.app, root = fixture.root

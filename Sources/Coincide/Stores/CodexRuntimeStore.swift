@@ -34,6 +34,7 @@ import Observation
     var selection: CodexRuntimeSelection { didSet { invalidateInspection() } }
     var executable: String { didSet { invalidateInspection() } }
     var homeDirectory: String { didSet { invalidateInspection() } }
+    var authenticationMode: CodexAuthenticationMode { didSet { invalidateInspection() } }
     private(set) var state: CodexInstallationState
     private(set) var inspected: CodexInstallationExecutable?
     private(set) var inspectedConfiguration: CodexRuntimeConfiguration?
@@ -48,6 +49,7 @@ import Observation
     @ObservationIgnored private var inspection: Task<CodexInstallationExecutable, any Error>?
     @ObservationIgnored private var inspectionID: UUID?
     @ObservationIgnored private var application: Task<Void, Never>?
+    @ObservationIgnored private var accountPublication: Task<Void, any Error>?
     @ObservationIgnored private var apply: (@MainActor (CodexRuntimeConfiguration) async throws -> Void)?
     @ObservationIgnored private var protectedCustomPaths: @MainActor () -> [String] = { [] }
     @ObservationIgnored private var ownedOperations: Set<UUID> = []
@@ -67,7 +69,8 @@ import Observation
         do { saved = try CodexRuntimePreferences.load(root: preferencesRoot) ?? saved }
         catch { loadError = String(localized: "The saved Codex runtime could not be read safely. Review the runtime selection before using it.") }
         configuration = saved; selection = saved.selection; executable = saved.executable
-        homeDirectory = saved.homeDirectory ?? ""; self.client = client; state = client.state(); errorMessage = loadError
+        homeDirectory = saved.homeDirectory ?? ""; authenticationMode = saved.authenticationMode
+        self.client = client; state = client.state(); errorMessage = loadError
         needsPersistence = loadError != nil
         observer = Task { [weak self] in
             for await value in client.updates() {
@@ -82,7 +85,8 @@ import Observation
     }
     var draftConfiguration: CodexRuntimeConfiguration? {
         let draft = CodexRuntimeConfiguration(instanceID: configuration.instanceID, selection: selection,
-            executable: selection == .custom ? executable : "codex", homeDirectory: homeDirectory.isEmpty ? nil : homeDirectory)
+            executable: selection == .custom ? executable : "codex", homeDirectory: homeDirectory.isEmpty ? nil : homeDirectory,
+            authenticationMode: authenticationMode, accountBinding: authenticationMode == .ownedChatGPT ? configuration.accountBinding : nil)
         guard (try? draft.validate()) != nil else { return nil }
         return draft
     }
@@ -157,6 +161,35 @@ import Observation
             errorMessage = String(localized: "The selected Codex executable could not be checked. Review its path and installation. Account access has not been checked.")
         }
     }
+
+    /// Called only inside the coordinator's Engine admission lease. Publication
+    /// retains the exact binary/home and owned mode, including on sign-out.
+    /// A persistence failure is thrown so the coordinator reports an observed
+    /// account change as unconfirmed rather than claiming a complete save.
+    func publishAccountBinding(_ binding: CodexAccountBinding?, expectedInstanceID: UUID) async throws {
+        guard !closed, !isApplying, configuration.instanceID == expectedInstanceID,
+              configuration.authenticationMode == .ownedChatGPT, let apply else {
+            throw CoincideError("Choose the saved Coincide ChatGPT connection before publishing its account.")
+        }
+        let target = configuration.replacingAccountBinding(binding)
+        try target.validate()
+        isApplying = true; errorMessage = nil
+        let task = Task { [self] in
+            defer { isApplying = false; accountPublication = nil }
+            try CodexRuntimePreferences.prepare(root: preferencesRoot)
+            try await apply(target)
+            configuration = target; invalidateInspection()
+            do { try CodexRuntimePreferences.save(target, root: preferencesRoot); needsPersistence = false }
+            catch {
+                needsPersistence = true
+                let message = String(localized: "The ChatGPT account changed, but the selected connection could not be saved. Refresh the account before continuing.")
+                errorMessage = message
+                throw CoincideError(message)
+            }
+        }
+        accountPublication = task
+        try await task.value
+    }
     func startInstallation() {
         guard canStartInstallation else { return }
         errorMessage = nil
@@ -180,7 +213,7 @@ import Observation
         if let shutdownTask { await shutdownTask.value; return }
         closed = true; inspection?.cancel()
         let task = Task { [self] in
-            _ = try? await inspection?.value; await application?.value
+            _ = try? await inspection?.value; await application?.value; _ = try? await accountPublication?.value
             for id in ownedOperations { _ = try? await cancellation(for: id).value; cancellations.removeValue(forKey: id) }
             for task in cancellations.values { _ = try? await task.value }
             state = client.state(); observer?.cancel(); await observer?.value; observer = nil

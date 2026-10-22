@@ -27,6 +27,21 @@ public enum CodexHomeLayout {
         public let continuationIdentity: String
         /// Displaced native runtime entries, retained with ownership proof. These are not disposable.
         public let preservedRuntimeEntries: [URL]
+        fileprivate let proof: OwnershipProof?
+        init(sharedHome: URL, effectiveHome: URL, continuationIdentity: String, preservedRuntimeEntries: [URL]) {
+            self.sharedHome = sharedHome; self.effectiveHome = effectiveHome; self.continuationIdentity = continuationIdentity
+            self.preservedRuntimeEntries = preservedRuntimeEntries; proof = nil
+        }
+        fileprivate init(sharedHome: URL, effectiveHome: URL, continuationIdentity: String, preservedRuntimeEntries: [URL], proof: OwnershipProof) {
+            self.sharedHome = sharedHome; self.effectiveHome = effectiveHome; self.continuationIdentity = continuationIdentity
+            self.preservedRuntimeEntries = preservedRuntimeEntries; self.proof = proof
+        }
+    }
+    fileprivate struct OwnershipProof: Sendable, Equatable {
+        let shared: GitWorktreeNodeIdentity
+        let overlay: GitWorktreeNodeIdentity
+        let receipt: GitWorktreeNodeIdentity
+        let receiptBytes: Data
     }
 
     private static let directories = ["sessions", "archived_sessions", "sqlite", "shell_snapshots", "worktrees", "skills", "plugins", "cache", "logs", "mcp-oauth-locks"]
@@ -43,6 +58,24 @@ public enum CodexHomeLayout {
         catch { throw CodexHomeLayoutError.io }
     }
 
+    /// Checks an existing owned layout without creating directories, locks, links,
+    /// caches or receipts. A required repair fails busy while live users hold SH.
+    public static func inspect(sharedHome: URL, overlayHome: URL) throws -> Prepared {
+        do { return try inspectExisting(sharedHome: sharedHome, overlayHome: overlayHome) }
+        catch let error as CodexHomeLayoutError { throw error }
+        catch is CancellationError { throw CodexHomeLayoutError.cancelled }
+        catch { throw CodexHomeLayoutError.io }
+    }
+    public static func validate(sharedHome: URL, overlayHome: URL) throws -> Prepared {
+        try inspect(sharedHome: sharedHome, overlayHome: overlayHome)
+    }
+    public static func validate(_ prepared: Prepared) throws {
+        guard prepared.proof != nil else { throw CodexHomeLayoutError.ownershipLost }
+        let observed = try inspect(sharedHome: prepared.sharedHome, overlayHome: prepared.effectiveHome)
+        guard observed == prepared else { throw CodexHomeLayoutError.ownershipLost }
+    }
+    static func resolvedPathForAdmission(_ url: URL) throws -> String { try canonicalPath(url).path }
+
     private struct Retained: Codable {
         let directory: String
         let identity: GitWorktreeNodeIdentity
@@ -57,6 +90,69 @@ public enum CodexHomeLayout {
         let overlayPath: String
         let overlayIdentity: GitWorktreeNodeIdentity
         var retained: [Retained]
+    }
+
+    private static func inspectExisting(sharedHome: URL, overlayHome: URL) throws -> Prepared {
+        try Task.checkCancellation()
+        let sharedInput = try canonicalPath(sharedHome), overlayInput = try canonicalPath(overlayHome)
+        guard sharedInput.identity != nil, overlayInput.identity != nil else { throw CodexHomeLayoutError.busy }
+        let shared = try HomeDirectory.openPath(sharedInput.path, create: false), overlay = try HomeDirectory.openPath(overlayInput.path, create: false)
+        guard shared.identity == sharedInput.identity, overlay.identity == overlayInput.identity, shared.identity != overlay.identity,
+              !shared.path.hasPrefix(overlay.path + "/"), !overlay.path.hasPrefix(shared.path + "/") else { throw CodexHomeLayoutError.ownershipLost }
+        try shared.checkHome(privateHome: false); try overlay.checkHome(privateHome: true)
+        let lock = try overlay.acquireLock(lockName, shared: true, create: false)
+        defer { withExtendedLifetime(lock) {} }
+        guard let metadata = try overlay.metadata(marker) else { throw CodexHomeLayoutError.busy }
+        try privateRegular(metadata)
+        let bytes = try overlay.read(marker, expected: metadata, maximum: 32_768)
+        guard let receipt = try? JSONDecoder().decode(Receipt.self, from: bytes), receipt.format == 1,
+              receipt.sharedPath == shared.path, receipt.overlayPath == overlay.path,
+              receipt.sharedIdentity == shared.identity, receipt.overlayIdentity == overlay.identity,
+              receipt.retained.count <= 32 else { throw CodexHomeLayoutError.ownershipLost }
+        if let auth = try overlay.metadata("auth.json") {
+            guard auth.st_mode & S_IFMT != S_IFLNK else { throw CodexHomeLayoutError.privateAuthSymlink }
+            try privateRegular(auth, requirePrivateMode: false)
+        }
+        if let cache = try overlay.metadata("models_cache.json") {
+            guard cache.st_mode & S_IFMT != S_IFLNK else { throw CodexHomeLayoutError.busy }
+            try privateRegular(cache, requirePrivateMode: false)
+        }
+        let entries = try shared.entries(), names = Set(directories).union(entries.keys.filter { !excluded.contains($0) })
+        guard names.count <= 1_024, !entries.keys.contains(where: { $0.hasPrefix(reservedPrefix) }) else { throw CodexHomeLayoutError.ownershipLost }
+        for name in names {
+            try Task.checkCancellation()
+            guard let sharedEntry = entries[name] else { throw CodexHomeLayoutError.busy }
+            if directories.contains(name) {
+                var target = stat()
+                guard fstatat(shared.fd, name, &target, 0) == 0, target.st_mode & S_IFMT == S_IFDIR else { throw CodexHomeLayoutError.ownershipLost }
+            }
+            if sharedEntry.st_mode & S_IFMT == S_IFLNK {
+                let physical = try physicalPath(shared.path + "/" + name)
+                guard physical != overlay.path, !physical.hasPrefix(overlay.path + "/") else { throw CodexHomeLayoutError.homeConflict }
+            }
+            guard let link = try overlay.metadata(name), link.st_mode & S_IFMT == S_IFLNK else { throw CodexHomeLayoutError.busy }
+            guard link.st_uid == geteuid(), try expectedLink(overlay.readLink(name, expected: link), in: overlay.path, shared: shared.path, name: name) else { throw CodexHomeLayoutError.ownershipLost }
+        }
+        var seen = Set<String>()
+        for retained in receipt.retained {
+            guard retained.directory.hasPrefix(reservedPrefix + "preserved-"), UUID(uuidString: String(retained.directory.dropFirst((reservedPrefix + "preserved-").count))) != nil,
+                  runtime.contains(retained.name), seen.insert(retained.directory).inserted else { throw CodexHomeLayoutError.ownershipLost }
+            let folder = try HomeDirectory(child: retained.directory, parent: overlay)
+            try folder.checkHome(privateHome: true)
+            guard folder.identity == retained.identity else { throw CodexHomeLayoutError.ownershipLost }
+            let preserved = try folder.entries()
+            guard preserved.count <= 1, preserved.keys.allSatisfy({ $0 == retained.name }) else { throw CodexHomeLayoutError.ownershipLost }
+            guard let entry = preserved[retained.name] else { throw CodexHomeLayoutError.busy }
+            guard worktreeIdentity(entry) == retained.entryIdentity else { throw CodexHomeLayoutError.ownershipLost }
+        }
+        try shared.validate(); try overlay.validate()
+        guard let final = try overlay.metadata(marker), worktreeIdentity(final) == worktreeIdentity(metadata),
+              final.st_size == metadata.st_size, final.st_mtimespec.tv_sec == metadata.st_mtimespec.tv_sec,
+              final.st_mtimespec.tv_nsec == metadata.st_mtimespec.tv_nsec else { throw CodexHomeLayoutError.ownershipLost }
+        return .init(sharedHome: URL(fileURLWithPath: shared.path, isDirectory: true), effectiveHome: URL(fileURLWithPath: overlay.path, isDirectory: true),
+                     continuationIdentity: "codex:home:" + shared.path,
+                     preservedRuntimeEntries: receipt.retained.map { URL(fileURLWithPath: overlay.path + "/" + $0.directory + "/" + $0.name) },
+                     proof: .init(shared: shared.identity, overlay: overlay.identity, receipt: worktreeIdentity(metadata), receiptBytes: bytes))
     }
 
     private static func materialize(sharedHome: URL, overlayHome: URL) throws -> Prepared {
@@ -230,10 +326,13 @@ public enum CodexHomeLayout {
         }
         try proveReceipt()
         guard fsync(shared.fd) == 0, fsync(overlay.fd) == 0 else { throw CodexHomeLayoutError.io }
+        guard let finalReceipt = try overlay.metadata(marker) else { throw CodexHomeLayoutError.ownershipLost }
+        let finalReceiptBytes = try overlay.read(marker, expected: finalReceipt, maximum: 32_768)
         succeeded = true
         return Prepared(sharedHome: URL(fileURLWithPath: shared.path, isDirectory: true), effectiveHome: URL(fileURLWithPath: overlay.path, isDirectory: true),
                         continuationIdentity: "codex:home:" + shared.path,
-                        preservedRuntimeEntries: receipt.retained.map { URL(fileURLWithPath: overlay.path + "/" + $0.directory + "/" + $0.name) })
+                        preservedRuntimeEntries: receipt.retained.map { URL(fileURLWithPath: overlay.path + "/" + $0.directory + "/" + $0.name) },
+                        proof: .init(shared: shared.identity, overlay: overlay.identity, receipt: worktreeIdentity(finalReceipt), receiptBytes: finalReceiptBytes))
     }
 
     private static func privateRegular(_ value: stat, requirePrivateMode: Bool = true) throws {
@@ -311,11 +410,14 @@ private final class HomeDirectory {
         fd = opened; identity = worktreeIdentity(value)
     }
     deinit { Darwin.close(fd) }
-    static func openPath(_ path: String) throws -> HomeDirectory {
+    static func openPath(_ path: String, create: Bool = true) throws -> HomeDirectory {
         var directory = try HomeDirectory(root: ())
         for name in path.split(separator: "/").map(String.init) {
             try Task.checkCancellation(); try directory.validate()
-            if try directory.metadata(name) == nil { guard mkdirat(directory.fd, name, 0o700) == 0 else { throw CodexHomeLayoutError.io } }
+            if try directory.metadata(name) == nil {
+                guard create else { throw CodexHomeLayoutError.busy }
+                guard mkdirat(directory.fd, name, 0o700) == 0 else { throw CodexHomeLayoutError.io }
+            }
             directory = try HomeDirectory(child: name, parent: directory)
         }
         return directory
@@ -439,15 +541,16 @@ private final class HomeDirectory {
         guard (try? validate()) != nil, let value = try? metadata(name), worktreeIdentity(value) == identity else { return }
         _ = unlinkat(fd, name, flags)
     }
-    func acquireLock(_ name: String) throws -> HomeLayoutLock {
+    func acquireLock(_ name: String, shared: Bool = false, create: Bool = true) throws -> HomeLayoutLock {
         try validate()
-        let file = openat(fd, name, O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
+        let file = openat(fd, name, O_RDWR | (create ? O_CREAT : 0) | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
+        if file < 0, !create, errno == ENOENT { throw CodexHomeLayoutError.busy }
         guard file >= 0 else { throw CodexHomeLayoutError.ownershipLost }
         var value = stat()
         guard fstat(file, &value) == 0, value.st_mode & S_IFMT == S_IFREG, value.st_size == 0,
               value.st_uid == geteuid(), value.st_nlink == 1, value.st_mode & 0o077 == 0 else { Darwin.close(file); throw CodexHomeLayoutError.ownershipLost }
         let deadline = ContinuousClock.now + .seconds(1)
-        while flock(file, LOCK_EX | LOCK_NB) != 0 {
+        while flock(file, (shared ? LOCK_SH : LOCK_EX) | LOCK_NB) != 0 {
             guard errno == EWOULDBLOCK || errno == EINTR else { Darwin.close(file); throw CodexHomeLayoutError.io }
             if Task.isCancelled { Darwin.close(file); throw CodexHomeLayoutError.cancelled }
             guard ContinuousClock.now < deadline else { Darwin.close(file); throw CodexHomeLayoutError.busy }; usleep(10_000)
