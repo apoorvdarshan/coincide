@@ -12,6 +12,8 @@ public actor PiSession: ProviderSession {
     private let arguments: [String]?
     private let requestTimeout: Duration
     private let steeringTimeout: Duration
+    private let freshIntent: PiFreshSessionIntent?
+    private let historyWorkerRootURL: URL?
     private var channel: ProcessChannel?
     private var reader: Task<Void, Never>?
     private var closeTask: Task<Void, Never>?
@@ -38,6 +40,13 @@ public actor PiSession: ProviderSession {
     private var versionTask: Task<String, any Error>?
     private var prepared: Prepared?
     private var steeringPreparation: PiSteeringHistoryPreparation?
+    private var historyOperation: UUID?
+    private var historyWake = false
+    private var historyAttempts = Set<UUID>()
+    private var historyTasks: [UUID: Task<ProviderConversationSnapshot, any Error>] = [:]
+    private var historyWorker: PiSession?
+    private var historyWorkerReader: Task<Void, Never>?
+    private var historyWorkerRequests = Set<JSONValue>()
     private struct Prepared {
         let proof: PiRunHistoryPreparation
         let configuration: ProviderConfiguration
@@ -73,20 +82,23 @@ public actor PiSession: ProviderSession {
         var admissionGeneration: UInt64?
         var projection: PiProjection
     }
-    public init(executable: URL, cwd: URL, configuration: PiConfiguration, permission: PermissionMode = .supervised) {
+    public init(executable: URL, cwd: URL, configuration: PiConfiguration, permission: PermissionMode = .supervised,
+                freshIntent: PiFreshSessionIntent? = nil, historyWorkerRootURL: URL? = nil) {
         self.executable = executable; self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
         self.configuration = configuration; self.permission = permission; self.arguments = nil
         requestTimeout = .seconds(15)
         steeringTimeout = .seconds(300)
+        self.freshIntent = freshIntent; self.historyWorkerRootURL = historyWorkerRootURL
         (events, output) = AsyncStream.makeStream()
     }
     /// Test-only literal invocation; production always owns --mode rpc and its
     /// approval extension. No shell interpolation or provider process reuse.
-    init(executable: URL, cwd: URL, configuration: PiConfiguration, permission: PermissionMode = .supervised, arguments: [String], requestTimeout: Duration = .seconds(15), steeringTimeout: Duration = .seconds(300)) {
+    init(executable: URL, cwd: URL, configuration: PiConfiguration, permission: PermissionMode = .supervised, arguments: [String], requestTimeout: Duration = .seconds(15), steeringTimeout: Duration = .seconds(300), freshIntent: PiFreshSessionIntent? = nil, historyWorkerRootURL: URL? = nil) {
         self.executable = executable; self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
         self.configuration = configuration; self.permission = permission; self.arguments = arguments
         self.requestTimeout = requestTimeout
         self.steeringTimeout = steeringTimeout
+        self.freshIntent = freshIntent; self.historyWorkerRootURL = historyWorkerRootURL
         (events, output) = AsyncStream.makeStream()
     }
     private func connect() throws {
@@ -118,10 +130,238 @@ public actor PiSession: ProviderSession {
         } catch { if let scratch { try? FileManager.default.removeItem(at: scratch) }; scratch = nil; throw CoincideError(PiProtocol.failure) }
     }
     public func models() async throws -> [ProviderModel] {
+        guard historyOperation == nil else { throw ProviderHistoryError(.notIdle) }
         if configuration.runtime != nil { _ = try await verifyVersion() }
         try connect()
         let result = try await request("get_available_models")
         return try PiProtocol.models(result)
+    }
+
+    public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities {
+        guard configuration.runtime != nil else { throw ProviderHistoryError(.unsupported) }
+        let version = try await verifyVersion()
+        return .init(reference: try .init(provider: .pi, nativeThreadID: threadID), historyMode: .entryTree,
+            canRead: true, canForkHead: version == "0.80.5", canForkFromTurn: version == "0.80.5", canRevertBeforeTurn: version == "0.80.5",
+            unavailableReason: version == "0.80.5" ? nil : "This Pi version has not been reviewed for native history mutation.")
+    }
+
+    public func piHistoryEventBarrier(_ id: UUID) async throws {
+        guard !closing, !broken else { throw ProviderHistoryError(.outcomeUncertain) }
+        output.yield(.piHistoryBarrier(id))
+    }
+
+    public func piHistorySnapshot(threadID: String) async throws -> PiHistorySnapshot {
+        guard let runtime = configuration.runtime, registered, nativeID == threadID,
+              active == nil, preparing == nil, historyOperation == nil, pending.isEmpty, ui.isEmpty, !closing, !broken else {
+            throw ProviderHistoryError(.notIdle)
+        }
+        let id = UUID(); historyOperation = id; historyWake = false
+        defer { if historyOperation == id { historyOperation = nil } }
+        let version = try await verifyVersion()
+        let (_, entries) = try await historyObservation(id)
+        return try PiHistoryService(configuration: runtime, workerRootURL: historyWorkerRootURL)
+            .snapshot(observation: entries.observation, observedVersion: version, freshIntent: freshIntent)
+    }
+
+    public func inspectPiHistoryOriginal(expected: PiHistorySnapshot) async throws -> PiHistorySnapshot {
+        guard let runtime = configuration.runtime else { throw ProviderHistoryError(.unsupported) }
+        return try PiHistoryService(configuration: runtime, workerRootURL: historyWorkerRootURL).inspectOriginal(expected: expected)
+    }
+
+    public func inspectPiHistoryCandidate(review: PiHistoryReviewEvidence, candidate: PiHistoryCandidate,
+                                         configuration target: ProviderConfiguration) async throws -> ProviderConversationSnapshot {
+        guard let runtime = target.piConfiguration?.runtime else { throw ProviderHistoryError(.unsupported) }
+        let result = try PiHistoryService(configuration: runtime, workerRootURL: historyWorkerRootURL)
+            .inspectCandidate(review: review, candidate: candidate, configuration: target)
+        return try .init(reference: result.reference, workspacePath: result.workspacePath, historyMode: .entryTree, pi: result)
+    }
+
+    public func applyPiHistory(review: PiHistoryReviewEvidence, configuration target: ProviderConfiguration, operationID: UUID,
+        candidate: @escaping @Sendable (PiHistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot {
+        try review.validate()
+        guard operationID == review.operationID, configuration.runtimeIdentity == review.source.runtimeIdentity,
+              active == nil, preparing == nil, historyOperation == nil, pending.isEmpty, ui.isEmpty,
+              historyAttempts.count < 128, !historyAttempts.contains(operationID), !closing, !broken else { throw ProviderHistoryError(.notIdle) }
+        guard let sourceRuntime = configuration.runtime, let targetNative = target.piConfiguration, let targetRuntime = targetNative.runtime,
+              target.provider == .pi, targetRuntime.registeredWorkspacePath == target.workspacePath,
+              try PiHistoryProofValidation.sameNamespace(review.source.runtimeIdentity, targetNative.runtimeIdentity) else {
+            throw ProviderHistoryError(.invalidRequest)
+        }
+        if review.kind == .rewindBeforeRun {
+            guard targetRuntime == sourceRuntime, target.permission == permission else { throw ProviderHistoryError(.invalidRequest) }
+        }
+        historyAttempts.insert(operationID); historyOperation = operationID; historyWake = false
+        let task = Task { try await self.performPiHistory(review: review, target: target, operationID: operationID, candidate: candidate) }
+        historyTasks[operationID] = task
+        defer { historyTasks.removeValue(forKey: operationID); if historyOperation == operationID { historyOperation = nil } }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    private func performPiHistory(review: PiHistoryReviewEvidence, target: ProviderConfiguration, operationID: UUID,
+        candidate publish: @escaping @Sendable (PiHistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot {
+        guard let runtime = configuration.runtime, let targetNative = target.piConfiguration, let targetRuntime = targetNative.runtime else {
+            throw ProviderHistoryError(.invalidRequest)
+        }
+        let sourceService = try PiHistoryService(configuration: runtime, workerRootURL: historyWorkerRootURL)
+        let targetService = try PiHistoryService(configuration: targetRuntime, workerRootURL: historyWorkerRootURL)
+        var mutationPossible = false
+        do {
+            guard try await verifyVersion() == "0.80.5", review.source.observedVersion == "0.80.5" else { throw ProviderHistoryError(.unsupported) }
+            let sourceGraph = try sourceService.graph(expected: review.source)
+            if registered {
+                guard nativeID == review.source.reference.nativeThreadID else { throw ProviderHistoryError(.historyChanged) }
+                let (_, entries) = try await historyObservation(operationID)
+                guard entries.observation == review.source.observation else { throw ProviderHistoryError(.historyChanged) }
+            }
+            if review.kind == .rewindBeforeRun, review.cutUserEntryID == nil {
+                let selected = try Self.retainedPiHistoryInputs(review)
+                let result = try PiHistoryResult(operationID: operationID, source: review.source, snapshot: review.source,
+                    inputs: selected, candidates: [], semanticDigest: review.semanticDigest)
+                try review.validateResult(result)
+                return try .init(reference: result.reference, workspacePath: result.workspacePath, historyMode: .entryTree, pi: result)
+            }
+            var candidates: [PiHistoryCandidate] = []
+            let worker: PiSession
+            if review.kind == .forkAfterRun {
+                let reservation = try targetService.reserveFork(operationID: operationID, review: review)
+                try review.validateCandidate(reservation, previous: []); try await publish(reservation); candidates.append(reservation)
+                try Task.checkCancellation(); try targetService.verifyReservation(reservation); try requireHistory(operationID)
+                guard let directory = reservation.operationDirectory else { throw ProviderHistoryError(.invalidResponse) }
+                worker = PiSession(executable: URL(fileURLWithPath: targetRuntime.executable), cwd: URL(fileURLWithPath: targetRuntime.workspacePath),
+                    configuration: targetNative, permission: target.permission,
+                    arguments: ["--mode", "rpc", "--no-extensions", "--no-tools", "--session-dir", directory, "--fork", review.source.reference.nativeThreadID],
+                    historyWorkerRootURL: historyWorkerRootURL)
+                historyWorker = worker
+                historyWorkerReader = Task { [weak self] in
+                    for await event in worker.events { await self?.forwardHistoryWorker(event, operationID: operationID) }
+                }
+                mutationPossible = true
+                try await worker.beginHistoryWorker(operationID)
+                let state = try await worker.historyState(operationID)
+                let initial = try PiHistoryCandidate(operationID: operationID, stage: .initialClone, runtimeIdentity: targetNative.runtimeIdentity,
+                    operationDirectory: directory, nativeSessionFile: state.sessionFile, nativeSessionID: state.sessionID,
+                    expectedParentSessionPath: review.source.reference.nativeThreadID,
+                    sourceInventoryDigest: review.source.inventoryDigest, semanticDigest: review.semanticDigest)
+                try targetService.verifyReservation(reservation); try review.validateCandidate(initial, previous: candidates)
+                try await publish(initial); candidates.append(initial); try requireHistory(operationID)
+                let (_, copied) = try await worker.historyObservation(operationID)
+                let copyGraph = try targetService.candidateGraph(initial)
+                guard copyGraph.entries.map(PiHistoryEntryDescriptor.init) == copied.observation.entries else { throw ProviderHistoryError(.historyChanged) }
+                try targetService.validateInitialClone(source: sourceGraph, candidate: initial, graph: copyGraph)
+            } else {
+                worker = self
+                if !registered {
+                    // Reopening selects the append tail. There is no native RPC
+                    // for restoring an unpersisted leaf selected by /tree.
+                    guard review.source.leafID == sourceGraph.entries.last?.id else { throw ProviderHistoryError(.boundaryUnavailable) }
+                    try connect()
+                    let before = try PiProtocol.resumeHeader(review.source.reference.nativeThreadID, cwd: cwd)
+                    mutationPossible = true
+                    let switched = try await request("switch_session", fields: ["sessionPath": .string(review.source.reference.nativeThreadID)], timeout: .seconds(300))
+                    guard switched["cancelled"] == .bool(false), before == (try PiProtocol.resumeHeader(review.source.reference.nativeThreadID, cwd: cwd)) else {
+                        throw ProviderHistoryError(.historyChanged)
+                    }
+                    let state = try await historyState(operationID)
+                    baseline = state; nativeID = state.sessionFile; registered = true
+                    let (_, entries) = try await historyObservation(operationID)
+                    guard entries.observation == review.source.observation else { throw ProviderHistoryError(.historyChanged) }
+                    _ = try sourceService.inspectOriginal(expected: review.source)
+                    mutationPossible = false
+                }
+            }
+            if let entry = review.cutUserEntryID {
+                mutationPossible = true
+                let accepted = try await worker.historyFork(entry, operationID: operationID)
+                if !accepted {
+                    if review.kind == .rewindBeforeRun {
+                        let (_, unchanged) = try await historyObservation(operationID)
+                        guard unchanged.observation == review.source.observation else { throw ProviderHistoryError(.historyChanged) }
+                        // The exact still-owned actor just proved its live
+                        // leaf unchanged. A cold reload-tail guard would lose
+                        // that stronger observation on a vetoed branch.
+                        _ = try sourceService.graph(expected: review.source); mutationPossible = false
+                    }
+                    throw ProviderHistoryError(.boundaryUnavailable)
+                }
+                let state = try await worker.historyState(operationID)
+                let parent = candidates.last?.nativeSessionFile ?? review.source.reference.nativeThreadID
+                let final = try PiHistoryCandidate(operationID: operationID, stage: .finalBranch, runtimeIdentity: targetNative.runtimeIdentity,
+                    operationDirectory: candidates.first?.operationDirectory, nativeSessionFile: state.sessionFile, nativeSessionID: state.sessionID,
+                    expectedParentSessionPath: parent, sourceInventoryDigest: review.source.inventoryDigest, semanticDigest: review.semanticDigest)
+                try review.validateCandidate(final, previous: candidates); try await publish(final); candidates.append(final)
+                try requireHistory(operationID)
+            }
+            let (state, entries) = try await worker.historyObservation(operationID)
+            let result = try targetService.makeResult(review: review, candidates: candidates, observation: entries.observation, sourceGraph: sourceGraph)
+            try Task.checkCancellation(); try requireHistory(operationID)
+            if worker === self {
+                baseline = state; nativeID = state.sessionFile; registered = true
+                appliedModel = nil; appliedThinking = nil
+            }
+            await closeHistoryWorker()
+            return try .init(reference: result.reference, workspacePath: result.workspacePath, historyMode: .entryTree, pi: result)
+        } catch {
+            await closeHistoryWorker()
+            if mutationPossible {
+                if review.kind == .rewindBeforeRun { await failConnection() }
+                throw ProviderHistoryError(.outcomeUncertain)
+            }
+            throw error
+        }
+    }
+
+    private static func retainedPiHistoryInputs(_ review: PiHistoryReviewEvidence) throws -> [PiHistoryRunInput] {
+        guard let selected = review.inputs.firstIndex(where: { $0.runID == review.runID }) else { throw ProviderHistoryError(.invalidRequest) }
+        return Array(review.inputs.prefix(review.kind == .forkAfterRun ? selected + 1 : selected))
+    }
+    private func beginHistoryWorker(_ id: UUID) throws {
+        guard historyOperation == nil, active == nil, !closing, !broken else { throw ProviderHistoryError(.notIdle) }
+        historyOperation = id; historyWake = false; try connect()
+    }
+    private func requireHistory(_ id: UUID) throws {
+        try Task.checkCancellation()
+        guard historyOperation == id, !historyWake, !closing, !broken else { throw ProviderHistoryError(.outcomeUncertain) }
+    }
+    private func historyState(_ id: UUID) async throws -> PiState {
+        try requireHistory(id)
+        let state = try PiProtocol.state(await request("get_state"))
+        try requireHistory(id); guard state.idle, ui.isEmpty else { throw ProviderHistoryError(.notIdle) }
+        // Internal binding only: adoption belongs to the durable history result.
+        baseline = state; nativeID = state.sessionFile
+        return state
+    }
+    private func historyFork(_ entry: String, operationID: UUID) async throws -> Bool {
+        try requireHistory(operationID)
+        let result = try await request("fork", fields: ["entryId": .string(entry)], timeout: .seconds(300))
+        try requireHistory(operationID)
+        return try PiProtocol.forkAccepted(result)
+    }
+    private func historyObservation(_ id: UUID) async throws -> (PiState, PiRuntimeEntries) {
+        try requireHistory(id); guard ui.isEmpty else { throw ProviderHistoryError(.notIdle) }
+        let captured = generation
+        let before = try await historyState(id)
+        let entries = try PiProtocol.entries(await request("get_entries"), state: before)
+        // This final native response is an ordered reader barrier: the single
+        // decoder consumes every preceding notification before resuming it.
+        let after = try await historyState(id)
+        try requireHistory(id)
+        guard generation == captured, before == after, after.idle, ui.isEmpty else { throw ProviderHistoryError(.historyChanged) }
+        return (after, entries)
+    }
+    private func forwardHistoryWorker(_ event: ProviderEvent, operationID: UUID) {
+        guard historyOperation == operationID, !closing else { return }
+        switch event {
+        case .sessionApproval(let request): historyWorkerRequests.insert(request.id); output.yield(event)
+        case .sessionApprovalDismissed(let id): historyWorkerRequests.remove(id); output.yield(event)
+        case .connectionClosed: historyWake = true; output.yield(event)
+        default: break
+        }
+    }
+    private func closeHistoryWorker() async {
+        guard let worker = historyWorker else { return }
+        let reader = historyWorkerReader; historyWorker = nil; historyWorkerReader = nil
+        await worker.close(); await reader?.value
+        historyWorkerRequests.removeAll()
     }
     private func verifyVersion() async throws -> String {
         if let observedVersion { return observedVersion }
@@ -172,17 +412,28 @@ public actor PiSession: ProviderSession {
         guard let runID = thread.activeRun?.id, let runtime = captured.piConfiguration?.runtime,
               captured.provider == .pi, captured.piConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
               captured.permission == permission, runtime.registeredWorkspacePath == captured.workspacePath,
-              active == nil, preparing == nil, !closing, !broken,
+              active == nil, preparing == nil, historyOperation == nil, !closing, !broken,
               let openingID = thread.runHistory?.first(where: { $0.id == runID })?.userMessageID else { throw PiRuntimeConfiguration.invalid() }
         let token = UUID(); preparing = token
         do {
             let version = try await verifyVersion(); try connect()
             let resume = captured.nativeThreadID ?? thread.providerThreadID
+            let intent = captured.piFreshSessionIntent
+            if let intent {
+                try intent.validate()
+                guard intent == freshIntent, intent.runtimeIdentity == configuration.runtimeIdentity,
+                      intent.nativeSessionFile == resume else { throw PiHistoryGraphError(.invalidWindow) }
+            }
             if !registered {
                 if let resume {
-                    let before = try PiProtocol.resumeHeader(resume, cwd: cwd)
+                    let before: (UInt64, UInt64)?
+                    if let intent {
+                        guard resume == intent.nativeSessionFile, try PiHistoryService.isAbsent(resume) else { throw PiHistoryGraphError(.invalidWindow) }
+                        before = nil
+                    } else { before = try PiProtocol.resumeHeader(resume, cwd: cwd) }
                     let result = try await request("switch_session", fields: ["sessionPath": .string(resume)], timeout: .seconds(60))
-                    guard result["cancelled"] == .bool(false), before == (try PiProtocol.resumeHeader(resume, cwd: cwd)) else { throw CoincideError(PiProtocol.rejected) }
+                    guard result["cancelled"] == .bool(false) else { throw CoincideError(PiProtocol.rejected) }
+                    if let before { guard before == (try PiProtocol.resumeHeader(resume, cwd: cwd)) else { throw CoincideError(PiProtocol.rejected) } }
                 }
                 let state = try PiProtocol.state(await request("get_state"))
                 guard state.idle, resume == nil || resume == state.sessionFile else { throw CoincideError(PiProtocol.failure) }
@@ -191,6 +442,15 @@ public actor PiSession: ProviderSession {
                 emit(.thread(state.sessionFile), runID: runID)
             }
             guard preparing == token, !closing, !broken, resume == nil || resume == nativeID else { throw CancellationError() }
+            let freshEmpty: PiRuntimeEntryObservation?
+            if let intent {
+                let before = try PiProtocol.state(await request("get_state"))
+                let empty = try PiProtocol.entries(await request("get_entries"), state: before).observation
+                let after = try PiProtocol.state(await request("get_state"))
+                guard before == after, after.idle, after.sessionFile == intent.nativeSessionFile,
+                      empty.entries.isEmpty, empty.leafID == nil, ui.isEmpty, preparing == token else { throw PiHistoryGraphError(.invalidWindow) }
+                freshEmpty = empty
+            } else { freshEmpty = nil }
             let model = captured.piConfiguration?.model ?? baseline?.model
             if let model, model != appliedModel {
                 let result = try await request("set_model", fields: ["provider": .string(model.provider), "modelId": .string(model.modelID)])
@@ -210,7 +470,7 @@ public actor PiSession: ProviderSession {
                   preparing == token, !closing, !broken, ui.isEmpty else { throw CoincideError(PiProtocol.historyFailure) }
             let opening = try PiHistoryInputEvidence(clientMessageID: openingID, inputDigest: PiHistoryInputEvidence.digest(input), kind: .opening)
             let proof = try PiRunHistoryPreparation(id: token, runID: runID, runtimeIdentity: configuration.runtimeIdentity,
-                observedVersion: version, openingInput: opening, baseline: entries.observation)
+                observedVersion: version, openingInput: opening, baseline: entries.observation, freshIntentID: intent?.id, freshEmptyObservation: freshEmpty)
             prepared = .init(proof: proof, configuration: captured, state: after, generation: generation)
             return proof
         } catch {
@@ -228,7 +488,7 @@ public actor PiSession: ProviderSession {
               try PiHistoryInputEvidence.digest(input) == preparation.inputDigest,
               let durable = thread.runHistory?.first(where: { $0.id == preparation.runID })?.pi,
               durable.preparation == preparation, durable.captureStatus == .prepared,
-              durable.inputs == [preparation.openingInput], active == nil, generation == owned.generation,
+              durable.inputs == [preparation.openingInput], active == nil, historyOperation == nil, generation == owned.generation,
               !closing, !broken else { throw CoincideError(PiProtocol.historyFailure) }
         try durable.validate()
         do {
@@ -259,7 +519,7 @@ public actor PiSession: ProviderSession {
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         guard captured.piConfiguration?.runtime == nil else { throw CoincideError("Commit the prepared Pi input before sending it.") }
         let resumeID = captured.nativeThreadID ?? thread.providerThreadID
-        guard active == nil, preparing == nil, !closing, !broken, captured.provider == .pi,
+        guard active == nil, preparing == nil, historyOperation == nil, !closing, !broken, captured.provider == .pi,
               captured.piConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
               captured.permission == permission,
               URL(fileURLWithPath: captured.workspacePath).standardizedFileURL.resolvingSymlinksInPath() == cwd else { throw CoincideError(PiProtocol.failure) }
@@ -503,6 +763,7 @@ public actor PiSession: ProviderSession {
         try await interrupt()
     }
     public func respond(_ request: ApprovalRequest, allow: Bool) async throws {
+        if historyWorkerRequests.contains(request.id), let worker = historyWorker { try await worker.respond(request, allow: allow); return }
         let pending = try requireUI(request)
         let typed = try PiExtensionRequest.presentation(request)
         if typed.method == .confirm { try await replyUI(pending, payload: ["confirmed": .bool(allow)]) }
@@ -510,11 +771,13 @@ public actor PiSession: ProviderSession {
         else { throw CoincideError(PiProtocol.rejected) }
     }
     public func answer(_ request: ApprovalRequest, answers: [String: String]) async throws {
+        if historyWorkerRequests.contains(request.id), let worker = historyWorker { try await worker.answer(request, answers: answers); return }
         let pending = try requireUI(request), typed = try PiExtensionRequest.presentation(request)
         guard [.input, .editor].contains(typed.method), answers.count == 1, let answer = answers["value"], answer.utf8.count <= 1_048_576 else { throw CoincideError(PiProtocol.rejected) }
         try await replyUI(pending, payload: ["value": .string(answer)])
     }
     public func choose(_ request: ApprovalRequest, optionID: String) async throws {
+        if historyWorkerRequests.contains(request.id), let worker = historyWorker { try await worker.choose(request, optionID: optionID); return }
         let pending = try requireUI(request), typed = try PiExtensionRequest.presentation(request)
         guard typed.method == .select, typed.options.contains(optionID) else { throw CoincideError(PiProtocol.rejected) }
         try await replyUI(pending, payload: ["value": .string(optionID)])
@@ -623,6 +886,15 @@ public actor PiSession: ProviderSession {
             if wait.steering { steeringAdmissionRetired(wait.runID) }
             return
         }
+        if historyOperation != nil {
+            if type == "extension_ui_request" { generation &+= 1; try extensionUI(frame); return }
+            if ["agent_start", "agent_end", "agent_settled", "message_start", "message_update", "message_end",
+                "tool_execution_start", "tool_execution_update", "tool_execution_end", "auto_compaction_start", "compaction_start",
+                "auto_compaction_end", "compaction_end", "auto_retry_start", "auto_retry_end", "extension_error"].contains(type) {
+                historyWake = true; generation &+= 1
+                throw ProviderHistoryError(.notIdle)
+            }
+        }
         if let file = frame["sessionFile"].string, file != nativeID { return }
         if let sessionID = frame["sessionId"].string, let expected = baseline?.sessionID, sessionID != expected { return }
         if type == "extension_ui_request" { try extensionUI(frame); return }
@@ -724,10 +996,19 @@ public actor PiSession: ProviderSession {
             guard after == observed, after.idle, after.sessionFile == history.nativeSessionFile,
                   after.sessionID == history.nativeSessionID, !compacting, ui.isEmpty, steeringPreparation == nil, !hasSteeringAdmission(id) else { return false }
             let status: ThreadRunStatus = state == .interrupted ? .interrupted : state == .failed ? .failed : .completed
-            let evidence: PiRunHistoryEvidence
+            var evidence: PiRunHistoryEvidence
             do {
                 let entries = try PiProtocol.entries(raw, state: after)
                 evidence = try Self.finalEvidence(history, entries: entries, status: status)
+                if history.preparation.freshIntentID != nil, evidence.captureStatus == .proven,
+                   let runtime = history.runtimeIdentity.runtime {
+                    if let file = try? PiHistoryFileReader().read(filePath: after.sessionFile, expectedWorkspacePath: runtime.workspacePath,
+                        expectedSessionID: after.sessionID), file.graph.entries.map(PiHistoryEntryDescriptor.init) == entries.observation.entries {
+                        evidence = try .init(preparation: evidence.preparation, inputs: evidence.inputs, finalObservation: evidence.finalObservation,
+                            openingUserEntryID: evidence.openingUserEntryID, nativeUserEntryIDs: evidence.nativeUserEntryIDs,
+                            captureStatus: evidence.captureStatus, terminalStatus: evidence.terminalStatus, persistedFileRevision: .init(file))
+                    }
+                }
             } catch {
                 // A completed run is real even when extensions or an unsupported
                 // graph prevent a trustworthy native history attribution.
@@ -801,11 +1082,16 @@ public actor PiSession: ProviderSession {
         }; pending.removeAll()
         for (id, pending) in ui { pending.deadline?.cancel(); output.yield(.sessionApprovalDismissed(id)) }; ui.removeAll(); active = nil
         let channel = channel, reader = reader, scratch = scratch, steering = Array(steeringTasks.values), version = versionTask
+        let history = Array(historyTasks.values), worker = historyWorker, workerReader = historyWorkerReader
+        historyWorker = nil; historyWorkerReader = nil; historyWorkerRequests.removeAll()
         for task in steering { task.cancel() }
+        for task in history { task.cancel() }
         let task = Task {
             if let channel { await channel.stopAndDrain() }
             await reader?.value
+            await worker?.close(); await workerReader?.value
             for task in steering { _ = await task.result }
+            for task in history { _ = await task.result }
             if let version { _ = await version.result }
             if let scratch { try? FileManager.default.removeItem(at: scratch) }
         }

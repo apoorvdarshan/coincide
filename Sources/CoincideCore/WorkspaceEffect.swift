@@ -23,6 +23,8 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
     public var acpAgent: ACPAgentConfiguration?
     public var openCodeConfiguration: OpenCodeConfiguration?
     public var piConfiguration: PiConfiguration?
+    /// Present only on the one durably selected consumer of a native empty context.
+    public var piFreshSessionIntent: PiFreshSessionIntent?
     public var museConfiguration: MuseConfiguration?
     public var antigravityConfiguration: AntigravityConfiguration?
     public var agentModeID: String?
@@ -34,6 +36,7 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
         codexRuntimeConfiguration = thread.codexRuntimeConfiguration
         claudeRuntimeConfiguration = thread.claudeRuntimeConfiguration; claudeLaunchSelection = nil
         acpAgent = thread.acpAgent; openCodeConfiguration = thread.openCodeConfiguration; piConfiguration = thread.piConfiguration; agentModeID = thread.agentModeID
+        piFreshSessionIntent = nil
         museConfiguration = thread.museConfiguration
         antigravityConfiguration = thread.antigravityConfiguration
         agentConfigValues = thread.agentConfigValues

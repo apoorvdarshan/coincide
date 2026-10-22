@@ -6,7 +6,8 @@
 // A missing output creates a new private temporary candidate. Existing output
 // files are never replaced; install a reviewed candidate in the repo separately.
 // This evaluates original source bodies under restricted import facades. It is
-// not a complete package import, OS sandbox, installed-Pi test, or fork oracle.
+// not a complete package import, OS sandbox, or installed-Pi test. Optional
+// --fork-output evaluates original fork bodies with private bounded writes.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,12 +32,12 @@ const sourceSpecs = [
 ];
 const args = process.argv.slice(2);
 if (args.length === 1 && args[0] === '--help') {
-  console.log('Usage: node generate_pi_history_oracle.mjs --session-manager <pinned.ts> --messages <pinned.ts> [--output <fresh-private-candidate.json>], or --source-dir <pinned-core-directory>.');
+  console.log('Usage: node generate_pi_history_oracle.mjs --session-manager <pinned.ts> --messages <pinned.ts> [--output <fresh-private-candidate.json> | --fork-output <fresh-private-fork-candidate.json>], or --source-dir <pinned-core-directory>.');
   return;
 }
-let managerPath, messagesPath, requestedOutput;
+let managerPath, messagesPath, requestedOutput, forkMode = false;
 if (args.some(argument => argument.startsWith('--'))) {
-  const options = new Map(), allowedOptions = new Set(['--session-manager', '--messages', '--source-dir', '--output']);
+  const options = new Map(), allowedOptions = new Set(['--session-manager', '--messages', '--source-dir', '--output', '--fork-output']);
   for (let position = 0; position < args.length; position += 2) {
     const name = args[position], value = args[position + 1];
     assert(allowedOptions.has(name) && value && !value.startsWith('--') && !options.has(name), 'Provide distinct explicit source/output options.');
@@ -49,7 +50,9 @@ if (args.some(argument => argument.startsWith('--'))) {
   } else {
     managerPath = options.get('--session-manager'); messagesPath = options.get('--messages');
   }
-  requestedOutput = options.get('--output');
+  assert(!(options.has('--output') && options.has('--fork-output')), 'Choose ordinary or fork output.');
+  forkMode = options.has('--fork-output');
+  requestedOutput = options.get('--fork-output') ?? options.get('--output');
 } else {
   assert(args.length === 2 || args.length === 3, 'Provide two original source paths and an optional private output path.');
   [managerPath, messagesPath, requestedOutput] = args;
@@ -171,12 +174,36 @@ const cases = [
   { name: 'empty-v3-header-has-null-reload-leaf', rows: [], leaf: null, cuts: [], labelIDs: [] },
 ];
 assert(cases.length <= 32);
+const forkLabels = [user('u1', null), entry('label', 'l1', 'u1', { targetId: 'u1', label: 'First' }),
+  assistant('a1', 'l1'), user('u2', 'a1'), entry('label', 'l2', 'u2', { targetId: 'a1', label: 'Answer' }), assistant('a2', 'l2'), user('u3', 'a2'),
+  user('other-u', 'a1'), entry('label', 'l3', 'other-u', { targetId: 'u2', label: 'Other branch updates retained target' }),
+  entry('label', 'l4', 'l3', { targetId: 'u1', label: 'Replacement', timestamp: '2026-10-23T00:00:01.000Z' }),
+  entry('label', 'l5', 'l4', { targetId: 'a1' }), entry('label', 'l6', 'l5', { targetId: 'u1', label: '' }),
+  entry('label', 'l7', 'l6', { targetId: 'other-u', label: 'Excluded target' }),
+  entry('label', 'l8', 'l7', { targetId: 'a1', label: 'Re-added answer', timestamp: '2026-10-23T00:00:02.000Z' }),
+  entry('label', 'l9', 'l8', { targetId: 'u1', label: 'Re-added user', timestamp: '2026-10-23T00:00:03.000Z' })];
+const forkCases = [
+  { name: 'cli-full-inventory-including-abandoned-branch', rows: branched, mode: 'cliFork', leaf: 'abandoned-answer' },
+  { name: 'cli-preserves-label-compaction-and-custom-inventory', rows: compactions, mode: 'cliFork', leaf: 'abandoned-compaction' },
+  { name: 'cli-preserves-unicode-images-and-missing-null-payloads', rows: payloads, mode: 'cliFork', leaf: 'tool-null' },
+  { name: 'cli-empty-header-is-persisted', rows: [], mode: 'cliFork', leaf: null },
+  { name: 'cli-reload-does-not-preserve-different-live-leaf', rows: branched, mode: 'cliFork', leaf: 'local-answer', refusal: true },
+  { name: 'branch-global-label-order-clear-readd-and-parent-rechain', rows: forkLabels, mode: 'branched', leaf: 'u3', before: 'u3' },
+  { name: 'branch-preserves-compaction-custom-and-literal-references', rows: compactions, mode: 'branched', leaf: 'a3', before: 'u3' },
+  { name: 'branch-compaction-at-retained-native-leaf', rows: compactions, mode: 'branched', leaf: 'a3', at: 'a3' },
+  { name: 'branch-no-assistant-retains-settings-without-file', rows: custom, mode: 'branched', leaf: 'title', before: 'original-user' },
+  { name: 'branch-user-and-label-without-assistant-defers-file', rows: [user('u', null), entry('label', 'l', 'u', { targetId: 'u', label: 'User only' }), user('next', 'l')], mode: 'branched', leaf: 'next', before: 'next' },
+  { name: 'fresh-before-first-user-has-parent-but-no-file', rows: branched, mode: 'fresh', leaf: 'local-answer', before: 'inherited-user' },
+  { name: 'branch-unknown-leaf-is-refused', rows: branched, mode: 'branched', leaf: 'abandoned-answer', at: 'not-present', nativeRejection: true },
+  { name: 'cli-missing-source-is-refused', rows: [], mode: 'cliFork', leaf: null, missing: true, nativeRejection: true },
+];
+const selectedCases = forkMode ? forkCases : cases;
 const allowedPaths = new Set([workspace, sessionDirectory]);
 const permittedFiles = new Set();
 const openDescriptors = new Map();
 const originals = new Map();
-for (let index = 0; index < cases.length; index++) {
-  const item = cases[index];
+for (let index = 0; index < selectedCases.length; index++) {
+  const item = selectedCases[index];
   item.header = { type: 'session', version: 3, id: `synthetic-native-${index + 1}`, timestamp, cwd: workspace };
   const seen = new Set();
   for (const row of item.rows) {
@@ -186,8 +213,11 @@ for (let index = 0; index < cases.length; index++) {
   const bytes = Buffer.from([item.header, ...item.rows].map(row => JSON.stringify(row)).join('\n') + '\n');
   assert(bytes.length <= MAX_BYTES && item.rows.length <= 20_000);
   item.file = path.join(sessionDirectory, `case-${index + 1}.jsonl`);
-  fs.writeFileSync(item.file, bytes, { flag: 'wx', mode: 0o600 });
-  permittedFiles.add(item.file); allowedPaths.add(item.file); originals.set(item.file, bytes);
+  if (!item.missing) {
+    fs.writeFileSync(item.file, bytes, { flag: 'wx', mode: 0o600 });
+    permittedFiles.add(item.file); originals.set(item.file, bytes);
+  }
+  allowedPaths.add(item.file);
 }
 const checkPath = value => {
   if (typeof value !== 'string' || !allowedPaths.has(value) || path.resolve(value) !== value) return refuse('filesystem')();
@@ -200,8 +230,42 @@ const checkFile = value => {
   if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid() || info.size > MAX_BYTES) return refuse('filesystem')();
   return value;
 };
+// Fork mode grants native source code only paths minted during one explicitly
+// owned operation. Sources can never be opened for writing or overwritten.
+let forkOperation;
+let identityCounter = 0;
+const ownedOutputFiles = new Set();
+const outputWriteBytes = new Map();
+const fixedNativeIdentity = isSession => {
+  if (!forkMode || !forkOperation || ++identityCounter > 1024) return refuse('identityCreation')();
+  allowed.identityCreation++;
+  const counter = identityCounter.toString(16).padStart(8, '0');
+  const id = isSession ? `00000000-0000-7000-8000-${counter.padStart(12, '0')}` : `${counter}-0000-4000-8000-000000000000`;
+  if (isSession) {
+    const file = path.join(sessionDirectory, timestamp.replace(/[:.]/g, '-') + '_' + id + '.jsonl');
+    assert(!fs.existsSync(file) && !allowedPaths.has(file));
+    forkOperation.paths.add(file); allowedPaths.add(file);
+  }
+  return id;
+};
+const authorizeOutput = (value, existing) => {
+  if (!forkMode || !forkOperation || !forkOperation.paths.has(value) || originals.has(value) || path.dirname(value) !== sessionDirectory) return refuse('filesystem')();
+  checkPath(value);
+  if (existing) {
+    if (!ownedOutputFiles.has(value)) return refuse('filesystem')();
+    checkFile(value);
+  } else if (fs.existsSync(value)) return refuse('filesystem')();
+  return value;
+};
+const boundOutput = (file, value) => {
+  if (typeof value !== 'string' || Buffer.byteLength(value) > 4 * 1024 * 1024) return refuse('filesystem')();
+  const size = (outputWriteBytes.get(file) ?? 0) + Buffer.byteLength(value);
+  if (size > MAX_BYTES) return refuse('filesystem')();
+  outputWriteBytes.set(file, size); allowed.writes++;
+};
 const bindings = {
-  uuidv7: refuse('identityCreation'), randomUUID: refuse('identityCreation'),
+  uuidv7: forkMode ? () => fixedNativeIdentity(true) : refuse('identityCreation'),
+  randomUUID: forkMode ? () => fixedNativeIdentity(false) : refuse('identityCreation'),
   getDefaultAgentDir: refuse('configuration'), getSessionsDir: refuse('configuration'),
   normalizePath: value => { const checked = checkPath(value); allowed.pathIdentity++; return checked; },
   resolvePath: value => { const checked = checkPath(value); allowed.pathIdentity++; return checked; },
@@ -209,13 +273,18 @@ const bindings = {
   existsSync: value => { allowed.existenceChecks++; checkPath(value); return fs.existsSync(value); },
   statSync: value => { allowed.stats++; return fs.statSync(checkFile(value)); },
   openSync: (value, flags) => {
-    if (flags !== 'r') return refuse('filesystem')();
-    const file = checkFile(value), descriptor = fs.openSync(file, 'r');
-    openDescriptors.set(descriptor, { file, readBytes: 0 }); allowed.opens++; return descriptor;
+    if (flags === 'r') {
+      const file = checkFile(value), descriptor = fs.openSync(file, 'r');
+      openDescriptors.set(descriptor, { file, readBytes: 0 }); allowed.opens++; return descriptor;
+    }
+    if (flags !== 'w') return refuse('filesystem')();
+    const file = authorizeOutput(value, false), descriptor = fs.openSync(file, 'wx', 0o600);
+    permittedFiles.add(file); ownedOutputFiles.add(file);
+    openDescriptors.set(descriptor, { file, readBytes: 0, writing: true }); allowed.opens++; return descriptor;
   },
   readSync: (descriptor, buffer, offset, length, position) => {
     const owned = openDescriptors.get(descriptor);
-    if (!owned || !Buffer.isBuffer(buffer) || length > 1024 * 1024 || offset < 0 || length < 0 || offset + length > buffer.length) return refuse('filesystem')();
+    if (!owned || owned.writing || !Buffer.isBuffer(buffer) || length > 1024 * 1024 || offset < 0 || length < 0 || offset + length > buffer.length) return refuse('filesystem')();
     const count = fs.readSync(descriptor, buffer, offset, length, position);
     owned.readBytes += count; allowed.reads++; allowed.readBytes += count;
     if (owned.readBytes > MAX_BYTES) return refuse('filesystem')();
@@ -225,10 +294,35 @@ const bindings = {
     if (!openDescriptors.has(descriptor)) return refuse('filesystem')();
     fs.closeSync(descriptor); openDescriptors.delete(descriptor); allowed.closes++;
   },
-  appendFileSync: refuse('filesystem'), writeFileSync: refuse('filesystem'), mkdirSync: refuse('filesystem'),
+  appendFileSync: (value, bytes) => {
+    const file = authorizeOutput(value, true); boundOutput(file, bytes); fs.appendFileSync(file, bytes);
+  },
+  writeFileSync: (value, bytes, options) => {
+    if (typeof value === 'number') {
+      const owned = openDescriptors.get(value);
+      if (!owned?.writing) return refuse('filesystem')();
+      authorizeOutput(owned.file, true); boundOutput(owned.file, bytes); fs.writeFileSync(value, bytes); return;
+    }
+    if (options?.flag !== 'wx') return refuse('filesystem')();
+    const file = authorizeOutput(value, false); boundOutput(file, bytes);
+    fs.writeFileSync(file, bytes, { flag: 'wx', mode: 0o600 }); permittedFiles.add(file); ownedOutputFiles.add(file);
+  },
+  mkdirSync: refuse('filesystem'),
   readdirSync: refuse('filesystem'), createReadStream: refuse('filesystem'), createInterface: refuse('filesystem'),
   readdir: refuse('filesystem'), stat: refuse('filesystem'),
 };
+if (forkMode) {
+  allowed.identityCreation = 0; allowed.writes = 0; allowed.clockObservations = 0;
+  const NativeDate = Date;
+  bindings.Date = class extends NativeDate {
+    constructor(...values) {
+      if (!values.length && !forkOperation) refuse('identityCreation')();
+      if (!values.length) allowed.clockObservations++;
+      super(...(values.length ? values : [timestamp]));
+    }
+    static now() { if (!forkOperation) refuse('identityCreation')(); allowed.clockObservations++; return NativeDate.parse(timestamp); }
+  };
+}
 // Exercise denied entry points without performing the denied operation. Keep
 // these counters separate; never reset or hide an original-code guard violation.
 checkingGuards = true;
@@ -238,9 +332,9 @@ const deniedProbes = [
   () => http.get('http://oracle.invalid/'), () => https.request('https://oracle.invalid/'),
   () => http2.connect('https://oracle.invalid'), () => dgram.createSocket('udp4'), () => dns.lookup('oracle.invalid'),
   () => dns.promises.resolve4('oracle.invalid'), () => globalThis.fetch('https://oracle.invalid/'),
-  () => bindings.openSync('/not-an-allowed-oracle-file', 'r'), () => bindings.openSync(cases[0].file, 'w'),
+  () => bindings.openSync('/not-an-allowed-oracle-file', 'r'), () => bindings.openSync(selectedCases[0].file, 'w'),
   () => bindings.readSync(-12345, Buffer.alloc(1), 0, 1, null), () => bindings.closeSync(-12345),
-  () => bindings.writeFileSync(cases[0].file, ''), () => bindings.readdirSync(sessionDirectory),
+  () => bindings.writeFileSync(selectedCases[0].file, ''), () => bindings.readdirSync(sessionDirectory),
   () => bindings.normalizePath('/not-an-allowed-oracle-directory'),
   () => bindings.getDefaultAgentDir(), () => bindings.getSessionsDir(), () => bindings.uuidv7(), () => bindings.randomUUID(),
 ];
@@ -268,7 +362,7 @@ try {
   const native = await import(dataURL(prefix + managerJS));
   stage = 'synthetic-case-evaluation';
   const outputs = [];
-  for (const item of cases) {
+  if (!forkMode) for (const item of cases) {
     assert.deepEqual(native.parseSessionEntries(originals.get(item.file).toString('utf8')), [item.header, ...item.rows]);
     const manager = native.SessionManager.open(item.file, sessionDirectory, workspace);
     const snapshot = model => {
@@ -311,6 +405,60 @@ try {
     assert.deepEqual(fs.readFileSync(item.file), originals.get(item.file), 'Original code changed a synthetic source file.');
     outputs.push({ name: item.name, header: manager.getHeader(), entries: manager.getEntries(), runtimeLeafID: item.leaf, expectedRuntime: runtime, expectedReload: reopened, branchResetTransitions, cuts });
   }
+  if (forkMode) for (const item of forkCases) {
+    stage = 'original-fork-' + item.name;
+    forkOperation = { paths: new Set() };
+    try {
+      if (item.missing) {
+        assert.throws(() => native.SessionManager.forkFrom(item.file, workspace, sessionDirectory));
+        assert.equal(forkOperation.paths.size, 0);
+        outputs.push({ name: item.name, mode: item.mode, nativeOperationRejected: true, sourceMissing: true });
+        continue;
+      }
+      const manager = native.SessionManager.open(item.file, sessionDirectory, workspace);
+      if (item.leaf === null) manager.resetLeaf(); else manager.branch(item.leaf);
+      const source = { header: manager.getHeader(), entries: manager.getEntries(), runtimeLeafID: manager.getLeafId(), sessionFile: item.file };
+      let candidate, retainedLeafID = item.leaf;
+      if (item.nativeRejection) {
+        assert.throws(() => manager.createBranchedSession(item.at));
+        assert.equal(forkOperation.paths.size, 0);
+        outputs.push({ name: item.name, mode: item.mode, nativeOperationRejected: true, source });
+        continue;
+      }
+      if (item.mode === 'cliFork') candidate = native.SessionManager.forkFrom(item.file, workspace, sessionDirectory);
+      else {
+        if (item.before) {
+          const selected = manager.getEntry(item.before);
+          assert(selected?.type === 'message' && selected.message?.role === 'user');
+          retainedLeafID = selected.parentId;
+        } else retainedLeafID = item.at;
+        if (item.mode === 'fresh') {
+          assert.equal(retainedLeafID, null);
+          candidate = native.SessionManager.create(workspace, sessionDirectory);
+          candidate.newSession({ parentSession: item.file });
+        } else {
+          assert.notEqual(retainedLeafID, null);
+          manager.createBranchedSession(retainedLeafID); candidate = manager;
+        }
+      }
+      const candidateFile = candidate.getSessionFile();
+      assert(forkOperation.paths.has(candidateFile));
+      const candidateFileExists = fs.existsSync(candidateFile);
+      const observed = { header: candidate.getHeader(), entries: candidate.getEntries(), runtimeLeafID: candidate.getLeafId(), sessionFile: candidateFile };
+      let persistedRecords = null;
+      if (candidateFileExists) {
+        checkFile(candidateFile);
+        persistedRecords = fs.readFileSync(candidateFile, 'utf8').trimEnd().split('\n').map(line => JSON.parse(line));
+        assert.deepEqual(persistedRecords, [observed.header, ...observed.entries]);
+        const reopened = native.SessionManager.open(candidateFile, sessionDirectory, workspace);
+        assert.deepEqual(reopened.getEntries(), observed.entries);
+        assert.equal(reopened.getLeafId(), observed.runtimeLeafID);
+      }
+      assert.deepEqual(fs.readFileSync(item.file), originals.get(item.file));
+      outputs.push({ name: item.name, mode: item.mode, source, retainedLeafID,
+        expectedPolicyRefusal: item.refusal === true, candidate: observed, candidateFileExists, persistedRecords });
+    } finally { forkOperation = undefined; }
+  }
   stage = 'guard-and-source-verification';
   assert.equal(openDescriptors.size, 0, 'Original reader did not close all owned file descriptors.');
   assert.equal(allowed.opens, allowed.closes);
@@ -335,7 +483,8 @@ try {
   const fixture = stable({
     schema: 1, providerVersion: '0.80.5', origin: 'hash-pinned original source bodies with restricted import facades',
     modules: sources.map(({ name, hash, bodyHash, origin }) => ({ name, sha256: hash, bodySha256: bodyHash, origin })),
-    scope: { fullPackageImported: false, installedProviderInvoked: false, nativeMutationTested: false, originalAlgorithmsRewritten: false, stableWorkspaceSubstitution: true },
+    scope: { fullPackageImported: false, installedProviderInvoked: false, nativeMutationTested: false, originalAlgorithmsRewritten: false, stableWorkspaceSubstitution: true,
+      ...(forkMode ? { originalSourceForkWritesTested: true, deterministicClockAndIdentity: true, runtimeFactoryEvaluated: false } : {}) },
     guards, guardSelfTests, allowedOperations: stableAllowedOperations, cases: outputs,
   });
   const bytes = Buffer.from(JSON.stringify(fixture, null, 2) + '\n');

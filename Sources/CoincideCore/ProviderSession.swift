@@ -29,6 +29,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     case steeringCapabilitiesChanged
     case claudeHistoryEvidence(ClaudeRunHistoryEvidence)
     case piHistoryEvidence(PiRunHistoryEvidence)
+    case piHistoryBarrier(UUID)
     indirect case context(runID: UUID, event: ProviderEvent)
 }
 
@@ -49,6 +50,13 @@ public protocol ProviderSession: Actor {
     func preparePiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String) async throws -> PiSteeringHistoryPreparation
     func sendPreparedPiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String, preparation: PiSteeringHistoryPreparation) async throws -> ProviderSteeringReceipt
     func cancelPiSteeringPreparation(_ preparation: PiSteeringHistoryPreparation) async
+    func piHistorySnapshot(threadID: String) async throws -> PiHistorySnapshot
+    func applyPiHistory(review: PiHistoryReviewEvidence, configuration: ProviderConfiguration, operationID: UUID,
+        candidate: @escaping @Sendable (PiHistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot
+    func inspectPiHistoryCandidate(review: PiHistoryReviewEvidence, candidate: PiHistoryCandidate,
+        configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
+    func inspectPiHistoryOriginal(expected: PiHistorySnapshot) async throws -> PiHistorySnapshot
+    func piHistoryEventBarrier(_ id: UUID) async throws
     func interrupt() async throws
     func interrupt(expectedRunID: UUID) async throws
     func steeringCapabilities() async -> ProviderSteeringCapabilities
@@ -90,6 +98,13 @@ extension ProviderSession {
         throw ProviderSteeringError(.unsupported)
     }
     public func cancelPiSteeringPreparation(_ preparation: PiSteeringHistoryPreparation) async {}
+    public func piHistorySnapshot(threadID: String) async throws -> PiHistorySnapshot { throw ProviderHistoryError(.unsupported) }
+    public func applyPiHistory(review: PiHistoryReviewEvidence, configuration: ProviderConfiguration, operationID: UUID,
+        candidate: @escaping @Sendable (PiHistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
+    public func inspectPiHistoryCandidate(review: PiHistoryReviewEvidence, candidate: PiHistoryCandidate,
+        configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
+    public func inspectPiHistoryOriginal(expected: PiHistorySnapshot) async throws -> PiHistorySnapshot { throw ProviderHistoryError(.unsupported) }
+    public func piHistoryEventBarrier(_ id: UUID) async throws { throw ProviderHistoryError(.unsupported) }
     public func codexSkills(forceReload: Bool = false) async throws -> ProviderSkillInventory {
         throw ProviderSkillError(.unsupported)
     }
@@ -199,7 +214,8 @@ public enum ProviderSessions {
                   let executable = ProcessChannel.findExecutable(configuration.runtime?.executable ?? configuration.executable) else {
                 throw CoincideError("Install and sign in to Pi before sending a message.")
             }
-            return PiSession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration, permission: thread.permission)
+            return PiSession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration, permission: thread.permission,
+                             freshIntent: thread.activeRun?.configuration.piFreshSessionIntent)
         }
         if thread.provider == .opencode {
             guard let configuration = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }

@@ -137,6 +137,13 @@ indirect enum EngineCommand: Codable, Sendable {
     case conversationHistoryEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryCandidateObserved(operationID: UUID, candidate: OpenCodeV1HistoryCandidate, incarnation: UUID)
     case conversationHistoryClaudeForkReserved(operationID: UUID, publication: ClaudeTranscriptPublication, incarnation: UUID)
+    case conversationHistoryPiCandidateObserved(operationID: UUID, candidate: PiHistoryCandidate, incarnation: UUID)
+    case conversationHistoryPiControlsOpened(operationID: UUID, sessionID: UUID, incarnation: UUID)
+    case conversationHistoryPiControlEvent(operationID: UUID, sessionID: UUID, event: ProviderEvent, incarnation: UUID)
+    case conversationHistoryPiControlResponding(operationID: UUID, sessionID: UUID, requestID: JSONValue, response: ProviderApprovalResponse, incarnation: UUID)
+    case conversationHistoryPiControlsClosed(operationID: UUID, sessionID: UUID, incarnation: UUID)
+    case conversationHistoryPiCancelled(operationID: UUID, incarnation: UUID)
+    case piFreshSessionResolved(threadID: UUID, incarnation: UUID, intent: PiFreshSessionIntent, consumerRunID: UUID, inspection: PiFreshSessionInspection)
     case claudeResumeInspected(threadID: UUID, incarnation: UUID, selection: ClaudeResumeSelection, run: ThreadRunRecord, result: ClaudeResumeInspection)
     case conversationHistoryReconciled(operationID: UUID, incarnation: UUID, result: ConversationHistoryReconciliation)
     case conversationHistoryMaintenanceAccepted(operationID: UUID, attempt: ConversationHistoryMaintenanceAttempt, incarnation: UUID)
@@ -193,6 +200,9 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         let reduced: GeneralReduction
         switch command {
+        case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
+             .conversationHistoryPiControlResponding, .conversationHistoryPiControlsClosed, .conversationHistoryPiCancelled, .piFreshSessionResolved:
+            reduced = .init(decision: try reducePiHistory(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .provider(let threadID, let runtimeID, let event):
             reduced = try reduceProvider(event, threadID: threadID, runtimeID: runtimeID, snapshot: snapshot, now: now)
         case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
@@ -378,6 +388,9 @@ struct WorkspaceDecision: Sendable {
                 guard thread.claudeResumeConsumerRunID == nil || thread.isBusy else {
                     throw WorkspaceCommandError("Inspect the previous Claude resume attempt before sending another message.")
                 }
+                guard thread.piFreshConsumerRunID == nil || thread.isBusy else {
+                    throw WorkspaceCommandError("Inspect the previous Pi empty-context attempt before sending another message.")
+                }
                 let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard (!text.isEmpty || !thread.draftAttachments.isEmpty), !thread.isArchived else { throw WorkspaceCommandError("Enter a message or attach a file in an active conversation.") }
                 guard text.utf16.count <= 120_000 else { throw WorkspaceCommandError("Messages can contain up to 120,000 characters. Shorten the draft or attach it as a file.") }
@@ -418,7 +431,9 @@ struct WorkspaceDecision: Sendable {
     private static func mutateGeneral(_ command: EngineCommand, id: UUID, prepared: Self, snapshot: WorkspaceSnapshot, now: Date) throws -> GeneralReduction {
         var decision = prepared
         switch command {
-        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
+        case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
+             .conversationHistoryPiControlResponding, .conversationHistoryPiControlsClosed, .conversationHistoryPiCancelled, .piFreshSessionResolved,
+             .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
              .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
              .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt),
              .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
@@ -1178,6 +1193,7 @@ struct WorkspaceDecision: Sendable {
                 thread.draft = item.text; thread.draftAttachments = item.attachments ?? []; thread.queuedTurns.removeAll { $0.id == queuedID }
             case .resumeQueue:
                 guard thread.claudeResumeConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Claude resume attempt before resuming queued messages.") }
+                guard thread.piFreshConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Pi empty-context attempt before resuming queued messages.") }
                 guard !thread.isBusy, !thread.isArchived else { throw WorkspaceCommandError("Wait for the current turn before resuming the queue.") }
                 thread.queuePaused = false; decision.startNext(in: &thread, now: now)
             case .addAttachments(_, let attachments):
@@ -1254,6 +1270,7 @@ struct WorkspaceDecision: Sendable {
         preventDelayedPromptSteering(action, now: now)
         try validatePromptSteeringCommand(action, commandID: commandID)
         try validateConversationHistoryLocks(action)
+        try validatePiFreshContextCommand(action)
         try validateCheckpointRestoreLocks(action)
         try validatePullRequestCreationLocks(action)
         try validatePullRequestCheckoutLocks(action)
@@ -1299,6 +1316,9 @@ struct WorkspaceDecision: Sendable {
             configuration.claudeLaunchSelection = selection
             thread.claudeResumeConsumerRunID = queued.id
         }
+        if configuration.provider == .pi, let intent = thread.piFreshSessionIntent, thread.piFreshConsumerRunID == nil {
+            configuration.piFreshSessionIntent = intent; thread.piFreshConsumerRunID = queued.id
+        }
         thread.activeRun = ActiveRun(id: queued.id, configuration: configuration, startedAt: now)
         if thread.messages.isEmpty { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
         var message: ChatMessage
@@ -1321,7 +1341,7 @@ struct WorkspaceDecision: Sendable {
     }
     mutating func startNext(in thread: inout CodingThread, now: Date) {
         if let i = snapshot.threads.firstIndex(where: { $0.id == thread.id }) { snapshot.threads[i] = thread }
-        guard thread.claudeResumeConsumerRunID == nil, !snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), snapshot.providerReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
+        guard thread.claudeResumeConsumerRunID == nil, thread.piFreshConsumerRunID == nil, !snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), snapshot.providerReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
         let queued = thread.queuedTurns.removeFirst(); start(queued, in: &thread, now: now)
     }
     private mutating func receive(_ scopedEvent: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
@@ -1364,6 +1384,7 @@ struct WorkspaceDecision: Sendable {
             switch event { case .sessionApproval, .sessionApprovalDismissed, .configuration, .thread, .runEntity: break; default: return }
         }
         switch event {
+        case .piHistoryBarrier: return
         case .piHistoryEvidence(let evidence):
             guard thread.provider == .pi, thread.activeRun?.id == evidence.runID else { return }
             try thread.mergePiHistoryEvidence(evidence)
@@ -1507,7 +1528,8 @@ struct WorkspaceDecision: Sendable {
             thread.finishRunRecord(status: status, reason: .providerCompleted, now: now)
             if let runID = thread.activeRun?.id { requestPostRunCheckpoint(runID: runID, in: &thread, now: now) }
             thread.activeRun = nil; thread.runtimeRequests.removeAll { $0.sessionScoped != true }; thread.state = stopped ? .interrupted : state
-            if stopped || state != .idle || thread.claudeResumeConsumerRunID != nil { thread.queuePaused = true }
+            if status == .completed { try thread.completeProvenPiFreshSession(now: now) }
+            if stopped || state != .idle || thread.claudeResumeConsumerRunID != nil || thread.piFreshConsumerRunID != nil { thread.queuePaused = true }
             else { startNext(in: &thread, now: now) }
         case .failure(let message), .connectionClosed(let message):
             closeRuntimes.insert(thread.id); thread.runtimeID = nil

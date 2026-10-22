@@ -39,6 +39,13 @@ enum PiProtocol {
     static let rejected = "Pi did not accept the request."
     static let modelFailure = "The Pi model catalog could not be read safely."
     static let historyFailure = "Pi could not prove the exact native history boundary. No history operation was enabled."
+    static func forkAccepted(_ value: JSONValue) throws -> Bool {
+        guard value.object != nil, case .bool(let cancelled) = value["cancelled"] else { throw ProviderHistoryError(.invalidResponse) }
+        if value["text"] != .null {
+            guard let text = value["text"].string, text.utf8.count <= 4_194_304, !text.contains("\0") else { throw ProviderHistoryError(.invalidResponse) }
+        }
+        return !cancelled
+    }
     static func observedVersion(_ data: Data) throws -> String {
         guard data.count <= 8_192, let text = String(data: data, encoding: .utf8) else { throw CoincideError(failure) }
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines).split(whereSeparator: \.isWhitespace)

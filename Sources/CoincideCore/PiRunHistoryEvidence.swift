@@ -116,11 +116,16 @@ public struct PiRunHistoryPreparation: Codable, Sendable, Equatable {
     public let nativeSessionFile: String
     public let nativeSessionID: String
     public let baseline: PiRuntimeEntryObservation
+    public let freshIntentID: UUID?
+    public let freshEmptyObservation: PiRuntimeEntryObservation?
     public init(id: UUID = UUID(), runID: UUID, runtimeIdentity: PiRuntimeIdentity, observedVersion: String,
-                openingInput: PiHistoryInputEvidence, baseline: PiRuntimeEntryObservation) throws {
+                openingInput: PiHistoryInputEvidence, baseline: PiRuntimeEntryObservation, freshIntentID: UUID? = nil,
+                freshEmptyObservation: PiRuntimeEntryObservation? = nil) throws {
         self.id = id; self.runID = runID; self.runtimeIdentity = runtimeIdentity; self.observedVersion = observedVersion
         self.openingInput = openingInput; inputDigest = openingInput.inputDigest; self.baseline = baseline
         nativeSessionFile = baseline.nativeSessionFile; nativeSessionID = baseline.nativeSessionID
+        self.freshIntentID = freshIntentID
+        self.freshEmptyObservation = freshEmptyObservation
         try validate()
     }
     public func validate() throws {
@@ -131,6 +136,15 @@ public struct PiRunHistoryPreparation: Codable, Sendable, Equatable {
               openingInput.inputDigest == inputDigest,
               baseline.nativeSessionFile == nativeSessionFile, baseline.nativeSessionID == nativeSessionID else { throw PiHistoryGraphError(.invalidWindow) }
         try runtime.validate(); try openingInput.validate(); try baseline.validate()
+        if let freshIntentID {
+            _ = freshIntentID
+            guard let empty = freshEmptyObservation, empty.nativeSessionFile == nativeSessionFile,
+                  empty.nativeSessionID == nativeSessionID, empty.entries.isEmpty, empty.leafID == nil,
+                  baseline.entries.allSatisfy({ $0.kind == PiHistoryEntry.Kind.modelChange.rawValue || $0.kind == PiHistoryEntry.Kind.thinkingLevelChange.rawValue }) else {
+                throw PiHistoryGraphError(.invalidWindow)
+            }
+            try empty.validate()
+        } else { guard freshEmptyObservation == nil else { throw PiHistoryGraphError(.invalidWindow) } }
     }
 }
 
@@ -162,6 +176,9 @@ public struct PiRunHistoryEvidence: Codable, Sendable, Equatable {
     public let nativeUserEntryIDs: [String]
     public let captureStatus: PiRunHistoryCaptureStatus
     public let terminalStatus: ThreadRunStatus?
+    /// Only a fresh consumer needs this anchored, actually persisted native
+    /// artifact before its deferred empty-context intent may be cleared.
+    public let persistedFileRevision: PiHistoryFileRevision?
     public var runID: UUID { preparation.runID }
     public var runtimeIdentity: PiRuntimeIdentity { preparation.runtimeIdentity }
     public var nativeSessionFile: String { preparation.nativeSessionFile }
@@ -171,10 +188,12 @@ public struct PiRunHistoryEvidence: Codable, Sendable, Equatable {
             openingUserEntryID: nil, nativeUserEntryIDs: [], captureStatus: .prepared, terminalStatus: nil)
     }
     public init(preparation: PiRunHistoryPreparation, inputs: [PiHistoryInputEvidence], finalObservation: PiRuntimeEntryObservation?,
-                openingUserEntryID: String?, nativeUserEntryIDs: [String], captureStatus: PiRunHistoryCaptureStatus, terminalStatus: ThreadRunStatus?) throws {
+                openingUserEntryID: String?, nativeUserEntryIDs: [String], captureStatus: PiRunHistoryCaptureStatus, terminalStatus: ThreadRunStatus?,
+                persistedFileRevision: PiHistoryFileRevision? = nil) throws {
         self.preparation = preparation; self.inputs = inputs; self.finalObservation = finalObservation
         self.openingUserEntryID = openingUserEntryID; self.nativeUserEntryIDs = nativeUserEntryIDs
         self.captureStatus = captureStatus; self.terminalStatus = terminalStatus
+        self.persistedFileRevision = persistedFileRevision
         try validate()
     }
     public mutating func registerSteering(_ input: PiHistoryInputEvidence) throws {
@@ -192,13 +211,18 @@ public struct PiRunHistoryEvidence: Codable, Sendable, Equatable {
         let mapped = inputs.compactMap(\.nativeUserEntryID)
         guard Set(mapped).count == mapped.count, Set(nativeUserEntryIDs).count == nativeUserEntryIDs.count else { throw PiHistoryGraphError(.invalidWindow) }
         if captureStatus == .prepared {
-            guard terminalStatus == nil, finalObservation == nil, openingUserEntryID == nil, nativeUserEntryIDs.isEmpty, mapped.isEmpty else { throw PiHistoryGraphError(.invalidWindow) }
+            guard terminalStatus == nil, finalObservation == nil, openingUserEntryID == nil, nativeUserEntryIDs.isEmpty, mapped.isEmpty, persistedFileRevision == nil else { throw PiHistoryGraphError(.invalidWindow) }
             return
         }
         guard terminalStatus == .completed || terminalStatus == .interrupted || terminalStatus == .failed else { throw PiHistoryGraphError(.invalidWindow) }
         if let finalObservation {
             try finalObservation.validate()
             guard finalObservation.nativeSessionFile == nativeSessionFile, finalObservation.nativeSessionID == nativeSessionID else { throw PiHistoryGraphError(.invalidWindow) }
+        }
+        if let persistedFileRevision {
+            try persistedFileRevision.validate()
+            guard preparation.freshIntentID != nil, finalObservation != nil,
+                  persistedFileRevision.filePath == nativeSessionFile, persistedFileRevision.sessionID == nativeSessionID else { throw PiHistoryGraphError(.invalidWindow) }
         }
         if captureStatus == .unavailable {
             guard openingUserEntryID == nil, nativeUserEntryIDs.isEmpty, mapped.isEmpty else { throw PiHistoryGraphError(.invalidWindow) }; return

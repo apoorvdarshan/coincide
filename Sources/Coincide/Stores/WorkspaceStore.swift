@@ -79,6 +79,25 @@ private struct ConversationHistoryInspection {
     let task: Task<WorkspaceCommandReceipt, any Error>
 }
 
+private struct PiHistoryResponse {
+    let operationID: UUID
+    let sessionID: UUID
+    let request: ApprovalRequest
+    let owner: ConversationHistoryInspection
+}
+
+private struct PiFreshHistoryInspection {
+    let intent: PiFreshSessionIntent
+    let consumerRunID: UUID
+    let task: Task<(PiFreshSessionInspection, WorkspaceCommandReceipt?), any Error>
+}
+
+private struct PiFreshHistoryObservation {
+    let intent: PiFreshSessionIntent
+    let consumerRunID: UUID
+    let result: PiFreshSessionInspection
+}
+
 @MainActor private final class WeakTerminalStore {
     weak var value: TerminalWorkspaceStore?
     init(_ value: TerminalWorkspaceStore) { self.value = value }
@@ -190,6 +209,10 @@ final class WorkspaceStore {
     private var acceptingHistoryThreads: Set<UUID> = []
     private var historyNavigationRequests: [UUID: UUID] = [:]
     private var historyInspections: [UUID: ConversationHistoryInspection] = [:]
+    private var piHistoryResponses: [UUID: PiHistoryResponse] = [:]
+    private var piHistoryCancellations: [UUID: ConversationHistoryInspection] = [:]
+    private var piFreshHistoryReads: [UUID: PiFreshHistoryInspection] = [:]
+    private var piFreshHistoryObservations: [UUID: PiFreshHistoryObservation] = [:]
     private var recallingHistoryPrompts: Set<UUID> = []
     private var automaticHistoryRecallTasks: [UUID: Task<Void, Never>] = [:]
     private var automaticHistoryRecallErrors: [UUID: String] = [:]
@@ -1033,6 +1056,10 @@ final class WorkspaceStore {
         let worktreeReads = worktreeOptionsReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let historyReads = historyReviewReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let historyChecks = historyInspections.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
+        let piHistoryActions = piHistoryResponses.values.filter { threadIDs.contains($0.owner.threadID) }.map(\.owner.task)
+            + piHistoryCancellations.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
+        let piFreshReads = piFreshHistoryReads.filter { threadIDs.contains($0.key) }.map(\.value.task)
+        for id in threadIDs { piFreshHistoryObservations.removeValue(forKey: id) }
         let automaticRecalls = automaticHistoryRecallTasks.filter { key, _ in
             conversationHistoryOperation(key).map { threadIDs.contains($0.review.sourceThreadID) } ?? true
         }.map(\.value)
@@ -1043,6 +1070,8 @@ final class WorkspaceStore {
         for task in imports { task.cancel() }; for task in worktrees { task.cancel() }; for task in retries { task.cancel() }
         for task in worktreeReads { task.cancel() }
         for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }
+        for task in piHistoryActions { task.cancel() }
+        for task in piFreshReads { task.cancel() }
         for task in restoreReads { task.cancel() }; for task in restoreChecks { task.cancel() }
         for task in automaticRecalls { task.cancel() }
         let terminals = terminalStores.values.compactMap(\.value)
@@ -1073,6 +1102,8 @@ final class WorkspaceStore {
             for task in worktrees { _ = await task.result }
             for task in worktreeReads { _ = await task.result }
             for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
+            for task in piHistoryActions { _ = await task.result }
+            for task in piFreshReads { _ = await task.result }
             for task in restoreReads { _ = await task.result }; for task in restoreChecks { _ = await task.result }
             for task in automaticRecalls { await task.value }
             for task in scriptReads { await task.value }
@@ -2322,6 +2353,69 @@ final class WorkspaceStore {
     func canInspectConversationHistory(_ operation: ConversationHistoryOperation) -> Bool {
         !terminating && snapshot.canInspectConversationHistory(operationID: operation.id)
     }
+    func isRespondingPiHistory(operationID: UUID, sessionID: UUID, requestID: JSONValue) -> Bool {
+        piHistoryResponses.values.contains {
+            $0.operationID == operationID && $0.sessionID == sessionID && $0.request.id == requestID
+        }
+    }
+    func canRespondPiHistory(operationID: UUID, sessionID: UUID, requestID: JSONValue) -> Bool {
+        guard !terminating, engine != nil, let operation = conversationHistoryOperation(operationID),
+              operation.isPending, operation.review.pi != nil, operation.review.sourceConfiguration.provider == .pi,
+              thread(operation.review.sourceThreadID) != nil,
+              let controls = operation.piControls, controls.sessionID == sessionID,
+              controls.requests.contains(where: { $0.id == requestID && !$0.responding }),
+              piHistoryCancellations[operationID] == nil else { return false }
+        return !isRespondingPiHistory(operationID: operationID, sessionID: sessionID, requestID: requestID)
+    }
+    func respondPiHistory(operationID: UUID, sessionID: UUID, request: ApprovalRequest,
+                          response: ProviderApprovalResponse) async throws {
+        guard let engine, canRespondPiHistory(operationID: operationID, sessionID: sessionID, requestID: request.id),
+              let operation = conversationHistoryOperation(operationID),
+              operation.piControls?.requests.contains(where: { $0.request == request && !$0.responding }) == true else {
+            throw CancellationError()
+        }
+        let id = UUID()
+        let task = Task { try await engine.respondPiHistory(operationID: operationID, sessionID: sessionID,
+                                                           requestID: request.id, response: response) }
+        piHistoryResponses[id] = .init(operationID: operationID, sessionID: sessionID, request: request,
+            owner: .init(threadID: operation.review.sourceThreadID, task: task))
+        defer { piHistoryResponses.removeValue(forKey: id) }
+        let receipt: WorkspaceCommandReceipt
+        do { receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() } }
+        catch {
+            guard !terminating else { throw CancellationError() }
+            apply(await engine.current())
+            guard let current = conversationHistoryOperation(operationID), current.isPending,
+                  current.piControls?.sessionID == sessionID,
+                  current.piControls?.requests.contains(where: { $0.request == request }) == true else { throw CancellationError() }
+            throw error
+        }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection {
+            guard let current = conversationHistoryOperation(operationID), current.isPending,
+                  current.piControls?.sessionID == sessionID,
+                  current.piControls?.requests.contains(where: { $0.request == request }) == true else { throw CancellationError() }
+            throw CoincideError(rejection)
+        }
+    }
+    func isCancellingPiHistory(_ id: UUID) -> Bool { piHistoryCancellations[id] != nil }
+    func canCancelPiHistory(_ operation: ConversationHistoryOperation) -> Bool {
+        !terminating && engine != nil && operation.isPending && operation.review.pi != nil && operation.review.sourceConfiguration.provider == .pi &&
+            piHistoryCancellations[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
+    }
+    func cancelPiHistory(_ id: UUID) async throws {
+        guard let engine, let operation = conversationHistoryOperation(id), canCancelPiHistory(operation) else { throw CancellationError() }
+        // The Engine owns the accepted job. Keep cancellation independent of a
+        // response awaiting native I/O and of the workspace command queue.
+        let task = Task { try await engine.cancelPiHistory(operationID: id) }
+        piHistoryCancellations[id] = .init(threadID: operation.review.sourceThreadID, task: task)
+        defer { piHistoryCancellations.removeValue(forKey: id) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
     func hasPendingClaudeResumeSelection(_ operation: ConversationHistoryOperation) -> Bool {
         snapshot.isClaudeResumeSelectionPending(operationID: operation.id)
     }
@@ -2347,6 +2441,74 @@ final class WorkspaceStore {
         !terminating && operation.phase == .unconfirmed && operation.review.kind == .rewindBeforeRun &&
             operation.review.openCodeV1 != nil && !operation.isWorking &&
             historyInspections[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
+    }
+    func canKeepPiOriginal(_ operation: ConversationHistoryOperation) -> Bool {
+        !terminating && operation.phase == .unconfirmed && operation.review.pi != nil && !operation.isWorking &&
+            historyInspections[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
+    }
+    func keepPiOriginal(_ id: UUID) async throws {
+        guard let engine, let operation = conversationHistoryOperation(id), canKeepPiOriginal(operation),
+              let source = thread(operation.review.sourceThreadID),
+              operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
+        let task = Task {
+            let expected = try await engine.inspectPiOriginal(operationID: id)
+            return try await engine.keepPiOriginal(operationID: id, expected: expected)
+        }
+        historyInspections[id] = .init(threadID: source.id, task: task)
+        defer { historyInspections.removeValue(forKey: id) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
+    func piFreshSessionNeedsInspection(threadID: UUID) -> Bool {
+        snapshot.piFreshSessionNeedsInspection(threadID: threadID)
+    }
+    func isInspectingPiFreshSession(threadID: UUID) -> Bool {
+        piFreshHistoryReads[threadID] != nil || historyInspections[threadID] != nil
+    }
+    func canInspectPiFreshSession(threadID: UUID) -> Bool {
+        !terminating && engine != nil && piFreshSessionNeedsInspection(threadID: threadID) && !isInspectingPiFreshSession(threadID: threadID)
+    }
+    func inspectPiFreshSession(threadID: UUID) async throws {
+        guard let engine, canInspectPiFreshSession(threadID: threadID), let source = thread(threadID),
+              let intent = source.piFreshSessionIntent, let consumerRunID = source.piFreshConsumerRunID else { throw CancellationError() }
+        let task = Task<(PiFreshSessionInspection, WorkspaceCommandReceipt?), any Error> {
+            let result = try await engine.inspectPiFreshSession(threadID: threadID)
+            try Task.checkCancellation()
+            if case .persisted(let revision) = result {
+                return (result, try await engine.confirmPersistedPiFreshSession(threadID: threadID, expected: revision))
+            }
+            return (result, nil)
+        }
+        piFreshHistoryReads[threadID] = .init(intent: intent, consumerRunID: consumerRunID, task: task)
+        piFreshHistoryObservations.removeValue(forKey: threadID)
+        defer { piFreshHistoryReads.removeValue(forKey: threadID) }
+        let (result, receipt) = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt?.rejection { throw CoincideError(rejection) }
+        guard let current = thread(threadID), current.piFreshSessionIntent == intent, current.piFreshConsumerRunID == consumerRunID else { return }
+        piFreshHistoryObservations[threadID] = .init(intent: intent, consumerRunID: consumerRunID, result: result)
+    }
+    func canKeepUnwrittenPiFreshSession(threadID: UUID) -> Bool {
+        guard canInspectPiFreshSession(threadID: threadID), let current = thread(threadID),
+              let observed = piFreshHistoryObservations[threadID], current.piFreshSessionIntent == observed.intent,
+              current.piFreshConsumerRunID == observed.consumerRunID, case .unwritten = observed.result else { return false }
+        return true
+    }
+    func keepUnwrittenPiFreshSession(threadID: UUID) async throws {
+        guard let engine, canKeepUnwrittenPiFreshSession(threadID: threadID), let observed = piFreshHistoryObservations[threadID] else {
+            throw CancellationError()
+        }
+        let task = Task { try await engine.acknowledgeUnwrittenPiFreshSession(threadID: threadID,
+            expectedIntentID: observed.intent.id, expectedConsumerRunID: observed.consumerRunID) }
+        historyInspections[threadID] = .init(threadID: threadID, task: task)
+        defer { historyInspections.removeValue(forKey: threadID) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current()); piFreshHistoryObservations.removeValue(forKey: threadID)
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
     }
     func keepOpenCodeV1Original(_ id: UUID) async throws {
         guard let engine, let operation = conversationHistoryOperation(id), canKeepOpenCodeV1Original(operation),
@@ -2643,8 +2805,14 @@ final class WorkspaceStore {
         for task in refreshes { task.cancel() }; for task in refreshes { await task.value }
         let historyReads = historyReviewReads.values.map(\.task)
         let historyChecks = historyInspections.values.map(\.task)
+        let piHistoryActions = piHistoryResponses.values.map(\.owner.task) + piHistoryCancellations.values.map(\.task)
+        let piFreshReads = piFreshHistoryReads.values.map(\.task)
         for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }
+        for task in piHistoryActions { task.cancel() }
+        for task in piFreshReads { task.cancel() }
         for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
+        for task in piHistoryActions { _ = await task.result }
+        for task in piFreshReads { _ = await task.result }
         await projectScriptService?.shutdown()
         await externalEditorService?.shutdown()
         let creations = Array(projectCreationTasks.values)

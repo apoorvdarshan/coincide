@@ -162,11 +162,18 @@ must each be mapped and verified before declaring parity.
   completion and maps owned inputs only when the unchanged baseline, native
   ancestry, order and payload digests agree. Unknown or rewritten windows remain
   unavailable; process-loss recovery keeps the preparation without replay.
-  Storage 38 preserves these captures and proofs. The source-oracle, runtime,
-  journal, Engine and Store checks are recorded separately in VALIDATION.md.
-  Native fork/rollback, session browsing/import, history recovery controls,
-  setup/auth, usage and installed acceptance remain open. No installed Pi calls
-  were made. See [native run-evidence boundaries](PI_HISTORY.md).
+  Storage 39 preserves these captures, proofs and native history operations.
+  Reviewed native `--fork`/exclusive-user rewind now journals every candidate
+  before adoption, routes lifecycle dialogs to their exact owned worker, and
+  supports read-only known-candidate or Keep Original recovery without replay.
+  Immutable original run references, separately reviewed workspace restoration,
+  once-only prompt recall and explicit deferred empty-context consumers are
+  connected. Cold reload-leaf changes and nonempty unpersisted cuts stay refused;
+  model/thinking-only first-user resets still need a durable native solution.
+  Source-oracle, stdio, journal, Engine, Store and hosted acceptance evidence are
+  recorded separately in VALIDATION.md. Session browsing/import, setup/auth,
+  usage and actual installed acceptance remain open. No installed Pi calls were
+  made. See [native history boundaries](PI_HISTORY.md).
 - Native Muse uses a separate MSP JSON-RPC connection with bounded framing,
   exact command admission, initialized-before-use ordering and an owned process.
   Captured model/effort/permission values govern each input; session identity and

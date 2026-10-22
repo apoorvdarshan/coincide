@@ -9,6 +9,7 @@ public enum ConversationHistoryReconciliation: Codable, Sendable, Equatable {
     case openCodeV2Unchanged(OpenCodeV2HistorySnapshot)
     case openCodeV1NotAdopted(OpenCodeV1HistorySnapshot)
     case claudeForkNotStarted(ClaudeHistorySnapshot)
+    case piOriginalKept(PiHistorySnapshot)
 }
 
 /// A reviewed local/provider history boundary. Creating this value never performs
@@ -38,6 +39,7 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
     public let openCodeV2: OpenCodeV2HistoryReviewEvidence?
     public let openCodeV1: OpenCodeV1HistoryReviewEvidence?
     public let claude: ClaudeHistoryReviewEvidence?
+    public let pi: PiHistoryReviewEvidence?
     public init(id: UUID = UUID(), kind: ConversationHistoryKind, reviewedAt: Date = Date(), sourceThreadID: UUID,
                 projectID: UUID, runID: UUID, sourceIncarnation: UUID, sourceConfiguration: ProviderConfiguration,
                 targetConfiguration: ProviderConfiguration, sourceReference: ProviderConversationReference,
@@ -45,7 +47,8 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
                 prefix: [ChatMessage], removedRunIDs: [UUID], removedMessageIDs: [String], sourceFingerprint: String,
                 targetThreadID: UUID?, suggestedTitle: String, files: ConversationHistoryFilesReview? = nil, recallPromptOnSuccess: Bool? = nil,
                 openCodeV2: OpenCodeV2HistoryReviewEvidence? = nil,
-                openCodeV1: OpenCodeV1HistoryReviewEvidence? = nil, claude: ClaudeHistoryReviewEvidence? = nil) throws {
+                openCodeV1: OpenCodeV1HistoryReviewEvidence? = nil, claude: ClaudeHistoryReviewEvidence? = nil,
+                pi: PiHistoryReviewEvidence? = nil) throws {
         self.id = id; self.kind = kind; self.reviewedAt = reviewedAt; self.sourceThreadID = sourceThreadID
         self.projectID = projectID; self.runID = runID; self.sourceIncarnation = sourceIncarnation
         self.sourceConfiguration = sourceConfiguration; self.targetConfiguration = targetConfiguration
@@ -57,6 +60,7 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
         self.openCodeV2 = openCodeV2
         self.openCodeV1 = openCodeV1
         self.claude = claude
+        self.pi = pi
         try validate()
     }
     public func validate() throws {
@@ -77,8 +81,16 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
               !suggestedTitle.contains("\0"), try JSONEncoder().encode(prefix).count <= 4_194_304 else {
             throw CoincideError("This conversation history review is invalid or exceeds its bounded transcript limit.")
         }
-        guard [openCodeV1 != nil, openCodeV2 != nil, claude != nil].filter({ $0 }).count <= 1 else { throw CoincideError("A history review cannot combine native provider evidence.") }
-        if let claude {
+        guard [openCodeV1 != nil, openCodeV2 != nil, claude != nil, pi != nil].filter({ $0 }).count <= 1 else { throw CoincideError("A history review cannot combine native provider evidence.") }
+        if let pi {
+            try pi.validate()
+            guard sourceReference.provider == .pi, reviewedHeadTurnID == nil, expectedResultHeadTurnID == nil,
+                  pi.operationID == id, pi.source.reference == sourceReference,
+                  pi.source.matchesBinding(sourceConfiguration), pi.source.matchesBinding(targetConfiguration),
+                  pi.runID == runID, pi.kind == kind, boundary == pi.boundary.providerBoundary else {
+                throw CoincideError("The Pi history review has inconsistent native entry ownership.")
+            }
+        } else if let claude {
             try claude.validate()
             guard sourceReference.provider == .claude, reviewedHeadTurnID == nil, expectedResultHeadTurnID == nil,
                   claude.source.reference == sourceReference, claude.source.matchesBinding(sourceConfiguration),
@@ -117,7 +129,9 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
         case .forkAfterRun:
             guard targetThreadID != nil, targetThreadID != sourceThreadID, targetThreadID != id,
                   removedRunIDs.isEmpty, removedMessageIDs.isEmpty else { throw CoincideError("The fork review has inconsistent ownership or turn boundaries.") }
-            if claude != nil {
+            if pi != nil {
+                switch boundary { case .head, .beforePiUserEntry: break; default: throw ProviderHistoryError(.boundaryUnavailable) }
+            } else if claude != nil {
                 guard case .throughClaudeMessage = boundary else { throw ProviderHistoryError(.boundaryUnavailable) }
             } else if openCodeV2 != nil || openCodeV1 != nil {
                 switch boundary { case .beforeMessage, .head: break; default: throw CoincideError("The OpenCode fork has no exact message cut.") }
@@ -126,7 +140,9 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
             }
         case .rewindBeforeRun:
             guard targetThreadID == nil, removedRunIDs.contains(runID), !removedMessageIDs.isEmpty else { throw CoincideError("The rewind review has no exact retained transcript suffix.") }
-            if claude != nil {
+            if pi != nil {
+                switch boundary { case .head, .beforePiUserEntry, .freshPiSession: break; default: throw ProviderHistoryError(.boundaryUnavailable) }
+            } else if claude != nil {
                 switch boundary { case .throughClaudeMessage, .freshClaudeSession: break; default: throw ProviderHistoryError(.boundaryUnavailable) }
             } else if let openCodeV1 {
                 guard boundary == .beforeMessage(openCodeV1.selectedOpeningMessageID) else { throw CoincideError("The OpenCode rewind does not precede its selected input.") }
@@ -146,14 +162,22 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
     public func validateResult(_ result: ProviderConversationSnapshot) throws {
         try result.validate()
         let referenceMatches: Bool
-        if case .freshClaudeSession(let nativeID) = boundary, kind == .rewindBeforeRun {
+        if pi != nil {
+            referenceMatches = result.pi?.source.reference == sourceReference
+        } else if case .freshClaudeSession(let nativeID) = boundary, kind == .rewindBeforeRun {
             referenceMatches = result.reference.nativeThreadID == nativeID && result.reference != sourceReference
         } else { referenceMatches = kind == .forkAfterRun || openCodeV1 != nil ? result.reference != sourceReference : result.reference == sourceReference }
         guard referenceMatches, result.reference.provider == sourceReference.provider,
               result.workspacePath == targetConfiguration.workspacePath else {
             throw CoincideError("The conversation history result does not match its reviewed provider boundary.")
         }
-        if let claude {
+        if let pi {
+            guard result.historyMode == .entryTree, result.headTurnID == nil, let evidence = result.pi,
+                  evidence.snapshot.matchesBinding(targetConfiguration) else {
+                throw CoincideError("Pi did not return its reviewed native entry-tree evidence.")
+            }
+            try pi.validateResult(evidence)
+        } else if let claude {
             guard result.historyMode == .nativeTranscript, result.headTurnID == nil,
                   result.openCodeV1 == nil, result.openCodeV2 == nil, let evidence = result.claude else {
                 throw CoincideError("Claude did not return its reviewed native history evidence.")
@@ -170,7 +194,7 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
             }
             try openCodeV2.validateResult(evidence, kind: kind)
         } else {
-            guard result.historyMode == .paginated, result.openCodeV2 == nil, result.openCodeV1 == nil, result.claude == nil, result.headTurnID == expectedResultHeadTurnID else {
+            guard result.historyMode == .paginated, result.openCodeV2 == nil, result.openCodeV1 == nil, result.claude == nil, result.pi == nil, result.headTurnID == expectedResultHeadTurnID else {
                 throw CoincideError("The conversation history result does not match its reviewed provider boundary.")
             }
         }
@@ -239,13 +263,16 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
     public var previousMaintenanceAttempts: [ConversationHistoryMaintenanceAttempt]?
     public var openCodeV1Candidate: OpenCodeV1HistoryCandidate?
     public var claudeForkPublication: ClaudeTranscriptPublication?
+    public var piCandidates: [PiHistoryCandidate]?
+    public var piControls: PiHistoryControlState?
     public var id: UUID { review.id }
     public init(review: ConversationHistoryReview, phase: ConversationHistoryPhase = .accepted, updatedAt: Date? = nil,
                 targetTitle: String? = nil, result: ProviderConversationSnapshot? = nil, error: String? = nil, recalledAt: Date? = nil,
                 files: ConversationHistoryFilesState? = nil, recallDismissedAt: Date? = nil,
                 maintenance: ConversationHistoryMaintenanceAttempt? = nil,
                 previousMaintenanceAttempts: [ConversationHistoryMaintenanceAttempt]? = nil,
-                openCodeV1Candidate: OpenCodeV1HistoryCandidate? = nil, claudeForkPublication: ClaudeTranscriptPublication? = nil) {
+                openCodeV1Candidate: OpenCodeV1HistoryCandidate? = nil, claudeForkPublication: ClaudeTranscriptPublication? = nil,
+                piCandidates: [PiHistoryCandidate]? = nil, piControls: PiHistoryControlState? = nil) {
         self.review = review; self.phase = phase; self.updatedAt = updatedAt ?? review.reviewedAt
         self.targetTitle = targetTitle; self.result = result; self.error = error; self.recalledAt = recalledAt
         self.files = files ?? review.files.map { .init(review: $0, updatedAt: updatedAt ?? review.reviewedAt) }
@@ -253,11 +280,13 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
         self.maintenance = maintenance; self.previousMaintenanceAttempts = previousMaintenanceAttempts
         self.openCodeV1Candidate = openCodeV1Candidate
         self.claudeForkPublication = claudeForkPublication
+        self.piCandidates = piCandidates; self.piControls = piControls
     }
     public static let failureMessage = "The conversation history action was not completed. No provider work was replayed."
     public static let unconfirmedMessage = "The provider history outcome could not be confirmed. Inspect it before continuing; the action was not repeated."
     public static let unchangedMessage = "Provider history is unchanged. Review again before retrying."
     public static let openCodeV1NotAdoptedMessage = "The original OpenCode conversation was kept. A separate native conversation may remain; no history action was repeated or native conversation deleted."
+    public static let piNotAdoptedMessage = "The original Pi conversation was kept. Separate native files may remain, including an unrecorded result if Pi's reply was lost. No history action was repeated or native file deleted."
     public var isPending: Bool { phase == .accepted || phase == .dispatching }
     public var reservesOpenCodeV1Candidate: Bool {
         openCodeV1Candidate != nil && (isPending || phase == .unconfirmed || (phase == .applied && locksSource))
@@ -273,9 +302,22 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
         if isPending || phase == .unconfirmed { return true }
         return phase == .applied && files.phase != .applied && files.acknowledgedAt == nil
     }
-    public var locksSource: Bool { isPending || (phase == .unconfirmed && (review.kind == .rewindBeforeRun || review.claude != nil)) || locksFiles || needsPromptRecall }
+    public var locksSource: Bool { isPending || (phase == .unconfirmed && (review.kind == .rewindBeforeRun || review.claude != nil || review.pi != nil)) || locksFiles || needsPromptRecall }
     public func validate() throws {
         try review.validate()
+        if let candidates = piCandidates {
+            guard let evidence = review.pi, phase != .accepted, !candidates.isEmpty, candidates.count <= 3 else { throw ProviderHistoryError(.invalidResponse) }
+            var previous: [PiHistoryCandidate] = []
+            for candidate in candidates { try evidence.validateCandidate(candidate, previous: previous); previous.append(candidate) }
+            if let result { guard result.pi?.candidates == candidates else { throw ProviderHistoryError(.invalidResponse) } }
+        }
+        if let controls = piControls {
+            guard review.pi != nil, phase == .dispatching else { throw ProviderHistoryError(.invalidResponse) }
+            try controls.validate()
+        }
+        if phase == .applied, let result = result?.pi, result.source != result.snapshot, result.candidates != (piCandidates ?? []) {
+            throw ProviderHistoryError(.invalidResponse)
+        }
         if let publication = claudeForkPublication {
             guard let evidence = review.claude, review.kind == .forkAfterRun, phase != .accepted else { throw ProviderHistoryError(.invalidResponse) }
             try evidence.validatePublication(publication)
@@ -318,7 +360,8 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
         try files?.validate(providerPhase: phase)
         guard updatedAt.timeIntervalSince1970.isFinite,
               error == nil || [Self.failureMessage, Self.unconfirmedMessage, Self.unchangedMessage].contains(error!) ||
-                (review.openCodeV1 != nil && phase == .failed && error == Self.openCodeV1NotAdoptedMessage),
+                (review.openCodeV1 != nil && phase == .failed && error == Self.openCodeV1NotAdoptedMessage) ||
+                (review.pi != nil && phase == .failed && error == Self.piNotAdoptedMessage),
               (phase == .applied) == (result != nil), recalledAt == nil || (phase == .applied && review.kind == .rewindBeforeRun && recalledAt!.timeIntervalSince1970.isFinite),
               targetTitle.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 4_096 && !$0.contains("\0") }) ?? true else { throw CoincideError("The conversation history operation has inconsistent state.") }
         if let result { try review.validateResult(result) }
@@ -348,6 +391,13 @@ extension WorkspaceSnapshot {
         return (conversationHistoryOperations ?? []).contains { operation in
             guard operation.id != excludingOperationID else { return false }
             if operation.locksSource, operation.review.sourceThreadID == threadID { return true }
+            if let thread, operation.review.pi != nil {
+                return (operation.locksSource && hasPiHistoryCapture(thread, nativeSessionFile: operation.review.sourceReference.nativeThreadID)) ||
+                    (operation.piCandidates ?? []).contains { candidate in
+                        guard let path = candidate.nativeSessionFile else { return false }
+                        return (operation.phase != .applied || operation.locksSource || path != operation.result?.reference.nativeThreadID) && hasPiHistoryCapture(thread, nativeSessionFile: path)
+                    }
+            }
             if let thread, let source = operation.review.claude?.source {
                 if operation.locksSource, case .freshClaudeSession(let reserved) = operation.review.boundary,
                    hasClaudeHistoryCapture(thread, runtimeIdentity: source.runtimeIdentity, nativeThreadID: reserved) { return true }
@@ -407,7 +457,7 @@ extension WorkspaceSnapshot {
     public func canInspectConversationHistory(operationID: UUID) -> Bool {
         guard let operation = conversationHistoryOperation(operationID), operation.phase == .unconfirmed,
               operation.maintenance?.phase.isWorking != true,
-              operation.review.kind == .rewindBeforeRun || (operation.review.claude != nil && operation.claudeForkPublication != nil),
+              operation.review.kind == .rewindBeforeRun || operation.review.pi != nil || (operation.review.claude != nil && operation.claudeForkPublication != nil),
               canReviewConversationHistory(threadID: operation.review.sourceThreadID, excludingOperationID: operationID) else { return false }
         return (try? historySourceFingerprint(threadID: operation.review.sourceThreadID)) == operation.review.sourceFingerprint
     }
@@ -444,7 +494,7 @@ extension WorkspaceSnapshot {
     public func canReviewConversationHistory(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty, thread.heldPostRunCheckpoint == nil,
-              thread.claudeResumeConsumerRunID == nil,
+              thread.claudeResumeConsumerRunID == nil, thread.piFreshSessionIntent == nil, thread.piFreshConsumerRunID == nil,
               thread.settlement == nil, !(promptSteerings ?? []).contains(where: { $0.threadID == threadID && $0.isWorking }), workspaceReady(for: thread), !isPullRequestCheckoutLocked(threadID: threadID), !isPullRequestCreationLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID, excludingOperationID: excludingOperationID),
               !isConversationHistoryLocked(threadID: threadID, excludingOperationID: excludingOperationID) else { return false }
         return thread.workspacePreparation?.setup.map { [.succeeded, .skipped].contains($0.phase) } ?? true
@@ -473,6 +523,9 @@ extension WorkspaceSnapshot {
             let claudeSelection: ClaudeResumeSelection?
             let claudeConsumer: UUID?
             let claudeInheritedHead: ClaudeInheritedHead?
+            let piFreshIntent: PiFreshSessionIntent?
+            let piFreshConsumer: UUID?
+            let piResolutions: [PiFreshContextResolution]?
         }
         let records = thread.activeHistoryRuns.map { value in var value = value; value.checkpoints = nil; return value }
         let steering = (promptSteerings ?? []).filter { $0.threadID == thread.id }.map { SteeringProof(id: $0.id, runID: $0.runID, messageID: $0.messageID, phase: $0.phase, receipt: $0.receipt) }
@@ -480,7 +533,8 @@ extension WorkspaceSnapshot {
             records: records, checkpointPolicy: thread.checkpointPolicy, activeRun: thread.activeRun,
             queuedTurns: thread.queuedTurns, runtimeRequests: thread.runtimeRequests,
             preparation: thread.workspacePreparation, settlement: thread.settlement, archived: thread.isArchived, queuePaused: thread.queuePaused,
-            claudeSelection: thread.claudeResumeSelection, claudeConsumer: thread.claudeResumeConsumerRunID, claudeInheritedHead: thread.claudeInheritedHead)
+            claudeSelection: thread.claudeResumeSelection, claudeConsumer: thread.claudeResumeConsumerRunID, claudeInheritedHead: thread.claudeInheritedHead, piFreshIntent: thread.piFreshSessionIntent,
+            piFreshConsumer: thread.piFreshConsumerRunID, piResolutions: thread.piFreshContextResolutions)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return SHA256.hash(data: try encoder.encode(source)).map { String(format: "%02x", $0) }.joined()
     }
@@ -490,8 +544,8 @@ extension WorkspaceSnapshot {
         }
         guard let run = thread.activeHistoryRuns.first(where: { $0.id == runID }), run.status.isTerminal,
               run.messageAttributionVersion == 1, run.configuration.provider == thread.provider,
-              run.configuration.workspacePath == thread.workspacePath, thread.provider == .claude || !run.turnIDs.isEmpty,
-              (thread.provider == .opencode && thread.openCodeConfiguration?.generation == .v1) || run.providerThreadID == thread.providerThreadID,
+              run.configuration.workspacePath == thread.workspacePath, thread.provider == .claude || thread.provider == .pi || !run.turnIDs.isEmpty,
+              thread.provider == .pi || (thread.provider == .opencode && thread.openCodeConfiguration?.generation == .v1) || run.providerThreadID == thread.providerThreadID,
               run.providerThreadID != nil, thread.providerThreadID != nil else { return "This run has no verified boundary in the current provider conversation and checkout." }
         switch thread.provider {
         case .codex: break
@@ -501,6 +555,12 @@ extension WorkspaceSnapshot {
                   evidence.terminalStatus == run.status,
                   kind != .forkAfterRun || evidence.finalRootAssistantMessageID != nil else {
                 return "This run has no prospectively recorded root Claude input and assistant boundary in this exact runtime."
+            }
+        case .pi:
+            guard let runtime = thread.piConfiguration?.runtimeIdentity, runtime.runtime != nil,
+                  let evidence = run.pi, evidence.runtimeIdentity == runtime, evidence.terminalStatus == run.status,
+                  evidence.captureStatus == .proven || (kind == .rewindBeforeRun && evidence.captureStatus == .noNativeChange) else {
+                return "This run has no prospectively recorded native Pi input boundary in this exact runtime."
             }
         case .opencode:
             guard let current = thread.openCodeConfiguration,
@@ -512,7 +572,7 @@ extension WorkspaceSnapshot {
         if kind == .forkAfterRun, run.status != .completed { return "Native forks require a completed run with a verified provider turn." }
         do {
             let prefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
-            guard thread.provider == .claude || !hasUnverifiedSteering(in: prefix) else { return "This retained transcript includes steering whose native delivery is unconfirmed. Rewind before its run instead." }
+            guard thread.provider == .claude || thread.provider == .pi || !hasUnverifiedSteering(in: prefix) else { return "This retained transcript includes steering whose native delivery is unconfirmed. Rewind before its run instead." }
         }
         catch { return "This run has no verified local transcript boundary." }
         return nil
@@ -528,19 +588,27 @@ extension WorkspaceSnapshot {
               run.messageAttributionVersion == 1, run.configuration == review.targetConfiguration,
               run.configuration.workspacePath == thread.workspacePath,
               run.configuration.provider == thread.provider,
-              review.openCodeV1 != nil || run.providerThreadID == review.sourceReference.nativeThreadID,
+              review.pi != nil || review.openCodeV1 != nil || run.providerThreadID == review.sourceReference.nativeThreadID,
               thread.providerThreadID == review.sourceReference.nativeThreadID,
-              review.claude != nil || !run.turnIDs.isEmpty else { throw WorkspaceCommandError("This conversation or its reviewed history changed. Review the current run again.") }
+              review.pi != nil || review.claude != nil || !run.turnIDs.isEmpty else { throw WorkspaceCommandError("This conversation or its reviewed history changed. Review the current run again.") }
         let rawPrefix = try thread.transcriptPrefix(runID: run.id, boundary: review.kind == .forkAfterRun ? .afterRun : .beforeRun)
         let prefix: [ChatMessage]
-        if let evidence = review.claude {
+        if let evidence = review.pi {
+            prefix = try verifiedPiHistoryPrefix(rawPrefix, evidence: evidence, threadID: thread.id, fork: review.kind == .forkAfterRun)
+        } else if let evidence = review.claude {
             prefix = try verifiedClaudeHistoryPrefix(rawPrefix, evidence: evidence, threadID: thread.id, fork: review.kind == .forkAfterRun)
         } else {
             guard !hasUnverifiedSteering(in: rawPrefix) else { throw WorkspaceCommandError("This native history prefix includes unconfirmed steering delivery.") }
             prefix = review.kind == .forkAfterRun ? try verifiedForkPrefix(rawPrefix) : rawPrefix
         }
         guard prefix == review.prefix else { throw WorkspaceCommandError("The reviewed transcript prefix changed. Review it again.") }
-        if let evidence = review.claude {
+        if let evidence = review.pi {
+            guard thread.piFreshSessionIntent == nil, thread.piFreshConsumerRunID == nil,
+                  !threads.contains(where: { $0.id != thread.id && hasPiHistoryCapture($0, nativeSessionFile: review.sourceReference.nativeThreadID) }) else {
+                throw WorkspaceCommandError("Another conversation owns this exact Pi native file. Finish that work before changing its history.")
+            }
+            try evidence.validateLedger(snapshot: self, thread: thread)
+        } else if let evidence = review.claude {
             guard thread.claudeResumeConsumerRunID == nil,
                   !threads.contains(where: { $0.id != thread.id && hasClaudeHistoryCapture($0, runtimeIdentity: evidence.source.runtimeIdentity,
                                                                                        nativeThreadID: review.sourceReference.nativeThreadID) }) else {
@@ -577,12 +645,12 @@ extension WorkspaceSnapshot {
         switch review.kind {
         case .forkAfterRun:
             guard run.status == .completed else { throw WorkspaceCommandError("The fork no longer matches the completed provider run.") }
-            if review.openCodeV2 == nil && review.openCodeV1 == nil && review.claude == nil {
+            if review.openCodeV2 == nil && review.openCodeV1 == nil && review.claude == nil && review.pi == nil {
                 guard review.boundary == .throughTurn(run.turnIDs.last!), review.expectedResultHeadTurnID == run.turnIDs.last else { throw WorkspaceCommandError("The fork no longer matches the completed provider run.") }
             }
         case .rewindBeforeRun:
             guard let start = thread.activeHistoryRuns.firstIndex(where: { $0.id == run.id }),
-                  review.openCodeV2 != nil || review.openCodeV1 != nil || review.claude != nil || review.boundary == .beforeTurn(run.turnIDs.first!) else { throw WorkspaceCommandError("The rewind no longer matches the selected provider run.") }
+                  review.pi != nil || review.openCodeV2 != nil || review.openCodeV1 != nil || review.claude != nil || review.boundary == .beforeTurn(run.turnIDs.first!) else { throw WorkspaceCommandError("The rewind no longer matches the selected provider run.") }
             let removedRuns = thread.activeHistoryRuns.dropFirst(start).map(\.id)
             let prefixIDs = Set(prefix.map(\.id))
             let removedMessages = thread.visibleMessages.filter { !prefixIDs.contains($0.id) }.map(\.id)
@@ -657,6 +725,7 @@ extension WorkspaceSnapshot {
             }
         }
         try OpenCodeV1HistoryReviewEvidence.validateAdoptionLedger(in: self)
+        try validatePiFreshContexts()
         let byID = Dictionary(uniqueKeysWithValues: operations.map { ($0.id, $0) })
         for thread in threads {
             if let selection = thread.claudeResumeSelection {
@@ -726,7 +795,8 @@ extension WorkspaceDecision {
             throw WorkspaceCommandError("This conversation identity is reserved by a history action. Create a fresh conversation instead.")
         }
         if let created, snapshot.isOpenCodeHistoryScopeLocked(configuration: .init(thread: created), nativeThreadID: created.providerThreadID) ||
-            snapshot.isClaudeHistoryScopeLocked(configuration: .init(thread: created), nativeThreadID: created.providerThreadID) {
+            snapshot.isClaudeHistoryScopeLocked(configuration: .init(thread: created), nativeThreadID: created.providerThreadID) ||
+            snapshot.isPiHistoryScopeLocked(configuration: .init(thread: created), nativeThreadID: created.providerThreadID) {
             throw WorkspaceCommandError("This native provider session is held by a pending history action. Create a separate native session instead.")
         }
         let locked = Set(snapshot.threads.filter { snapshot.isConversationHistoryLocked(threadID: $0.id) }.map(\.id))
@@ -913,6 +983,7 @@ extension WorkspaceDecision {
               let i = snapshot.conversationHistoryOperations?.firstIndex(where: { $0.id == operationID }),
               var operation = snapshot.conversationHistoryOperations?[i], [.accepted, .dispatching].contains(operation.phase),
               operation.review.sourceThreadID == threadID, operation.review.sourceIncarnation == incarnation else { return }
+        operation.piControls = nil
         switch result {
         case .conversationHistoryConfirmed(let result):
             guard operation.phase == .dispatching else { return }
@@ -946,11 +1017,13 @@ extension WorkspaceDecision {
     mutating func reconcileConversationHistory(operationID: UUID, result: ConversationHistoryReconciliation, now: Date) throws {
         guard let i = snapshot.conversationHistoryOperations?.firstIndex(where: { $0.id == operationID }),
               var operation = snapshot.conversationHistoryOperations?[i], operation.phase == .unconfirmed,
-              (operation.review.kind == .rewindBeforeRun || (operation.review.claude != nil && operation.claudeForkPublication != nil)),
+              (operation.review.kind == .rewindBeforeRun || operation.review.pi != nil || (operation.review.claude != nil && operation.claudeForkPublication != nil)),
               operation.maintenance?.phase.isWorking != true else { throw WorkspaceCommandError("Only a current unconfirmed native history action can be inspected.") }
         try snapshot.validateConversationHistorySource(operation.review, excludingOperationID: operationID)
+        operation.piControls = nil
         switch result {
         case .applied(let result):
+            if operation.review.pi != nil, result.pi?.candidates != (operation.piCandidates ?? []) { throw ProviderHistoryError(.invalidResponse) }
             if operation.review.openCodeV1 != nil {
                 guard operation.openCodeV1Candidate?.reference == result.reference else { throw ProviderHistoryError(.invalidResponse) }
             }
@@ -965,8 +1038,12 @@ extension WorkspaceDecision {
                 files.updatedAt = now; operation.files = files
             }
         case .unchanged:
-            guard operation.review.openCodeV2 == nil, operation.review.openCodeV1 == nil, operation.review.claude == nil else { throw ProviderHistoryError(.invalidResponse) }
+            guard operation.review.openCodeV2 == nil, operation.review.openCodeV1 == nil, operation.review.claude == nil, operation.review.pi == nil else { throw ProviderHistoryError(.invalidResponse) }
             operation.phase = .failed; operation.error = ConversationHistoryOperation.unchangedMessage; operation.updatedAt = now
+        case .piOriginalKept(let observed):
+            guard let evidence = operation.review.pi, observed == evidence.source else { throw ProviderHistoryError(.historyChanged) }
+            try observed.validate()
+            operation.phase = .failed; operation.error = ConversationHistoryOperation.piNotAdoptedMessage; operation.updatedAt = now
         case .claudeForkNotStarted(let observed):
             guard let evidence = operation.review.claude, operation.review.kind == .forkAfterRun,
                   operation.claudeForkPublication != nil, observed == evidence.source else { throw ProviderHistoryError(.invalidResponse) }
@@ -1009,6 +1086,7 @@ extension WorkspaceDecision {
             target.claudeRuntimeConfiguration = configuration.claudeRuntimeConfiguration
             target.claudeResumeSelection = nil; target.claudeResumeConsumerRunID = nil
             target.claudeInheritedHead = result.claude?.inheritedHead
+            target.piFreshSessionIntent = result.pi?.freshIntent; target.piFreshConsumerRunID = nil
             target.agentModeID = configuration.agentModeID; target.agentConfigValues = configuration.agentConfigValues
             target.agentConfiguration = configuration.agentConfiguration; target.providerThreadID = result.reference.nativeThreadID
             target.messages = review.prefix; target.forkedFromHistoryOperationID = operation.id
@@ -1020,13 +1098,17 @@ extension WorkspaceDecision {
             let removedMessages = Set(review.removedMessageIDs), removedRuns = Set(review.removedRunIDs)
             for i in source.messages.indices where removedMessages.contains(source.messages[i].id) { source.messages[i].removedByHistoryOperationID = operation.id }
             for i in (source.runHistory ?? []).indices where removedRuns.contains(source.runHistory![i].id) { source.runHistory?[i].removedByHistoryOperationID = operation.id }
-            source.providerThreadID = result.reference.nativeThreadID; source.activeRun = nil; source.runtimeID = nil
+            let preservesPiRuntime = result.pi.map { $0.source == $0.snapshot && $0.candidates.isEmpty } == true
+            source.providerThreadID = result.reference.nativeThreadID; source.activeRun = nil
+            if !preservesPiRuntime { source.runtimeID = nil }
             if let selection = result.claude?.selection {
                 source.claudeResumeSelection = selection; source.claudeResumeConsumerRunID = nil
             }
+            if let pi = result.pi { source.piFreshSessionIntent = pi.freshIntent; source.piFreshConsumerRunID = nil }
             source.runtimeRequests = []; source.providerActivity = nil; source.providerMetadata = nil
             source.state = .idle; source.updatedAt = now
-            snapshot.threads[sourceIndex] = source; closeRuntimes.insert(source.id)
+            snapshot.threads[sourceIndex] = source
+            if !preservesPiRuntime { closeRuntimes.insert(source.id) }
         }
     }
 

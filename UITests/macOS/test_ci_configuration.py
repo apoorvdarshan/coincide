@@ -69,7 +69,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
         launcher = (directory / "OfflineCLILauncher.swift").read_text()
         verifier = (directory / "verify_offline_launcher.py").read_text()
         peer = (directory / "claude_history_ui.py").read_text()
-        self.assertEqual(harness.count("@MainActor func test"), 21)
+        self.assertEqual(harness.count("@MainActor func test"), 24)
         for name in ("testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart",
                      "testNativeClaudeSelectedContextIsConsumedOnceBeforeQueuedSuccessor",
                      "testNativeClaudeContextInspectionIsReadOnlyAndNeverReplaysConsumedOrUnwrittenInput"):
@@ -88,14 +88,40 @@ class NativeUIConfigurationTests(unittest.TestCase):
         self.assertNotIn('import socket', peer)
         self.assertNotIn('subprocess', peer)
 
+    def test_pi_history_adds_three_offline_native_scenarios_and_keeps_strict_closed_world_launcher(self):
+        directory = Path(__file__).parent
+        harness = (directory / "CoincideDesktopUITests.swift").read_text()
+        launcher = (directory / "OfflineCLILauncher.swift").read_text()
+        project = (directory / "CoincideDesktopUITests.xcodeproj/project.pbxproj").read_text()
+        verifier = (directory / "verify_offline_launcher.py").read_text()
+        peer = (directory / "pi_history_ui.py").read_text()
+        for name in ("testNativePiHistoryQuestionsUseExactWorkerAndCancellationNeverSendsDraft",
+                     "testNativePiUnknownHistoryKeepsOriginalAcrossRestartWithoutRepeatingNativeFork",
+                     "testNativePiEmptyContextRecoveryRequiresExplicitAcknowledgementAndNeverReplaysUnknownInput"):
+            self.assertIn("func " + name + "() throws", harness)
+        self.assertIn('path = pi_history_ui.py;', project)
+        self.assertIn('"pi": ["pi_history_ui.py"]', launcher)
+        self.assertIn('validPiArguments(arguments)', launcher)
+        self.assertIn('privatePiDirectory(value, expected:', launcher)
+        self.assertIn('Exact immutable Pi helper preflight.', harness)
+        self.assertIn('Version/metadata inspection cannot create a persisted native session.', verifier)
+        for value in ('publish-and-disconnect', 'before-write-disconnect', 'extension_ui_response', 'os.O_NOFOLLOW', 'os.O_EXCL'):
+            self.assertIn(value, peer)
+        for value in ('import socket', 'import urllib', 'import subprocess'):
+            self.assertNotIn(value, peer)
+
     def test_change_filter_keeps_product_and_harness_paths_and_skips_unrelated_unit_docs(self):
         for path in ["Sources/Coincide/Views/ChatView.swift", "Sources/CoincideCore/WorkspaceEngine.swift", "UITests/macOS/Example.swift", "script/test_macos_ui.sh", "script/prepare_macos_signing.py", "Package.resolved"]:
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_twenty_one_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=21, passedTests=21, failedTests=0, skippedTests=0)), 21)
-        for summary in [dict(totalTestCount=21, passedTests=20, failedTests=0, skippedTests=1),
+    def test_results_require_twenty_four_real_tests_without_silent_skips(self):
+        self.assertEqual(ci.verify_results(dict(totalTestCount=24, passedTests=24, failedTests=0, skippedTests=0)), 24)
+        for summary in [dict(totalTestCount=24, passedTests=23, failedTests=0, skippedTests=1),
+                        dict(totalTestCount=24, passedTests=23, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=23, passedTests=23, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=21, passedTests=21, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=21, passedTests=20, failedTests=0, skippedTests=1),
                         dict(totalTestCount=21, passedTests=20, failedTests=1, skippedTests=0),
                         dict(totalTestCount=20, passedTests=20, failedTests=0, skippedTests=0),
                         dict(totalTestCount=18, passedTests=18, failedTests=0, skippedTests=0),

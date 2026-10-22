@@ -98,7 +98,11 @@ enum PiConfigurationValidation {
                 guard runtime.registeredWorkspacePath == value.workspacePath else { throw PiConfiguration.invalid() }
             }
             if let file = value.nativeThreadID { try ProviderHistoryValidation.path(file) }
-        } else if value.piConfiguration != nil { throw PiConfiguration.invalid() }
+            if let intent = value.piFreshSessionIntent {
+                try intent.validate()
+                guard native.runtimeIdentity == intent.runtimeIdentity, value.nativeThreadID == intent.nativeSessionFile else { throw PiConfiguration.invalid() }
+            }
+        } else if value.piConfiguration != nil || value.piFreshSessionIntent != nil { throw PiConfiguration.invalid() }
     }
 }
 

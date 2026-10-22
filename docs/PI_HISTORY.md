@@ -1,10 +1,13 @@
 # Native Pi run evidence
 
-Coincide implements Pi conversations and steering in Swift. New native inputs
-capture their selected launcher and storage namespace before admission, then
-save an exact live-history baseline before sending. This is the foundation for
-native Run History; it does **not** yet enable Pi fork, rollback, session import
-or history recovery controls. Full T3 parity remains unfinished.
+Coincide implements Pi conversations, steering and native Run History in Swift.
+New inputs capture their selected launcher and storage namespace before
+admission, then save an exact live-history baseline before sending. Reviewed
+fork/rewind, native lifecycle controls and explicit recovery are connected to
+the durable workspace ledger. The current mutation profile is exactly Pi
+0.80.5. Full T3 parity remains unfinished; this implementation does not establish
+installed-package or model acceptance, session browsing/import, or compatibility
+with later mutation profiles. See [validation evidence](VALIDATION.md).
 
 ## Captured runtime and admission
 
@@ -65,8 +68,67 @@ Stale admission markers are ordinary command rejections. Malformed proof from
 the current scoped provider closes that runtime without failing the workspace
 database or unrelated conversations. An obsolete outer run context stays ignored.
 Process-loss recovery retains the preparation and audit without replaying input.
-Workspace storage version 38 prevents an older binary from dropping the new
+Workspace storage version 39 prevents an older binary from dropping the new
 capture and admission fields.
+
+## Reviewed native history
+
+Review joins prospectively owned opening/steered user-entry IDs to the current
+active branch and immutable prior adoption edges. Native input IDs remain
+separate from provider turn IDs. Review retains bounded descriptors/digests,
+not another raw prompt archive; journal admission validates those retained
+facts without reading native files. Anchored native-byte and label-transform
+checks occur outside journal reduction before native mutation.
+
+A head fork uses native `--fork` and preserves the entire append inventory,
+including abandoned branches. It refuses a live cursor that would change on
+native reload. A historical fork then uses Pi's exclusive user-entry fork on
+the separate worker; rewind uses the owned live source actor when available.
+Each reserved directory, initial clone and final branch is committed before
+further native work or adoption. Intermediate files remain in the audit; no
+native file is deleted or guessed from a directory scan after a lost reply.
+Deferred model/thinking selection is applied on the next explicit ordinary
+turn, rather than claimed as already applied by the history operation.
+
+Pi extension questions belong to the exact history worker generation, outside
+ordinary chat requests. Answer admission is committed before one wire response;
+a restart never replays it. The single existing event reader, ordered barriers,
+source observation and owned close/drain prevent an already observed wake,
+changed branch, lost reply or shutdown write from becoming successful adoption.
+Unconfirmed operations hold their source. Known candidates can be inspected
+without reissuing a fork; Keep Original verifies the exact source and warns
+that separate or unrecorded native files may remain. Cold inspection refuses a
+live cursor that native reload cannot retain. Physical aliases and hard links
+do not create independent ownership of a held native file.
+
+Rewinds retain immutable original run/input references, audit removed rows and
+preserve the latest draft. Separately reviewed Git restoration uses that exact
+run boundary; once-only prompt recall follows successful external work. A
+native no-change suffix can be removed locally without inventing a native cut.
+
+## Empty context and the remaining persistence boundary
+
+A genuinely empty native result may have no file yet. Only its durably selected
+consumer receives the explicit empty-context intent; an ordinary missing resume
+path remains refused. Reopening this exact absent path creates a new native UUID
+and loses the native parent header. The app records that actual identity and
+proves empty context before applying its own model/thinking controls. It retains
+application lineage without claiming native UUID or parent-header continuity.
+
+The intent is released automatically only after a proven completed consumer and
+anchored persisted native file. Failed or lost consumers hold subsequent work.
+Read-only inspection may confirm the exact persisted owned input, or report an
+absent file. Absence does not establish that an input was never processed. An
+explicit Keep Empty Context acknowledgement preserves that uncertainty in the
+audit, keeps the queue paused and permits a new explicit input; it never replays
+the previous prompt.
+
+A nonempty branch containing no assistant may also be unpersisted in native Pi.
+That case remains **unconfirmed/unavailable for adoption**; it is never normalized
+to empty context. This includes first-user cuts retaining only model/thinking
+metadata. A native-compatible durable solution for this boundary, actual
+installed-package/model acceptance and session browsing/import remain required
+before declaring Pi parity complete.
 
 ## Independent original-source comparison
 
@@ -74,7 +136,8 @@ capture and admission fields.
 Pi v0.80.5 hashes and evaluates the original graph/context/reload bodies with
 restricted import bindings against private synthetic files. No Node or Pi
 dependency ships with the app or runs in Swift tests. This is not a full-package
-import, OS sandbox, provider execution or native mutation oracle.
+import, OS sandbox or installed provider execution. The optional fork output
+separately evaluates the original native file-producing fork bodies.
 
 The [golden fixture](../Tests/CoincideCoreTests/Fixtures/pi_history_original_0_80_5.json)
 contains eleven histories, 41 branch/reset observations and thirteen exclusive
@@ -93,9 +156,18 @@ refused. The Swift file reader deliberately rejects malformed, ambiguous and
 legacy data which Pi's permissive reader may skip or migrate; those refusal
 policies are tested separately from conformance.
 
+The separate [fork fixture](../Tests/CoincideCoreTests/Fixtures/pi_history_fork_original_0_80_5.json)
+contains thirteen cases: ten native outputs, two native rejections and one
+intentional policy refusal. It preserves full head inventories, branch rechaining,
+global effective labels, compaction references and native missing-file behavior.
+Its SHA-256 is `4429c00ca0154c9839138649a4f0db54207cfe7281962f131d7a82dde6af9239`.
+Default oracle output remains byte-identical. Fork generation permits bounded,
+explicitly owned clock/identity/file writes; subprocess, network and configuration
+access remain denied. This is separate from a real RPC process or model turn.
+
 Original references are the pinned
 [session manager](https://github.com/earendil-works/pi/blob/v0.80.5/packages/coding-agent/src/core/session-manager.ts),
 [RPC types](https://github.com/earendil-works/pi/blob/v0.80.5/packages/coding-agent/src/modes/rpc/rpc-types.ts)
 and [CLI](https://github.com/earendil-works/pi/blob/v0.80.5/packages/coding-agent/src/main.ts).
-Installed Pi authentication/model turns, native mutation/recovery and hosted Pi
-history acceptance remain separate unfinished requirements.
+Installed Pi authentication/model turns and hosted Pi history acceptance remain
+separate unfinished requirements until their actual results are recorded.

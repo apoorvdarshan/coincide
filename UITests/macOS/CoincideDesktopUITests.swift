@@ -1333,6 +1333,285 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
+    @MainActor func testNativePiHistoryQuestionsUseExactWorkerAndCancellationNeverSendsDraft() throws {
+        let f = try preparePiHistoryGUI(mode: "controls", appearance: "light", name: "pi-history-controls")
+        let sourceID = try seedPiHistoryGUI(f), source = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
+        let native = URL(fileURLWithPath: try XCTUnwrap(source["providerThreadID"] as? String)), before = try Data(contentsOf: native)
+        replaceClaudeGUIDraft("Keep the latest Pi draft 工作 😀", in: f.app)
+        let sheet = try beginPiGUIRewind(f, prompt: Self.piBetaPrompt)
+        let picker = try revealPiHistoryControl("pi-extension-choice", in: sheet)
+        capture(f.app, name: "pi-history-native-select-question")
+        picker.click(); let offered = f.app.menuItems["Keep inherited context"]
+        XCTAssertTrue(offered.waitForExistence(timeout: 5)); offered.click()
+        let submit = try revealPiHistoryControl("pi-extension-submit", in: sheet)
+        XCTAssertTrue(submit.isEnabled); submit.click()
+        XCTAssertTrue(sheet.staticTexts["Pi GUI final branch confirmation"].waitForExistence(timeout: 10))
+        let held = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            guard let operation = self.latestPiGUIOperation(snapshot), let controls = operation["piControls"] as? [String: Any],
+                  let requests = controls["requests"] as? [[String: Any]] else { return false }
+            return operation["phase"] as? String == "dispatching" && requests.count == 1 &&
+                ((requests[0]["request"] as? [String: Any])?["params"] as? [String: Any])?["title"] as? String == "Pi GUI final branch confirmation"
+        }
+        let generation = try XCTUnwrap((latestPiGUIOperation(held)?["piControls"] as? [String: Any])?["sessionID"] as? String)
+        XCTAssertNotNil(UUID(uuidString: generation))
+        let cancel = try revealPiHistoryControl("conversation-history-pi-cancel", in: sheet)
+        XCTAssertTrue(cancel.isEnabled); cancel.click()
+        _ = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "unconfirmed" }
+        try waitForClaudeGUIEnabled(sheet.buttons["conversation-history-close"], timeout: 10)
+        capture(f.app, name: "pi-history-cancelled-without-native-copy")
+        let keep = try revealPiHistoryControl("conversation-history-pi-keep-original", in: sheet); keep.click()
+        let confirm = f.app.alerts.firstMatch.buttons["conversation-history-pi-keep-original-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.click()
+        _ = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "failed" }
+        sheet.buttons["conversation-history-close"].click(); try nativeHistoryDone(in: f.app).click()
+        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: "Keep the latest Pi draft 工作 😀", timeout: 10))
+        let frames = try historyWire(f.wire)
+        let answers = frames.filter { $0["type"] as? String == "extension_ui_response" }
+        XCTAssertEqual(answers.count, 1); XCTAssertEqual(answers[0]["id"] as? String, "pi-gui-select")
+        XCTAssertEqual(answers[0]["value"] as? String, "Keep inherited context")
+        XCTAssertEqual(frames.filter { $0["type"] as? String == "fork" }.count, 1)
+        XCTAssertTrue(frames.filter { $0["kind"] as? String == "fork-result" }.isEmpty)
+        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt])
+        XCTAssertEqual(try Data(contentsOf: native), before)
+        try assertPiGUIWorkspaceUnchanged(f)
+    }
+
+    @MainActor func testNativePiUnknownHistoryKeepsOriginalAcrossRestartWithoutRepeatingNativeFork() throws {
+        let f = try preparePiHistoryGUI(mode: "publish-and-disconnect", appearance: "dark", name: "pi-history-unknown")
+        let sourceID = try seedPiHistoryGUI(f), original = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
+        let path = try XCTUnwrap(original["providerThreadID"] as? String), before = try Data(contentsOf: URL(fileURLWithPath: path))
+        replaceClaudeGUIDraft("Keep original Pi draft after lost reply", in: f.app)
+        _ = try beginPiGUIRewind(f, prompt: Self.piBetaPrompt)
+        let unknown = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "unconfirmed" }
+        XCTAssertNil(latestPiGUIOperation(unknown)?["piCandidates"], "A lost fork reply cannot invent a candidate identity.")
+        let orphan = try XCTUnwrap(historyWire(f.wire).last { $0["kind"] as? String == "fork-result" })
+        let orphanFile = URL(fileURLWithPath: try XCTUnwrap(orphan["candidateFile"] as? String))
+        XCTAssertNotEqual(orphanFile.path, path); XCTAssertTrue(FileManager.default.fileExists(atPath: orphanFile.path))
+        let orphanBytes = try Data(contentsOf: orphanFile)
+        f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
+        f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertEqual(try selectedThreadIdentifier(in: f.app), sourceID)
+        let keep = f.app.buttons["conversation-history-pi-keep-original"]
+        XCTAssertTrue(keep.waitForExistence(timeout: 10)); keep.click()
+        let confirm = f.app.alerts.firstMatch.buttons["conversation-history-pi-keep-original-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.click()
+        let kept = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "failed" }
+        let current = try claudeGUIThread(kept, id: sourceID), operation = try XCTUnwrap(latestPiGUIOperation(kept))
+        XCTAssertTrue((operation["error"] as? String)?.contains("unrecorded result") == true)
+        XCTAssertNil(operation["recalledAt"]); XCTAssertEqual(current["providerThreadID"] as? String, path)
+        XCTAssertEqual(try claudeGUIJSON(current["messages"]), try claudeGUIJSON(original["messages"]))
+        XCTAssertEqual(try claudeGUIJSON(current["runHistory"]), try claudeGUIJSON(original["runHistory"]))
+        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: "Keep original Pi draft after lost reply", timeout: 10))
+        XCTAssertEqual(try historyWire(f.wire).filter { $0["type"] as? String == "fork" }.count, 1)
+        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt])
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), before)
+        XCTAssertEqual(try Data(contentsOf: orphanFile), orphanBytes, "Keep Original cannot delete or rewrite an unrecorded native copy.")
+        capture(f.app, name: "pi-history-original-kept-unrecorded-orphan-warning")
+        try assertPiGUIWorkspaceUnchanged(f)
+    }
+
+    @MainActor func testNativePiEmptyContextRecoveryRequiresExplicitAcknowledgementAndNeverReplaysUnknownInput() throws {
+        let f = try preparePiHistoryGUI(mode: "normal", appearance: "light", name: "pi-history-fresh")
+        let sourceID = try seedPiHistoryGUI(f), original = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
+        let originalFile = URL(fileURLWithPath: try XCTUnwrap(original["providerThreadID"] as? String)), before = try Data(contentsOf: originalFile)
+        replaceClaudeGUIDraft("Latest Pi reset draft", in: f.app)
+        let sheet = try beginPiGUIRewind(f, prompt: Self.piAlphaPrompt)
+        let selected = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID) else { return false }
+            return self.latestPiGUIOperation(snapshot)?["phase"] as? String == "applied" && thread["piFreshSessionIntent"] != nil
+        }
+        sheet.buttons["conversation-history-close"].click(); try nativeHistoryDone(in: f.app).click()
+        let intent = try XCTUnwrap(claudeGUIThread(selected, id: sourceID)["piFreshSessionIntent"] as? [String: Any])
+        let target = URL(fileURLWithPath: try XCTUnwrap(intent["nativeSessionFile"] as? String))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: "Latest Pi reset draft\n\n" + Self.piAlphaPrompt, timeout: 10))
+        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt])
+        f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
+        f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertEqual(try claudeGUIJSON(claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)["piFreshSessionIntent"]), try claudeGUIJSON(intent))
+        try submitClaudeGUI(Self.piUnwrittenPrompt, in: f.app)
+        let failed = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID), let run = self.findClaudeGUIRun(thread, prompt: Self.piUnwrittenPrompt) else { return false }
+            return thread["activeRun"] == nil && thread["piFreshConsumerRunID"] as? String == run["id"] as? String && run["status"] as? String != "completed"
+        }
+        let failedThread = try claudeGUIThread(failed, id: sourceID), failedRun = try claudeGUIRun(failedThread, prompt: Self.piUnwrittenPrompt)
+        let failedID = try XCTUnwrap(failedRun["id"] as? String), priorStatus = try XCTUnwrap(failedRun["status"] as? String)
+        XCTAssertTrue(["failed", "unknown", "interrupted"].contains(priorStatus)); XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        replaceClaudeGUIDraft("Keep typing after unknown Pi input", in: f.app)
+        let inspect = f.app.buttons["conversation-history-pi-inspect-fresh"]
+        XCTAssertTrue(inspect.waitForExistence(timeout: 10)); inspect.click()
+        let keep = f.app.buttons["conversation-history-pi-keep-empty"]
+        XCTAssertTrue(keep.waitForExistence(timeout: 10)); keep.click()
+        let alert = f.app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "may have been processed", "may have been processed")).firstMatch.exists)
+        let confirm = alert.buttons["conversation-history-pi-keep-empty-confirm"]
+        XCTAssertTrue(confirm.exists); confirm.click()
+        let acknowledged = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID), let audit = thread["piFreshContextResolutions"] as? [[String: Any]] else { return false }
+            return thread["piFreshConsumerRunID"] == nil && audit.last?["consumerRunID"] as? String == failedID
+        }
+        let acknowledgedThread = try claudeGUIThread(acknowledged, id: sourceID)
+        XCTAssertEqual(try claudeGUIJSON(acknowledgedThread["piFreshSessionIntent"]), try claudeGUIJSON(intent))
+        XCTAssertEqual(acknowledgedThread["queuePaused"] as? Bool, true)
+        XCTAssertEqual(try claudeGUIRun(acknowledgedThread, prompt: Self.piUnwrittenPrompt)["status"] as? String, priorStatus)
+        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: "Keep typing after unknown Pi input", timeout: 10))
+        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt, Self.piUnwrittenPrompt])
+        capture(f.app, name: "pi-fresh-unknown-explicit-empty-context-kept-no-replay")
+        try submitClaudeGUI(Self.piNewPrompt, in: f.app)
+        let completed = try completedPiGUI(f, threadID: sourceID, prompt: Self.piNewPrompt)
+        XCTAssertNil(completed["piFreshSessionIntent"]); XCTAssertNil(completed["piFreshConsumerRunID"])
+        let run = try claudeGUIRun(completed, prompt: Self.piNewPrompt), proof = try XCTUnwrap(run["pi"] as? [String: Any])
+        let records = try Data(contentsOf: target).split(separator: 10).map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]) }
+        XCTAssertEqual(records.count, 3); XCTAssertEqual(records[0]["id"] as? String, (proof["preparation"] as? [String: Any])?["nativeSessionID"] as? String)
+        XCTAssertNotEqual(records[0]["id"] as? String, intent["originalNativeSessionID"] as? String)
+        XCTAssertEqual(((records[1]["message"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String, Self.piNewPrompt)
+        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt, Self.piUnwrittenPrompt, Self.piNewPrompt])
+        XCTAssertEqual(try Data(contentsOf: originalFile), before)
+        try assertPiGUIWorkspaceUnchanged(f)
+    }
+
+    private static let piAlphaPrompt = "Pi GUI remember ALPHA 工作"
+    private static let piBetaPrompt = "Pi GUI remember BETA مرحباً"
+    private static let piUnwrittenPrompt = "Pi GUI explicit input with missing result"
+    private static let piNewPrompt = "Pi GUI new explicit input after acknowledgement"
+    private struct PiHistoryGUIFixture {
+        let app: XCUIApplication, root: URL, project: URL, wire: URL, document: URL, original: Data, head: String, gitPath: String, gitConfiguration: URL
+    }
+    @MainActor private func preparePiHistoryGUI(mode: String, appearance: String, name: String) throws -> PiHistoryGUIFixture {
+        let base = try prepareApplication(appearance: appearance, diagnosticPrefix: name), app = base.app, root = base.root
+        let manager = FileManager.default, python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        let project = root.appendingPathComponent("Pi Native History"), bin = root.appendingPathComponent("private-bin")
+        for directory in [project, bin] + ["private-pi-home", "private-pi-agent", "private-pi-sessions"].map({ root.appendingPathComponent($0) }) {
+            try manager.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        let document = project.appendingPathComponent("README.md"), original = Data("Private Pi UI workspace remains unchanged\n".utf8)
+        try original.write(to: document)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Pi native GUI fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: base.gitPath, configuration: base.configuration, name: name + "-git-" + arguments[0])
+        }
+        let head = try verifyHead(gitPath: base.gitPath, project: project, configuration: base.configuration, name: name + "-head")
+        let state = root.appendingPathComponent("pi-peer.json"), wire = root.appendingPathComponent("pi-wire.jsonl")
+        let actions = [Self.piAlphaPrompt: ["mode": "normal", "label": "ALPHA"], Self.piBetaPrompt: ["mode": "normal", "label": "BETA"],
+            Self.piUnwrittenPrompt: ["mode": "before-write-disconnect", "label": "UNWRITTEN"], Self.piNewPrompt: ["mode": "normal", "label": "NEW"]]
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "historyMode": mode, "actions": actions], options: .sortedKeys).write(to: state, options: .atomic)
+        let peer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "pi_history_ui", withExtension: "py"))
+        let executable = try installOfflineCLI(tool: "pi", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        for (key, name) in [("HOME", "private-pi-home"), ("PI_CODING_AGENT_DIR", "private-pi-agent"), ("PI_CODING_AGENT_SESSION_DIR", "private-pi-sessions")] {
+            app.launchEnvironment[key] = root.appendingPathComponent(name).path
+        }
+        try preflightPiGUI(executable, environment: app.launchEnvironment, cwd: project)
+        addTeardownBlock { @MainActor [weak self] in
+            if let data = try? Data(contentsOf: wire), data.count <= 131_072 {
+                let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                attachment.name = name + "-bounded-synthetic-wire"; attachment.lifetime = .keepAlways; self?.add(attachment)
+            }
+        }
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15)); try openProject(project, in: app)
+        app.typeKey("n", modifierFlags: .command); XCTAssertTrue(app.textViews["composer-input"].waitForExistence(timeout: 10))
+        return .init(app: app, root: root, project: project, wire: wire, document: document, original: original,
+            head: head, gitPath: base.gitPath, gitConfiguration: base.configuration)
+    }
+    @MainActor private func seedPiHistoryGUI(_ f: PiHistoryGUIFixture) throws -> String {
+        let provider = f.app.descendants(matching: .any).matching(identifier: "provider-model-menu").firstMatch
+        XCTAssertTrue(provider.waitForExistence(timeout: 10)); provider.click()
+        let pi = f.app.menuItems["Pi"]; XCTAssertTrue(pi.waitForExistence(timeout: 5)); XCTAssertTrue(pi.isEnabled); pi.click()
+        let id = try selectedThreadIdentifier(in: f.app)
+        _ = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: id) else { return false }
+            return thread["provider"] as? String == "pi" && (thread["piConfiguration"] as? [String: Any])?["runtime"] != nil
+        }
+        f.app.descendants(matching: .any).matching(identifier: "conversation-workspace").firstMatch.click()
+        let checkpoints = f.app.menuItems["conversation-run-checkpoints"]
+        XCTAssertTrue(checkpoints.waitForExistence(timeout: 5)); XCTAssertTrue(checkpoints.isEnabled); checkpoints.click()
+        _ = try waitForPrivateWorkspace(f.root, timeout: 10) { self.findClaudeGUIThread($0, id: id)?["checkpointPolicy"] as? String == "disabled" }
+        for prompt in [Self.piAlphaPrompt, Self.piBetaPrompt] { try submitClaudeGUI(prompt, in: f.app); _ = try completedPiGUI(f, threadID: id, prompt: prompt) }
+        XCTAssertTrue(f.app.staticTexts["Pi GUI saved BETA"].waitForExistence(timeout: 10))
+        return id
+    }
+    @MainActor private func completedPiGUI(_ f: PiHistoryGUIFixture, threadID: String, prompt: String) throws -> [String: Any] {
+        let snapshot = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID), thread["activeRun"] == nil,
+                  let run = self.findClaudeGUIRun(thread, prompt: prompt), let proof = run["pi"] as? [String: Any] else { return false }
+            return run["status"] as? String == "completed" && proof["captureStatus"] as? String == "proven" && proof["terminalStatus"] as? String == "completed"
+        }
+        let thread = try claudeGUIThread(snapshot, id: threadID), run = try claudeGUIRun(thread, prompt: prompt)
+        XCTAssertEqual((run["turnIDs"] as? [String])?.count, 0); XCTAssertNil(thread["activeRun"])
+        XCTAssertEqual((run["pi"] as? [String: Any])?["openingUserEntryID"] as? String,
+            ((run["pi"] as? [String: Any])?["nativeUserEntryIDs"] as? [String])?.first)
+        return thread
+    }
+    @MainActor private func beginPiGUIRewind(_ f: PiHistoryGUIFixture, prompt: String) throws -> XCUIElement {
+        try openNativeRunHistory(in: f.app)
+        let run = try revealNativeHistoryRun(prompt: prompt, in: f.app), sheet = try openNativeHistoryAction(runID: run, kind: "rewind", in: f.app)
+        let confirm = sheet.buttons["conversation-history-confirm"]
+        try waitForClaudeGUIEnabled(confirm, timeout: 10); XCTAssertEqual(confirm.label, "Revert and Keep Changes"); confirm.click()
+        return sheet
+    }
+    private func latestPiGUIOperation(_ snapshot: [String: Any]) -> [String: Any]? {
+        (snapshot["conversationHistoryOperations"] as? [[String: Any]])?.last { ($0["review"] as? [String: Any])?["pi"] != nil }
+    }
+    private func piGUIPrompts(_ f: PiHistoryGUIFixture) throws -> [String] {
+        try historyWire(f.wire).filter { $0["type"] as? String == "prompt" }.compactMap { $0["message"] as? String }
+    }
+    @MainActor private func revealPiHistoryControl(_ identifier: String, in sheet: XCUIElement) throws -> XCUIElement {
+        let control = sheet.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        XCTAssertTrue(control.waitForExistence(timeout: 10))
+        for _ in 0..<5 where !control.isHittable { sheet.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(control.isHittable); return control
+    }
+    @MainActor private func assertPiGUIWorkspaceUnchanged(_ f: PiHistoryGUIFixture) throws {
+        XCTAssertEqual(try Data(contentsOf: f.document), f.original)
+        XCTAssertEqual(try verifyHead(gitPath: f.gitPath, project: f.project, configuration: f.gitConfiguration, name: "pi-history-preserved-head"), f.head)
+        let status = try runGit(["-C", f.project.path, "status", "--porcelain=v1"], gitPath: f.gitPath, configuration: f.gitConfiguration, name: "pi-history-preserved-index")
+        XCTAssertTrue(status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+    @MainActor private func preflightPiGUI(_ executable: URL, environment: [String: String], cwd: URL) throws {
+        let version = try runPiGUIPreflight(executable, arguments: ["--version"], environment: environment, cwd: cwd, input: Data())
+        XCTAssertEqual(String(decoding: version, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), "0.80.5")
+        let frames: [[String: Any]] = [["type": "get_state", "id": "gui-preflight-state"], ["type": "get_entries", "id": "gui-preflight-entries"]]
+        var input = Data()
+        for frame in frames { input.append(try JSONSerialization.data(withJSONObject: frame)); input.append(10) }
+        let output = try runPiGUIPreflight(executable, arguments: ["--mode", "rpc"], environment: environment, cwd: cwd, input: input)
+        let replies = try output.split(separator: 10).map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]) }
+        XCTAssertEqual(replies.compactMap { $0["id"] as? String }, ["gui-preflight-state", "gui-preflight-entries"])
+        XCTAssertTrue(replies.allSatisfy { $0["success"] as? Bool == true })
+        let entries = try XCTUnwrap(replies.last?["data"] as? [String: Any])
+        XCTAssertEqual((entries["entries"] as? [[String: Any]])?.count, 0); XCTAssertTrue(entries["leafId"] is NSNull)
+    }
+    @MainActor private func runPiGUIPreflight(_ executable: URL, arguments: [String], environment: [String: String], cwd: URL, input payload: Data) throws -> Data {
+        let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
+        process.executableURL = executable; process.arguments = arguments; process.environment = environment; process.currentDirectoryURL = cwd
+        process.standardInput = input; process.standardOutput = output; process.standardError = errors
+        var stage = "configure-pipe"
+        defer {
+            try? input.fileHandleForWriting.close()
+            if process.isRunning { kill(process.processIdentifier, SIGKILL); process.waitUntilExit() }
+        }
+        do {
+            guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+            stage = "process-run"; try process.run()
+            stage = "stdin-write"; if !payload.isEmpty { try input.fileHandleForWriting.write(contentsOf: payload) }
+            try input.fileHandleForWriting.close()
+            stage = "wait-for-eof"
+            let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !process.isRunning }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 5), .completed, "The exact Pi fixture must exit after preflight EOF.")
+            if process.isRunning { kill(process.processIdentifier, SIGKILL); process.waitUntilExit() }
+            stage = "read-response"
+            let data = try output.fileHandleForReading.readToEnd() ?? Data(), stderr = try errors.fileHandleForReading.readToEnd() ?? Data()
+            XCTAssertLessThanOrEqual(data.count, 65_536); XCTAssertLessThanOrEqual(stderr.count, 65_536)
+            let evidence = XCTAttachment(string: "Exact immutable Pi helper preflight. stage=\(stage) exit=\(process.terminationStatus) stdoutBytes=\(data.count) stderrBytes=\(stderr.count)\nstderr:\n\(String(decoding: stderr.prefix(512), as: UTF8.self))")
+            evidence.name = "pi-immutable-helper-\(arguments == ["--version"] ? "version" : "idle")-preflight"; evidence.lifetime = .keepAlways; add(evidence)
+            XCTAssertEqual(process.terminationStatus, 0); return data
+        } catch {
+            let failure = error as NSError
+            let evidence = XCTAttachment(string: "Exact immutable Pi helper failed with the fixture environment. stage=\(stage) NSError domain=\(failure.domain) code=\(failure.code)")
+            evidence.name = "pi-immutable-helper-preflight-failure"; evidence.lifetime = .keepAlways; add(evidence)
+            throw error
+        }
+    }
+
     @MainActor func testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart() throws {
         let f = try prepareClaudeHistoryGUI(appearance: "light", name: "claude-history")
         let sourceID = try seedClaudeHistoryGUI(f)
@@ -1369,7 +1648,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let target = try claudeGUIThread(forkSnapshot, id: forkID)
         let operationID = try XCTUnwrap(target["forkedFromHistoryOperationID"] as? String)
         let operation = try XCTUnwrap((forkSnapshot["conversationHistoryOperations"] as? [[String: Any]])?.first {
-            $0["id"] as? String == operationID
+            ($0["review"] as? [String: Any])?["id"] as? String == operationID
         })
         XCTAssertEqual(operation["phase"] as? String, "applied")
         let publication = try XCTUnwrap(operation["claudeForkPublication"] as? [String: Any])
@@ -1690,7 +1969,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let thread = try claudeGUIThread(snapshot, id: threadID)
         let selection = try XCTUnwrap(thread["claudeResumeSelection"] as? [String: Any])
         let operation = try XCTUnwrap((snapshot["conversationHistoryOperations"] as? [[String: Any]])?.first {
-            $0["id"] as? String == selection["id"] as? String
+            ($0["review"] as? [String: Any])?["id"] as? String == selection["id"] as? String
         })
         XCTAssertEqual(operation["phase"] as? String, "applied")
         XCTAssertEqual((operation["review"] as? [String: Any])?["sourceThreadID"] as? String, String(threadID.dropFirst("thread-".count)))
@@ -2725,7 +3004,7 @@ final class CoincideDesktopUITests: XCTestCase {
     @MainActor private func installOfflineCLI(tool: String, python: String, peer: URL, state: URL, wire: URL,
                                               root: URL, bin: URL, in app: XCUIApplication) throws -> URL {
         let manager = FileManager.default
-        let allowed = ["codex": ["codex_history_ui.py", "codex_steering_ui.py", "codex_models_ui.py"], "gh": ["github_pr_ui.py"], "claude": ["claude_history_ui.py"]]
+        let allowed = ["codex": ["codex_history_ui.py", "codex_steering_ui.py", "codex_models_ui.py"], "gh": ["github_pr_ui.py"], "claude": ["claude_history_ui.py"], "pi": ["pi_history_ui.py"]]
         XCTAssertTrue(allowed[tool]?.contains(peer.lastPathComponent) == true)
         let bundle = Bundle(for: CoincideDesktopUITests.self)
         let helper = try XCTUnwrap(bundle.url(forResource: "CoincideOfflineCLI", withExtension: nil))

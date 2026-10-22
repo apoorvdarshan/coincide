@@ -27,6 +27,11 @@ extension CodingThread {
               runHistory?[index].providerThreadID == nil || runHistory?[index].providerThreadID == preparation.nativeSessionFile else {
             throw PiHistoryGraphError(.invalidWindow)
         }
+        if let intent = run.configuration.piFreshSessionIntent {
+            guard piFreshSessionIntent == intent, piFreshConsumerRunID == run.id,
+                  preparation.freshIntentID == intent.id, preparation.nativeSessionFile == intent.nativeSessionFile,
+                  preparation.runtimeIdentity == intent.runtimeIdentity else { throw PiHistoryGraphError(.invalidWindow) }
+        } else if preparation.freshIntentID != nil { throw PiHistoryGraphError(.invalidWindow) }
         let evidence = try PiRunHistoryEvidence(preparation: preparation)
         guard runHistory?[index].pi == nil || runHistory?[index].pi == evidence else { throw PiHistoryGraphError(.invalidWindow) }
         providerThreadID = preparation.nativeSessionFile

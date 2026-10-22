@@ -1,5 +1,71 @@
 # Validation record
 
+## 2026-10-23 — durable Pi fork, rewind and explicit fresh context
+
+- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with
+  1611 declarations: 1600 pass and eleven optional installed-provider checks
+  skip. Core's 1387 declarations across eight suites finish in 325.892 seconds;
+  all 205 native view/store declarations pass in 65.411 seconds, terminal six
+  in 1.364 seconds and Markdown thirteen in 0.128 seconds. No issue is reported.
+- Focused Pi provider, history, journal, Engine and native Store/view checks pass
+  54 declarations: 51 Core declarations in 6.668 seconds and three native
+  view/store declarations in 0.351 seconds. They exercise the production Pi
+  actor against a private synthetic stdio peer, durable candidate admission,
+  lifecycle-dialog ownership, lost acknowledgments, restart without replay,
+  source preservation, inherited lineage, fresh-context consumers and recovery.
+  These checks do not invoke an installed Pi package, authentication or a model.
+- A subsequent production-Engine filter passes four declarations/six cases in
+  16.213 seconds. Real Git worktrees exercise conversation-only rewind, combined
+  file restoration with once-only latest-draft recall, standalone files-only
+  restoration, and stale-file-review refusal before provider mutation. The
+  selected receipt is the previous completed run's post-run checkpoint, rather
+  than the selected run's later baseline. Native session bytes, shared checkout,
+  HEAD, branches, immutable run origins and SQLite replay remain checked.
+  Warm runtime cases also verify conclusive veto retains its exact process and
+  reader, while successful rewind drains it before the next explicit input.
+  Initial failures in this new fixture correctly enforced isolation and exact
+  checkpoint-path admission; it now uses real Engine worktree preparation and
+  Git's canonical path spelling. No production guard or deadline was weakened.
+- Storage 39 retains typed Pi history operations, candidate ownership, lifecycle
+  controls, immutable adoption proof and explicit fresh-context intent. Schema
+  assertions now expect 39, retain older-version migration cases and refuse 40.
+  The first full attempt reached the end without a crash, with nineteen issues
+  confined to stale schema-38 assertions; its native view/store, terminal and
+  Markdown targets passed. The final canonical run above verifies the fixes.
+- The original-source fork generator produces a separate 98,326-byte,
+  thirteen-case fixture with SHA-256
+  `4429c00ca0154c9839138649a4f0db54207cfe7281962f131d7a82dde6af9239`.
+  Ten native transform outputs, two native rejections and one policy refusal
+  cover retained branches, exclusive user cuts and unwritten results. Its
+  restricted original-source execution reports no forbidden operations and
+  closes all 53 opened descriptors. The previous eleven-case graph fixture is
+  byte-identical. This is source-transform evidence, not full vendor RPC or
+  installed-package execution.
+- The app packages with `--build-only`, passes deep strict signature verification
+  and renders its bundled math resources through the verification CLI. The
+  compiled async-default guard passes on 858 Mach-O objects (app 221, Core 554),
+  with three local records and zero weak records. The native
+  UI runner also builds and signs without launching a window; its immutable
+  launcher verifier exercises the new private Pi namespace, version, state,
+  entries and refusal envelopes. All 67 Python harness tests pass, with the five
+  affected Pi-peer tests rerun after bounded input handling. Three additive Pi
+  GUI scenarios bring the hosted gate to 24 with zero allowed skips. Actual
+  hosted execution of those scenarios remains pending; no local GUI or system
+  app installation is used for these checks.
+- Hosted [run 39863932911](https://github.com/apoorvdarshan/coincide/actions/runs/39863932911)
+  at `5c71a5c92006b02f3569119dd46408f246747380` passes its Swift build/test,
+  async-default guard, packaging, signature and resource-loading steps. Its
+  separate 21-scenario native GUI job is still running when this batch is
+  recorded. The current harness also repairs two Claude-history lookups to use
+  the Codable `review.id`; the computed operation `id` is not a serialized key.
+  That repair does not establish a hosted GUI result.
+- Pi 0.80.5 installed-package/RPC acceptance remains unverified. In particular,
+  nonempty cuts that have not produced a native session file, including a
+  model/thinking-only first-user reset, remain unavailable rather than being
+  relabeled empty. Session browsing/import, broader native extension behavior,
+  provider parity and full GUI acceptance remain unfinished. See
+  [PI_HISTORY.md](PI_HISTORY.md) and [PROVIDER_PARITY.md](PROVIDER_PARITY.md).
+
 ## 2026-10-23 — captured Pi runtime and durable native entry evidence
 
 - Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with

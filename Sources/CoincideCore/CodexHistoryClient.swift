@@ -81,7 +81,7 @@ struct CodexHistoryClient: Sendable {
             let previous = turns.indices.contains(i + 1) ? turns[i + 1] : nil
             guard previous == nil || previous?.status.isTerminal == true else { throw ProviderHistoryError(.boundaryUnavailable) }
             expectedHead = previous?.id
-        case .beforeMessage, .throughMessage, .throughClaudeMessage, .freshClaudeSession: throw ProviderHistoryError(.unsupported)
+        case .beforeMessage, .throughMessage, .throughClaudeMessage, .freshClaudeSession, .beforePiUserEntry, .freshPiSession: throw ProviderHistoryError(.unsupported)
         }
         var params: [String: JSONValue] = ["threadId": .string(source.nativeThreadID), "cwd": .string(configuration.workspacePath),
             "approvalPolicy": configuration.permission.approvalPolicy, "approvalsReviewer": configuration.permission.reviewer,
@@ -90,7 +90,7 @@ struct CodexHistoryClient: Sendable {
         if !configuration.model.isEmpty { params["model"] = .string(configuration.model) }
         if let effort = configuration.reasoningEffort { params["config"] = .object(["model_reasoning_effort": .string(effort)]) }
         switch boundary { case .head: break; case .throughTurn(let id): params["lastTurnId"] = .string(id); case .beforeTurn(let id): params["beforeTurnId"] = .string(id)
-        case .beforeMessage, .throughMessage, .throughClaudeMessage, .freshClaudeSession: throw ProviderHistoryError(.unsupported) }
+        case .beforeMessage, .throughMessage, .throughClaudeMessage, .freshClaudeSession, .beforePiUserEntry, .freshPiSession: throw ProviderHistoryError(.unsupported) }
         try Task.checkCancellation()
         let response = try await request("thread/fork", params: .object(params), deadline: deadline, mutation: true)
         do {

@@ -75,6 +75,9 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var acpAgent: ACPAgentConfiguration?
     public var openCodeConfiguration: OpenCodeConfiguration?
     public var piConfiguration: PiConfiguration?
+    public var piFreshSessionIntent: PiFreshSessionIntent?
+    public var piFreshConsumerRunID: UUID?
+    public var piFreshContextResolutions: [PiFreshContextResolution]?
     public var museConfiguration: MuseConfiguration?
     public var antigravityConfiguration: AntigravityConfiguration?
     public var agentModeID: String?
@@ -116,6 +119,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
         case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
+        case piFreshSessionIntent, piFreshConsumerRunID, piFreshContextResolutions
         case museConfiguration
         case antigravityConfiguration, codexRuntimeConfiguration
         case claudeRuntimeConfiguration, claudeResumeSelection, claudeResumeConsumerRunID, claudeInheritedHead
@@ -139,6 +143,9 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         acpAgent = try values.decodeIfPresent(ACPAgentConfiguration.self, forKey: .acpAgent)
         openCodeConfiguration = try values.decodeIfPresent(OpenCodeConfiguration.self, forKey: .openCodeConfiguration)
         piConfiguration = try values.decodeIfPresent(PiConfiguration.self, forKey: .piConfiguration)
+        piFreshSessionIntent = try values.decodeIfPresent(PiFreshSessionIntent.self, forKey: .piFreshSessionIntent)
+        piFreshConsumerRunID = try values.decodeIfPresent(UUID.self, forKey: .piFreshConsumerRunID)
+        piFreshContextResolutions = try values.decodeIfPresent([PiFreshContextResolution].self, forKey: .piFreshContextResolutions)
         museConfiguration = try values.decodeIfPresent(MuseConfiguration.self, forKey: .museConfiguration)
         antigravityConfiguration = try values.decodeIfPresent(AntigravityConfiguration.self, forKey: .antigravityConfiguration)
         agentModeID = try values.decodeIfPresent(String.self, forKey: .agentModeID)
@@ -252,6 +259,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
                 files.error = accepted ? ConversationHistoryFilesState.notStartedMessage : ConversationHistoryFilesState.unconfirmedMessage
                 files.updatedAt = Date(); operation.files = files; operation.updatedAt = files.updatedAt
             }
+            operation.piControls = nil
             operation.recoverMaintenanceAfterProcessRestart()
             conversationHistoryOperations?[i] = operation
         }

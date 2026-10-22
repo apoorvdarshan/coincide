@@ -484,19 +484,31 @@ extension WorkspaceEngine {
               let incarnation = threadIncarnations[threadID],
               let record = thread.runHistory?.first(where: { $0.id == runID && $0.removedByHistoryOperationID == nil }),
               record.status.isTerminal,
-              record.providerThreadID == thread.providerThreadID || thread.provider == .claude || (thread.provider == .opencode && thread.openCodeConfiguration?.generation == .v1),
+              record.providerThreadID == thread.providerThreadID || thread.provider == .claude || thread.provider == .pi || (thread.provider == .opencode && thread.openCodeConfiguration?.generation == .v1),
               record.configuration.provider == thread.provider,
               record.configuration.workspacePath == thread.workspacePath else {
             throw WorkspaceCommandError("Finish this conversation's work and select a run with verified provider history before continuing.")
         }
         let fingerprint = try revision.snapshot.historySourceFingerprint(threadID: threadID)
         let rawPrefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
-        var prefix = kind == .forkAfterRun && thread.provider != .claude ? try revision.snapshot.verifiedForkPrefix(rawPrefix) : rawPrefix
+        var prefix = kind == .forkAfterRun && thread.provider != .claude && thread.provider != .pi ? try revision.snapshot.verifiedForkPrefix(rawPrefix) : rawPrefix
         let native: ReviewedNativeHistory?
         let claude: ClaudeHistoryReviewEvidence?
         let openCodeV1: OpenCodeV1HistoryReviewEvidence?
         let openCodeV2: OpenCodeV2HistoryReviewEvidence?
-        if thread.provider == .claude {
+        let pi: PiHistoryReviewEvidence?
+        let reviewID = UUID()
+        if thread.provider == .pi {
+            guard thread.piConfiguration?.runtime != nil, piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
+            let observed = try await readPiHistorySnapshot(thread: thread)
+            guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: fingerprint),
+                  piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            pi = try PiHistoryReviewEvidence.make(source: observed, snapshot: revision.snapshot, thread: thread,
+                runID: runID, kind: kind, operationID: reviewID)
+            if let pi { prefix = try revision.snapshot.verifiedPiHistoryPrefix(rawPrefix, evidence: pi, threadID: threadID, fork: kind == .forkAfterRun) }
+            native = nil; claude = nil; openCodeV1 = nil; openCodeV2 = nil
+        } else if thread.provider == .claude {
+            pi = nil
             guard let nativeID = thread.providerThreadID, claudeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
             // Claude flushes native metadata while its idle process closes. The
             // reviewed revision must include that flush; accepting an earlier
@@ -514,6 +526,7 @@ extension WorkspaceEngine {
             prefix = try revision.snapshot.verifiedClaudeHistoryPrefix(rawPrefix, evidence: evidence, threadID: threadID, fork: kind == .forkAfterRun)
             claude = evidence; native = nil; openCodeV1 = nil; openCodeV2 = nil
         } else if thread.provider == .opencode, thread.openCodeConfiguration?.generation == .v1 {
+            pi = nil
             claude = nil
             guard openCodeHistoryScopeIsolated(thread: thread), let nativeID = thread.providerThreadID else { throw ProviderHistoryError(.notIdle) }
             let observed = try await readHistory(thread: thread) { try await $0.openCodeV1HistorySnapshot(threadID: nativeID) }
@@ -525,6 +538,7 @@ extension WorkspaceEngine {
             native = .init(snapshot: try .init(reference: observed.reference, workspacePath: observed.workspacePath,
                 historyMode: .messageOrdered, openCodeV1: observed), boundary: evidence.boundary, resultingHead: nil)
         } else if thread.provider == .opencode, thread.openCodeConfiguration?.generation == .v2 {
+            pi = nil
             claude = nil
             guard openCodeHistoryScopeIsolated(thread: thread), let nativeID = thread.providerThreadID else { throw ProviderHistoryError(.notIdle) }
             let observed = try await readHistory(thread: thread) { try await $0.openCodeV2HistorySnapshot(threadID: nativeID) }
@@ -536,6 +550,7 @@ extension WorkspaceEngine {
             native = .init(snapshot: try .init(reference: observed.reference, workspacePath: observed.workspacePath,
                 historyMode: .messageOrdered, openCodeV2: observed), boundary: evidence.boundary, resultingHead: nil)
         } else {
+            pi = nil
             claude = nil; openCodeV1 = nil; openCodeV2 = nil
             native = try await readHistory(thread: thread) { session in
                 try await Self.readReviewedNativeHistory(session: session, thread: thread, runID: runID, kind: kind)
@@ -545,10 +560,10 @@ extension WorkspaceEngine {
               revision.snapshot.canReviewConversationHistory(threadID: threadID) else { throw ProviderHistoryError(.historyChanged) }
         let activeRecords = (thread.runHistory ?? []).filter { $0.removedByHistoryOperationID == nil }
         guard let index = activeRecords.firstIndex(where: { $0.id == runID }),
-              native?.snapshot.headTurnID != nil || openCodeV2 != nil || openCodeV1 != nil || claude != nil else { throw ProviderHistoryError(.boundaryUnavailable) }
-        guard let sourceReference = claude?.source.reference ?? native?.snapshot.reference,
-              let boundary = claude?.boundary.providerBoundary ?? native?.boundary else { throw ProviderHistoryError(.boundaryUnavailable) }
-        let review = try ConversationHistoryReview(kind: kind, sourceThreadID: threadID, projectID: thread.projectID,
+              native?.snapshot.headTurnID != nil || openCodeV2 != nil || openCodeV1 != nil || claude != nil || pi != nil else { throw ProviderHistoryError(.boundaryUnavailable) }
+        guard let sourceReference = pi?.source.reference ?? claude?.source.reference ?? native?.snapshot.reference,
+              let boundary = pi?.boundary.providerBoundary ?? claude?.boundary.providerBoundary ?? native?.boundary else { throw ProviderHistoryError(.boundaryUnavailable) }
+        let review = try ConversationHistoryReview(id: reviewID, kind: kind, sourceThreadID: threadID, projectID: thread.projectID,
             runID: runID, sourceIncarnation: incarnation, sourceConfiguration: .init(thread: thread),
             targetConfiguration: record.configuration, sourceReference: sourceReference,
             reviewedHeadTurnID: native?.snapshot.headTurnID, boundary: boundary, expectedResultHeadTurnID: native?.resultingHead,
@@ -557,7 +572,7 @@ extension WorkspaceEngine {
             sourceFingerprint: fingerprint, targetThreadID: kind == .forkAfterRun ? UUID() : nil,
             suggestedTitle: String((thread.title + " — Fork").prefix(200)),
             recallPromptOnSuccess: kind == .rewindBeforeRun && recallPromptOnSuccess ? true : nil,
-            openCodeV2: openCodeV2, openCodeV1: openCodeV1, claude: claude)
+            openCodeV2: openCodeV2, openCodeV1: openCodeV1, claude: claude, pi: pi)
         historyReviews[review.id] = .init(review: review, digest: try historyReviewDigest(review))
         return review
     }
@@ -575,7 +590,8 @@ extension WorkspaceEngine {
             kind: .rewindBeforeRun, recallPromptOnSuccess: keepReview.recallPromptOnSuccess == true)
         var prepared: GitCheckpointRestoreReview?
         do {
-            guard (fresh.boundary == keepReview.boundary || (fresh.claude.map { value in keepReview.claude.map { value.sameLogicalBoundary(as: $0) } == true } == true)), fresh.reviewedHeadTurnID == keepReview.reviewedHeadTurnID,
+            guard (fresh.boundary == keepReview.boundary || (fresh.claude.map { value in keepReview.claude.map { value.sameLogicalBoundary(as: $0) } == true } == true) ||
+                   (fresh.pi.map { value in keepReview.pi.map { value.sameLogicalBoundary(as: $0) } == true } == true)), fresh.reviewedHeadTurnID == keepReview.reviewedHeadTurnID,
                   let thread = revision.snapshot.threads.first(where: { $0.id == fresh.sourceThreadID }),
                   revision.snapshot.canReviewCheckpointRestore(threadID: thread.id),
                   case .available(let target) = try revision.snapshot.conversationHistoryFileTarget(for: fresh),
@@ -597,7 +613,7 @@ extension WorkspaceEngine {
                 removedRunIDs: fresh.removedRunIDs, removedMessageIDs: fresh.removedMessageIDs,
                 sourceFingerprint: fresh.sourceFingerprint, targetThreadID: fresh.targetThreadID,
                 suggestedTitle: fresh.suggestedTitle, files: files, recallPromptOnSuccess: fresh.recallPromptOnSuccess,
-                openCodeV2: fresh.openCodeV2, openCodeV1: fresh.openCodeV1, claude: keepReview.claude ?? fresh.claude)
+                openCodeV2: fresh.openCodeV2, openCodeV1: fresh.openCodeV1, claude: keepReview.claude ?? fresh.claude, pi: fresh.pi)
             guard ownsHistorySource(threadID: review.sourceThreadID, incarnation: review.sourceIncarnation, fingerprint: review.sourceFingerprint),
                   restoreRuntimeScopeIsolated(thread: thread, path: git.currentPlan.repositoryPath) else { throw CancellationError() }
             try revision.snapshot.validateConversationHistoryFilesReview(review)
@@ -657,6 +673,7 @@ extension WorkspaceEngine {
               thread.runtimeRequests.isEmpty,
               try revision.snapshot.historySourceFingerprint(threadID: thread.id) == operation.review.sourceFingerprint else { throw ProviderHistoryError(.historyChanged) }
         let expected = operation.review
+        if expected.pi != nil { return try await reconcilePiHistory(operation: operation, thread: thread, incarnation: incarnation) }
         if expected.claude != nil { return try await reconcileClaudeHistory(operation: operation, thread: thread, incarnation: incarnation) }
         if expected.openCodeV1 != nil { return try await reconcileOpenCodeV1History(operation: operation, thread: thread, incarnation: incarnation) }
         if expected.openCodeV2 != nil { return try await reconcileOpenCodeV2History(operation: operation, thread: thread, incarnation: incarnation) }
@@ -757,6 +774,15 @@ extension WorkspaceEngine {
     }
     private func ownsHistoryEvent(_ command: EngineCommand) -> Bool {
         switch command {
+        case .piFreshSessionResolved(let threadID, let incarnation, _, _, _): return threadIncarnations[threadID] == incarnation
+        case .conversationHistoryPiCandidateObserved(let id, _, let incarnation),
+             .conversationHistoryPiControlsOpened(let id, _, let incarnation),
+             .conversationHistoryPiControlEvent(let id, _, _, let incarnation),
+             .conversationHistoryPiControlResponding(let id, _, _, _, let incarnation),
+             .conversationHistoryPiControlsClosed(let id, _, let incarnation),
+             .conversationHistoryPiCancelled(let id, let incarnation):
+            guard let operation = revision.snapshot.conversationHistoryOperation(id) else { return false }
+            return operation.review.sourceIncarnation == incarnation && threadIncarnations[operation.review.sourceThreadID] == incarnation
         case .claudeResumeInspected(let thread, let incarnation, _, _, _): return threadIncarnations[thread] == incarnation
         case .conversationHistoryAccepted(let review, _):
             return threadIncarnations[review.sourceThreadID] == review.sourceIncarnation
@@ -888,6 +914,7 @@ extension WorkspaceEngine {
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
               ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint) else { return .cancelled }
         let review = operation.review
+        if review.pi != nil { return await performPiConversationHistory(operation: operation, thread: thread, incarnation: incarnation) }
         if review.claude != nil { return await performClaudeConversationHistory(request, operation: operation, thread: thread, incarnation: incarnation) }
         if review.openCodeV1 != nil || review.openCodeV2 != nil {
             do { try await drainOpenCodeHistoryCleanup(thread: thread) }
@@ -1001,6 +1028,518 @@ extension WorkspaceEngine {
               openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [candidate.reference.nativeThreadID]) else {
             throw ProviderHistoryError(.outcomeUncertain)
         }
+    }
+}
+
+extension WorkspaceEngine {
+    private func piHistoryScopeIsolated(thread: CodingThread, additionalNativeFiles: [String] = []) -> Bool {
+        guard thread.provider == .pi, thread.piConfiguration?.runtime != nil, let native = thread.providerThreadID else { return false }
+        let files = [native] + additionalNativeFiles + (revision.snapshot.conversationHistoryOperations ?? []).filter {
+            $0.review.sourceThreadID == thread.id && $0.review.pi != nil && $0.locksSource
+        }.flatMap { ($0.piCandidates ?? []).compactMap(\.nativeSessionFile) }
+        func matches(_ configuration: ProviderConfiguration, _ path: String?) -> Bool {
+            configuration.provider == .pi && (path ?? configuration.nativeThreadID).map { candidate in
+                files.contains { PiHistoryScope.sameFile($0, candidate) }
+            } == true
+        }
+        if revision.snapshot.threads.contains(where: { other in
+            other.id != thread.id && files.contains { revision.snapshot.hasPiHistoryCapture(other, nativeSessionFile: $0) }
+        }) { return false }
+        if metadataSessions.values.contains(where: { metadata in
+            metadata.threadID != thread.id && (matches(metadata.launchConfiguration, nil) || metadata.configuration.map { matches($0, nil) } == true)
+        }) || historyReads.values.contains(where: { $0.threadID != thread.id && matches($0.configuration, nil) }) { return false }
+        for (operationID, job) in piHistoryJobs where job.threadID != thread.id && !job.closing {
+            if let proof = revision.snapshot.conversationHistoryOperation(operationID)?.review.pi,
+               files.contains(where: { PiHistoryScope.sameFile($0, proof.source.reference.nativeThreadID) }) { return false }
+        }
+        return !cleanupTasks.values.contains { $0.threadIDs.contains(thread.id) }
+    }
+
+    private func readPiFiles<Value: Sendable>(thread: CodingThread,
+        operation: @escaping @Sendable (PiHistoryService) throws -> Value) async throws -> Value {
+        guard !closing, !stoppingEffects, fatalError == nil, let configuration = thread.piConfiguration?.runtime,
+              let incarnation = threadIncarnations[thread.id], piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
+        let service = try PiHistoryService(configuration: configuration), token = UUID()
+        let task = Task.detached { try Task.checkCancellation(); return try operation(service) }
+        historyReads[token] = .init(threadID: thread.id, projectID: thread.projectID,
+            drain: Task { _ = try? await task.value }, cancel: { task.cancel() }, configuration: .init(thread: thread))
+        defer { historyReads.removeValue(forKey: token) }
+        do {
+            let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard !closing, !stoppingEffects, fatalError == nil, threadIncarnations[thread.id] == incarnation,
+                  revision.snapshot.threads.first(where: { $0.id == thread.id })?.piConfiguration?.runtime == configuration,
+                  piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            return result
+        } catch { task.cancel(); _ = await task.result; throw error }
+    }
+
+    private func readPiHistorySnapshot(thread: CodingThread) async throws -> PiHistorySnapshot {
+        guard let native = thread.providerThreadID, piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
+        if let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == .pi,
+           runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.path == thread.workspacePath {
+            return try await readHistory(thread: thread) { try await $0.piHistorySnapshot(threadID: native) }
+        }
+        if let proof = thread.activeHistoryRuns.last(where: { $0.providerThreadID == native && $0.pi?.finalObservation != nil })?.pi {
+            return try await readPiFiles(thread: thread) { try $0.readSnapshot(nativeSessionFile: native, latestRun: proof, freshIntent: thread.piFreshSessionIntent) }
+        }
+        let observations = (revision.snapshot.conversationHistoryOperations ?? []).filter {
+            $0.phase == .applied && ($0.review.sourceThreadID == thread.id || $0.review.targetThreadID == thread.id) &&
+            $0.result?.pi?.snapshot.reference.nativeThreadID == native
+        }.compactMap { $0.result?.pi?.snapshot }
+        guard let expected = observations.last else { throw ProviderHistoryError(.boundaryUnavailable) }
+        return try await readPiFiles(thread: thread) { try $0.inspectOriginal(expected: expected) }
+    }
+
+    private func routeProviderEvent(threadID: UUID, runtimeID: UUID, event: ProviderEvent) async throws {
+        if let (operationID, job) = piHistoryJobs.first(where: { $0.value.threadID == threadID && ($0.value.reusedRuntimeID == runtimeID || $0.value.sourceRuntimeID == runtimeID) }) {
+            if job.reusedRuntimeID != runtimeID {
+                switch event {
+                case .piHistoryBarrier: break
+                case .thread, .configuration, .steeringCapabilitiesChanged: return
+                default: piHistoryStreamFailed(operationID: operationID, sessionID: job.id); return
+                }
+            }
+            await receivePiHistoryEvent(operationID: operationID, sessionID: job.id, event: event)
+            return
+        }
+        var routed = event
+        if case .thread(let nativeID) = event,
+           let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+           revision.snapshot.isPiHistoryScopeLocked(configuration: thread.activeRun?.configuration ?? .init(thread: thread), nativeThreadID: nativeID) {
+            routed = .connectionClosed("This Pi conversation is held by a pending history action.")
+        }
+        _ = try await enqueue(.provider(threadID: threadID, runtimeID: runtimeID, event: routed))
+    }
+    private func piRuntimeStreamEnded(threadID: UUID, runtimeID: UUID) {
+        guard let (operationID, job) = piHistoryJobs.first(where: { $0.value.threadID == threadID && ($0.value.reusedRuntimeID == runtimeID || $0.value.sourceRuntimeID == runtimeID) }) else { return }
+        piHistoryStreamFailed(operationID: operationID, sessionID: job.id)
+    }
+    private func receivePiHistoryEvent(operationID: UUID, sessionID: UUID, event: ProviderEvent) async {
+        guard let job = piHistoryJobs[operationID], job.id == sessionID, !job.closing else { return }
+        switch event {
+        case .piHistoryBarrier(let barrierID):
+            guard let waiter = piHistoryJobs[operationID]?.barrierWaiters.removeValue(forKey: barrierID) else {
+                piHistoryStreamFailed(operationID: operationID, sessionID: sessionID); return
+            }
+            waiter.resume()
+        case .sessionApproval, .sessionApprovalDismissed:
+            do {
+                let receipt = try await enqueue(.conversationHistoryPiControlEvent(operationID: operationID,
+                    sessionID: sessionID, event: event, incarnation: job.incarnation))
+                if receipt.rejection != nil { piHistoryStreamFailed(operationID: operationID, sessionID: sessionID) }
+            } catch { piHistoryStreamFailed(operationID: operationID, sessionID: sessionID) }
+        case .thread, .steeringCapabilitiesChanged, .configuration: break // Never adopt a native ID from a history worker event.
+        default: piHistoryStreamFailed(operationID: operationID, sessionID: sessionID)
+        }
+    }
+    private func piHistoryStreamFailed(operationID: UUID, sessionID: UUID) {
+        guard let job = piHistoryJobs[operationID], job.id == sessionID, !job.closing else { return }
+        piHistoryJobs[operationID]?.streamFailed = true
+        _ = beginPiHistoryClose(operationID)
+    }
+    private func beginPiHistoryClose(_ operationID: UUID) -> Task<Void, Never>? {
+        guard let job = piHistoryJobs[operationID] else { return nil }
+        if let close = job.closeTask { return close }
+        piHistoryJobs[operationID]?.closing = true
+        job.operation?.cancel(); for response in job.responses.values { response.cancel() }
+        for request in job.barrierRequests.values { request.cancel() }
+        let waiters = job.barrierWaiters
+        piHistoryJobs[operationID]?.barrierWaiters = [:]
+        for waiter in waiters.values { waiter.resume(throwing: CancellationError()) }
+        if let id = job.reusedRuntimeID, runtimes[job.threadID]?.id == id { runtimes.removeValue(forKey: job.threadID) }
+        let failedSource: Runtime?
+        if job.streamFailed, let id = job.sourceRuntimeID, id != job.reusedRuntimeID, runtimes[job.threadID]?.id == id {
+            failedSource = runtimes.removeValue(forKey: job.threadID)
+        } else { failedSource = nil }
+        let close = Task {
+            await job.session.close()
+            if let failedSource { await failedSource.session.close(); failedSource.reader?.cancel(); await failedSource.reader?.value }
+            job.reader?.cancel(); await job.reader?.value
+            if let operation = job.operation { _ = await operation.result }
+            for response in job.responses.values { _ = await response.result }
+            for request in job.barrierRequests.values { await request.value }
+        }
+        piHistoryJobs[operationID]?.closeTask = close
+        return close
+    }
+    private func finishPiHistoryJob(_ operationID: UUID, sessionID: UUID, preservingReusedRuntime: Bool = false) async {
+        if preservingReusedRuntime, let job = piHistoryJobs[operationID], job.id == sessionID {
+            // The source's single reader remains attached. Only this history
+            // job's already settled tasks are joined; canceling that reader
+            // would terminate AsyncStream and lose the original live leaf.
+            if let operation = job.operation { _ = await operation.result }
+            for response in job.responses.values { _ = await response.result }
+            for request in job.barrierRequests.values { await request.value }
+        } else if let close = beginPiHistoryClose(operationID) { await close.value }
+        guard let job = piHistoryJobs[operationID], job.id == sessionID else { return }
+        if !closing, fatalError == nil {
+            _ = try? await enqueue(.conversationHistoryPiControlsClosed(operationID: operationID, sessionID: sessionID, incarnation: job.incarnation))
+        }
+        piHistoryJobs.removeValue(forKey: operationID)
+    }
+
+    private func performPiConversationHistory(operation: ConversationHistoryOperation, thread: CodingThread,
+                                               incarnation: UUID) async -> EffectResult {
+        let review = operation.review
+        guard let evidence = review.pi, piHistoryJobs[operation.id] == nil, piHistoryScopeIsolated(thread: thread) else {
+            return .failed(ConversationHistoryOperation.failureMessage)
+        }
+        if let files = review.files {
+            do {
+                try revision.snapshot.validateConversationHistoryFilesReview(review, excludingOperationID: operation.id)
+                guard restoreRuntimeScopeIsolated(thread: thread, path: files.gitReview.currentPlan.repositoryPath),
+                      try await readCheckpointRestore(thread: thread, operation: { try await $0.inspectRestore(review: files.gitReview) }) == .notStarted else { throw ProviderHistoryError(.notIdle) }
+            } catch { return .failed(ConversationHistoryOperation.failureMessage) }
+        }
+        var dispatched = false
+        var jobID: UUID?
+        var preserveSource = false
+        var preservedRuntimeID: UUID?
+        var result: EffectResult
+        do {
+            try Task.checkCancellation()
+            let dispatch = try await enqueue(.conversationHistoryDispatching(threadID: thread.id, operationID: operation.id, incarnation: incarnation))
+            guard dispatch.rejection == nil, ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                  revision.snapshot.conversationHistoryOperation(operation.id)?.phase == .dispatching,
+                  piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            let session: any ProviderSession, reused: UUID?, reader: Task<Void, Never>?
+            if review.kind == .rewindBeforeRun, let attached = runtimes[thread.id], attached.id == thread.runtimeID,
+               attached.provider == .pi, attached.path == thread.workspacePath,
+               attached.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding {
+                session = attached.session; reused = attached.id; reader = attached.reader
+            } else {
+                var configured = thread
+                configured.activeRun = nil; configured.runtimeID = nil; configured.runtimeRequests = []; configured.state = .idle
+                if review.kind == .forkAfterRun {
+                    guard let project = revision.snapshot.projects.first(where: { $0.id == thread.projectID }), let target = review.targetThreadID else { throw CancellationError() }
+                    configured = CodingThread(project: project, model: review.targetConfiguration.model)
+                    configured.id = target; configured.provider = .pi; configured.workspacePath = review.targetConfiguration.workspacePath
+                    configured.permission = review.targetConfiguration.permission; configured.piConfiguration = review.targetConfiguration.piConfiguration
+                }
+                session = try factory(configured); reused = nil; reader = nil
+            }
+            let id = UUID(); jobID = id
+            let sourceRuntime = runtimes[thread.id].flatMap { attached in
+                attached.provider == .pi && attached.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding ? attached.id : nil
+            }
+            piHistoryJobs[operation.id] = .init(id: id, threadID: thread.id, projectID: thread.projectID,
+                incarnation: incarnation, session: session, reusedRuntimeID: reused, sourceRuntimeID: sourceRuntime, reader: reader)
+            let opened = try await enqueue(.conversationHistoryPiControlsOpened(operationID: operation.id, sessionID: id, incarnation: incarnation))
+            guard opened.rejection == nil, ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                  piHistoryJobs[operation.id]?.closing == false else { throw CancellationError() }
+            if reused == nil {
+                let stream = session.events
+                piHistoryJobs[operation.id]?.reader = Task { [weak self] in
+                    for await event in stream {
+                        guard let self else { return }
+                        await self.receivePiHistoryEvent(operationID: operation.id, sessionID: id, event: event)
+                    }
+                    await self?.piHistoryStreamFailed(operationID: operation.id, sessionID: id)
+                }
+            }
+            if review.kind == .forkAfterRun { try await verifyPiHistorySourceRuntime(operationID: operation.id, sessionID: id, expected: evidence.source) }
+            try Task.checkCancellation(); dispatched = true
+            let configuration = review.kind == .rewindBeforeRun ? review.sourceConfiguration : review.targetConfiguration
+            let native = Task { [weak self] in
+                guard let self else { throw CancellationError() }
+                return try await session.applyPiHistory(review: evidence, configuration: configuration, operationID: operation.id) { candidate in
+                    try await self.publishPiHistoryCandidate(candidate, review: review, sessionID: id, incarnation: incarnation)
+                }
+            }
+            piHistoryJobs[operation.id]?.operation = native
+            let observed = try await withTaskCancellationHandler { try await native.value } onCancel: {
+                native.cancel(); Task { [weak self] in _ = await self?.beginPiHistoryClose(operation.id) }
+            }
+            if review.kind == .forkAfterRun { try await verifyPiHistorySourceRuntime(operationID: operation.id, sessionID: id, expected: evidence.source) }
+            try await flushPiHistoryEvents(operationID: operation.id, sessionID: id)
+            try Task.checkCancellation(); try review.validateResult(observed)
+            guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                  let job = piHistoryJobs[operation.id], job.id == id, !job.closing, !job.streamFailed,
+                  let current = revision.snapshot.conversationHistoryOperation(operation.id), current.phase == .dispatching,
+                  (current.piCandidates ?? []) == (observed.pi?.candidates ?? []), piHistoryScopeIsolated(thread: thread) else {
+                throw ProviderHistoryError(.outcomeUncertain)
+            }
+            result = .conversationHistoryConfirmed(observed)
+        } catch {
+            let knownNativeWrite = revision.snapshot.conversationHistoryOperation(operation.id)?.piCandidates?.contains(where: { $0.nativeSessionFile != nil }) == true
+            if dispatched, knownNativeWrite || error is CancellationError || (error as? ProviderHistoryError)?.kind == .outcomeUncertain || !(error is ProviderHistoryError) {
+                result = .conversationHistoryUnconfirmed
+            } else { result = .failed(ConversationHistoryOperation.failureMessage) }
+        }
+        if let jobID, let job = piHistoryJobs[operation.id], job.id == jobID, job.reusedRuntimeID != nil,
+           !job.closing, !job.streamFailed, (revision.snapshot.conversationHistoryOperation(operation.id)?.piCandidates ?? []).isEmpty {
+            let conclusiveUnchanged: Bool
+            if case .failed = result { conclusiveUnchanged = true }
+            else if case .conversationHistoryConfirmed(let observed) = result { conclusiveUnchanged = observed.pi?.source == observed.pi?.snapshot }
+            else { conclusiveUnchanged = false }
+            if conclusiveUnchanged {
+                do {
+                    let unchanged = try await job.session.piHistorySnapshot(threadID: evidence.source.reference.nativeThreadID)
+                    guard unchanged == evidence.source else { throw ProviderHistoryError(.historyChanged) }
+                    try await flushPiHistoryEvents(operationID: operation.id, sessionID: jobID)
+                    guard let current = piHistoryJobs[operation.id], !current.closing, !current.streamFailed,
+                          runtimes[thread.id]?.id == job.reusedRuntimeID else { throw ProviderHistoryError(.historyChanged) }
+                    preserveSource = true
+                    preservedRuntimeID = job.reusedRuntimeID
+                } catch { result = .conversationHistoryUnconfirmed }
+            }
+        }
+        if let jobID { await finishPiHistoryJob(operation.id, sessionID: jobID, preservingReusedRuntime: preserveSource) }
+        if case .conversationHistoryConfirmed(let observed) = result, let proof = observed.pi {
+            // Shutdown hooks can append native records. Do not publish an
+            // earlier revision after our own exact process has drained.
+            do {
+                let retainedLiveSource = preserveSource
+                _ = try await readPiFiles(thread: thread) { service in
+                    _ = try service.graph(expected: evidence.source)
+                    if retainedLiveSource { _ = try service.graph(expected: proof.snapshot); return proof.snapshot }
+                    return try service.inspectOriginal(expected: proof.snapshot)
+                }
+                guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                      revision.snapshot.conversationHistoryOperation(operation.id)?.phase == .dispatching else {
+                    throw ProviderHistoryError(.outcomeUncertain)
+                }
+            } catch {
+                result = .conversationHistoryUnconfirmed
+                if let preservedRuntimeID { await closeRuntime(thread.id, matching: preservedRuntimeID) }
+            }
+        }
+        return result
+    }
+    private func publishPiHistoryCandidate(_ candidate: PiHistoryCandidate, review: ConversationHistoryReview,
+                                          sessionID: UUID, incarnation: UUID) async throws {
+        guard let evidence = review.pi, ownsHistorySource(threadID: review.sourceThreadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              let job = piHistoryJobs[review.id], job.id == sessionID, !job.closing, !job.streamFailed,
+              let operation = revision.snapshot.conversationHistoryOperation(review.id), operation.review == review, operation.phase == .dispatching,
+              let thread = revision.snapshot.threads.first(where: { $0.id == review.sourceThreadID }),
+              piHistoryScopeIsolated(thread: thread, additionalNativeFiles: candidate.nativeSessionFile.map { [$0] } ?? []) else {
+            throw ProviderHistoryError(.outcomeUncertain)
+        }
+        try evidence.validateCandidate(candidate, previous: operation.piCandidates ?? [])
+        let receipt = try await enqueue(.conversationHistoryPiCandidateObserved(operationID: review.id, candidate: candidate, incarnation: incarnation))
+        guard receipt.rejection == nil, ownsHistorySource(threadID: review.sourceThreadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              piHistoryJobs[review.id]?.id == sessionID, piHistoryJobs[review.id]?.closing == false,
+              let saved = revision.snapshot.conversationHistoryOperation(review.id), saved.phase == .dispatching,
+              saved.piCandidates?.last == candidate,
+              piHistoryScopeIsolated(thread: thread, additionalNativeFiles: candidate.nativeSessionFile.map { [$0] } ?? []) else {
+            throw ProviderHistoryError(.outcomeUncertain)
+        }
+    }
+
+    private func verifyPiHistorySourceRuntime(operationID: UUID, sessionID: UUID, expected: PiHistorySnapshot) async throws {
+        guard let job = piHistoryJobs[operationID], job.id == sessionID, !job.closing else { throw ProviderHistoryError(.outcomeUncertain) }
+        guard let sourceID = job.sourceRuntimeID else { return }
+        guard let source = runtimes[job.threadID], source.id == sourceID else { throw ProviderHistoryError(.outcomeUncertain) }
+        let observed = try await source.session.piHistorySnapshot(threadID: expected.reference.nativeThreadID)
+        guard observed == expected, piHistoryJobs[operationID]?.closing == false else { throw ProviderHistoryError(.historyChanged) }
+        try await flushPiHistoryEvents(operationID: operationID, sessionID: sessionID, emitter: source.session)
+    }
+    private func flushPiHistoryEvents(operationID: UUID, sessionID: UUID, emitter: (any ProviderSession)? = nil) async throws {
+        try Task.checkCancellation()
+        let token = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                guard let job = piHistoryJobs[operationID], job.id == sessionID, !job.closing, !job.streamFailed else {
+                    continuation.resume(throwing: ProviderHistoryError(.outcomeUncertain)); return
+                }
+                piHistoryJobs[operationID]?.barrierWaiters[token] = continuation
+                let session = emitter ?? job.session
+                piHistoryJobs[operationID]?.barrierRequests[token] = Task { [weak self] in
+                    do { try await session.piHistoryEventBarrier(token) }
+                    catch { await self?.piHistoryBarrierFailed(operationID: operationID, sessionID: sessionID, token: token) }
+                }
+            }
+        } onCancel: { Task { [weak self] in _ = await self?.beginPiHistoryClose(operationID) } }
+        if let emitter = piHistoryJobs[operationID]?.barrierRequests.removeValue(forKey: token) { await emitter.value }
+        try Task.checkCancellation()
+        guard let job = piHistoryJobs[operationID], job.id == sessionID, !job.closing, !job.streamFailed else {
+            throw ProviderHistoryError(.outcomeUncertain)
+        }
+    }
+    private func piHistoryBarrierFailed(operationID: UUID, sessionID: UUID, token: UUID) {
+        guard piHistoryJobs[operationID]?.id == sessionID else { return }
+        piHistoryJobs[operationID]?.barrierWaiters.removeValue(forKey: token)?.resume(throwing: ProviderHistoryError(.outcomeUncertain))
+        piHistoryStreamFailed(operationID: operationID, sessionID: sessionID)
+    }
+
+    @discardableResult public func respondPiHistory(operationID: UUID, sessionID: UUID, requestID: JSONValue,
+                                                    response: ProviderApprovalResponse) async throws -> WorkspaceCommandReceipt {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil, let job = piHistoryJobs[operationID], job.id == sessionID,
+              !job.closing, !job.streamFailed, let operation = revision.snapshot.conversationHistoryOperation(operationID),
+              operation.phase == .dispatching, operation.piControls?.sessionID == sessionID,
+              let request = operation.piControls?.requests.first(where: { $0.id == requestID && !$0.responding })?.request,
+              ownsHistorySource(threadID: job.threadID, incarnation: job.incarnation, fingerprint: operation.review.sourceFingerprint) else {
+            throw WorkspaceCommandError("This Pi lifecycle request belongs to an expired history worker.")
+        }
+        let receipt = try await enqueue(.conversationHistoryPiControlResponding(operationID: operationID, sessionID: sessionID,
+            requestID: requestID, response: response, incarnation: job.incarnation))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        guard piHistoryJobs[operationID]?.id == sessionID, piHistoryJobs[operationID]?.closing == false,
+              revision.snapshot.conversationHistoryOperation(operationID)?.piControls?.requests.contains(where: { $0.id == requestID && $0.responding }) == true else {
+            throw WorkspaceCommandError("The Pi lifecycle request changed before its response was sent.")
+        }
+        let token = UUID(), session = job.session
+        let task = Task<Void, any Error> {
+            try Task.checkCancellation()
+            switch response {
+            case .decision(let allow): try await session.respond(request, allow: allow)
+            case .option(let option): try await session.choose(request, optionID: option)
+            case .answers(let answers): try await session.answer(request, answers: answers)
+            case .selections, .selectionsWithNotes: throw ProviderHistoryError(.invalidRequest)
+            }
+        }
+        piHistoryJobs[operationID]?.responses[token] = task
+        do {
+            try await withTaskCancellationHandler { try await task.value } onCancel: {
+                task.cancel(); Task { [weak self] in _ = await self?.beginPiHistoryClose(operationID) }
+            }
+            if piHistoryJobs[operationID]?.id == sessionID { piHistoryJobs[operationID]?.responses.removeValue(forKey: token) }
+            return receipt
+        } catch {
+            if piHistoryJobs[operationID]?.id == sessionID { piHistoryJobs[operationID]?.responses.removeValue(forKey: token) }
+            piHistoryStreamFailed(operationID: operationID, sessionID: sessionID)
+            if let close = beginPiHistoryClose(operationID) { await close.value }
+            throw WorkspaceCommandError("The Pi lifecycle response could not be confirmed. It was not replayed.")
+        }
+    }
+    @discardableResult public func cancelPiHistory(operationID: UUID) async throws -> WorkspaceCommandReceipt {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let operation = revision.snapshot.conversationHistoryOperation(operationID), operation.review.pi != nil,
+              operation.isPending, let incarnation = threadIncarnations[operation.review.sourceThreadID] else {
+            throw WorkspaceCommandError("The Pi history action is no longer running.")
+        }
+        let receipt = try await enqueue(.conversationHistoryPiCancelled(operationID: operationID, incarnation: incarnation))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        effects[operationID]?.cancel()
+        if let close = beginPiHistoryClose(operationID) { await close.value }
+        if let effect = effects[operationID] { await effect.value }
+        return receipt
+    }
+    private func reconcilePiHistory(operation: ConversationHistoryOperation, thread: CodingThread,
+                                    incarnation: UUID) async throws -> WorkspaceCommandReceipt {
+        guard let evidence = operation.review.pi, let candidate = operation.piCandidates?.last,
+              candidate.stage != .reserved, piHistoryJobs[operation.id] == nil,
+              piHistoryScopeIsolated(thread: thread, additionalNativeFiles: candidate.nativeSessionFile.map { [$0] } ?? []) else {
+            throw ProviderHistoryError(.boundaryUnavailable)
+        }
+        let configuration = operation.review.kind == .rewindBeforeRun ? operation.review.sourceConfiguration : operation.review.targetConfiguration
+        let observed = try await readHistory(thread: thread, forceOwnedMetadata: true) {
+            try await $0.inspectPiHistoryCandidate(review: evidence, candidate: candidate, configuration: configuration)
+        }
+        try operation.review.validateResult(observed)
+        guard observed.pi?.candidates == operation.piCandidates,
+              ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperation(operation.id) == operation,
+              piHistoryScopeIsolated(thread: thread, additionalNativeFiles: candidate.nativeSessionFile.map { [$0] } ?? []) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        if let runtime = runtimes[thread.id] { await closeRuntime(thread.id, matching: runtime.id) }
+        guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperation(operation.id) == operation else { throw ProviderHistoryError(.historyChanged) }
+        let receipt = try await enqueue(.conversationHistoryReconciled(operationID: operation.id, incarnation: incarnation, result: .applied(observed)))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+    public func inspectPiOriginal(operationID: UUID) async throws -> PiHistorySnapshot {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let operation = revision.snapshot.conversationHistoryOperation(operationID), operation.phase == .unconfirmed,
+              let proof = operation.review.pi, piHistoryJobs[operationID] == nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == operation.review.sourceThreadID }),
+              let incarnation = threadIncarnations[thread.id], !thread.isBusy, thread.queuedTurns.isEmpty,
+              ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint),
+              piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+        let observed = try await readPiFiles(thread: thread) { try $0.inspectOriginal(expected: proof.source) }
+        guard observed == proof.source, revision.snapshot.conversationHistoryOperation(operationID) == operation,
+              ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        return observed
+    }
+    @discardableResult public func keepPiOriginal(operationID: UUID, expected: PiHistorySnapshot) async throws -> WorkspaceCommandReceipt {
+        try expected.validate()
+        let observed = try await inspectPiOriginal(operationID: operationID)
+        guard observed == expected, let operation = revision.snapshot.conversationHistoryOperation(operationID), operation.phase == .unconfirmed,
+              let incarnation = threadIncarnations[operation.review.sourceThreadID], piHistoryJobs[operationID] == nil else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        let receipt = try await enqueue(.conversationHistoryReconciled(operationID: operationID, incarnation: incarnation,
+            result: .piOriginalKept(observed)))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        if let files = operation.review.files {
+            await discardCheckpointRestoreScratch(files.gitReview, threadID: operation.review.sourceThreadID, projectID: operation.review.projectID)
+        }
+        return receipt
+    }
+
+    public func inspectPiFreshSession(threadID: UUID) async throws -> PiFreshSessionInspection {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              revision.snapshot.piFreshSessionNeedsInspection(threadID: threadID),
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              let intent = thread.piFreshSessionIntent, let consumer = thread.piFreshConsumerRunID,
+              let incarnation = threadIncarnations[threadID],
+              let record = thread.runHistory?.first(where: { $0.id == consumer }),
+              !revision.snapshot.isConversationHistoryLocked(threadID: threadID), piHistoryScopeIsolated(thread: thread) else {
+            throw WorkspaceCommandError("The Pi empty-context attempt is no longer available for inspection.")
+        }
+        // Absence is meaningful only after the exact owned process has drained.
+        if let runtime = runtimes[threadID] { await closeRuntime(threadID, matching: runtime.id) }
+        for id in metadataSessions.keys.filter({ metadataSessions[$0]?.threadID == threadID }) {
+            if let close = beginMetadataClose(id) { await close.value }
+            metadataSessions.removeValue(forKey: id)
+        }
+        guard piFreshOwnerMatches(threadID: threadID, incarnation: incarnation, intent: intent, consumer: consumer),
+              piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+        let inspection = try await readPiFiles(thread: thread) { service in
+            try service.inspectFresh(intent: intent, consumer: record.pi)
+        }
+        guard piFreshOwnerMatches(threadID: threadID, incarnation: incarnation, intent: intent, consumer: consumer),
+              revision.snapshot.threads.first(where: { $0.id == threadID })?.runHistory?.first(where: { $0.id == consumer }) == record else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        return inspection
+    }
+    private func piFreshOwnerMatches(threadID: UUID, incarnation: UUID, intent: PiFreshSessionIntent, consumer: UUID) -> Bool {
+        !closing && !stoppingEffects && fatalError == nil && threadIncarnations[threadID] == incarnation &&
+        revision.snapshot.piFreshSessionNeedsInspection(threadID: threadID) &&
+        revision.snapshot.threads.first(where: { $0.id == threadID }).map {
+            $0.piFreshSessionIntent == intent && $0.piFreshConsumerRunID == consumer && !$0.isBusy
+        } == true
+    }
+    @discardableResult public func acknowledgeUnwrittenPiFreshSession(threadID: UUID, expectedIntentID: UUID,
+                                                                     expectedConsumerRunID: UUID) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              let intent = thread.piFreshSessionIntent, intent.id == expectedIntentID,
+              thread.piFreshConsumerRunID == expectedConsumerRunID, let incarnation = threadIncarnations[threadID] else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        guard try await inspectPiFreshSession(threadID: threadID) == .unwritten,
+              piFreshOwnerMatches(threadID: threadID, incarnation: incarnation, intent: intent, consumer: expectedConsumerRunID) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        let receipt = try await enqueue(.piFreshSessionResolved(threadID: threadID, incarnation: incarnation,
+            intent: intent, consumerRunID: expectedConsumerRunID, inspection: .unwritten))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+    @discardableResult public func confirmPersistedPiFreshSession(threadID: UUID, expected: PiHistoryFileRevision) async throws -> WorkspaceCommandReceipt {
+        try expected.validate(); _ = try await load()
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              let intent = thread.piFreshSessionIntent, let consumer = thread.piFreshConsumerRunID,
+              let incarnation = threadIncarnations[threadID] else { throw ProviderHistoryError(.historyChanged) }
+        guard try await inspectPiFreshSession(threadID: threadID) == .persisted(expected),
+              piFreshOwnerMatches(threadID: threadID, incarnation: incarnation, intent: intent, consumer: consumer) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        let receipt = try await enqueue(.piFreshSessionResolved(threadID: threadID, incarnation: incarnation,
+            intent: intent, consumerRunID: consumer, inspection: .persisted(expected)))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
     }
 }
 
@@ -1674,6 +2213,24 @@ public actor WorkspaceEngine {
         let configuration: ProviderConfiguration
     }
     private var historyReads: [UUID: HistoryRead] = [:]
+    private struct PiHistoryJob: Sendable {
+        let id: UUID
+        let threadID: UUID
+        let projectID: UUID
+        let incarnation: UUID
+        let session: any ProviderSession
+        let reusedRuntimeID: UUID?
+        let sourceRuntimeID: UUID?
+        var reader: Task<Void, Never>?
+        var operation: Task<ProviderConversationSnapshot, any Error>?
+        var responses: [UUID: Task<Void, any Error>] = [:]
+        var barrierWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
+        var barrierRequests: [UUID: Task<Void, Never>] = [:]
+        var closeTask: Task<Void, Never>?
+        var streamFailed = false
+        var closing = false
+    }
+    private var piHistoryJobs: [UUID: PiHistoryJob] = [:]
     private struct PreparedHistoryReview: Sendable {
         let review: ConversationHistoryReview
         let digest: String
@@ -2166,6 +2723,10 @@ public actor WorkspaceEngine {
             threadIncarnations[thread.id] = UUID()
         }
         for id in removedThreads { threadIncarnations.removeValue(forKey: id) }
+        for (operationID, job) in piHistoryJobs where threads.contains(job.threadID) || removedProjects.contains(job.projectID) {
+            if let close = beginPiHistoryClose(operationID) { jobs.append(close) }
+            cleanupThreadIDs.insert(job.threadID); projectIDs.insert(job.projectID)
+        }
         for (id, read) in historyReads where removedThreads.contains(read.threadID) || removedProjects.contains(read.projectID) || threads.contains(read.threadID) {
             historyReads.removeValue(forKey: id); read.cancel()
             jobs.append(read.drain); projectIDs.insert(read.projectID); cleanupThreadIDs.insert(read.threadID)
@@ -2761,9 +3322,10 @@ public actor WorkspaceEngine {
         runtime.reader = Task { [weak self] in
             for await event in stream {
                 guard let self else { return }
-                do { _ = try await self.enqueue(.provider(threadID: thread.id, runtimeID: id, event: event)) }
+                do { try await self.routeProviderEvent(threadID: thread.id, runtimeID: id, event: event) }
                 catch { return }
             }
+            await self?.piRuntimeStreamEnded(threadID: thread.id, runtimeID: id)
         }
         if runtimes[thread.id]?.id == id { runtimes[thread.id] = runtime }
         else { runtime.reader?.cancel(); throw CancellationError() }
@@ -2867,6 +3429,8 @@ public actor WorkspaceEngine {
         cancelIdentityRefreshes()
         cancelCheckpointReads()
         for read in historyReads.values { read.cancel() }
+        let piCloses = Array(piHistoryJobs.keys).compactMap { beginPiHistoryClose($0) }
+        for close in piCloses { await close.value }
         historyReviews = [:]
         checkpointRestoreReviews = [:]
         pullRequestCreationReviews = [:]; pullRequestCheckoutReviews = [:]; codexDefaultReviews = [:]
@@ -3050,6 +3614,8 @@ public actor WorkspaceEngine {
         cancelIdentityRefreshes()
         cancelCheckpointReads()
         let jobs = Array(effects.values); for job in jobs { job.cancel() }
+        let piCloses = Array(piHistoryJobs.keys).compactMap { beginPiHistoryClose($0) }
+        for close in piCloses { await close.value }
         await closeAllProjectScripts()
         for id in Array(runtimes.keys) { await closeRuntime(id) }
         let metadata = Array(metadataSessions.values); metadataSessions = [:]
@@ -3521,7 +4087,8 @@ extension WorkspaceEngine {
 extension WorkspaceEngine {
     private func providerHistoryScopeLocked(configuration: ProviderConfiguration, nativeThreadID: String?) -> Bool {
         revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeThreadID) ||
-            revision.snapshot.isClaudeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeThreadID)
+            revision.snapshot.isClaudeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeThreadID) ||
+            revision.snapshot.isPiHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeThreadID)
     }
 
     private static func claudeScopes(_ configuration: ProviderConfiguration) -> Set<ClaudeHistoryScope> {

@@ -63,7 +63,7 @@ def prepare_configuration(configuration, app, bootstrap, git, python):
     return configuration
 
 
-def verify_results(summary, expected=21):
+def verify_results(summary, expected=24):
     counts = [summary.get(key) for key in ("totalTestCount", "passedTests", "failedTests", "skippedTests")]
     if not all(type(value) is int for value in counts):
         raise ValueError("The xcresult summary is missing native test counts.")

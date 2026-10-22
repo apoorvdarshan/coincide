@@ -132,6 +132,11 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("conversation-history-v1-adoption")
                         }
+                        if review.pi != nil {
+                            Text(ConversationHistoryPresentation.piContextDetail(review))
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("conversation-history-pi-context")
+                        }
                         if kind == .forkAfterRun, operation == nil {
                             TextField("New conversation name", text: $title)
                                 .accessibilityIdentifier("conversation-history-title").disabled(accepting)
@@ -167,6 +172,14 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                                         Text("Claude copies the native transcript through the inclusive selected entry and verifies the fork’s remapped message identities before it can be opened. The source is retained.")
                                             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                     }
+                                } else if let evidence = review.pi {
+                                    if let leaf = evidence.source.leafID { LabeledContent("Reviewed live entry leaf", value: leaf) }
+                                    if let opening = evidence.inputs.first(where: { $0.runID == review.runID })?.nativeUserEntryIDs.first {
+                                        LabeledContent("Selected native opening entry", value: opening)
+                                    }
+                                    LabeledContent("Retained native entries", value: evidence.retainedEntries.count.formatted())
+                                    Text("Pi entries form a parent-linked branch. The reviewed live leaf is separate from file append order; entry references are not native turn IDs.")
+                                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                 } else if let evidence = review.openCodeV1 {
                                     if let head = evidence.source.messages.last?.id { LabeledContent("Reviewed message head", value: head) }
                                     LabeledContent("Selected opening message", value: evidence.selectedOpeningMessageID)
@@ -192,6 +205,13 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                                 case .freshClaudeSession(let id):
                                     LabeledContent("Reserved next conversation", value: id)
                                     Text("The new native transcript starts only when you explicitly send a message.")
+                                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                case .beforePiUserEntry(let id):
+                                    LabeledContent("First excluded Pi user entry", value: id)
+                                case .freshPiSession:
+                                    Text("Empty Pi context for the next explicit message")
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text("An exact empty-session path is reserved. This is not a persisted native fork; Pi may assign a new native identity when your next message creates the file.")
                                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                 case .head:
                                     Text("Current provider head")
@@ -285,6 +305,14 @@ enum ConversationHistoryPresentation {
             ? String(localized: "Rewind before this run and keep its audit. After the rewind fully completes, the original prompt and attachments return to your latest draft. Current provider settings stay unchanged.")
             : String(localized: "Remove this run and later messages from the current conversation. Its run audit is retained; your current draft and settings stay unchanged.")
     }
+    static func piContextDetail(_ review: ConversationHistoryReview) -> String {
+        if case .freshPiSession = review.boundary {
+            return String(localized: "Select empty Pi context for your next explicit message. The original native session is kept. No prompt is sent, and no persisted fork file is claimed until Pi actually creates and verifies it.")
+        }
+        return review.kind == .forkAfterRun
+            ? String(localized: "Pi creates a separate native session with the exact reviewed branch. Only the final verified copy can become a new conversation. Its draft starts empty; the source conversation and draft stay unchanged.")
+            : String(localized: "Pi creates and verifies a separate native branch before this run, then switches this conversation to it. Inherited entries are retained at their verified boundary. The original native session, local run audit and latest draft are kept; no message is sent.")
+    }
     static func claudeContextDetail(_ review: ConversationHistoryReview) -> String {
         if let evidence = review.claude, evidence.inputs.first?.runID == review.runID, evidence.inheritedHead != nil {
             return String(localized: "Your next Claude message resumes from this conversation’s inherited fork head. The inherited context is kept; this does not start an empty conversation or delete native history.")
@@ -308,6 +336,9 @@ enum ConversationHistoryPresentation {
         operation.isWorking
     }
     static func status(_ operation: ConversationHistoryOperation) -> String {
+        if operation.phase == .applied, operation.files == nil, case .freshPiSession = operation.review.boundary {
+            return String(localized: "Empty Pi context selected; no message sent")
+        }
         if isClaudeContextSelection(operation.review) {
             if operation.phase == .applied, let files = operation.files {
                 switch files.phase {
@@ -326,7 +357,9 @@ enum ConversationHistoryPresentation {
             case .unconfirmed: String(localized: "Claude context selection unconfirmed")
             }
         }
-        if operation.error == ConversationHistoryOperation.openCodeV1NotAdoptedMessage { return String(localized: "Original conversation kept") }
+        if operation.error == ConversationHistoryOperation.openCodeV1NotAdoptedMessage || operation.error == ConversationHistoryOperation.piNotAdoptedMessage {
+            return String(localized: "Original conversation kept")
+        }
         if operation.phase == .unconfirmed, let maintenance = operation.maintenance {
             switch maintenance.phase {
             case .accepted, .dispatching: return String(localized: "Clearing pending provider revert…")

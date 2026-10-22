@@ -303,6 +303,8 @@ private struct RunHistoryRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(record.configuration.provider == .claude
                      ? String(localized: "Adapter input references are separate from Claude transcript-entry UUIDs. A history review verifies the complete native boundary before it can be used.")
+                     : record.configuration.provider == .pi
+                     ? String(localized: "Pi session-file and entry references identify a parent-linked native branch. Pi does not supply native turn IDs; file append order alone does not identify the live branch.")
                      : String(localized: "Session and turn references may be supplied by an adapter."))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 LabeledContent("Run", value: record.id.uuidString)
@@ -319,6 +321,13 @@ private struct RunHistoryRow: View {
                     if let cursor = claude.finalRootAssistantMessageID {
                         LabeledContent("Last observed root assistant UUID", value: cursor)
                     }
+                }
+                if let pi = record.pi {
+                    LabeledContent("Native input proof", value: PiHistoryPresentation.captureStatus(pi.captureStatus))
+                    LabeledContent("Registered inputs", value: pi.inputs.count.formatted())
+                    LabeledContent("Proven native user entries", value: pi.nativeUserEntryIDs.count.formatted())
+                    if let opening = pi.openingUserEntryID { LabeledContent("Native opening user entry", value: opening) }
+                    if let leaf = pi.finalObservation?.leafID { LabeledContent("Final observed live leaf", value: leaf) }
                 }
             }.textSelection(.enabled).padding(.top, 5)
         }
