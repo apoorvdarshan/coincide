@@ -45,6 +45,12 @@ saved completion evidence; unproven folders and branches are preserved. To chang
 a failed setup, remove queued messages and choose another worktree. Coincide
 does not reset branches, delete worktrees, or fetch a missing base automatically.
 
+For a new checkout, choose **None** (the default), **Top level**, or **Recursive**
+submodule initialization. Initialization may download repositories through your
+Git configuration; queued messages wait for the selected step to finish. A normal
+initialization failure leaves a usable checkout with a visible warning. Cancellation
+keeps the queue paused. Registered-worktree reuse preserves its existing submodules.
+
 Use **Run Script…** in the toolbar to choose a script declared in the current
 checkout's `t3.json`. Review its command and checkout, then run it in a dedicated
 native terminal tab. Scripts receive `T3CODE_PROJECT_ROOT` and, for a separate

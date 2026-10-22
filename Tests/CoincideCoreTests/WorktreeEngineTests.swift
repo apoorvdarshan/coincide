@@ -10,6 +10,7 @@ private actor EngineWorktreePeer: WorkspaceWorktreeSession {
     private var inspectionGate: CheckedContinuation<Void, any Error>?
     private var resolved = false
     private var evidence = false
+    private var submoduleWarning = false
     private var holdCancellation = false
     private var holdInspection = false
     private(set) var prepares = 0
@@ -35,7 +36,8 @@ private actor EngineWorktreePeer: WorkspaceWorktreeSession {
     }
     func result() throws -> GitWorktreeResult {
         let plan = try plan()
-        return .init(destinationPath: plan.destinationPath, headCommit: plan.baseCommit, branch: plan.branch)
+        return .init(destinationPath: plan.destinationPath, headCommit: plan.baseCommit, branch: plan.branch,
+                     submoduleWarning: submoduleWarning ? GitWorktreeResult.submoduleFailureWarning : nil)
     }
     func prepare() async throws -> GitWorktreePlan {
         prepares += 1
@@ -61,7 +63,7 @@ private actor EngineWorktreePeer: WorkspaceWorktreeSession {
         } onCancel: { Task { await self.cancel() } }
     }
     func resolve() { resolved = true; let saved = prepareGate; prepareGate = nil; saved?.resume() }
-    func succeed() { evidence = true; let saved = runGate; runGate = nil; saved?.resume() }
+    func succeed(withSubmoduleWarning: Bool = false) { submoduleWarning = withSubmoduleWarning; evidence = true; let saved = runGate; runGate = nil; saved?.resume() }
     func markCompleted() { evidence = true }
     func fail(_ message: String = "Fixture Git preparation failed") {
         let saved = runGate ?? prepareGate; runGate = nil; prepareGate = nil
@@ -134,8 +136,8 @@ private struct WorktreeEngineFixture {
     let thread: CodingThread
     var databaseURL: URL { root.appendingPathComponent("workspace.sqlite") }
     func currentThread() async throws -> CodingThread { try #require(await engine.current().snapshot.threads.first { $0.id == thread.id }) }
-    func begin(_ selection: GitWorktreeSelection = .createBranch(name: "feature/native", baseRef: "HEAD")) async throws -> EngineWorktreePeer {
-        try await engine.beginWorktreePreparation(threadID: thread.id, selection: selection)
+    func begin(_ selection: GitWorktreeSelection = .createBranch(name: "feature/native", baseRef: "HEAD"), submodules: ProjectWorktreeSubmoduleMode = .none) async throws -> EngineWorktreePeer {
+        try await engine.beginWorktreePreparation(threadID: thread.id, selection: selection, submodules: submodules)
         let state = try #require(await currentThread().workspacePreparation)
         return harness.peer(state.request)
     }
@@ -157,6 +159,37 @@ private func waitWorktree(_ condition: () async throws -> Bool) async throws {
     while try await !condition() {
         guard ContinuousClock.now < deadline else { throw CoincideError("Worktree engine fixture did not reach its explicit state") }
         try await Task.sleep(for: .milliseconds(5))
+    }
+}
+
+@Test(.timeLimit(.minutes(1))) func worktreeSubmoduleIntentHoldsProviderUntilFinalResultAndPersistsWarningAcrossRestart() async throws {
+    try await withWorktreeEngine { f in
+        let peer = try await f.begin(submodules: .recursive)
+        try await waitWorktree { await peer.prepares == 1 }
+        let database = try WorkspaceDatabase(url: f.databaseURL)
+        #expect(try await database.load().threads.first?.workspacePreparation?.request.submodules == .recursive)
+        try await f.engine.dispatch(.editThread(f.thread.id, .model("captured-before-modules")))
+        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "Wait for selected submodules"))
+        await peer.resolve(); try await waitWorktree { await peer.runs == 1 }
+        let pending = try await f.currentThread()
+        #expect(pending.workspacePreparation?.plan?.request.submodules == .recursive)
+        #expect(!pending.isBusy && pending.queuedTurns.count == 1 && pending.messages.isEmpty)
+        #expect(f.harness.sessions(f.thread.id).isEmpty)
+        await #expect(throws: (any Error).self) { try await f.engine.models(thread: pending) }
+        await peer.succeed(withSubmoduleWarning: true)
+        try await waitWorktree { await f.harness.sessions(f.thread.id).first?.turns.count == 1 }
+        let provider = try #require(f.harness.sessions(f.thread.id).first)
+        #expect(await provider.turns.first?.configuration.model == "captured-before-modules")
+        await provider.finish(); try await waitWorktree { try await f.currentThread().state == .idle }
+        let ready = try #require(try await f.currentThread().workspacePreparation)
+        #expect(ready.isReady && ready.result?.submoduleWarning == GitWorktreeResult.submoduleFailureWarning)
+        #expect(try await database.rebuildProjection().snapshot.threads.first?.workspacePreparation == ready)
+        await f.engine.shutdown()
+        let reopened = try f.harness.engine(f.databaseURL)
+        _ = try await reopened.load()
+        #expect(await reopened.current().snapshot.threads.first?.workspacePreparation == ready)
+        #expect(await peer.runs == 1)
+        await reopened.shutdown()
     }
 }
 
@@ -217,7 +250,7 @@ private func waitWorktree(_ condition: () async throws -> Bool) async throws {
 
 @Test(.timeLimit(.minutes(1))) func failedWorktreeRetryPreservesPartialBytesAndRebasesOnlyQueuedCWD() async throws {
     try await withWorktreeEngine { f in
-        let peer = try await f.begin(); try await waitWorktree { await peer.prepares == 1 }
+        let peer = try await f.begin(submodules: .topLevel); try await waitWorktree { await peer.prepares == 1 }
         await peer.resolve(); try await waitWorktree { await peer.runs == 1 }
         let old = try #require(try await f.currentThread().workspacePreparation)
         let partial = URL(fileURLWithPath: old.destinationPath); try FileManager.default.createDirectory(at: partial, withIntermediateDirectories: true)
@@ -229,6 +262,7 @@ private func waitWorktree(_ condition: () async throws -> Bool) async throws {
         try await f.engine.retryWorktreePreparation(f.thread.id)
         let retried = try #require(try await f.currentThread().workspacePreparation), next = f.harness.peer(retried.request)
         #expect(retried.id != old.id && retried.destinationPath != old.destinationPath)
+        #expect(old.request.submodules == .topLevel && retried.request.submodules == .topLevel)
         #expect(retried.previousAttempts == [.init(request: old.request, plan: old.plan)])
         let queued = try #require(try await f.currentThread().queuedTurns.first)
         #expect(queued.configuration.model == "captured" && queued.configuration.workspacePath == retried.destinationPath && queued.configuration.nativeThreadID == nil)
@@ -350,7 +384,7 @@ private func waitWorktree(_ condition: () async throws -> Bool) async throws {
 
 @Test(.timeLimit(.minutes(1))) func removingGatedWorktreeCannotResurrectReaddedIDsAndUnrelatedTurnRemainsResponsive() async throws {
     try await withWorktreeEngine { f in
-        let peer = try await f.begin(); await peer.keepCancellationPending(); try await waitWorktree { await peer.prepares == 1 }
+        let peer = try await f.begin(submodules: .recursive); await peer.keepCancellationPending(); try await waitWorktree { await peer.prepares == 1 }
         let otherProject = WorkspaceProject(path: f.root.appendingPathComponent("unrelated").path), other = CodingThread(project: otherProject)
         try await f.engine.dispatch(.addProjectWithThread(project: otherProject, thread: other))
         try await f.engine.dispatch(.removeProject(projectID: f.project.id, expectedThreadIDs: [f.thread.id]))
@@ -490,6 +524,10 @@ private func waitWorktree(_ condition: () async throws -> Bool) async throws {
     #expect(throws: (any Error).self) { try WorkspaceJournal.validate(snapshot) }
     state.result = try await peer.result(); snapshot.threads[0].workspacePreparation = state
     try WorkspaceJournal.validate(snapshot)
+    state.result = .init(destinationPath: plan.destinationPath, headCommit: plan.baseCommit, branch: plan.branch,
+                         submoduleWarning: GitWorktreeResult.submoduleFailureWarning)
+    snapshot.threads[0].workspacePreparation = state
+    #expect(throws: (any Error).self) { try WorkspaceJournal.validate(snapshot) }
     state.phase = .preparing; state.result = nil; snapshot.threads[0].workspacePreparation = state
     var wrongConfiguration = ProviderConfiguration(thread: thread); wrongConfiguration.workspacePath = project.path
     snapshot.threads[0].queuedTurns = [.init(id: UUID(), text: "captured in another folder", configuration: wrongConfiguration, createdAt: Date())]

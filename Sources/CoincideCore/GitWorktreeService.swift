@@ -229,10 +229,16 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
         guard result.status == 0 else { throw GitWorktreeError(.commandFailed, "Git did not finish creating this worktree. Existing branches and checkout data were preserved; inspect the attempt before choosing a new one.") }
         // Only this owned successful-exit path may turn a claimed destination into a durable
         // completion. A process lost before this receipt could still have an orphaned Git hook.
-        guard let completed = try await inspect(plan, context: context, requireReceipt: false) else { throw GitWorktreeError(.incomplete, "Git returned without verifiable registered-worktree ownership. Existing files were preserved.") }
+        guard let checkoutResult = try await inspect(plan, context: context, requireReceipt: false) else { throw GitWorktreeError(.incomplete, "Git returned without verifiable registered-worktree ownership. Existing files were preserved.") }
+        let initialInventory = try await self.inventory(context)
+        let initial = try await verifyCheckout(path: plan.destinationPath, context: context, inventory: initialInventory, branch: plan.branch)
+        let warning = try await initializeSubmodules(plan, checkout: initial, source: context)
         let finalInventory = try await self.inventory(context)
         let checked = try await verifyCheckout(path: plan.destinationPath, context: context, inventory: finalInventory, branch: plan.branch)
-        guard checked.result == completed else { throw worktreeFileFailure("The completed checkout changed before it could be recorded.") }
+        guard checked.result == checkoutResult else { throw worktreeFileFailure("The completed checkout changed before it could be recorded.") }
+        let completed = GitWorktreeResult(destinationPath: checkoutResult.destinationPath, headCommit: checkoutResult.headCommit,
+                                          branch: checkoutResult.branch, submoduleWarning: warning)
+        try completed.validate(); try Task.checkCancellation()
         try checkout.validate(expected: owner.destinationIdentity); try validate(context, plan: plan); try parent.validate(expected: plan.destinationParentIdentity)
         let receipt = GitWorktreeCompletion(ownership: owner, result: completed, gitDirectoryPath: checked.gitDirectory.path, gitDirectoryIdentity: checked.gitDirectory.identity)
         try parent.writeExclusive(encoder.encode(receipt), name: GitWorktreeCompletion.filename(plan.id))
@@ -254,7 +260,8 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
             if requireReceipt {
                 guard let receiptBytes = try parent.read(GitWorktreeCompletion.filename(plan.id)) else { return nil }
                 guard let receipt = try? JSONDecoder().decode(GitWorktreeCompletion.self, from: receiptBytes),
-                      receipt.ownership.plan == plan, receipt.ownership.destinationIdentity == destination else {
+                      receipt.ownership.plan == plan, receipt.ownership.destinationIdentity == destination,
+                      receipt.result.submoduleWarning == nil || plan.request.submodules != .none else {
                     throw GitWorktreeError(.metadataCorrupt, "The worktree completion receipt does not match this attempt. Existing files were preserved.")
                 }
                 completion = receipt
@@ -268,7 +275,7 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
         let checked = try await verifyCheckout(path: plan.destinationPath, context: context, inventory: inventory, branch: plan.branch)
         guard checked.result.headCommit == plan.baseCommit else { return nil }
         if let completion {
-            guard completion.result == checked.result, completion.gitDirectoryPath == checked.gitDirectory.path,
+            guard completion.result.hasSameCheckout(as: checked.result), completion.gitDirectoryPath == checked.gitDirectory.path,
                   completion.gitDirectoryIdentity == checked.gitDirectory.identity else { return nil }
         }
         try checked.directory.validate(expected: destination)
@@ -278,7 +285,61 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
         }
         try await validateMapping(context)
         try parent.validate(expected: plan.destinationParentIdentity); try validate(context, plan: plan)
-        return checked.result
+        return completion?.result ?? checked.result
+    }
+    private func initializeSubmodules(_ plan: GitWorktreePlan, checkout: Checkout, source: Context) async throws -> String? {
+        guard plan.request.submodules != .none else { return nil }
+        let context = Context(source: checkout.directory, common: source.common, admin: checkout.gitDirectory)
+        try await validateMapping(context); try validate(source, plan: plan)
+        let entry = try await output(["ls-tree", "-z", plan.baseCommit, "--", ".gitmodules"], at: checkout.directory, context: context)
+        let expected: Data?
+        if entry.isEmpty { expected = nil }
+        else {
+            guard entry.starts(with: Data("100644 blob ".utf8)) || entry.starts(with: Data("100755 blob ".utf8)) else {
+                throw worktreeFileFailure("The selected checkout has unsupported submodule configuration metadata.")
+            }
+            expected = try await output(["show", plan.baseCommit + ":.gitmodules"], at: checkout.directory, context: context, maximumOutput: 262_144)
+        }
+        let actual: Data?
+        do { actual = try checkout.directory.read(".gitmodules", maximum: 262_144, allowEmpty: true) }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw worktreeFileFailure("The checkout's submodule configuration is missing, replaced, or inaccessible.") }
+        guard actual == expected else { throw worktreeFileFailure("Submodule configuration changed after checkout. Its files were preserved without fetching.") }
+        let index = try await command.run(["diff", "--cached", "--quiet", "--no-ext-diff", plan.baseCommit, "--"], cwdFD: checkout.directory.fd,
+                                           gitDirectory: context.admin.path, commonDirectory: context.common.path, workTree: context.source.path)
+        guard index.status == 0 else { throw worktreeFileFailure("The checkout index changed before submodule initialization. Its files were preserved.") }
+        var warning: String?
+        do {
+            let policy = try await command.run(["config", "--null", "--get-regexp", "^protocol\\.(allow|(http|https|ssh|git|file)\\.allow)$"], cwdFD: checkout.directory.fd,
+                                                gitDirectory: context.admin.path, commonDirectory: context.common.path, workTree: context.source.path)
+            guard policy.status == 0 || policy.status == 1 else { throw GitWorktreeError(.commandFailed, "Git transport policy could not be read safely.") }
+            let protocols = try GitWorktreeSubmodulePolicy.allowlist(configuration: policy.output, inherited: command.inheritedProtocolAllowlist)
+            let finalIndex = try await command.run(["diff", "--cached", "--quiet", "--no-ext-diff", plan.baseCommit, "--"], cwdFD: checkout.directory.fd,
+                                                    gitDirectory: context.admin.path, commonDirectory: context.common.path, workTree: context.source.path)
+            guard finalIndex.status == 0 else { throw worktreeFileFailure("The checkout index changed before submodule initialization. Its files were preserved.") }
+            try await validateMapping(context); try validate(source, plan: plan); try checkout.directory.validate()
+            // Policy/index discovery suspends. Re-read the anchored configuration
+            // after those waits and immediately before spawning Git. External
+            // processes can still race a later write; this is not a filesystem CAS.
+            let finalConfiguration: Data?
+            do { finalConfiguration = try checkout.directory.read(".gitmodules", maximum: 262_144, allowEmpty: true) }
+            catch is CancellationError { throw CancellationError() }
+            catch { throw worktreeFileFailure("The checkout's submodule configuration changed during validation.") }
+            guard finalConfiguration == expected else { throw worktreeFileFailure("Submodule configuration changed during validation. No submodule was fetched.") }
+            var arguments = ["submodule", "update", "--init", "--checkout"]
+            if plan.request.submodules == .recursive { arguments.append("--recursive") }
+            arguments.append("--")
+            let initialized = try await command.run(arguments, cwdFD: checkout.directory.fd, timeout: timeout,
+                                                    gitDirectory: context.admin.path, commonDirectory: context.common.path, workTree: context.source.path,
+                                                    allowedProtocols: protocols)
+            if initialized.status != 0 { warning = GitWorktreeResult.submoduleFailureWarning }
+        } catch is CancellationError { throw CancellationError() }
+        catch let error as GitWorktreeError where [.commandFailed, .outputLimit, .timedOut].contains(error.failure) {
+            warning = GitWorktreeResult.submoduleFailureWarning
+        }
+        try Task.checkCancellation(); try await validateMapping(context); try validate(source, plan: plan)
+        try checkout.directory.validate(); try checkout.gitDirectory.validate()
+        return warning
     }
     private func verifyCheckout(path: String, context: Context, inventory: GitWorktreeInventory, branch: String?) async throws -> Checkout {
         guard let entry = inventory.worktrees.first(where: { canonical($0.path) == canonical(path) }),

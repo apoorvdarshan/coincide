@@ -68,10 +68,19 @@ The test then launches a private holding command, checks closing it requires
 confirmation, verifies Cancel retains both tabs and the unsent draft, and
 confirms closure removes only that running tab. Original Git HEAD is preserved;
 process-group shutdown remains covered by the terminal unit tests.
+The sixth test prepares a new branch from an explicit older local base, with
+submodules set to None and no provider or network calls. The native sheet and
+all three submodule options must fit the display. It checks the new checkout's
+branch, commit and file contents, unchanged selected conversation and unsent
+draft, and restoration of the same checkout after relaunch without duplication.
+The cwd records intent before Git finishes; native Terminal and Reveal Workspace
+must become enabled before any completed-checkout file or Git assertions.
+The source checkout's newer commit, dirty tracked file, untracked sentinel and
+HEAD bytes must remain intact.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all five tests to pass with zero
+gate requires all six tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 

@@ -7,7 +7,7 @@ struct ChatView: View {
     @State private var sending = false
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
-    @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection)?
+    @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode)?
     private var thread: CodingThread? { store.thread(threadID) }
     private var draft: Binding<String> {
         Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
@@ -122,10 +122,10 @@ struct ChatView: View {
             .sheet(isPresented: $worktreeSheet, onDismiss: {
                 guard let pending = pendingWorktree else { return }
                 pendingWorktree = nil
-                Task { await store.prepareWorktree(for: pending.threadID, selection: pending.selection) }
+                Task { await store.prepareWorktree(for: pending.threadID, selection: pending.selection, submodules: pending.submodules) }
             }) {
-                WorktreeSetupSheet(store: store, threadID: threadID, cancel: { worktreeSheet = false }) { selection in
-                    pendingWorktree = (threadID, selection); worktreeSheet = false
+                WorktreeSetupSheet(store: store, threadID: threadID, cancel: { worktreeSheet = false }) { selection, submodules in
+                    pendingWorktree = (threadID, selection, submodules); worktreeSheet = false
                 }
             }
         }

@@ -6,17 +6,19 @@ struct GitWorktreeCommand: Sendable {
     let environment: [String: String]?
     let executable: URL?
     func run(_ arguments: [String], cwdFD: Int32, timeout: Duration = .seconds(30), maximumOutput: Int = 1_048_576,
-             gitDirectory: String? = nil, commonDirectory: String? = nil, workTree: String? = nil) async throws -> GitWorktreeCommandResult {
+             gitDirectory: String? = nil, commonDirectory: String? = nil, workTree: String? = nil,
+             allowedProtocols: String = "") async throws -> GitWorktreeCommandResult {
         try Task.checkCancellation()
         guard let git = executable ?? ProcessChannel.findExecutable("git") else { throw GitWorktreeError(.commandFailed, "Git is not installed.") }
         var env = environment ?? ProcessChannel.environment()
         for key in ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_IMPLICIT_WORK_TREE", "GIT_SUPER_PREFIX", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CURL_VERBOSE"] + env.keys.filter({ $0.hasPrefix("GIT_CONFIG_KEY_") || $0.hasPrefix("GIT_CONFIG_VALUE_") || $0.hasPrefix("GIT_TRACE") }) { env.removeValue(forKey: key) }
         env["GIT_TERMINAL_PROMPT"] = "0"; env["GCM_INTERACTIVE"] = "Never"; env["GIT_ASKPASS"] = "/usr/bin/false"
-        env["GIT_ALLOW_PROTOCOL"] = ""; env["GIT_PROTOCOL_FROM_USER"] = "0"; env["LC_ALL"] = "C"; env["GIT_MERGE_AUTOEDIT"] = "no"
+        env["SSH_ASKPASS"] = "/usr/bin/false"; env["SSH_ASKPASS_REQUIRE"] = "never"
+        env["GIT_ALLOW_PROTOCOL"] = allowedProtocols; env["GIT_PROTOCOL_FROM_USER"] = "0"; env["LC_ALL"] = "C"; env["GIT_MERGE_AUTOEDIT"] = "no"
         if let commonDirectory { env["GIT_COMMON_DIR"] = commonDirectory }
         let binding = (gitDirectory.map { ["--git-dir=" + $0] } ?? []) + (workTree.map { ["--work-tree=" + $0] } ?? [])
         let process = try GitWorktreeProcess(executable: git,
-            arguments: ["--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "color.ui=false"] + binding + arguments,
+            arguments: ["--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "color.ui=false", "-c", "submodule.recurse=false"] + binding + arguments,
             cwdFD: cwdFD, environment: env, maxBytes: maximumOutput)
         let reader = Task.detached { await process.result() }
         return try await withTaskCancellationHandler {
@@ -36,6 +38,7 @@ struct GitWorktreeCommand: Sendable {
             } catch { process.stop(); _ = await reader.value; try Task.checkCancellation(); throw error }
         } onCancel: { process.stop() }
     }
+    var inheritedProtocolAllowlist: String? { (environment ?? ProcessChannel.environment())["GIT_ALLOW_PROTOCOL"] }
 }
 
 struct GitWorktreeCommandResult: Sendable { let status: Int32; let output: Data; let overflow: Bool }

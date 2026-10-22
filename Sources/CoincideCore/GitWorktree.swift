@@ -11,8 +11,11 @@ public struct GitWorktreeRequest: Codable, Sendable, Equatable {
     public let sourcePath: String
     public let destinationRoot: String
     public let selection: GitWorktreeSelection
-    public init(id: UUID = UUID(), sourcePath: String, destinationRoot: String, selection: GitWorktreeSelection) {
+    public let submodules: ProjectWorktreeSubmoduleMode
+    public init(id: UUID = UUID(), sourcePath: String, destinationRoot: String, selection: GitWorktreeSelection,
+                submodules: ProjectWorktreeSubmoduleMode = .none) {
         self.id = id; self.sourcePath = sourcePath; self.destinationRoot = destinationRoot; self.selection = selection
+        self.submodules = submodules
     }
     public var destinationPath: String {
         if case .reuse(let path) = selection { return path }
@@ -28,14 +31,17 @@ public struct GitWorktreeRequest: Codable, Sendable, Equatable {
                   baseRef.range(of: #"^[^/\s]+@[^/\s:]+:"#, options: .regularExpression) == nil,
                   !baseRef.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0) }) else { throw WorktreeValidation.invalid("Choose an explicit local base ref or commit.") }
         case .existingBranch(let name): try WorktreeValidation.branch(name)
-        case .reuse(let path): try WorktreeValidation.path(path)
+        case .reuse(let path):
+            try WorktreeValidation.path(path)
+            guard submodules == .none else { throw WorktreeValidation.invalid("Registered-worktree reuse does not initialize or change its submodules.") }
         }
     }
-    private enum CodingKeys: String, CodingKey { case id, sourcePath, destinationRoot, selection }
+    private enum CodingKeys: String, CodingKey { case id, sourcePath, destinationRoot, selection, submodules }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(id: try c.decode(UUID.self, forKey: .id), sourcePath: try c.decode(String.self, forKey: .sourcePath),
-                  destinationRoot: try c.decode(String.self, forKey: .destinationRoot), selection: try c.decode(GitWorktreeSelection.self, forKey: .selection))
+                  destinationRoot: try c.decode(String.self, forKey: .destinationRoot), selection: try c.decode(GitWorktreeSelection.self, forKey: .selection),
+                  submodules: c.contains(.submodules) ? try c.decode(ProjectWorktreeSubmoduleMode.self, forKey: .submodules) : .none)
         try validate()
     }
 }
@@ -133,18 +139,27 @@ public struct GitWorktreePlan: Codable, Sendable, Equatable {
 }
 
 public struct GitWorktreeResult: Codable, Sendable, Equatable {
+    public static let submoduleFailureWarning = "Some submodules could not be initialized. The checkout is available; use Terminal to inspect or finish initialization."
     public let destinationPath: String
     public let headCommit: String
     public let branch: String?
-    public init(destinationPath: String, headCommit: String, branch: String?) { self.destinationPath = destinationPath; self.headCommit = headCommit; self.branch = branch }
+    public let submoduleWarning: String?
+    public init(destinationPath: String, headCommit: String, branch: String?, submoduleWarning: String? = nil) {
+        self.destinationPath = destinationPath; self.headCommit = headCommit; self.branch = branch; self.submoduleWarning = submoduleWarning
+    }
     public func validate() throws {
         try WorktreeValidation.path(destinationPath); try WorktreeValidation.commit(headCommit)
         if let branch { try WorktreeValidation.branch(branch) }
+        guard submoduleWarning == nil || submoduleWarning == Self.submoduleFailureWarning else {
+            throw WorktreeValidation.invalid("The worktree submodule warning is not a supported generic diagnostic.")
+        }
     }
-    private enum CodingKeys: String, CodingKey { case destinationPath, headCommit, branch }
+    func hasSameCheckout(as other: Self) -> Bool { destinationPath == other.destinationPath && headCommit == other.headCommit && branch == other.branch }
+    private enum CodingKeys: String, CodingKey { case destinationPath, headCommit, branch, submoduleWarning }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(destinationPath: try c.decode(String.self, forKey: .destinationPath), headCommit: try c.decode(String.self, forKey: .headCommit), branch: try c.decodeIfPresent(String.self, forKey: .branch))
+        self.init(destinationPath: try c.decode(String.self, forKey: .destinationPath), headCommit: try c.decode(String.self, forKey: .headCommit), branch: try c.decodeIfPresent(String.self, forKey: .branch),
+                  submoduleWarning: try c.decodeIfPresent(String.self, forKey: .submoduleWarning))
         try validate()
     }
 }

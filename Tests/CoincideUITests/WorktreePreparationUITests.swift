@@ -133,8 +133,9 @@ func nativeWorktreeSetupOptionsAndDurableComposerQueueUseThePreparedCheckoutAndR
         #expect(store.worktreesRoot == fixture.root.appendingPathComponent("Worktrees", isDirectory: true))
         let options = try await store.worktreeSetupOptions(for: id)
         #expect(options.branches == ["main"] && options.worktrees.map(\.path) == [fixture.source.path])
-        await store.prepareWorktree(for: id, selection: .createBranch(name: "native-feature", baseRef: "HEAD"))
+        await store.prepareWorktree(for: id, selection: .createBranch(name: "native-feature", baseRef: "HEAD"), submodules: .topLevel)
         let request = try #require(store.thread(id)?.workspacePreparation?.request), peer = fixture.harness.peer(request)
+        #expect(request.submodules == .topLevel)
         try await waitWorktreeUI { await peer.starts == 1 }
         #expect(!store.isPreparingWorkspace(id) && store.thread(id)?.draft == "Keep this unsent draft")
         #expect(store.thread(id)?.workspacePath == request.destinationPath && !store.canAccessWorkspaceFiles(request.destinationPath))
@@ -164,6 +165,7 @@ func nativeWorktreeSetupOptionsAndDurableComposerQueueUseThePreparedCheckoutAndR
         await store.shutdown()
         let reopened = WorkspaceStore(databaseURL: fixture.database); await reopened.load()
         #expect(reopened.thread(id)?.workspacePreparation?.isReady == true)
+        #expect(reopened.thread(id)?.workspacePreparation?.request.submodules == .topLevel)
         #expect(reopened.thread(id)?.workspacePath == request.destinationPath && reopened.thread(id)?.draft == "Unsent while preparing")
         await reopened.shutdown()
     } catch { await fixture.cleanup(); throw error }

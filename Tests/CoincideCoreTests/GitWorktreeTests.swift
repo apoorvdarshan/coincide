@@ -32,8 +32,8 @@ private struct WorktreeFixture: Sendable {
         if succeeds { #expect(result.status == 0, "An isolated Git fixture command failed.") }
         return result
     }
-    func request(_ selection: GitWorktreeSelection, source: URL? = nil) -> GitWorktreeRequest {
-        .init(sourcePath: (source ?? self.source).path, destinationRoot: destinations.path, selection: selection)
+    func request(_ selection: GitWorktreeSelection, source: URL? = nil, submodules: ProjectWorktreeSubmoduleMode = .none) -> GitWorktreeRequest {
+        .init(sourcePath: (source ?? self.source).path, destinationRoot: destinations.path, selection: selection, submodules: submodules)
     }
     func service(_ request: GitWorktreeRequest, executable: URL? = nil) -> GitWorktreeService {
         .init(request: request, environment: environment, gitExecutable: executable ?? git)
@@ -50,6 +50,178 @@ private struct WorktreeFixture: Sendable {
         #expect(chmod(hook.path, 0o755) == 0)
         return (root.appendingPathComponent("hook-started"), root.appendingPathComponent("hook-release"))
     }
+}
+
+private extension WorktreeFixture {
+    func nestedSubmodules() async throws -> (inner: URL, nested: URL) {
+        let inner = root.appendingPathComponent("Inner origin"), nested = root.appendingPathComponent("Nested origin")
+        for (url, file) in [(nested, "NESTED.md"), (inner, "INNER.md")] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            _ = try await run(["init", "--initial-branch=main"], at: url)
+            _ = try await run(["config", "user.name", "Module Fixture"], at: url)
+            _ = try await run(["config", "user.email", "fixture@example.invalid"], at: url)
+            _ = try await run(["config", "commit.gpgsign", "false"], at: url)
+            try Data(("Committed " + file + "\n").utf8).write(to: url.appendingPathComponent(file))
+            _ = try await run(["add", "."], at: url); _ = try await run(["commit", "-m", "Module fixture"], at: url)
+        }
+        _ = try await run(["-c", "protocol.file.allow=always", "submodule", "add", "--", nested.path, "nested"], at: inner)
+        _ = try await run(["commit", "-am", "Nested module"], at: inner)
+        _ = try await run(["-c", "protocol.file.allow=always", "submodule", "add", "--", inner.path, "inner"])
+        _ = try await run(["commit", "-am", "Top module"])
+        _ = try await run(["-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"])
+        _ = try await run(["config", "protocol.file.allow", "always"])
+        return (source.appendingPathComponent("inner"), source.appendingPathComponent("inner/nested"))
+    }
+}
+
+@Test func gitWorktreeSubmoduleSelectionLegacyDecodeAndTransportPolicyRemainConservative() throws {
+    let request = GitWorktreeRequest(sourcePath: "/fixture/source", destinationRoot: "/fixture/worktrees", selection: .createBranch(name: "feature", baseRef: "HEAD"))
+    var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+    json.removeValue(forKey: "submodules")
+    #expect(try JSONDecoder().decode(GitWorktreeRequest.self, from: JSONSerialization.data(withJSONObject: json)).submodules == .none)
+    let invalid = GitWorktreeRequest(sourcePath: request.sourcePath, destinationRoot: request.destinationRoot, selection: .reuse(path: request.sourcePath), submodules: .recursive)
+    #expect(throws: GitWorktreeError.self) { try invalid.validate() }
+    #expect(try GitWorktreeSubmodulePolicy.allowlist(configuration: Data(), inherited: nil) == "http:https:ssh:git")
+    let configured = Data("protocol.allow\nnever\0protocol.https.allow\nalways\0protocol.file.allow\nalways\0protocol.ssh.allow\nuser\0".utf8)
+    #expect(try GitWorktreeSubmodulePolicy.allowlist(configuration: configured, inherited: nil) == "https:file")
+    #expect(try GitWorktreeSubmodulePolicy.allowlist(configuration: configured, inherited: "https:ssh:ext") == "https")
+    #expect(try GitWorktreeSubmodulePolicy.allowlist(configuration: configured, inherited: "") == "")
+    #expect(throws: GitWorktreeError.self) { try GitWorktreeSubmodulePolicy.allowlist(configuration: Data("protocol.file.allow\nunsupported\0".utf8), inherited: nil) }
+    let tampered = GitWorktreeResult(destinationPath: request.destinationPath, headCommit: String(repeating: "a", count: 40), branch: "feature", submoduleWarning: "https://user:synthetic-secret@example.invalid")
+    #expect(throws: GitWorktreeError.self) { try tampered.validate() }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func gitWorktreeSubmoduleModesPopulateOnlyNewCheckoutsAndPreserveDirtySourceModules() async throws {
+    let fixture = try await WorktreeFixture.make(); defer { fixture.cleanup() }
+    let modules = try await fixture.nestedSubmodules()
+    let sourceInner = modules.inner.appendingPathComponent("INNER.md"), sourceNested = modules.nested.appendingPathComponent("NESTED.md")
+    try Data("Keep dirty inner bytes\n".utf8).write(to: sourceInner); try Data("Keep dirty nested bytes\n".utf8).write(to: sourceNested)
+    let innerHead = try await fixture.run(["rev-parse", "HEAD"], at: modules.inner).output
+    let nestedHead = try await fixture.run(["rev-parse", "HEAD"], at: modules.nested).output
+    let sentinel = fixture.root.appendingPathComponent("custom-update-must-not-run")
+    _ = try await fixture.run(["config", "submodule.inner.update", "!touch '" + sentinel.path + "'"])
+    for mode in [ProjectWorktreeSubmoduleMode.none, .topLevel, .recursive] {
+        let request = fixture.request(.createBranch(name: "mode-" + mode.rawValue, baseRef: "HEAD"), submodules: mode)
+        let service = fixture.service(request), plan = try await service.prepare(), result = try await service.run(plan)
+        #expect(result.submoduleWarning == nil)
+        #expect(FileManager.default.fileExists(atPath: request.destinationPath + "/inner/INNER.md") == (mode != .none))
+        #expect(FileManager.default.fileExists(atPath: request.destinationPath + "/inner/nested/NESTED.md") == (mode == .recursive))
+        #expect(try await fixture.service(request).inspectCompletion(plan) == result)
+        #expect(try String(contentsOf: sourceInner, encoding: .utf8) == "Keep dirty inner bytes\n")
+        #expect(try String(contentsOf: sourceNested, encoding: .utf8) == "Keep dirty nested bytes\n")
+        #expect(try await fixture.run(["rev-parse", "HEAD"], at: modules.inner).output == innerHead)
+        #expect(try await fixture.run(["rev-parse", "HEAD"], at: modules.nested).output == nestedHead)
+        #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+    }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func gitWorktreeSubmoduleFailureRecordsOnlyGenericWarningAndRecoversWithoutNetworkOrHelpers() async throws {
+    let fixture = try await WorktreeFixture.make(); defer { fixture.cleanup() }
+    let sentinel = fixture.root.appendingPathComponent("ext-helper-must-not-run")
+    let config = "[submodule \"unavailable\"]\n path = unavailable\n url = ext::touch " + sentinel.path + "\n"
+    try Data(config.utf8).write(to: fixture.source.appendingPathComponent(".gitmodules"))
+    _ = try await fixture.run(["add", "--", ".gitmodules"])
+    let head = String(decoding: try await fixture.run(["rev-parse", "HEAD"]).output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try await fixture.run(["update-index", "--add", "--cacheinfo", "160000," + head + ",unavailable"])
+    _ = try await fixture.run(["commit", "-m", "Unavailable module fixture"])
+    let request = fixture.request(.createBranch(name: "module-warning", baseRef: "HEAD"), submodules: .recursive)
+    let service = fixture.service(request), plan = try await service.prepare(), result = try await service.run(plan)
+    #expect(result.submoduleWarning == GitWorktreeResult.submoduleFailureWarning)
+    #expect(FileManager.default.fileExists(atPath: request.destinationPath + "/README.md"))
+    #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+    #expect(try await fixture.service(request).inspectCompletion(plan) == result)
+    #expect(try await fixture.service(request).run(plan) == result)
+    let receipt = try Data(contentsOf: fixture.destinations.appendingPathComponent(GitWorktreeCompletion.filename(plan.id)))
+    #expect(!String(decoding: receipt, as: UTF8.self).contains("ext::"))
+    #expect(!String(decoding: receipt, as: UTF8.self).contains(sentinel.path))
+    // A gitlink can exist without a committed URL mapping. Selected initialization
+    // must ask Git and report its ordinary failure rather than skip this stage.
+    _ = try await fixture.run(["rm", "--", ".gitmodules"])
+    _ = try await fixture.run(["commit", "-m", "Missing module URL mapping"])
+    _ = try await fixture.run(["config", "--remove-section", "submodule.unavailable"], succeeds: false)
+    let missing = fixture.request(.createBranch(name: "missing-module-configuration", baseRef: "HEAD"), submodules: .topLevel)
+    let missingService = fixture.service(missing), missingPlan = try await missingService.prepare()
+    let missingResult = try await missingService.run(missingPlan)
+    #expect(missingResult.submoduleWarning == GitWorktreeResult.submoduleFailureWarning)
+    #expect(try await fixture.service(missing).inspectCompletion(missingPlan) == missingResult)
+    #expect(!FileManager.default.fileExists(atPath: sentinel.path))
+}
+
+@Test(.timeLimit(.minutes(1)))
+func gitWorktreeSubmoduleCancellationDrainsItsProcessAndNeverRecordsACompletionReceipt() async throws {
+    var fixture = try await WorktreeFixture.make(); defer { fixture.cleanup() }
+    _ = try await fixture.nestedSubmodules()
+    let request = fixture.request(.createBranch(name: "cancel-module-init", baseRef: "HEAD"), submodules: .recursive)
+    let started = fixture.root.appendingPathComponent("submodule-started"), release = fixture.root.appendingPathComponent("submodule-release")
+    let partial = URL(fileURLWithPath: request.destinationPath).appendingPathComponent("preserved-partial.txt")
+    let wrapper = fixture.root.appendingPathComponent("gated-git")
+    try Data("""
+    #!/bin/sh
+    for arg in "$@"; do
+      if [ "$arg" = submodule ]; then
+        printf 'Preserve partial module work\\n' > "$COINCIDE_MODULE_PARTIAL"
+        : > "$COINCIDE_MODULE_STARTED"
+        trap 'exit 130' TERM INT
+        while [ ! -f "$COINCIDE_MODULE_RELEASE" ]; do sleep 0.05; done
+      fi
+    done
+    exec "$COINCIDE_REAL_GIT" "$@"
+    """.utf8).write(to: wrapper)
+    #expect(chmod(wrapper.path, 0o755) == 0)
+    fixture.environment["COINCIDE_MODULE_PARTIAL"] = partial.path; fixture.environment["COINCIDE_MODULE_STARTED"] = started.path
+    fixture.environment["COINCIDE_MODULE_RELEASE"] = release.path; fixture.environment["COINCIDE_REAL_GIT"] = fixture.git.path
+    let service = fixture.service(request, executable: wrapper), plan = try await service.prepare()
+    let task = Task { try await service.run(plan) }
+    do {
+        try await worktreeEventually { FileManager.default.fileExists(atPath: started.path) }
+        #expect(try await fixture.service(request).inspectCompletion(plan) == nil)
+        task.cancel(); await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try String(contentsOf: partial, encoding: .utf8) == "Preserve partial module work\n")
+        #expect(!FileManager.default.fileExists(atPath: fixture.destinations.appendingPathComponent(GitWorktreeCompletion.filename(plan.id)).path))
+        #expect(try await fixture.service(request).inspectCompletion(plan) == nil)
+        await #expect(throws: GitWorktreeError.self) { try await fixture.service(request).run(plan) }
+    } catch { task.cancel(); try? Data().write(to: release); _ = await task.result; throw error }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func gitWorktreeSubmoduleConfigurationReplacementDuringPolicyReadNeverStartsInitialization() async throws {
+    var fixture = try await WorktreeFixture.make(); defer { fixture.cleanup() }
+    _ = try await fixture.nestedSubmodules()
+    let request = fixture.request(.createBranch(name: "changed-module-configuration", baseRef: "HEAD"), submodules: .recursive)
+    let started = fixture.root.appendingPathComponent("policy-started"), release = fixture.root.appendingPathComponent("policy-release")
+    let invoked = fixture.root.appendingPathComponent("initialization-must-not-start"), wrapper = fixture.root.appendingPathComponent("policy-gated-git")
+    try Data("""
+    #!/bin/sh
+    for arg in "$@"; do
+      if [ "$arg" = --get-regexp ]; then
+        : > "$COINCIDE_POLICY_STARTED"
+        trap 'exit 130' TERM INT
+        while [ ! -f "$COINCIDE_POLICY_RELEASE" ]; do sleep 0.05; done
+      fi
+      if [ "$arg" = submodule ]; then : > "$COINCIDE_MODULE_INVOKED"; fi
+    done
+    exec "$COINCIDE_REAL_GIT" "$@"
+    """.utf8).write(to: wrapper)
+    #expect(chmod(wrapper.path, 0o755) == 0)
+    fixture.environment["COINCIDE_POLICY_STARTED"] = started.path; fixture.environment["COINCIDE_POLICY_RELEASE"] = release.path
+    fixture.environment["COINCIDE_MODULE_INVOKED"] = invoked.path; fixture.environment["COINCIDE_REAL_GIT"] = fixture.git.path
+    let service = fixture.service(request, executable: wrapper), plan = try await service.prepare()
+    let task = Task { try await service.run(plan) }
+    do {
+        try await worktreeEventually { FileManager.default.fileExists(atPath: started.path) }
+        let configuration = URL(fileURLWithPath: request.destinationPath).appendingPathComponent(".gitmodules")
+        let replacement = Data("[submodule \"foreign\"]\n path = foreign\n url = ext::must-not-execute\n".utf8)
+        try replacement.write(to: configuration, options: .atomic)
+        try Data().write(to: release)
+        do { _ = try await task.value; Issue.record("Changed submodule configuration was used.") }
+        catch let error as GitWorktreeError { #expect(error.failure == .ownershipLost) }
+        #expect(!FileManager.default.fileExists(atPath: invoked.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.destinations.appendingPathComponent(GitWorktreeCompletion.filename(plan.id)).path))
+        #expect(try Data(contentsOf: configuration) == replacement)
+        #expect(try await fixture.service(request).inspectCompletion(plan) == nil)
+    } catch { task.cancel(); try? Data().write(to: release); _ = await task.result; throw error }
 }
 
 private func worktreeEventually(_ condition: @escaping @Sendable () -> Bool) async throws {
@@ -122,6 +294,20 @@ func gitWorktreeCreatesPinnedCommittedBytesPreservesDirtySourceAndRecoversComple
     let recovered = fixture.service(request)
     #expect(try await recovered.inspectCompletion(plan) == result)
     #expect(try await recovered.run(plan) == result)
+    // Pre-submodule receipts omit the new choice entirely. Decoding must preserve
+    // their no-network intent rather than infer recursive initialization.
+    func legacy(_ value: Any) -> Any {
+        if let object = value as? [String: Any] { return object.filter { $0.key != "submodules" && $0.key != "submoduleWarning" }.mapValues(legacy) }
+        if let array = value as? [Any] { return array.map(legacy) }
+        return value
+    }
+    for name in [GitWorktreeOwnership.filename(plan.id), GitWorktreeCompletion.filename(plan.id)] {
+        let file = fixture.destinations.appendingPathComponent(name)
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: file))
+        try JSONSerialization.data(withJSONObject: legacy(object)).write(to: file)
+    }
+    #expect(try await fixture.service(request).inspectCompletion(plan) == result)
+    #expect(try await fixture.service(request).run(plan) == result)
     let inventory = try await GitWorktreeService(source: fixture.source, environment: fixture.environment, gitExecutable: fixture.git).inventory()
     #expect(inventory.worktrees.contains { $0.path == plan.destinationPath && $0.branch == "feature/native" })
 }

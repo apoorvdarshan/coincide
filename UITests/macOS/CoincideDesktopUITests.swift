@@ -401,6 +401,113 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
+    @MainActor func testWorktreePreparationKeepsExplicitBaseDraftAndSourceFiles() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "worktree")
+        let app = fixture.app
+        let project = fixture.root.appendingPathComponent("Native Worktree", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let readme = project.appendingPathComponent("README.md")
+        let baseContents = "Committed explicit local base\n"
+        try baseContents.write(to: readme, atomically: true, encoding: .utf8)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Explicit base fixture"], ["branch", "ui-base"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "worktree-base-\(arguments[0])")
+        }
+        let baseHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "worktree-base-head")
+        try "Newer committed source checkout\n".write(to: readme, atomically: true, encoding: .utf8)
+        for arguments in [["add", "README.md"], ["commit", "--message", "Newer source fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "worktree-source-\(arguments[0])")
+        }
+        let sourceHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "worktree-source-head")
+        XCTAssertNotEqual(sourceHead, baseHead)
+        let dirtyContents = "Keep these uncommitted source edits\n"
+        try dirtyContents.write(to: readme, atomically: true, encoding: .utf8)
+        let sentinel = project.appendingPathComponent("untracked-sentinel.txt"), sentinelBytes = Data("Keep this untracked source file\n".utf8)
+        try sentinelBytes.write(to: sentinel)
+        let sourceHeadFile = project.appendingPathComponent(".git/HEAD"), sourceHeadBytes = try Data(contentsOf: sourceHeadFile)
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        try openProject(project, in: app)
+        let header = app.buttons["Collapse Native Worktree"]
+        XCTAssertTrue(header.waitForExistence(timeout: 10))
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let draft = "Keep this unsent draft while preparing a separate checkout"
+        composer.click(); composer.typeText(draft)
+        let identifier = try selectedThreadIdentifier(in: app)
+        assertConversationWorkspace(app, path: project.path)
+        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
+        workspace.click()
+        let choose = app.menuItems["Choose Worktree…"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5)); choose.click()
+        let review = app.sheets.containing(.textField, identifier: "worktree-new-branch").element
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        let branch = review.textFields["worktree-new-branch"], base = review.textFields["worktree-base-ref"]
+        XCTAssertTrue(branch.waitForExistence(timeout: 5)); branch.click(); branch.typeText("ui-native-worktree")
+        XCTAssertEqual(base.value as? String, "HEAD")
+        base.click(); base.typeKey("a", modifierFlags: .command); base.typeText("ui-base")
+        let submodules = review.descendants(matching: .any).matching(identifier: "worktree-submodules").element
+        XCTAssertTrue(submodules.waitForExistence(timeout: 5))
+        XCTAssertEqual(submodules.value as? String, "None", "Submodule downloads must require an explicit choice.")
+        let prepare = review.buttons["Prepare Worktree"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: prepare)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+        let display = CGDisplayBounds(CGMainDisplayID())
+        XCTAssertTrue(display.contains(review.frame), "The taller native worktree sheet must fit the hosted display: \(review.frame).")
+        for control in [branch, base, submodules, prepare, review.buttons["Cancel"]] {
+            XCTAssertTrue(control.isHittable && review.frame.contains(control.frame) && display.contains(control.frame), "Every worktree choice must remain visible and interactive.")
+        }
+        submodules.click()
+        for title in ["None", "Top level", "Recursive"] {
+            let option = app.menuItems[title]
+            XCTAssertTrue(option.waitForExistence(timeout: 5))
+            XCTAssertTrue(option.isHittable && display.contains(option.frame), "Submodule options must fit the display.")
+        }
+        app.menuItems["None"].click()
+        XCTAssertEqual(submodules.value as? String, "None")
+        XCTAssertEqual(branch.value as? String, "ui-native-worktree"); XCTAssertEqual(base.value as? String, "ui-base")
+        let choices = XCTAttachment(screenshot: review.screenshot()); choices.name = "worktree-explicit-base-and-safe-submodule-choice"; choices.lifetime = .keepAlways; add(choices)
+        prepare.click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        let managedRoot = fixture.root.appendingPathComponent("Worktrees", isDirectory: true)
+        let prepared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value BEGINSWITH %@", managedRoot.path + "/"), object: workspace)
+        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 20), .completed)
+        let checkoutPath = try XCTUnwrap(workspace.value as? String)
+        XCTAssertTrue(checkoutPath.hasPrefix(managedRoot.path + "/"))
+        let checkout = URL(fileURLWithPath: checkoutPath)
+        XCTAssertNotEqual(checkout.path, project.path)
+        assertWorkspaceReady(in: app)
+        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
+        XCTAssertEqual(composer.value as? String, draft)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: checkout, configuration: fixture.configuration, name: "worktree-prepared-head"), baseHead)
+        XCTAssertEqual(try runGit(["-C", checkout.path, "symbolic-ref", "--short", "HEAD"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "worktree-prepared-branch").trimmingCharacters(in: .whitespacesAndNewlines), "ui-native-worktree")
+        XCTAssertEqual(try String(contentsOf: checkout.appendingPathComponent("README.md"), encoding: .utf8), baseContents)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: checkout.appendingPathComponent("untracked-sentinel.txt").path))
+        assertSidebarFitsDisplay(app, projectHeader: header, selectedConversation: threadRow(identifier, in: app))
+        capture(app, name: "worktree-prepared-checkout-retains-draft")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
+        assertConversationWorkspace(app, path: checkout.path)
+        assertWorkspaceReady(in: app)
+        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: checkout, configuration: fixture.configuration, name: "worktree-reopened-head"), baseHead)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "worktree-preserved-source-head"), sourceHead)
+        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), dirtyContents)
+        XCTAssertEqual(try Data(contentsOf: sentinel), sentinelBytes)
+        XCTAssertEqual(try Data(contentsOf: sourceHeadFile), sourceHeadBytes)
+        let inventory = try runGit(["-C", project.path, "worktree", "list", "--porcelain"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "worktree-reopened-inventory")
+        let paths = inventory.split(separator: "\n").filter { $0.hasPrefix("worktree ") }.map { String($0.dropFirst("worktree ".count)) }
+        XCTAssertEqual(Set(paths), [project.path, checkout.path], "Restart must reuse the completed checkout without creating another worktree.")
+        assertSidebarFitsDisplay(app, projectHeader: header, selectedConversation: threadRow(identifier, in: app))
+        capture(app, name: "worktree-reopened-cwd-and-draft")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
     @MainActor private func prepareApplication(appearance: String, diagnosticPrefix: String? = nil) throws -> (app: XCUIApplication, root: URL, gitPath: String, configuration: URL) {
         let environment = ProcessInfo.processInfo.environment
         let appPath = try XCTUnwrap(environment["COINCIDE_UI_APP_PATH"], "The CI harness must supply the staged app.")
@@ -610,6 +717,17 @@ final class CoincideDesktopUITests: XCTestCase {
         app.menuBars.menuBarItems["Thread"].click()
         let toggle = app.menuItems["Toggle Inspector"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5)); toggle.click()
+    }
+
+    @MainActor private func assertWorkspaceReady(in app: XCUIApplication) {
+        // The cwd changes at durable intent. Native controls remain disabled until checkout is ready.
+        let terminal = app.buttons["Terminal"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed)
+        app.descendants(matching: .any).matching(identifier: "conversation-workspace").element.click()
+        let reveal = app.menuItems["Reveal Workspace"]
+        XCTAssertTrue(reveal.waitForExistence(timeout: 5)); XCTAssertTrue(reveal.isEnabled)
+        app.typeKey(.escape, modifierFlags: [])
     }
 
     @MainActor private func selectSegment(_ title: String, in app: XCUIApplication) {

@@ -7,7 +7,15 @@ struct WorktreePreparationBanner: View {
     let retry: () -> Void
     var retrying = false
     var body: some View {
-        if !preparation.isReady {
+        if preparation.isReady, let warning = preparation.result?.submoduleWarning {
+            Label {
+                Text(warning).font(.caption).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            } icon: { Image(systemName: "exclamationmark.triangle") }
+                .foregroundStyle(.secondary).padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityIdentifier("worktree-submodule-warning")
+        } else if !preparation.isReady {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
                     if preparation.isRunning { ProgressView().controlSize(.small) }
@@ -47,7 +55,7 @@ enum WorktreePreparationPresentation {
         return switch preparation.phase {
         case .queued: String(localized: "Preparing checkout…")
         case .resolving: String(localized: "Resolving local repository…")
-        case .preparing: String(localized: "Preparing worktree…")
+        case .preparing: preparation.request.submodules == .none ? String(localized: "Preparing worktree…") : String(localized: "Preparing worktree and submodules…")
         case .completed: String(localized: "Checkout ready")
         case .failed: String(localized: "Couldn’t prepare checkout")
         case .cancelled: String(localized: "Worktree setup cancelled")

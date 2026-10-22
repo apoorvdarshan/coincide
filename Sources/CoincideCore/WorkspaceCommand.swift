@@ -104,6 +104,7 @@ struct WorkspaceDecision: Sendable {
             if let previousAttemptID {
                 guard let old = thread.workspacePreparation, old.id == previousAttemptID, old.canRetry,
                       old.request.sourcePath == request.sourcePath, old.request.selection == request.selection,
+                      old.request.submodules == request.submodules,
                       old.request.destinationRoot == request.destinationRoot else { throw WorkspaceCommandError("This workspace preparation changed. Refresh its status before retrying.") }
                 history = old.previousAttempts + [.init(request: old.request, plan: old.plan)]
             } else {

@@ -175,14 +175,15 @@ public actor WorkspaceEngine {
     }
     /// Record the destination before resolving Git references. The command rechecks the source
     /// and first-turn boundary after any UI command that was already queued.
-    @discardableResult public func beginWorktreePreparation(threadID: UUID, selection: GitWorktreeSelection) async throws -> WorkspaceCommandReceipt {
+    @discardableResult public func beginWorktreePreparation(threadID: UUID, selection: GitWorktreeSelection,
+                                                          submodules: ProjectWorktreeSubmoduleMode = .none) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
         try Task.checkCancellation()
         guard !stoppingEffects, let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
               let incarnation = threadIncarnations[threadID] else { throw CancellationError() }
         let source = thread.workspacePreparation.flatMap { $0.canRetry ? $0.request.sourcePath : nil } ?? thread.workspacePath
-        let request = GitWorktreeRequest(sourcePath: source, destinationRoot: worktreesRoot.path, selection: selection)
+        let request = GitWorktreeRequest(sourcePath: source, destinationRoot: worktreesRoot.path, selection: selection, submodules: submodules)
         let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: nil, incarnation: incarnation))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
@@ -222,7 +223,7 @@ public actor WorkspaceEngine {
             }
         }
         guard ownsWorktree(threadID: threadID, attemptID: state.id, incarnation: incarnation) else { throw CancellationError() }
-        let request = GitWorktreeRequest(sourcePath: state.request.sourcePath, destinationRoot: worktreesRoot.path, selection: state.request.selection)
+        let request = GitWorktreeRequest(sourcePath: state.request.sourcePath, destinationRoot: worktreesRoot.path, selection: state.request.selection, submodules: state.request.submodules)
         let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }

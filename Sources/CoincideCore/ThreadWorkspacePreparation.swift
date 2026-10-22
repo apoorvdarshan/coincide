@@ -59,7 +59,9 @@ public struct ThreadWorkspacePreparation: Codable, Sendable, Equatable, Identifi
         guard plan.request == request, plan.destinationPath == request.destinationPath else { throw CoincideError("The worktree plan does not match its saved intent.") }
     }
     static func validate(result: GitWorktreeResult, plan: GitWorktreePlan?) throws {
+        try result.validate()
         guard let plan, result.destinationPath == plan.destinationPath, result.branch == plan.branch, result.headCommit == plan.baseCommit,
+              result.submoduleWarning == nil || plan.request.submodules != .none,
               [40, 64].contains(result.headCommit.utf8.count), result.headCommit.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }) else {
             throw CoincideError("The prepared worktree does not match its saved plan.")
         }

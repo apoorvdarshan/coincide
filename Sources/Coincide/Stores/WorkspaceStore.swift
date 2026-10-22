@@ -830,7 +830,7 @@ final class WorkspaceStore {
     func createWorktree(for id: UUID, branch: String) async {
         await prepareWorktree(for: id, selection: .createBranch(name: branch, baseRef: "HEAD"))
     }
-    func prepareWorktree(for id: UUID, selection: GitWorktreeSelection) async {
+    func prepareWorktree(for id: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode = .none) async {
         guard let thread = thread(id), thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty else {
             errorMessage = "Choose the worktree before sending the first message."; return
         }
@@ -839,7 +839,7 @@ final class WorkspaceStore {
         }
         guard thread.workspacePreparation?.isRunning != true else { return }
         await performWorktreeCommand(for: id, changesWorkspace: true) { engine in
-            try await engine.beginWorktreePreparation(threadID: id, selection: selection)
+            try await engine.beginWorktreePreparation(threadID: id, selection: selection, submodules: submodules)
         }
     }
     func cancelWorktreePreparation(_ id: UUID) {

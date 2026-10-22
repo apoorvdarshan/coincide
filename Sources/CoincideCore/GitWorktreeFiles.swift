@@ -55,14 +55,14 @@ final class GitWorktreeDirectory: @unchecked Sendable {
         _ = fsync(fd)
         return try .init(child: name, parent: self)
     }
-    func read(_ name: String, maximum: Int = 131_072) throws -> Data? {
+    func read(_ name: String, maximum: Int = 131_072, allowEmpty: Bool = false) throws -> Data? {
         try validate()
         let file = openat(fd, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         if file < 0, errno == ENOENT { return nil }
         guard file >= 0 else { throw GitWorktreeError(.metadataCorrupt, "Worktree ownership metadata cannot be read safely. Existing files were preserved.") }
         defer { Darwin.close(file) }
         var before = stat()
-        guard fstat(file, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_size > 0, before.st_size <= maximum else {
+        guard fstat(file, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_size >= (allowEmpty ? 0 : 1), before.st_size <= maximum else {
             throw GitWorktreeError(.metadataCorrupt, "Worktree ownership metadata is invalid. Existing files were preserved.")
         }
         var data = Data(), buffer = [UInt8](repeating: 0, count: min(maximum + 1, 65_536))

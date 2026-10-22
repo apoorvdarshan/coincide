@@ -1,5 +1,53 @@
 # Validation record
 
+## 2026-10-22 — explicit submodule initialization for new worktrees
+
+- New worktree requests capture an explicit None/top-level/recursive choice. None
+  remains the native default; old requests, ownership records and completion
+  receipts decode without enabling downloads. Retry preserves the captured mode.
+  Registered-worktree reuse rejects initialization and remains read-only. Storage
+  version 11 prevents older apps from ignoring a selected preparation stage.
+- Initialization follows successful owned checkout creation and precedes the
+  final completion receipt and eligible queued provider start. It uses the new
+  checkout, pinned regular `.gitmodules` bytes (up to 256 KiB), an unchanged index, captured Git
+  administration/common-directory ownership, and `--checkout` without force,
+  remote-update, reset or source-submodule mutation. Final synchronous config
+  revalidation rejects a replacement during awaited policy/mapping reads; this
+  does not claim filesystem locking against arbitrary external writers.
+- Only standard transports allowed by effective Git policy and any inherited
+  allowlist can run. File transport requires explicit allowance; arbitrary/ext
+  helpers and configured custom update commands cannot execute. Planning,
+  checkout creation and completion inspection continue to deny transport access.
+  Development regressions use private nested local repositories and gated wrapper
+  processes, with no real remote requests.
+- Normal initialization failures/timeouts/output limits persist one fixed generic
+  warning with a usable checkout. The warning remains visible after restart and
+  contains no raw Git output, URL or configuration value. Cancellation, changed
+  configuration and lost ownership preserve partial files without a completion
+  receipt; their queues stay held. Explicit reuse/new selection remains necessary
+  for an unproven partial attempt rather than replaying Git over retained files.
+- Five new primitive cases cover mode/legacy/policy validation, None/top-level/
+  recursive nested checkout contents and source dirty-file/HEAD preservation,
+  custom-update/ext-helper rejection, warning recovery, owned cancellation, and
+  config replacement during policy discovery. An engine case checks held FIFO
+  readiness and persisted warning recovery. The existing native Store workflow
+  now carries top-level selection through real Git, queued settings and restart.
+- A committed gitlink without `.gitmodules` initially returned success without
+  trying the selected initialization. The regression fails before the fix; missing
+  pinned configuration now requires proven absence and still invokes Git, whose
+  normal failure becomes the generic warning. Ordinary repositories remain no-ops.
+- The sixth hosted GUI workflow exercises the native worktree sheet, explicit
+  older local base/new branch, safe default and all mode controls, retained draft,
+  native readiness, actual new cwd/HEAD/content, restart reuse and unchanged source
+  HEAD/dirty/untracked files. It is separate from the immutable five-test run on
+  `8c0df0b`; compilation alone does not establish its runtime result.
+- Final `swift test --no-parallel`: **342 passed** (271 core, 6 terminal,
+  13 Markdown, 52 native UI/Store). All six Xcode GUI methods compile, the runner
+  passes deep signature verification, and Python CI configuration checks pass 3/3.
+  Packaging/launch, deep strict app signature and bundled math-font rendering pass.
+  Migration to storage 11 preserves the entire canonical user workspace against
+  its private storage-10 backup, including three conversations and 25 messages.
+
 ## 2026-10-22 — explicit native project scripts and process pipe isolation
 
 - Native discovery reads the current checkout's anchored `t3.json`, capped at

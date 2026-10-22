@@ -10,7 +10,7 @@ struct WorktreeSetupSheet: View {
     let store: WorkspaceStore
     let threadID: UUID
     let cancel: () -> Void
-    let choose: (GitWorktreeSelection) -> Void
+    let choose: (GitWorktreeSelection, ProjectWorktreeSubmoduleMode) -> Void
     private enum Mode: String, CaseIterable, Identifiable {
         case newBranch, existingBranch, registeredWorktree
         var id: Self { self }
@@ -27,6 +27,7 @@ struct WorktreeSetupSheet: View {
     @State private var baseRef = "HEAD"
     @State private var existingBranch = ""
     @State private var worktreePath = ""
+    @State private var submodules = ProjectWorktreeSubmoduleMode.none
     @State private var options: WorktreeSetupOptions?
     @State private var loadError: String?
     @State private var loading = true
@@ -81,6 +82,15 @@ struct WorktreeSetupSheet: View {
                 Text("Existing edits stay in that checkout. Coincide verifies it still belongs to this repository before using it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if mode != .registeredWorktree {
+                Picker("Initialize submodules", selection: $submodules) {
+                    Text("None").tag(ProjectWorktreeSubmoduleMode.none)
+                    Text("Top level").tag(ProjectWorktreeSubmoduleMode.topLevel)
+                    Text("Recursive").tag(ProjectWorktreeSubmoduleMode.recursive)
+                }.accessibilityIdentifier("worktree-submodules")
+                Text("Initialization may download repositories using your Git configuration. None leaves submodules empty. If initialization fails, the checkout remains available with a warning.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if loading { ProgressView().controlSize(.small).accessibilityLabel("Loading local worktrees") }
             if let loadError {
                 Text(loadError).font(.caption).foregroundStyle(.red)
@@ -95,7 +105,7 @@ struct WorktreeSetupSheet: View {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
                 Button(mode == .registeredWorktree ? "Use Worktree" : "Prepare Worktree") {
-                    if let selection { choose(selection) }
+                    if let selection { choose(selection, mode == .registeredWorktree ? .none : submodules) }
                 }.keyboardShortcut(.defaultAction).disabled(selection == nil || loading)
             }
         }
