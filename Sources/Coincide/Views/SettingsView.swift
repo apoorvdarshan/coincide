@@ -14,13 +14,17 @@ struct SettingsView: View {
                 LabeledContent("CLI", value: ProcessChannel.findExecutable(provider.executable)?.path ?? "Not installed")
                 Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)
                 Button(store.isRefreshingModels ? "Refreshing…" : "Refresh Available Models") { Task { await store.refreshModels(provider: provider) } }
-                    .disabled(store.isRefreshingModels || ((provider == .opencode || provider == .pi) && store.selectedThread?.provider != provider))
+                    .disabled(store.isRefreshingModels || ((provider == .opencode || provider == .pi || provider == .muse) && store.selectedThread?.provider != provider))
                 if provider == .opencode {
                     Text("Choose OpenCode in a new conversation, select the installed server generation, and refresh the models and agents available in that workspace.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if provider == .pi {
                     Text("Requires Pi 0.80.5 or newer. Choose Pi in a conversation, then refresh its workspace models. Pi uses its existing sign-in and app-provided tool approval prompts; it is not an OS sandbox.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if provider == .muse {
+                    Text("Choose Muse in a conversation before refreshing its models. Muse uses its existing CLI sign-in. A model list does not verify login or access to a model.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 LabeledContent("Available models", value: "\(store.models(for: provider).count)")

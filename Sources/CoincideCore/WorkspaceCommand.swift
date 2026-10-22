@@ -35,6 +35,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case openCodeModel(ProviderModel?), openCodeVariant(model: ProviderModel, variant: String?), openCodeAgent(String)
     case openCodeGeneration(OpenCodeGeneration), grokRuntimeMode(GrokACPRuntimeMode)
     case piModel(ProviderModel?), piThinking(model: ProviderModel, level: String?)
+    case museModel(ProviderModel?), museReasoning(model: ProviderModel, effort: String?)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -554,6 +555,12 @@ struct WorkspaceDecision: Sendable {
                 case .piThinking(let model, let level):
                     do { try thread.selectPiThinking(model: model, level: level) }
                     catch { throw WorkspaceCommandError(error.localizedDescription) }
+                case .museModel(let model):
+                    do { try thread.selectMuseModel(model) }
+                    catch { throw WorkspaceCommandError(error.localizedDescription) }
+                case .museReasoning(let model, let effort):
+                    do { try thread.selectMuseReasoning(model: model, effort: effort) }
+                    catch { throw WorkspaceCommandError(error.localizedDescription) }
                 case .openCodeVariant(let model, let variant): try thread.selectOpenCodeVariant(model: model, variant: variant)
                 case .openCodeAgent(let agent):
                     guard thread.provider == .opencode, let native = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
@@ -575,6 +582,10 @@ struct WorkspaceDecision: Sendable {
                     let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !title.isEmpty else { throw WorkspaceCommandError("A conversation title cannot be empty.") }; thread.title = title
                 case .model(let model):
+                    if thread.provider == .muse {
+                        guard model.isEmpty else { throw WorkspaceCommandError("Choose an available Muse model.") }
+                        try thread.selectMuseModel(nil); break
+                    }
                     if thread.provider == .pi {
                         guard model.isEmpty else { throw WorkspaceCommandError("Choose an advertised Pi model.") }
                         try thread.selectPiModel(nil); break
@@ -586,6 +597,9 @@ struct WorkspaceDecision: Sendable {
                     if thread.model != model { thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil }
                     thread.model = model
                 case .permission(let mode):
+                    if thread.provider == .muse, mode != .supervised && mode != .fullAccess {
+                        throw WorkspaceCommandError("Muse supports Ask and Always approve permissions.")
+                    }
                     if thread.provider == .acp, thread.acpAgent?.integration == .grok {
                         _ = try GrokACP.runtimeMode(permission: mode)
                     }
@@ -608,12 +622,15 @@ struct WorkspaceDecision: Sendable {
                     decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.openCodeConfiguration = kind == .opencode ? .init(instanceID: id) : nil
                     thread.piConfiguration = kind == .pi ? .init(instanceID: id) : nil
+                    thread.museConfiguration = kind == .muse ? .init(instanceID: id) : nil
+                    if kind == .muse, thread.permission != .supervised && thread.permission != .fullAccess { thread.permission = .supervised }
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
                     guard decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Save this agent in Settings first.") }
                     decision.closeRuntimes.insert(thread.id); thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
                     thread.openCodeConfiguration = nil
                     thread.piConfiguration = nil
+                    thread.museConfiguration = nil
                     thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value
@@ -692,6 +709,12 @@ struct WorkspaceDecision: Sendable {
                 let request = thread.runtimeRequests[i].request
                 switch response {
                 case .option(let id):
+                    if request.method == "muse/approval" {
+                        guard thread.provider == .muse, let input = request.museApproval else { throw WorkspaceCommandError("This Muse approval is no longer available.") }
+                        do { _ = try input.decisionBody(choiceID: id) }
+                        catch { throw WorkspaceCommandError("Choose a current Muse approval option.") }
+                        break
+                    }
                     if request.method == "pi/extension" {
                         guard thread.provider == .pi, let input = request.piExtension, input.method == .select, input.options.contains(id) else {
                             throw WorkspaceCommandError("This Pi choice is no longer available.")
@@ -703,7 +726,14 @@ struct WorkspaceDecision: Sendable {
                         throw WorkspaceCommandError("This permission option is no longer available.")
                     }
                 case .decision(let allow):
-                    if request.method == "pi/extension" {
+                    if request.method == "muse/approval" || request.method == "muse/userInput" {
+                        guard thread.provider == .muse, !allow else { throw WorkspaceCommandError("Choose a Muse option or answer its questions.") }
+                        if request.method == "muse/approval" {
+                            guard let input = request.museApproval else { throw WorkspaceCommandError("This Muse approval is no longer available.") }
+                            do { _ = try input.declineBody() }
+                            catch { throw WorkspaceCommandError("Choose a current Muse approval option.") }
+                        } else { guard request.museUserInput != nil else { throw WorkspaceCommandError("This Muse question is no longer available.") } }
+                    } else if request.method == "pi/extension" {
                         guard thread.provider == .pi, !allow || request.piExtension?.method == .confirm else {
                             throw WorkspaceCommandError("Answer the Pi request or cancel it.")
                         }
@@ -722,7 +752,11 @@ struct WorkspaceDecision: Sendable {
                         }
                     } else { guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") } }
                 case .answers(let answers):
-                    if request.method == "pi/extension" {
+                    if request.method == "muse/userInput" {
+                        guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
+                        do { _ = try input.answerBody(answers: answers) }
+                        catch { throw WorkspaceCommandError("Provide valid answers for the Muse questions.") }
+                    } else if request.method == "pi/extension" {
                         guard thread.provider == .pi, let input = request.piExtension,
                               input.method == .input || input.method == .editor, Set(answers.keys) == ["value"],
                               let value = answers["value"], value.utf8.count <= 1_048_576, !value.contains("\u{0}") else {
@@ -741,7 +775,11 @@ struct WorkspaceDecision: Sendable {
                         guard CursorACPMethod.canonical(request.method) == nil, request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
                     }
                 case .selections(let selections):
-                    if GrokACP.questionMethod(request.method) {
+                    if request.method == "muse/userInput" {
+                        guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
+                        do { _ = try input.answerBody(selections: selections) }
+                        catch { throw WorkspaceCommandError("Provide valid answers for the Muse questions.") }
+                    } else if GrokACP.questionMethod(request.method) {
                         guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else { throw ACPIntegrationValidation.failure() }
                         _ = try question.response(selections: selections)
                     } else if request.method == "opencode/question" {
@@ -758,6 +796,12 @@ struct WorkspaceDecision: Sendable {
                       catch { throw WorkspaceCommandError("Select valid answers for every required question.") }
                     }
                 case .selectionsWithNotes(let selections, let notes):
+                    if request.method == "muse/userInput" {
+                        guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
+                        do { _ = try input.answerBody(selections: selections, notes: notes) }
+                        catch { throw WorkspaceCommandError("Provide valid answers for the Muse questions.") }
+                        break
+                    }
                     guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else {
                         throw WorkspaceCommandError("This provider question does not accept notes.")
                     }
@@ -953,7 +997,9 @@ struct WorkspaceDecision: Sendable {
                         (thread.provider == .acp && thread.acpAgent?.integration == .grok &&
                          record.configuration.provider == .acp && record.configuration.acpAgent == thread.acpAgent) ||
                         (thread.provider == .opencode && record.configuration.provider == .opencode &&
-                         record.configuration.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity),
+                         record.configuration.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity) ||
+                        (thread.provider == .muse && record.configuration.provider == .muse &&
+                         record.configuration.museConfiguration?.runtimeIdentity == thread.museConfiguration?.runtimeIdentity),
                       record.providerThreadID == thread.providerThreadID else { return }
                 attributedRun = owner
             } else { attributedRun = thread.activeRun?.id }
@@ -1123,7 +1169,14 @@ struct WorkspaceDecision: Sendable {
         case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
-            if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
+            if case .succeeded = result {
+                // MSP acknowledges a decision before its native requirement
+                // changes or settles. Keep the exact row disabled until the
+                // adapter publishes that authoritative replacement/dismissal.
+                let waitsForNativeSettlement = thread.provider == .muse &&
+                    (request.method == "muse/approval" || request.method == "muse/userInput")
+                if !waitsForNativeSettlement { thread.runtimeRequests.remove(at: i) }
+            }
             else {
                 thread.runtimeRequests[i].responding = false
                 if case .failed(let message) = result { thread.appendRunMessage(role: .system, text: message) }

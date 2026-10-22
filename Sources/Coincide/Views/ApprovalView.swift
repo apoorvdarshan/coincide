@@ -13,7 +13,16 @@ struct ApprovalView: View {
     private var questions: [JSONValue] { request.questions }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if request.method == "pi/extension" {
+            if request.method == "muse/approval" {
+                if let input = request.museApproval {
+                    MuseApprovalView(request: input, isResponding: isResponding, onOption: onOption)
+                } else { Text("This Muse approval cannot be displayed safely. Stop the conversation to dismiss it.") }
+            } else if request.method == "muse/userInput" {
+                if let input = request.museUserInput {
+                    MuseUserInputView(request: input, isResponding: isResponding,
+                        onAnswer: onSelectionsWithNotes, onCancel: { onDecision(false) })
+                } else { Text("These Muse questions cannot be displayed safely. Stop the conversation to dismiss them.") }
+            } else if request.method == "pi/extension" {
                 if let input = request.piExtension {
                     PiExtensionApprovalView(request: input, isResponding: isResponding,
                         onDecision: onDecision, onAnswer: onAnswer, onOption: onOption)

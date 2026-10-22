@@ -22,19 +22,27 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
     public var openCodeVariants: [String]?
     public var piSelection: PiModelSelection?
     public var piThinkingLevels: [String]?
+    public var museSelection: MuseModelSelection?
+    public var museReasoningEfforts: [ProviderReasoningEffortOption]?
+    public var museDefaultReasoningEffort: String?
 
     public init(id: String, name: String, reasoningEfforts: [ProviderReasoningEffortOption] = [],
                 defaultReasoningEffort: String? = nil, isDefault: Bool = false, catalogID: String? = nil,
                 openCodeSelection: OpenCodeModelSelection? = nil, openCodeVariants: [String]? = nil,
-                piSelection: PiModelSelection? = nil, piThinkingLevels: [String]? = nil) {
+                piSelection: PiModelSelection? = nil, piThinkingLevels: [String]? = nil,
+                museSelection: MuseModelSelection? = nil, museReasoningEfforts: [ProviderReasoningEffortOption]? = nil,
+                museDefaultReasoningEffort: String? = nil) {
         self.id = id; self.name = name; self.reasoningEfforts = reasoningEfforts
         self.defaultReasoningEffort = defaultReasoningEffort; self.isDefault = isDefault; self.catalogID = catalogID
         self.openCodeSelection = openCodeSelection; self.openCodeVariants = openCodeVariants
         self.piSelection = piSelection; self.piThinkingLevels = piThinkingLevels
+        self.museSelection = museSelection; self.museReasoningEfforts = museReasoningEfforts
+        self.museDefaultReasoningEffort = museDefaultReasoningEffort
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, reasoningEfforts, defaultReasoningEffort, isDefault, catalogID, openCodeSelection, openCodeVariants, piSelection, piThinkingLevels
+        case museSelection, museReasoningEfforts, museDefaultReasoningEffort
     }
 
     public init(from decoder: any Decoder) throws {
@@ -47,7 +55,10 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
             openCodeSelection: try values.decodeIfPresent(OpenCodeModelSelection.self, forKey: .openCodeSelection),
             openCodeVariants: try values.decodeIfPresent([String].self, forKey: .openCodeVariants),
             piSelection: try values.decodeIfPresent(PiModelSelection.self, forKey: .piSelection),
-            piThinkingLevels: try values.decodeIfPresent([String].self, forKey: .piThinkingLevels))
+            piThinkingLevels: try values.decodeIfPresent([String].self, forKey: .piThinkingLevels),
+            museSelection: try values.decodeIfPresent(MuseModelSelection.self, forKey: .museSelection),
+            museReasoningEfforts: try values.decodeIfPresent([ProviderReasoningEffortOption].self, forKey: .museReasoningEfforts),
+            museDefaultReasoningEffort: try values.decodeIfPresent(String.self, forKey: .museDefaultReasoningEffort))
     }
 }
 

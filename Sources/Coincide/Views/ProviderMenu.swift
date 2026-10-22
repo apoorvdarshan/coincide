@@ -14,7 +14,8 @@ struct ProviderMenu: View {
         var parts = [thread.providerName]
         if !thread.model.isEmpty {
             let piName = thread.piConfiguration?.model.map { $0.provider + " / " + $0.modelID }
-            parts.append(store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? piName ?? thread.openCodeConfiguration?.model?.id ?? thread.model)
+            let museName = thread.museConfiguration?.model?.modelID
+            parts.append(store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? museName ?? piName ?? thread.openCodeConfiguration?.model?.id ?? thread.model)
         }
         if thread.provider == .codex, let effort = thread.reasoningEffort {
             parts.append(String(localized: "Reasoning: \(ReasoningEffortPresentation.title(effort))"))
@@ -24,6 +25,7 @@ struct ProviderMenu: View {
             if let agent = thread.openCodeConfiguration?.agentID { parts.append(agent) }
         }
         if thread.provider == .pi, let level = thread.piConfiguration?.thinkingLevel { parts.append("Thinking: \(level)") }
+        if thread.provider == .muse, let effort = thread.museConfiguration?.reasoningEffort { parts.append("Reasoning: \(effort)") }
         return parts.joined(separator: " · ")
     }
     private var menu: some View {
@@ -62,6 +64,21 @@ struct ProviderMenu: View {
             }
             if thread.provider == .opencode {
                 openCodeOptions
+            }
+            if thread.provider == .muse, let model = store.models(for: thread).first(where: { $0.id == thread.model }), !model.reasoningEfforts.isEmpty {
+                Menu("Reasoning") {
+                    Button { _ = store.setMuseReasoning(nil, model: model, threadID: thread.id) } label: {
+                        choice("Muse Default", selected: thread.museConfiguration?.reasoningEffort == nil)
+                    }
+                    ForEach(model.reasoningEfforts) { effort in
+                        Button { _ = store.setMuseReasoning(effort.id, model: model, threadID: thread.id) } label: {
+                            choice(ReasoningEffortPresentation.title(effort.id), selected: thread.museConfiguration?.reasoningEffort == effort.id)
+                        }.help(effort.description)
+                    }
+                    if model.museReasoningEfforts == nil {
+                        Text("Compatibility choices; Muse did not advertise reasoning options.")
+                    }
+                }.accessibilityIdentifier("muse-reasoning-menu")
             }
             if thread.provider == .pi, let model = store.models(for: thread).first(where: { $0.id == thread.model }),
                let levels = model.piThinkingLevels, !levels.isEmpty {
@@ -112,7 +129,7 @@ struct ProviderMenu: View {
             }
             Divider()
             Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
-                .disabled((thread.provider == .acp || thread.provider == .opencode || thread.provider == .pi) && !store.workspaceReady(for: thread))
+                .disabled((thread.provider == .acp || thread.provider == .opencode || thread.provider == .pi || thread.provider == .muse) && !store.workspaceReady(for: thread))
         } label: {
             // AppKit's native menu button derives its title from a single Text.
             // Nested label stacks otherwise lose the selected model and effort.

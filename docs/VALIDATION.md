@@ -1,5 +1,69 @@
 # Validation record
 
+## 2026-10-22 — initial native Muse Session Protocol
+
+- Added a dedicated native MSP transport and session actor using the pinned
+  1.4.6 SDK contract. The bounded stdio connection separates RPC IDs, command
+  IDs and server presentation requests, scrubs the inherited Meta API key,
+  disables automatic updates and never retries an uncertain write. A metadata
+  process has shell/write tools disabled and does not establish login or access.
+- Captured model, effort and launch authority survive FIFO execution, SQLite
+  reopen and journal replay. Storage 29 fences the new fields while preserving
+  prior Pi and other conversations. Before a prompt, session read-back must
+  prove the workspace, selected model and required permission profile. Old
+  hosts lacking profile proof are refused; a model selected explicitly or
+  observed during resume is never mislabeled as the native default.
+- Actual admission and owned native turn completion have separate identities.
+  ACK, idle and a reused view cursor cannot complete a run. Revisioned native
+  snapshots replace partial text/tool output; retained background items keep
+  their original run. Stop targets the native turn and waits for its terminal.
+  Uncertain preparation, gaps, EOF and overflow fail closed without resending.
+- The initial focused run passed 43 declarations: 38 Core (3.134 seconds,
+  including the existing creation regression) and five native view/store
+  declarations (2.734 seconds). Real offline stdio peers exercise the production
+  factory, Engine FIFO, policy replacement, exact Stop and durable reopen.
+  Compatibility effort descriptions retain their fallback provenance even when
+  native per-tier descriptive text is also present.
+- The initial complete local run passed 1076 declarations: 1068 passed and eight
+  optional installed-provider checks skipped. Core reports 910 declarations
+  (264.069 seconds), all 147 native view/store declarations pass (51.253 seconds),
+  and all six terminal and 13 Markdown declarations pass. This run precedes the
+  lifecycle corrections below and does not stand in for their validation.
+- Review found and corrected three lifecycle gaps: shared response effects could
+  dismiss a Muse row on ACK; pruning could let an absent old run's waiter close
+  a healthy successor; and direct RPC catches could overtake already-queued native
+  terminal proof. Muse rows now await native settlement, callback ownership must
+  still exist, and turn/Stop responses follow the ordered stream. Stop registers
+  its terminal waiter before dispatch and joins owned command tasks on close.
+  Real stdio regressions cover terminal-before-held Stop ACK/error, pruning,
+  late replies and ACK-before-native question/approval settlement. Deterministic
+  transport tests pause consumption and verify notification-before-failure order,
+  exact-once local failure callbacks and zero writes for rejected requests.
+- After those fixes, all 49 focused declarations pass: 44 Core (4.894 seconds,
+  including the existing creation regression) and five native view/store
+  declarations (2.603 seconds).
+- The final complete local rerun is green: 1082 declarations, 1074 passed and
+  eight optional installed-provider checks skipped. Core reports 916 declarations
+  (265.823 seconds); all 147 native view/store declarations (51.415 seconds), six
+  terminal declarations (1.373 seconds) and 13 Markdown declarations
+  (0.139 seconds) pass. This includes all lifecycle corrections above.
+- Native approval choices retain their exact labels, scopes and rule previews;
+  questions retain offered order, selections, separate notes and UTF-16 limits.
+  Rendering never submits or cancels. Sixteen narrow/wide, light/dark and
+  left-to-right/right-to-left offscreen layout combinations passed geometry
+  checks. Full offered approval labels wrap separately from native action
+  buttons. Offscreen glass/vibrant text caching is not reliable evidence of
+  dark contrast; actual composited dialog appearance remains unverified.
+- Packaging, strict/deep signature verification and native math-resource
+  rendering pass. The development app reopened and its actual window was
+  captured. A consistent private backup preceded the 28-to-29 migration;
+  SQLite integrity and canonical workspace content remain unchanged, with
+  three conversations and 25 messages.
+- These checks use synthetic peers only. No installed Muse process, login,
+  model turn or provider setup was performed. Steering, active-session adoption,
+  history/gap recovery, MCP/configuration, skills, usage and full T3 parity remain
+  unfinished. Exact owned-parent drain does not prove OS descendant exit.
+
 ## 2026-10-22 — native Pi RPC and atomic creation regression
 
 - Added a dedicated Pi JSONL actor, typed durable provider/model/thinking captures,
@@ -30,9 +94,16 @@
   all journal/rebuild/atomicity assertions (0.017 seconds). Registration, clone
   and standalone creation now share the original insertion guards and runtime
   normalization. Validation/effect ordering remains unchanged. Binary inspection
-  shows substantial fixed and dynamic stack allocation; no debugger stack was
-  available, so stack exhaustion is a supported hypothesis, not a confirmed
-  low-level fault diagnosis. Full-suite and hosted acceptance follow separately.
+  shows substantial fixed and dynamic stack allocation; the later hosted stack
+  below corroborates excessive stack use from the nested reducer/validation path.
+- The subsequent immutable diagnostic run `39775604839` at `40d1ca54` (before
+  the creation fix) captured a sanitized report after 20 seconds and five scans.
+  Its faulting thread shows `___chkstk_darwin`, collection mapping, conversation
+  history validation, journal validation and two nested reducer invocations.
+  `SIGBUS`/`KERN_PROTECTION_FAILURE` during stack probing directly corroborates
+  the recursive path's stack pressure. The native GUI job skipped all 14 cases;
+  this earlier run does not verify the later fix. The report fingerprint is
+  `6568cf9d61f2dcbeae6a317f67ebc641c8c2ab7dca3013ce1660a0c08b898804`.
 - The complete local run reached its end: 1034 declarations across 873 Core,
   142 native view/store, six terminal and 13 Markdown tests. There was one
   failing Pi fixture observation and eight optional installed-provider skips;
@@ -47,6 +118,17 @@
   was captured. A private consistent backup preceded migration from 27 to 28;
   SQLite integrity and canonical workspace content remain unchanged, with three
   conversations and 25 messages.
+- The final complete local run for code head `3645f869` is green: 1034 test
+  declarations, 1026 passed and eight optional installed-provider checks skipped.
+  Core reports 873 declarations (263.297 seconds), all 142 native view/store
+  tests pass (49.324 seconds), and all six terminal and 13 Markdown tests pass.
+  This rerun includes the corrected peer observation and the creation fix.
+- Hosted run `39777011810` at the same immutable code head passes production:
+  all 1034 declarations finish (752.554 seconds after a 272.29-second build),
+  followed by packaging/signature/resource checks. The formerly crashing case
+  reaches all 18 fixed phases through dispatch, rebuild and cleanup. Its separate
+  14-scenario native GUI job is still running; production success does not stand
+  in for that result.
 
 ## 2026-10-22 — delayed hosted crash reports and phase evidence
 

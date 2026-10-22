@@ -1,11 +1,11 @@
 import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case codex, claude, opencode, pi, acp
-    public static var builtIn: [Self] { [.codex, .claude, .opencode, .pi] }
+    case codex, claude, opencode, pi, muse, acp
+    public static var builtIn: [Self] { [.codex, .claude, .opencode, .pi, .muse] }
     public var id: String { rawValue }
-    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .pi: "Pi"; case .acp: "ACP Agent" } }
-    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .pi: "pi"; case .acp: "" } }
+    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .pi: "Pi"; case .muse: "Muse"; case .acp: "ACP Agent" } }
+    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .pi: "pi"; case .muse: "muse"; case .acp: "" } }
 }
 
 public enum ProviderEvent: Codable, Sendable, Equatable {
@@ -96,6 +96,13 @@ extension ProviderSession {
 
 public enum ProviderSessions {
     public static func make(for thread: CodingThread) throws -> any ProviderSession {
+        if thread.provider == .muse {
+            try MuseConfigurationValidation.configuration(.init(thread: thread))
+            guard let configuration = thread.museConfiguration, let executable = ProcessChannel.findExecutable(configuration.executable) else {
+                throw CoincideError("Install and sign in to Muse before sending a message.")
+            }
+            return MuseSession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration, permission: thread.permission)
+        }
         if thread.provider == .pi {
             try PiConfigurationValidation.configuration(.init(thread: thread))
             guard let configuration = thread.piConfiguration, let executable = ProcessChannel.findExecutable(configuration.executable) else {
@@ -135,6 +142,7 @@ public enum ProviderSessions {
         case .claude: return try ClaudeSession(executable: executable, cwd: cwd, resumeID: thread.providerThreadID)
         case .opencode: throw OpenCodeConfiguration.invalid()
         case .pi: throw PiConfiguration.invalid()
+        case .muse: throw MuseConfiguration.invalid()
         case .acp: throw CoincideError("Choose an ACP agent.")
         }
     }

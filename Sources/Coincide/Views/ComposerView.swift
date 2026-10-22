@@ -97,6 +97,17 @@ struct ComposerView: View {
                 .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
                 .accessibilityIdentifier("grok-runtime-mode-menu")
                 .help("Grok's native launch policy applies to future inputs. Active and queued inputs retain their captured policy.")
+        } else if provider == .muse {
+            Menu {
+                ForEach([PermissionMode.supervised, .fullAccess]) { mode in
+                    Button { setPermission(mode) } label: {
+                        if mode == permission { Label(mode.museTitle, systemImage: "checkmark") } else { Text(mode.museTitle) }
+                    }
+                }
+            } label: { Label(permission.museTitle, systemImage: "slider.horizontal.3").font(.caption) }
+                .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
+                .accessibilityIdentifier("muse-permission-menu")
+                .help("Muse verifies the selected permission profile before sending. Active and queued inputs retain their captured policy.")
         } else if provider == .pi {
             Menu {
                 ForEach([PermissionMode.supervised, .autoAcceptEdits, .fullAccess]) { mode in

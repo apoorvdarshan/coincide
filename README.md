@@ -35,8 +35,8 @@ so macOS can retain file-access consent across local rebuilds. Set
 CI uses ad-hoc signing. Local signing does not notarize or publish the app.
 
 Add a project folder, start a thread, and send a message. Coincide connects directly
-to Codex app-server, Claude's stream-json protocol, or an owned local OpenCode
-HTTP process using the CLI's existing sign-in and configuration.
+to the selected provider's native CLI protocol using its existing sign-in and
+configuration. Each conversation owns its provider connection.
 Choose the provider in a new conversation's header. Review requested commands and file
 changes in the conversation. Use the inspector to browse/edit files or inspect,
 stage, and commit Git changes. The branch menu creates/switches local branches or
@@ -70,6 +70,14 @@ choices. Inputs retain their captured settings and tool approval policy; native
 confirm, select, input and editor requests appear in the conversation. Existing
 sessions resume from their native session files. Offline protocol checks pass;
 installed Pi execution, steering, history mutation and usage remain unfinished.
+
+Muse conversations use the installed CLI's native MSP protocol. Select a model
+and reasoning level after refreshing its catalog. Ask and Always approve require
+the host to confirm the matching permission profile before any prompt is sent;
+older hosts without that proof are unsupported. Scoped approvals and questions
+retain the native choices, rule previews and written notes. Offline protocol and
+Engine checks cover queueing and exact-turn Stop; installed Muse execution,
+steering, broader recovery, setup/auth and usage remain unfinished.
 
 **Settings → Providers → Codex Account** reads the existing CLI sign-in, plan,
 and available allowance windows. Email stays hidden until revealed. Refresh

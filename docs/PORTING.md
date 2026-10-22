@@ -94,6 +94,15 @@ must each be mapped and verified before declaring parity.
   must agree. Stop is fenced to the app run; unresolved pre-start work retires
   the connection. Offline stdio/Engine and native view/store checks pass; installed
   Pi execution, steering, history mutation, setup/auth and usage remain pending.
+- Native Muse uses a separate MSP JSON-RPC connection with bounded framing,
+  exact command admission, initialized-before-use ordering and an owned process.
+  Captured model/effort/permission values govern each input; session identity and
+  permission-profile read-back must agree before sending. Scoped approval stages
+  and questions retain choices, rule previews and notes until native settlement.
+  Only the owned root terminal advances FIFO; an idle status or admission ACK
+  cannot complete it. Original-run background revisions retain attribution.
+  Offline stdio/Engine and native view/store checks cover the initial integration;
+  installed Muse execution, steering, broader recovery and usage remain pending.
 - Transcript entities retain their session, type, opaque ID, structured fields,
   and chunk annotations. The native reducer applies replacements, null clearing,
   metadata patches, independently decoded terminal bytes, and typed user-message
@@ -127,8 +136,8 @@ must each be mapped and verified before declaring parity.
   unfinished.
 - Queued turns capture their model, reasoning effort, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 28 protects these fields,
-  native generation/profile/Pi captures and typed question-with-notes effects
+  hold it for explicit resumption. Database storage version 29 protects these fields,
+  native generation/profile/Pi/Muse captures and typed question-with-notes effects
   and durable history gates from older binaries. No exactly-once provider execution is claimed.
 - Direct steering durably accepts one authored input into the active local run,
   preserving its captured settings, exact runtime/native thread/turn, attachments,

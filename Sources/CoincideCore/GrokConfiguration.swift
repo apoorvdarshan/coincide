@@ -9,6 +9,7 @@ extension ProviderConfiguration {
     public var effectiveGrokRuntimeMode: GrokACPRuntimeMode? { try? resolvedGrokRuntimeMode() }
     public var permissionSummary: String {
         if provider == .pi { return permission.piTitle }
+        if provider == .muse { return permission.museTitle }
         if provider == .acp, acpAgent?.integration == .grok {
             return effectiveGrokRuntimeMode?.name ?? "Unavailable Grok permissions"
         }
