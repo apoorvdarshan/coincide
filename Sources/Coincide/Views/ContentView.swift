@@ -78,7 +78,7 @@ struct ContentView: View {
         .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $cloneSheetPresented)
         .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $newProjectSheetPresented)
         .focusedSceneValue(\.settlementPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $settlementThread)
-        .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
+        .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().coincideSurface() } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .disabled(store.isLoading)
         .task { await store.refreshExternalEditors() }

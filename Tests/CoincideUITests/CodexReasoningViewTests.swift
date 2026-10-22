@@ -4,6 +4,24 @@ import Testing
 @testable import Coincide
 @testable import CoincideCore
 
+@MainActor @Test(.timeLimit(.minutes(1)))
+func nativeProviderMenuHugsShortLabelsAndBoundsLongModelsInNarrowHeaders() async throws {
+    _ = NSApplication.shared
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-provider-menu-" + UUID().uuidString)
+    let store = WorkspaceStore(databaseURL: root.appendingPathComponent("workspace.sqlite"))
+    defer { try? FileManager.default.removeItem(at: root) }
+    for model in ["", "GPT-6 Astra", String(repeating: "An advertised long model name ", count: 12)] {
+        let thread = CodingThread(project: .init(path: root.path), model: model)
+        let host = NSHostingController(rootView: ProviderMenu(store: store, thread: thread))
+        let wide = host.sizeThatFits(in: .init(width: 1_000, height: 100))
+        #expect(wide.width <= 300 && wide.height <= 100)
+        if model.isEmpty { #expect(wide.width < 120, "The header menu must keep its chevron beside a short provider label.") }
+        let narrow = host.sizeThatFits(in: .init(width: 160, height: 100))
+        #expect(narrow.width <= 161 && narrow.height <= 100)
+    }
+    await store.shutdown()
+}
+
 @Test func reasoningDefaultCheckmarkDistinguishesCLIEffortAndExplicitPerModelPreference() {
     let model = ProviderModel(id: "gpt-6-astra", name: "Astra", reasoningEfforts: [
         .init(id: "medium", description: "Balanced"), .init(id: "high", description: "More reasoning"),

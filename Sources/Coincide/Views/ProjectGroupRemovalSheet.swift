@@ -17,7 +17,7 @@ struct ProjectGroupRemovalSheet: View {
                 }.padding(12)
             }
             .frame(minHeight: 60, maxHeight: 160)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .coincideSurface(cornerRadius: 8)
             .accessibilityIdentifier("group-removal-checkouts")
             Text("Coincide does not delete checkout, worktree, staging, or attachment files. Git may clean up unfinished files when an active clone is stopped. Conversation data remains in local recovery history; this is not secure erasure.")
                 .font(.caption).foregroundStyle(.secondary)

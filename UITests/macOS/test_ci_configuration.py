@@ -12,6 +12,27 @@ spec.loader.exec_module(ci)
 
 
 class NativeUIConfigurationTests(unittest.TestCase):
+    def test_offline_tools_are_built_signed_and_immutable_inside_the_test_bundle(self):
+        directory = Path(__file__).resolve().parent
+        project = (directory / "CoincideDesktopUITests.xcodeproj/project.pbxproj").read_text()
+        harness = (directory / "CoincideDesktopUITests.swift").read_text()
+        launcher = (directory / "OfflineCLILauncher.swift").read_text()
+        script = (directory.parents[1] / "script/test_macos_ui.sh").read_text()
+        self.assertIn('productType = "com.apple.product-type.tool"', project)
+        self.assertEqual(project.count('CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO'), 2)
+        self.assertIn('path = CoincideOfflineCLI; sourceTree = BUILT_PRODUCTS_DIR', project)
+        self.assertIn('createSymbolicLink(at: executable, withDestinationURL: helper)', harness)
+        self.assertNotIn('#!/bin/sh\\nexec ', harness)
+        self.assertIn('app.launchEnvironment["COINCIDE_UI_PYTHON_PATH"] = python', harness)
+        self.assertIn('cmp "$helper" "$embedded"', script)
+        self.assertIn('codesign --verify --strict "$embedded"', script)
+        self.assertIn('"-I", "-S", peer.path', launcher)
+        self.assertIn('O_NOFOLLOW | O_NONBLOCK', launcher)
+        self.assertIn('Set(object.keys) ==', launcher)
+        self.assertIn('execv(expectedPython', launcher)
+        for forbidden in ('Process(', 'fork(', 'system(', 'posix_spawn('):
+            self.assertNotIn(forbidden, launcher)
+
     def test_change_filter_keeps_product_and_harness_paths_and_skips_unrelated_unit_docs(self):
         for path in ["Sources/Coincide/Views/ChatView.swift", "Sources/CoincideCore/WorkspaceEngine.swift", "UITests/macOS/Example.swift", "script/test_macos_ui.sh", "Package.resolved"]:
             self.assertTrue(ci.needs_native_ui([path]), path)

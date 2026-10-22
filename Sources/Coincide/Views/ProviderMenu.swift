@@ -5,6 +5,12 @@ struct ProviderMenu: View {
     var store: WorkspaceStore
     let thread: CodingThread
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            menu.fixedSize()
+            menu.frame(maxWidth: 280, alignment: .leading)
+        }
+    }
+    private var menu: some View {
         Menu {
             if thread.messages.isEmpty {
                 ForEach(ProviderKind.builtIn) { provider in

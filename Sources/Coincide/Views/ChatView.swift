@@ -169,6 +169,7 @@ struct ChatView: View {
                                      }
                                  }, stop: { Task { await store.interrupt(threadID) } })
                 }
+                .coincideGlassGroup()
                 .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(minWidth: 0, maxWidth: .infinity)
             }
             .frame(minWidth: 0, maxWidth: .infinity)

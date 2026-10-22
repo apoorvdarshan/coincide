@@ -7,12 +7,19 @@ final architecture. This goal is **not complete**.
 The product uses the ChatGPT macOS app as its interaction and layout reference.
 Liquid Glass is the default design requirement across native chrome and controls
 on supported macOS versions, with native system-material fallbacks on older
-versions. Its visual adoption and accessibility checks are still pending.
+versions. Shared glass surfaces now cover the composer, search, native status,
+approval/recovery cards, attachment shelves and terminal header. Native sidebars,
+toolbars, controls and sheets keep their system treatment; text, code and terminal
+content keep readable semantic backing. Reduce Transparency uses opaque surfaces
+and increased contrast adds outlines. Complete accessibility and oldest-runtime
+verification remain pending.
 Provider parity includes every T3 built-in driver and ACP Registry integration:
 Codex, Claude, Cursor, Grok, OpenCode, Antigravity, Pi, Muse Code, and Copilot
 through ACP. A selectable name or preset alone does not establish end-to-end
 integration: installation/setup, authentication, controls, streaming, tools,
 permissions, recovery and supported history behavior each need verification.
+See the detailed [provider parity inventory](PROVIDER_PARITY.md) for exact
+transports, evidence boundaries and missing end-to-end behavior.
 
 The reference is [pingdotgg/t3code at 680152e27b2a961686389ca69a1557cbb2c55f08](https://github.com/pingdotgg/t3code/tree/680152e27b2a961686389ca69a1557cbb2c55f08).
 `upstream-inventory.json` records 198 registered RPC methods (182 from `WS_METHODS`
@@ -431,7 +438,7 @@ must each be mapped and verified before declaring parity.
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
 | Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup, bounded t3.json script discovery with explicit native selection and dedicated command tabs/cwd/environment/exit status, app-owned setup and settle jobs with shared output and separate command/background lifetime | Preview behavior, project-script settings/editing, durable terminal restart restoration, remote attachment/replay, search/settings, activity/idle detection and idle-tab closure, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |
-| Desktop integration | App bundle, commands/shortcuts, appearance | Default Liquid Glass across native chrome and controls, notifications, deep links, updates, browser/preview, screenshot/import features, localization resources and locale QA, power/resources, accessibility QA |
+| Desktop integration | App bundle, commands/shortcuts, appearance, default macOS 26+ glass on custom chrome with native system structures/material fallbacks and opaque/increased-contrast accessibility variants | Broader appearance/accessibility/older-runtime QA, notifications, deep links, updates, browser/preview, screenshot/import features, localization resources and locale QA, power/resources |
 | Distribution | Local development-identity or ad-hoc signed bundle | Release signing/notarization, installer/update validation, full notices |
 | Validation | Deterministic core/protocol/orchestration tests, CI workflow, native Codex/Claude turn and queue smoke checks | Upstream replay corpus, broader live tool/approval coverage, UI automation, full parity and failure audit |
 

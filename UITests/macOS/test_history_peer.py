@@ -19,7 +19,7 @@ class NativeHistoryPeerTests(unittest.TestCase):
 
             def exchange(requests):
                 frames = [dict(id=index + 1, method=method, params=params) for index, (method, params) in enumerate(requests)]
-                process = subprocess.run([sys.executable, str(peer), str(state), str(wire)],
+                process = subprocess.run([sys.executable, "-I", "-S", str(peer), str(state), str(wire)],
                     input="".join(json.dumps(frame) + "\n" for frame in frames), text=True,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
                 return [json.loads(line) for line in process.stdout.splitlines()]
@@ -47,7 +47,7 @@ class NativeHistoryPeerTests(unittest.TestCase):
             root = Path(scratch).resolve()
             state = root / "history.json"
             state.write_text(json.dumps(dict(cwd=str(root.parent), threads={}, nextTurn=0)))
-            process = subprocess.run([sys.executable, str(peer), str(state), str(root / "wire.jsonl")],
+            process = subprocess.run([sys.executable, "-I", "-S", str(peer), str(state), str(root / "wire.jsonl")],
                 input=json.dumps(dict(id=1, method="initialize")) + "\n", text=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
             self.assertNotEqual(process.returncode, 0)
@@ -65,7 +65,7 @@ class NativeHistoryPeerTests(unittest.TestCase):
             state.write_text(json.dumps(dict(cwd=str(directory), threads={}, nextTurn=0, restoreFixture=True)))
             frames = [dict(id=1, method="thread/start", params=dict(historyMode="paginated")),
                       dict(id=2, method="turn/start", params=dict(threadId="ui-native-source"))]
-            process = subprocess.run([sys.executable, str(peer), str(state), str(wire)],
+            process = subprocess.run([sys.executable, "-I", "-S", str(peer), str(state), str(wire)],
                 input="".join(json.dumps(frame) + "\n" for frame in frames), text=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
             self.assertIn("turn/completed", process.stdout)
@@ -87,7 +87,7 @@ class NativeHistoryPeerTests(unittest.TestCase):
             for directory in (source, managed):
                 with self.subTest(directory=directory.name):
                     state.write_text(json.dumps(dict(cwd=str(directory), threads={"ui-native-source": dict(turns=[])}, nextTurn=0, restoreFixture=True)))
-                    process = subprocess.run([sys.executable, str(peer), str(state), str(wire)],
+                    process = subprocess.run([sys.executable, "-I", "-S", str(peer), str(state), str(wire)],
                         input=json.dumps(dict(id=1, method="turn/start", params=dict(threadId="ui-native-source"))) + "\n", text=True,
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
                     self.assertIn('"error"', process.stdout)

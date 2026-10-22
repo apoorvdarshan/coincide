@@ -24,6 +24,17 @@ build_runner() {
   xcodebuild build-for-testing -project "$PROJECT" -scheme "$SCHEME" -configuration Debug \
     -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA" -parallel-testing-enabled NO \
     CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=
+  # Built outside the runner sandbox, then sealed into the signed test bundle.
+  # The runner only creates symlinks to these immutable executable bytes.
+  local helper="$DERIVED_DATA/Build/Products/Debug/CoincideOfflineCLI"
+  local embedded="$DERIVED_DATA/Build/Products/Debug/CoincideDesktopUITests-Runner.app/Contents/PlugIns/CoincideDesktopUITests.xctest/Contents/Resources/CoincideOfflineCLI"
+  codesign --verify --strict "$helper"
+  codesign --verify --strict "$embedded"
+  cmp "$helper" "$embedded"
+  codesign -d --entitlements :- "$embedded" 2>/dev/null | python3 -c 'import plistlib,sys; data=sys.stdin.buffer.read(); value=plistlib.loads(data) if data.strip() else {}; forbidden={"com.apple.security.app-sandbox","com.apple.security.inherit","com.apple.security.get-task-allow"}; assert not forbidden.intersection(value), "Unexpected entitlements on the test-only offline CLI helper."'
+  local fixture_python
+  fixture_python="$(python3 -c 'import os,sys; print(os.path.realpath(sys.executable))')"
+  python3 "$ROOT_DIR/UITests/macOS/verify_offline_launcher.py" "$embedded" "$fixture_python"
 }
 if [[ "$MODE" == "--build-for-testing" ]]; then
   build_runner

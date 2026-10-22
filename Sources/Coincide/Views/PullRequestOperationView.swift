@@ -76,7 +76,7 @@ struct PullRequestOperationContent: View {
                 }
             }
         }.padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+            .coincideSurface(cornerRadius: 10)
             .accessibilityIdentifier("pull-request-creation-operation")
     }
     private var result: GitHubPullRequestSummary? {

@@ -25,7 +25,7 @@ struct AttachmentShelf: View {
                             Button { remove(attachment.id) } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                                 .buttonStyle(.plain).accessibilityLabel("Remove \(attachment.name)")
                         }
-                    }.padding(8).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                    }.padding(8).coincideSurface(cornerRadius: 10)
                 }
             }.padding(.vertical, 2)
         }.frame(height: 60)

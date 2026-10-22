@@ -8,6 +8,12 @@ as the functionality reference and the ChatGPT macOS app as the interface refere
 In development. Full T3 Code feature parity is **not complete**. See
 [porting status](docs/PORTING.md) for implemented behavior, gaps, and verification.
 
+Liquid Glass is the default for custom native chrome on macOS 26+, alongside
+system sidebars, toolbars, menus and sheets. Older macOS versions use native
+materials, and Reduce Transparency uses opaque surfaces. The complete
+[provider integration inventory](docs/PROVIDER_PARITY.md) tracks what is working
+and what still needs implementation and verification.
+
 ## Build and run
 
 Requires macOS 14+, a Swift 6.2+ toolchain, and Xcode Command Line Tools. Codex

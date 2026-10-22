@@ -54,7 +54,6 @@ struct PullRequestsSheet: View {
             .coordinateSpace(name: "pull-requests-layout")
             .interactiveDismissDisabled(model.isAccepting)
             .onExitCommand { if !model.isAccepting { dismiss() } }
-            .accessibilityIdentifier("pull-requests-sheet")
             .task {
                 await model.refresh()
                 if let initialSelection { mode = .detail; await model.select(initialSelection) }
@@ -88,7 +87,7 @@ struct PullRequestsSheet: View {
                 PullRequestCheckoutOperationView(model: model, operationID: operation.id)
             }
             if model.operation != nil { PullRequestOperationView(model: model, viewResult: { mode = .detail }) }
-        }
+        }.coincideGlassGroup()
     }
     private var listContent: some View {
         VStack(alignment: .leading, spacing: 12) {

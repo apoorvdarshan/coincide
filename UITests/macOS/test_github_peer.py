@@ -18,7 +18,7 @@ class NativeGitHubPeerTests(unittest.TestCase):
         return checkout, state, wire
 
     def call(self, checkout, state, wire, arguments, body=""):
-        return subprocess.run([sys.executable, str(Path(__file__).with_name("github_pr_ui.py")), str(state), str(wire)] + arguments,
+        return subprocess.run([sys.executable, "-I", "-S", str(Path(__file__).with_name("github_pr_ui.py")), str(state), str(wire)] + arguments,
             cwd=checkout, input=body, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
 
     def test_create_is_persisted_before_lost_reply_and_reconciliation_never_repeats_it(self):
@@ -31,6 +31,7 @@ class NativeGitHubPeerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertEqual(result.stdout, "")
             saved = json.loads(state.read_text())
+            self.assertEqual(state.stat().st_mode & 0o777, 0o600)
             self.assertEqual(saved["creates"], 1)
             self.assertEqual(saved["pullRequest"]["body"], body)
             self.assertTrue(saved["pullRequest"]["isDraft"])

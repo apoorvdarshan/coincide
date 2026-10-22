@@ -56,6 +56,7 @@ def main():
         if replacement.is_symlink():
             raise ValueError("The fixture state must remain a regular private file.")
         replacement.write_text(json.dumps(state))
+        os.chmod(replacement, 0o600)
         os.replace(replacement, state_path)
         if output is not None:
             print(output if isinstance(output, str) else json.dumps(output), flush=True)

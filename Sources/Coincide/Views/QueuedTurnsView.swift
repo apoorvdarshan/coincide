@@ -40,6 +40,6 @@ struct QueuedTurnsView: View {
                     }
                 }
             }.frame(height: min(200, CGFloat(thread.queuedTurns.count) * (thread.queuedTurns.contains { !($0.attachments ?? []).isEmpty } ? 55 : 37)))
-        }.padding(12).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(12).coincideSurface()
     }
 }

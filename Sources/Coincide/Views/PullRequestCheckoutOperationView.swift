@@ -135,7 +135,7 @@ struct PullRequestCheckoutOperationContent: View {
                 }
             }
         }.font(.callout).padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+            .coincideSurface(cornerRadius: 10)
             .accessibilityIdentifier("pull-request-checkout-operation")
     }
     @ViewBuilder private var recoveryButtons: some View {

@@ -24,13 +24,10 @@ final class CoincideDesktopUITests: XCTestCase {
         let state = root.appendingPathComponent("models-peer.json"), wire = root.appendingPathComponent("models-peer-wire.jsonl")
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 1]).write(to: state, options: .atomic)
         let bundled = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_models_ui", withExtension: "py"))
-        let peer = root.appendingPathComponent("codex_models_ui.py"); try Data(contentsOf: bundled).write(to: peer)
+        let peer = bundled
         let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
         for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        let executable = bin.appendingPathComponent("codex")
-        try ("#!/bin/sh\nexec " + [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ") + "\n")
-            .write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
         app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"; app.launchEnvironment["CODEX_HOME"] = home.path
         addTeardownBlock { @MainActor [weak self] in
             if let data = try? Data(contentsOf: wire), let text = String(data: data, encoding: .utf8) {
@@ -66,6 +63,7 @@ final class CoincideDesktopUITests: XCTestCase {
         capture(app, name: "models-per-model-effort-restored-without-sending")
 
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 2]).write(to: state, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: state.path)
         openNativeProviderMenu(in: app); app.menuItems["Refresh Models"].click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Offline Future Refreshed", "Offline Future Refreshed")).firstMatch.waitForExistence(timeout: 10), "The current model label must reflect the refreshed catalog before opening its new effort menu.")
         openNativeProviderMenu(in: app)
@@ -147,14 +145,10 @@ final class CoincideDesktopUITests: XCTestCase {
         let state = root.appendingPathComponent("steering-peer.json"), wire = root.appendingPathComponent("steering-peer-wire.jsonl")
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "firstPrompt": firstPrompt, "steeringPrompt": literal]).write(to: state)
         let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_steering_ui", withExtension: "py"))
-        let peer = root.appendingPathComponent("codex_steering_ui.py")
-        try Data(contentsOf: bundledPeer).write(to: peer)
+        let peer = bundledPeer
         let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
         for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        let executable = bin.appendingPathComponent("codex")
-        try ("#!/bin/sh\nexec " + [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ") + "\n")
-            .write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
         app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         app.launchEnvironment["CODEX_HOME"] = home.path
         addTeardownBlock { @MainActor [weak self] in
@@ -1016,14 +1010,10 @@ final class CoincideDesktopUITests: XCTestCase {
         let state = root.appendingPathComponent("history-peer.json"), wire = root.appendingPathComponent("history-peer-wire.jsonl")
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "threads": [:], "nextTurn": 0]).write(to: state)
         let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_history_ui", withExtension: "py"))
-        let peer = root.appendingPathComponent("codex_history_ui.py")
-        try Data(contentsOf: bundledPeer).write(to: peer)
+        let peer = bundledPeer
         let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
         for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        let executable = bin.appendingPathComponent("codex")
-        let command = [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ")
-        try ("#!/bin/sh\nexec " + command + "\n").write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
         app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         app.launchEnvironment["CODEX_HOME"] = home.path
         addTeardownBlock { @MainActor [weak self] in
@@ -1177,14 +1167,10 @@ final class CoincideDesktopUITests: XCTestCase {
         let state = root.appendingPathComponent("history-peer.json"), wire = root.appendingPathComponent("history-peer-wire.jsonl")
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "threads": [:], "nextTurn": 0, "restoreFixture": true]).write(to: state)
         let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_history_ui", withExtension: "py"))
-        let peer = root.appendingPathComponent("codex_history_ui.py")
-        try Data(contentsOf: bundledPeer).write(to: peer)
+        let peer = bundledPeer
         let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
         for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        let executable = bin.appendingPathComponent("codex")
-        let command = [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ")
-        try ("#!/bin/sh\nexec " + command + "\n").write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
         app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         app.launchEnvironment["CODEX_HOME"] = home.path
         addTeardownBlock { @MainActor [weak self] in
@@ -1231,6 +1217,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(stateValue["nextTurn"] as? Int, 0)
         stateValue["cwd"] = checkout.path
         try JSONSerialization.data(withJSONObject: stateValue).write(to: state, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: state.path)
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(waitForValue(composer, value: preparingDraft, timeout: 10))
@@ -1401,15 +1388,11 @@ final class CoincideDesktopUITests: XCTestCase {
         let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
         XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
         let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "github_pr_ui", withExtension: "py"))
-        let peer = root.appendingPathComponent("github_pr_ui.py")
-        try Data(contentsOf: bundledPeer).write(to: peer)
+        let peer = bundledPeer
         let bin = root.appendingPathComponent("private-github-bin", isDirectory: true)
         let config = root.appendingPathComponent("private-gh-config", isDirectory: true)
         for directory in [bin, config] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        let executable = bin.appendingPathComponent("gh")
-        let command = [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ")
-        try ("#!/bin/sh\nexec " + command + " \"$@\"\n").write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        _ = try installOfflineCLI(tool: "gh", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
         app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         app.launchEnvironment["GH_CONFIG_DIR"] = config.path
         app.launchEnvironment["GH_REPO"] = "github.com/unrelated/ignored"
@@ -1552,12 +1535,8 @@ final class CoincideDesktopUITests: XCTestCase {
         for directory in [bin, codexHome, ghHome] { try manager.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
         for (name, resource, peerState, peerWire) in [("gh", "github_pr_ui", state, wire), ("codex", "codex_history_ui", providerState, providerWire)] {
             let bundled = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: resource, withExtension: "py"))
-            let peer = root.appendingPathComponent(resource + ".py")
-            try Data(contentsOf: bundled).write(to: peer)
-            let executable = bin.appendingPathComponent(name)
-            let command = [python, peer.path, peerState.path, peerWire.path].map(shellQuoted).joined(separator: " ")
-            try ("#!/bin/sh\nexec " + command + " \"$@\"\n").write(to: executable, atomically: true, encoding: .utf8)
-            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+            let peer = bundled
+            _ = try installOfflineCLI(tool: name, python: python, peer: peer, state: peerState, wire: peerWire, root: root, bin: bin, in: app)
         }
         app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         app.launchEnvironment["CODEX_HOME"] = codexHome.path; app.launchEnvironment["GH_CONFIG_DIR"] = ghHome.path
@@ -1947,7 +1926,29 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(result["userAgent"] as? String, "coincide/0.163.0 (macos; fixture)")
     }
 
-    private func shellQuoted(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    @MainActor private func installOfflineCLI(tool: String, python: String, peer: URL, state: URL, wire: URL,
+                                              root: URL, bin: URL, in app: XCUIApplication) throws -> URL {
+        let manager = FileManager.default
+        let allowed = ["codex": ["codex_history_ui.py", "codex_steering_ui.py", "codex_models_ui.py"], "gh": ["github_pr_ui.py"]]
+        XCTAssertTrue(allowed[tool]?.contains(peer.lastPathComponent) == true)
+        let bundle = Bundle(for: CoincideDesktopUITests.self)
+        let helper = try XCTUnwrap(bundle.url(forResource: "CoincideOfflineCLI", withExtension: nil))
+        XCTAssertTrue(manager.isExecutableFile(atPath: helper.path))
+        XCTAssertNotEqual(helper.deletingLastPathComponent(), root)
+        _ = try XCTUnwrap(bundle.url(forResource: peer.deletingPathExtension().lastPathComponent, withExtension: "py"))
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: state.path)
+        let descriptor = root.appendingPathComponent(tool + ".offline.json")
+        try JSONSerialization.data(withJSONObject: ["version": 1, "tool": tool, "root": root.path, "python": python,
+            "peer": peer.lastPathComponent, "state": state.path, "wire": wire.path], options: .sortedKeys).write(to: descriptor, options: .atomic)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: descriptor.path)
+        app.launchEnvironment["COINCIDE_UI_PYTHON_PATH"] = python
+        let executable = bin.appendingPathComponent(tool)
+        // Creating a symlink does not create executable bytes in the sandbox's
+        // quarantined temporary directory. The sealed helper remains immutable.
+        try manager.createSymbolicLink(at: executable, withDestinationURL: helper)
+        XCTAssertEqual(executable.resolvingSymlinksInPath(), helper.resolvingSymlinksInPath())
+        return executable
+    }
 
     @MainActor private func prepareApplication(appearance: String, diagnosticPrefix: String? = nil) throws -> (app: XCUIApplication, root: URL, gitPath: String, configuration: URL) {
         let environment = ProcessInfo.processInfo.environment

@@ -1,0 +1,270 @@
+# Native provider parity inventory
+
+Coincide's completion requirement is native Swift, end-to-end support for **all
+T3 Code provider integrations**, including Claude, Codex, OpenCode, Copilot,
+Cursor, Grok, Antigravity, Pi, Muse Code, and ACP Registry agents. A selectable
+name, executable path, preset, successful handshake, or passing protocol fixture
+does not by itself establish a working integration or complete parity.
+
+This inventory was checked on 2026-10-22 against
+[T3 Code `680152e27b2a961686389ca69a1557cbb2c55f08`][t3-root], the native
+implementation, its tests, and the official protocol references below. Current
+vendor documentation can describe versions newer than the pinned T3 adapters;
+implementation must negotiate or verify capabilities rather than assume that
+the two contracts are identical. Runtime observations below are recorded prior
+verification, not provider calls repeated for this document. Consult
+[VALIDATION.md](VALIDATION.md) for their circumstances and limitations and
+[PORTING.md](PORTING.md) for the broader port scope.
+
+The separate default Liquid Glass requirement also remains mandatory. Provider
+integration work does not satisfy the native chrome, control, accessibility,
+older-macOS fallback, or actual visual-verification requirements.
+
+## Inventory and evidence
+
+The pinned [built-in driver registry][t3-drivers] registers eight dedicated
+drivers plus `acpRegistry`. Copilot is a concrete integration through that ACP
+driver, with additional Copilot-specific event handling; it is not absent merely
+because it has no top-level driver enum case. The ACP Registry is a dynamic
+catalog, not a ninth fixed vendor list. Its official CDN returned HTTP 403 during
+this audit, so this document does not invent a current catalog count or claim to
+have enumerated its live contents.
+
+Evidence labels mean:
+
+- **Installed:** a recorded test or native interaction used the actual installed
+  provider. Its tested capabilities and version remain the limit of that claim.
+- **Fixture:** deterministic local peers exercised the native implementation;
+  this does not prove current vendor compatibility, authentication, or service
+  availability.
+- **Preset:** a saved invocation can select the generic ACP adapter. It is not
+  independent runtime evidence for the named provider.
+- **Missing:** no provider-specific native integration or verification is
+  established by the inspected sources and evidence.
+
+| Integration / pinned driver | Pinned T3 implementation | Coincide evidence and current boundary | Work required for parity |
+| --- | --- | --- | --- |
+| Codex / `codex` | App-server protocol, local and managed runtime paths, dynamic catalog and options, approvals/questions, native history, steering, skills/commands, account and usage controls. | **Installed:** native turns, resume, images/files, exact reviewed fork/rewind, and acknowledged same-turn steering. **Fixture/source:** bounded catalog, advertised reasoning options, captured turn effort, and cwd-aware CLI-default selection. History and inferred CLI model defaults have explicit reviewed-version boundaries. | Account/auth/setup and usage UI; broader protocol/tool/subagent coverage; skills, slash commands and MCP/configuration controls; session browsing/import; broader history compatibility and recovery. |
+| Claude / `claudeAgent` | Claude Agent SDK and bidirectional query stream, native controls, approvals/questions, subagent ownership, steering, fork and rollback. | **Installed:** native conversations, resume and image/file turns. **Fixture:** `priority: now` steering, interruption and root-task ownership restrictions. This does not claim a new installed-Claude steering or history verification. | Native fork/rollback and session browsing/import; complete model/effort/control/configuration behavior; richer questions, hooks, skills, usage/auth/setup and subagent metadata. |
+| OpenCode / `opencode` | Dedicated, generation-selected OpenCode 1 and 2 HTTP adapters, provider/model configuration, permissions/questions, commands/skills, steering, fork/revert, sessions and usage. | **Installed:** OpenCode ACP v1 model discovery and marker turns through the native engine. **Preset:** `opencode acp`. Experimental ACP v2 negotiation selected v1 on that installed provider; that is not a live v2-server result. | Native OpenCode HTTP generation detection and complete controls, provider authentication/configuration, session import/history/fork/revert, direct steering, command/skill discovery, subagent events and usage. Preserve the working ACP path while adding the dedicated surface. |
+| Cursor / `cursor` | `@cursor/sdk` 1.0.35, browser/API-key authentication, settings sources, models, tool/plan/subagent events and account usage. | **Missing:** no named Cursor preset, provider-specific adapter, or installed native verification. A manually entered ACP invocation has only generic capability support. | Named discovery/onboarding and native transport; auth/status/catalog/settings and complete tool/plan/subagent mapping; usage and applicable recovery. Official Cursor ACP is a possible native starting transport, but it is not automatically equivalent to the pinned SDK. |
+| Grok / `grok` | ACP via `grok agent stdio`, xAI completion/background-task extensions, explicit runtime permission mode, authentication, skills and usage. | **Missing:** no Grok-specific native adapter, extension mapping or installed evidence. | Named integration, xAI completion and background-wake semantics, cancellation metadata, captured permissions/configuration, models/auth/status/skills/usage and installed verification. |
+| Antigravity / `antigravity` | Managed ACP server plus paired local harness, installation, Google/auth-method flows, model options and usage. The pinned macOS artifacts include `agy_acp_server.par` and `localharness_external`. | **Missing:** provider integration. The independently implemented external-editor handoff for Antigravity IDE is not an agent integration. | Verified artifact/harness installation and lifecycle, ACP transport, explicit auth modes, dynamic models/permissions/usage, recovery and installed verification. Do not substitute an IDE launch or an assumed `agy` command for the pinned paired runtime. |
+| Pi / `pi` | Long-lived JSONL RPC subprocess, model/provider/thinking selection, extension UI, steering, persisted session-file history, fork/rollback and usage. | **Missing:** native Pi RPC adapter or installed evidence. | Command/response correlation, actual settled lifecycle, dynamic configuration and extension input, tools/MCP integration, session persistence/fork/rollback, usage and installed verification. |
+| Muse Code / `muse` | Muse Session Protocol (MSP), through `@muse-code/sdk` 1.4.6 and `muse serve`; capabilities, revisioned items, approvals/questions, resume and steering. | **Missing:** native MSP transport or installed evidence. | Native MSP framing and fingerprint/capability checks, revision folding, precise command acknowledgments, resume and partial-failure recovery, models/permissions/questions and installed verification. Pinned T3 intentionally uses portable handoff instead of native Muse fork/rewind. |
+| GitHub Copilot / ACP `github-copilot-cli` | ACP Registry/local Copilot invocation plus `github.com/copilot/sessionEvent` and opt-in raw assistant/subagent attribution. | **Missing:** named preset/onboarding, Copilot-specific extensions and installed evidence. Generic ACP does not implement its raw-event bridge. | `copilot --acp --stdio` discovery, actual negotiated auth/model/mode/options, permissions, session lifecycle and Copilot subagent attribution; verify restart/Stop and captured launch options with the installed CLI. |
+| Other ACP Registry / `acpRegistry` | Official registry and local commands; binary/npx/uvx distributions, preparation, authentication, elicitation, provider configuration, session browsing/import/delete and provider-specific extensions. | **Fixture:** native ACP v1 and opt-in current v2 draft, same-connection v1 fallback, models/options, streaming, tools, permissions, resume and lifecycle. **Installed:** only the OpenCode path described above. No registry/install/auth UI is established. | Full catalog/installation/authentication lifecycle, richer client methods/media, session/provider management, capability-aware history/handoff and the named extensions below. Verify each offered integration; do not label every registry row tested. |
+
+## ACP is a foundation, not an all-provider completion claim
+
+Native [ACPSession](../Sources/CoincideCore/ACPSession.swift) deliberately
+advertises empty client capabilities. It supports session creation and
+capability-gated loading, drains replayed history without duplicating the native
+journal, handles text/images, tool/plan updates and exact permission choices,
+and applies select options or legacy model/mode controls. It rejects
+unnegotiated filesystem, terminal, authentication and elicitation requests.
+
+Native [ACP2Session](../Sources/CoincideCore/ACP2Session.swift) is opt-in. It can
+adopt ACP v1 on the same transport, supports select/boolean options, native
+entities and session-level permissions, and distinguishes prompt insertion from
+foreground completion. Lost acknowledgments, agent-initiated work and background
+permissions do not imply a new user turn or automatic retry. Neither ACP adapter
+implements the native steering/history methods in
+[ProviderSession](../Sources/CoincideCore/ProviderSession.swift); their defaults
+are explicitly unsupported.
+
+Only OpenCode has a named shortcut in
+[SettingsView](../Sources/Coincide/Views/SettingsView.swift). The generic saved
+[ACPAgentConfiguration](../Sources/CoincideCore/ACPAgentConfiguration.swift)
+captures an invocation, not a vendor capability profile or an installation/auth
+receipt. Agent tool output in the transcript does not mean Coincide implements
+delegated client filesystem or terminal operations.
+
+Pinned T3 has explicit [ACP flavor extensions][t3-acp-flavors] that must remain
+in scope:
+
+| Agent | Pinned extension | Native gap |
+| --- | --- | --- |
+| GitHub Copilot (`github-copilot-cli`, or local Copilot executable) | Opt-in raw assistant/reasoning events and subagent lifecycle; map task tool IDs to child-session authors in wire order. Background tasks finish on the corresponding completion event, not merely the launching tool result. | No Copilot extension/attribution layer or installed proof. |
+| Claude ACP (`claude-acp`, or local `claude-agent-acp`) | Experimental v2 environment selection, agent work-state following, provisional/asynchronous tool ownership and subagent/session events. | Generic ACP capability only; the separate native Claude adapter does not prove Claude ACP behavior. |
+| Devin (`devin`) | `cognition.ai/subagentSupport` and message-grouping metadata; normalize session/tool updates and child-agent attribution. | No named capability metadata or normalization. |
+| Factory Droid (`factory-droid`) | Extract provider-specific elicitation forms. | Native ACP authentication/elicitation UI and Droid form handling absent. |
+| Mistral Vibe (`mistral-vibe`) | Registered provider extensions and provider-specific rate-limit failure mapping. | No Vibe extension or failure mapping. |
+
+Other registry agents use the negotiated generic contract unless source evidence
+establishes another extension. A registry entry's own model providers are also
+distinct from the agent integration; for example, an OpenCode model named after
+another vendor does not implement that vendor's dedicated CLI/session behavior.
+
+## Control and history fidelity
+
+Pinned capability declarations and implementations differ materially:
+
+| Transport | Active steering in pinned T3 | History behavior that must be preserved |
+| --- | --- | --- |
+| Codex | Native expected-turn steering; interrupt/restart is a distinct path. | Native exact-boundary fork/rewind where the reviewed protocol supports it. Coincide's existing version and ownership guards remain authoritative. |
+| Claude | Native query input; root/background-task ownership matters. | Native fork and rollback in T3. Native Coincide has not implemented this history path. |
+| OpenCode | Native steering and a separate interrupt/restart path. | Dedicated native snapshot/fork/revert behavior, not a generic ACP session reset. |
+| Cursor SDK | No direct steering; interrupt/restart supported. | No native fork or rollback in the pinned adapter. Portable context handoff must not be described as native history mutation. |
+| Pi | RPC steering. | Session-entry/file-based fork and rollback, with extension cancellation and lifecycle checks. |
+| Muse | Native MSP expected-turn steering. | Pinned adapter rejects native fork/rollback and uses portable handoff. |
+| Generic ACP / Grok | Generic ACP direct steering unavailable; interrupt/restart path. | T3's generic rollback can replace the runtime and clear its native projection. This is not proof of a provider-side exact-boundary rewind. Fork/portable handoff is capability-dependent. |
+
+Sources include [Cursor capability/unsupported paths][t3-cursor],
+[OpenCode adapter][t3-opencode], [Pi adapter][t3-pi],
+[Muse adapter][t3-muse], [Grok ACP extensions][t3-grok] and
+[generic ACP replacement/history handling][t3-acp-history]. Preserve these
+distinctions rather than fabricating a uniform API capability. Where upstream
+uses a portable handoff, that applicable behavior remains part of completion.
+
+## Installation, authentication and usage
+
+T3 supports multiple named instances of a driver, per-instance configuration and
+environment, enablement, workspace-scoped discovery and stable continuation
+identity. See [instance contracts][t3-instances] and
+[registry hydration][t3-hydration]. Coincide's captured ACP invocations are useful
+foundation, but its three-case `ProviderKind` is not a complete native counterpart
+to this provider-instance inventory.
+
+[T3 managed installation][t3-install] is explicitly available for managed Codex
+and Antigravity. [ACP Registry preparation][t3-acp-install] additionally resolves
+platform distributions and exact-version binary/npx/uvx packages with bounded
+registry/download/process handling and installation evidence. Other drivers have
+their own discovery and maintenance policies; do not claim T3 automatically
+installs every CLI. Native integration must preserve existing user installations,
+use explicit installation/update actions and verified destinations, and avoid
+replacing or removing a binary still owned by another instance/session.
+
+[ProviderAuthService][t3-auth-service] serializes credential changes and drains
+sessions sharing the credential binding. It uses the actual runtime binding,
+not the future model selected in a header. The [auth contracts][t3-auth-contract]
+include owned flows, browser consent, device codes, terminal interactions,
+credentials, completion, cancellation and logout. The
+[ACP auth implementation][t3-acp-auth] selects negotiated agent/terminal methods
+and handles URL elicitation; terminal methods must not be blindly replayed as
+ordinary `authenticate` requests.
+
+Native auth must use an explicit user action, scope cancellation to its own
+flow/process, preserve captured queued settings and keep credentials,
+authorization URLs/callbacks and one-time codes out of the workspace journal,
+audit payloads and logs. Shared credential mutation needs a session-drain
+boundary; a status refresh must not close an active conversation's transport.
+T3-managed ChatGPT profiles are a separate credential/runtime mode from an
+existing local Codex CLI login, not an implicit migration of that login.
+
+Account status, subscription allowance windows, turn token telemetry and
+historical cost/token activity are different features. T3 has dedicated usage
+readers for Claude, Codex, Grok, Pi, OpenCode, Antigravity and Cursor in the
+[driver registry][t3-drivers]. Muse reports its own protocol/usage information
+but is not in that same historical usage-reader array. The
+[usage-limit contract][t3-limits] distinguishes unsupported accounts from
+transient probe failures: unsupported clears windows, while a failed refresh can
+retain stale last-good windows. Sparse updates merge by stable identity. A reset
+timer is not proof that provider work may resume. Credit redemption, logout,
+credential replacement and sending account emails are mutations, not probes.
+
+## Official current protocol checks
+
+These pages were opened during this audit. They establish transport options, not
+installed native verification, and do not override the pinned reference's
+version-specific semantics.
+
+- [OpenAI app-server documentation](https://learn.chatgpt.com/docs/app-server)
+  describes Codex account/authentication, models, history, turn control and usage.
+  Native compatibility remains capability/version-aware; credentials stay with
+  the installed CLI unless a separately implemented explicit auth flow changes
+  that ownership.
+- [GitHub Copilot ACP](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server)
+  documents `copilot --acp --stdio` and marks ACP public preview. Effort/tool
+  filters can be server-launch settings rather than `session/new` values; capture
+  those settings without pretending a per-session setter applied them.
+- [Cursor ACP](https://cursor.com/docs/cli/acp) documents `agent acp`, existing
+  CLI authentication, session loading, modes and permission requests. This route
+  can support a native Swift integration, but its capability surface must be
+  compared explicitly with T3's pinned SDK before claiming parity.
+- [OpenCode v2 ACP](https://dev.opencode.ai/v2/docs/cli/acp/) documents a private
+  server behind ACP v1 and use of existing provider sign-in. Its terminal-auth
+  method is a separate login invocation followed by reconnect. The dedicated
+  [OpenCode HTTP server API](https://docs.opencode.ai/docs/server/) is a wider
+  integration surface than the preset.
+- [Pi RPC](https://pi.dev/docs/latest/rpc) documents language-independent JSONL
+  subprocess control. Prompt acknowledgment does not establish completion;
+  `agent_settled` accounts for automatic follow-up, retry and compaction work.
+- [Grok ACP](https://docs.x.ai/build/cli/headless-scripting) documents
+  `grok agent stdio`; prompt metadata and streamed assistant output are distinct.
+- [Google Antigravity integration documentation](https://antigravity.google/docs/ide/extensions)
+  describes editor integration. The pinned installation/harness implementation
+  must still be verified rather than inferred from the IDE brand or CLI name.
+- [Meta Muse MSP documentation](https://meta-models.github.io/muse-code-sdk/next/guides/msp-concepts/)
+  describes versioned wire/session/item state, command acknowledgments,
+  approvals, resume and host-loss semantics.
+- The [official ACP Registry](https://github.com/agentclientprotocol/registry)
+  is the source for dynamic agents and distribution metadata. Registration and
+  its auth-handshake checks do not establish Coincide compatibility.
+
+## Implementation order and completion gate
+
+The sequence below is an implementation order, not permission to omit later
+providers or reduce the full native Swift goal:
+
+1. Establish stable driver/instance identity, capability/status/setup inventory
+   and native provider management while preserving legacy conversation, queue,
+   model and credential ownership. Do not turn every future provider into an
+   untyped Codex permission/configuration path.
+2. Add named Copilot and Cursor onboarding and complete ACP authentication,
+   lifecycle, session management and extension routing. Verify the actual named
+   CLIs instead of equating presets with support.
+3. Complete dedicated OpenCode generation-aware HTTP controls while retaining
+   its working ACP integration and captured invocations.
+4. Implement Pi RPC and Muse MSP using native Swift transports and their actual
+   settled/acknowledgment/revision/recovery contracts.
+5. Implement Grok and Antigravity provider-specific ACP, background work,
+   authentication, installation and usage behavior.
+6. In parallel, finish Codex/Claude account, controls, skills, history and usage
+   gaps; complete portable handoff and applicable generic registry behavior.
+
+For each offered integration, completion requires a capability matrix and
+evidence for the applicable end-to-end chain:
+
+- Executable/distribution discovery, supported-version detection, explicit
+  installation/update/removal and actual authentication/setup behavior.
+- Dynamic models, defaults, provider/mode/reasoning/options, command/skill/MCP
+  discovery, and exact per-input captured configuration.
+- Native send/resume, attachments, streaming and structured tools/plans/questions,
+  exact permissions, background/subagent attribution, Stop and process cleanup.
+- Correct accepted/submitted/acknowledged/completed boundaries, explicit
+  configuration-changing restart behavior, and no fabricated native turn IDs.
+- Durable intent before external mutation, stale/incarnation/path fences,
+  cancellation/removal/shutdown drains, honest unknown outcomes and no automatic
+  duplicate delivery/replay after lost acknowledgments or process loss.
+- Advertised session browsing/import and applicable exact native history or
+  portable handoff, with source and target ownership and user data preserved.
+- Account/usage display and recovery behavior where supported, with unsupported,
+  stale and unavailable states distinguished and no hidden credential mutation.
+- Meaningful offline protocol and engine/store tests, installed-provider marker
+  smoke tests with bounded cost and exact task-owned cleanup, and native UI
+  interaction/accessibility checks. Record the tested version, capabilities and
+  exceptions; fixtures and successful builds do not replace installed evidence.
+
+An upstream-unavailable capability should remain honestly unavailable; an
+applicable but unimplemented capability remains a parity gap. Full provider
+parity and default Liquid Glass adoption are **not complete** until these gates
+and the broader [port requirements](PORTING.md) have been satisfied.
+
+[t3-root]: https://github.com/pingdotgg/t3code/tree/680152e27b2a961686389ca69a1557cbb2c55f08
+[t3-drivers]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/apps/server/src/provider/builtInDrivers.ts#L29-L63
+[t3-instances]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/contracts/src/providerInstance.ts#L26-L94
+[t3-hydration]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/apps/server/src/provider/ProviderInstanceRegistryHydration.ts#L36-L70
+[t3-install]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/apps/server/src/provider/providerInstallation.ts#L53-L101
+[t3-acp-install]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-acp-registry/src/server/AcpRegistrySupport.ts
+[t3-acp-flavors]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-acp-registry/src/server/adapter.ts#L185-L246
+[t3-cursor]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-cursor/src/server/adapter.ts
+[t3-opencode]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-opencode/src/server/adapter.ts
+[t3-pi]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-pi/src/server/adapter.ts
+[t3-muse]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-muse/src/server/adapter.ts
+[t3-grok]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-grok/src/server/acpSupport.ts
+[t3-acp-history]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-acp/src/server/adapter.ts#L8332-L8423
+[t3-auth-service]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/apps/server/src/provider/ProviderAuthService.ts#L72-L198
+[t3-auth-contract]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/contracts/src/providerSetup.ts#L45-L163
+[t3-acp-auth]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/provider-acp-registry/src/server/auth.ts#L230-L314
+[t3-limits]: https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/contracts/src/providerUsageLimits.ts#L13-L67

@@ -10,7 +10,7 @@ struct ConversationHistoryBanner: View {
             operation.needsPromptRecall || store.canRecallConversationHistoryPrompt(operation) {
             ConversationHistoryOperationView(store: store, operation: operation)
                 .padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+                .coincideSurface()
         }
     }
 }

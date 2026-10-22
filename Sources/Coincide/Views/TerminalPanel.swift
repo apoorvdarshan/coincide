@@ -35,9 +35,11 @@ struct TerminalPanel: View {
                 Button { add() } label: { Image(systemName: "plus") }.help("New terminal").accessibilityLabel("New terminal")
                 Button(action: hide) { Image(systemName: "chevron.down") }.help("Hide terminal").accessibilityLabel("Hide terminal")
             }.buttonStyle(.borderless).font(.caption).padding(.horizontal, 12).padding(.vertical, 6)
+                .coincideSurface(cornerRadius: 0)
             Divider()
             if let selected {
                 NativeTerminalView(session: selected).id(selected.id).padding(6)
+                    .background(Color(nsColor: .textBackgroundColor))
                 if case .exited(let status) = selected.lifecycle {
                     HStack {
                         Text(selected.isCommand ? status.map { "Command exited (\($0))." } ?? "Command stopped." : status.map { "Shell exited (\($0))." } ?? "Shell stopped.")
@@ -52,7 +54,6 @@ struct TerminalPanel: View {
                 actions: { Button("New Terminal") { add() } }
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
         .onAppear { if sessions.isEmpty { add() } }
         .confirmationDialog("Close terminal and stop its running command?", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } })) {
             Button("Close Terminal", role: .destructive) {

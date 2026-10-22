@@ -43,7 +43,7 @@ struct ProjectCloneBanner: View {
                 }
             }
             .padding(12)
-            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+            .coincideSurface()
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Repository clone")
         }

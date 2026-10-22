@@ -42,7 +42,7 @@ struct RunCheckpointBanner: View {
                 }
             }
             .padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+            .coincideSurface()
             .accessibilityIdentifier("run-checkpoint")
             .onChange(of: presentation.attempt.id) { actionError = nil }
         }

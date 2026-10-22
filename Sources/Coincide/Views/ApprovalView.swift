@@ -39,7 +39,7 @@ struct ApprovalView: View {
                 }
             }
             if isResponding { HStack { ProgressView().controlSize(.small); Text("Sending response…").font(.caption) } }
-        }.padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)).disabled(isResponding)
+        }.padding().coincideSurface().disabled(isResponding)
     }
     private var permissionOptions: some View {
         ForEach(request.params["options"].array ?? [], id: \.self) { option in

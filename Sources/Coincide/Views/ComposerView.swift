@@ -68,8 +68,7 @@ struct ComposerView: View {
             }
         }
         .padding(14)
-        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 23))
-        .overlay { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1) }
+        .coincideSurface(cornerRadius: 23)
         .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $dropTargeted) { providers in importProviders(providers); return true }
         .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false) } }
         .background { geometry("bounds") }
@@ -120,10 +119,10 @@ struct ComposerView: View {
             activate(alternate: NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.control))
         } label: {
             Image(systemName: delivery == .steer ? "arrow.turn.up.right" : "arrow.up").font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color(nsColor: .controlBackgroundColor))
-                .frame(width: 30, height: 30).background(Color.primary, in: Circle())
+                .frame(width: 18, height: 18)
         }
-        .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command)
+        .coincidePrimaryAction().controlSize(.small).buttonBorderShape(.circle)
+        .keyboardShortcut(.return, modifiers: .command)
         .accessibilityLabel(delivery.label)
         .accessibilityIdentifier("composer-send")
         .help(delivery == .steer ? "Send into the running turn using its current settings" : busy ? "Send after the current turn" : "Send message")

@@ -121,8 +121,24 @@ The peer runs only from a private PATH entry with a private CODEX_HOME. Its
 bounded state and wire log live under the test-owned workspace; flock plus
 atomic state replacement preserve boundaries across fresh metadata/fork
 processes. The CI shell resolves Python before entering the sandbox so the test
-does not invoke Apple's developer-tool shim. Eleven GUI-free configuration and
-peer tests validate isolation, persistence and the strict result gate.
+does not invoke Apple's developer-tool shim. GUI-free configuration and peer
+tests validate isolation, persistence and the strict result gate.
+
+Offline CLI entry points are symlinks to `CoincideOfflineCLI`, an ad hoc signed
+Mach-O target built before testing and sealed inside the test bundle. The
+sandboxed runner never creates or copies executable bytes into its temporary
+fixture roots. The test-only helper has no sandbox or debugger entitlements;
+the generated runner keeps its own sandbox, whose restrictions remain inherited
+by its children. Each private `0600` descriptor identifies only an allowlisted
+adjacent bundled peer, the resolved absolute Python, and state/wire files under
+the owned `0700` fixture root. The helper rejects foreign paths, symlinks and
+unexpected descriptor fields. It uses `execv` with Python `-I -S`, keeping the
+same PID, standard streams and termination signals without a shell, launcher
+parent, user Python imports, or real-provider fallback. Build verification checks
+both signatures, byte identity and the helper's absent entitlements, then runs
+initialize/GitHub and negative descriptor cases without GUI. The existing exact
+CLI initialize preflight still runs inside XCTest before every provider workflow;
+only hosted execution can establish that launch succeeds under its sandbox.
 
 The tenth workflow uses an actual local Git repository and a natively prepared,
 isolated managed worktree. An explicit fixture-only peer option edits its own

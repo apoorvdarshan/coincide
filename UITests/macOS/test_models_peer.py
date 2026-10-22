@@ -10,7 +10,7 @@ import unittest
 class NativeModelsPeerTests(unittest.TestCase):
     def exchange(self, state, wire, calls):
         frames = [dict(id=index + 1, method=method, params=params) for index, (method, params) in enumerate(calls)]
-        result = subprocess.run([sys.executable, str(Path(__file__).with_name("codex_models_ui.py")), str(state), str(wire)],
+        result = subprocess.run([sys.executable, "-I", "-S", str(Path(__file__).with_name("codex_models_ui.py")), str(state), str(wire)],
             input="".join(json.dumps(frame) + "\n" for frame in frames), text=True, capture_output=True, check=True, timeout=5)
         return [json.loads(line) for line in result.stdout.splitlines()]
 
@@ -42,7 +42,7 @@ class NativeModelsPeerTests(unittest.TestCase):
             self.assertTrue(all(row["error"]["code"] == -32602 for row in rows))
             self.assertEqual(json.loads(state.read_text()), dict(cwd=str(checkout), generation=1))
             linked = root / "linked.json"; linked.symlink_to(state)
-            process = subprocess.run([sys.executable, str(Path(__file__).with_name("codex_models_ui.py")), str(linked), str(wire)],
+            process = subprocess.run([sys.executable, "-I", "-S", str(Path(__file__).with_name("codex_models_ui.py")), str(linked), str(wire)],
                 input=json.dumps(dict(id=1, method="initialize")) + "\n", text=True, capture_output=True, timeout=5)
             self.assertNotEqual(process.returncode, 0); self.assertEqual(process.stdout, "")
 

@@ -1,5 +1,54 @@
 # Validation record
 
+## 2026-10-22 — model controls and default native Liquid Glass
+
+- Commit `01fb90f` adds bounded, paginated Codex discovery, native advertised
+  reasoning controls and per-model preferences. CLI Default Model reads current
+  checkout configuration on an independently owned metadata connection, captures
+  concrete model/effort values and rechecks ownership before committing. Active,
+  queued and future settings remain distinct. Default resets, stale catalog/read
+  results, cancellation, immutable steering/queue captures and SQLite replay are
+  covered by protocol, engine and native-store regressions.
+- The complete model-control build passed 761 Swift tests: 627 core, 115 native
+  view/store, six terminal and 13 Markdown. All 34 focused new declarations
+  passed. The installed-Codex discovery test also passed with real catalog and
+  cwd-aware default reads; it sent no model turn or configuration mutation.
+- Shared native chrome uses `glassEffect` and `GlassEffectContainer` on macOS
+  26+, with native material/bordered-control fallbacks on older systems. Opaque
+  Reduce Transparency and increased-contrast rendering inputs are checked
+  without changing the user's system settings. Editors, transcripts, code output
+  and terminal content retain their readable semantic backing.
+- The visual changes passed 117 native view/store tests, six terminal and 13
+  Markdown tests, plus focused composer, provider-menu, PR and glass-layout
+  checks. Geometry covers 320/680-point panels, both appearances, opaque/normal
+  surfaces and standard/increased contrast. Native menu checks catch short
+  labels stretching their chevrons across the header and long labels overflowing
+  narrow space. App packaging, strict/deep signatures and native math resources
+  passed; a Cua capture of the running development app showed readable chrome.
+- WindowServer composites real glass and vibrant text. `NSView.cacheDisplay`
+  offscreen PNGs are insufficient evidence for that material; opaque accessibility
+  variants can be rasterized, while actual glass needs native window captures.
+  The backed-up storage-23 workspace opened as storage 24 with identical
+  canonical content and a successful SQLite integrity check. No release was made.
+- Hosted GUI run `39735788588` executed 13 scenarios: eight passed, five failed,
+  zero skipped. Four offline provider preflights failed specifically at
+  `Process.run` with EPERM; `fcntl(F_SETNOSIGPIPE)` succeeded. The PR sheet also
+  exposed another container accessibility identifier replacing its child action
+  IDs. These findings are separate from unit/geometry success. The updated
+  14-scenario runner requires fresh hosted execution after the launcher and
+  accessibility fixes. Older-macOS runtime, full accessibility, provider and T3
+  parity remain unverified.
+- The replacement offline test CLI is a built/signed immutable Mach-O resource;
+  private `codex`/`gh` entries are symlinks and fixture descriptors are data. It
+  validates opt-in, private ownership/modes, exact fields, closed-world peers and
+  executable arguments, then replaces its PID with explicit Python `-I -S`.
+  Compile/sign/byte/entitlement checks and the actual-helper initialize/GitHub
+  positive and descriptor rejection checks passed without a GUI. Physical root
+  identity permits equivalent `/var` and `/private/var` spellings while preserving
+  exact descriptor/environment binding. Seventeen Python checks passed. This
+  does not yet prove execution inside the hosted XCTest sandbox; all 14 strict
+  workflows, preflights, assertions and deadlines remain required.
+
 ## 2026-10-22 — durable native steering and full-suite handoff
 
 - Native Queue/Steer preference, explicit delivery menu and alternate

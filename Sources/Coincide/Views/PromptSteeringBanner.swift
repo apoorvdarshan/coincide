@@ -48,6 +48,6 @@ struct PromptSteeringStatusContent: View {
                     .accessibilityIdentifier("prompt-steering-continue")
             }
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+            .coincideSurface()
     }
 }

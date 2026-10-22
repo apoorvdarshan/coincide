@@ -59,7 +59,7 @@ struct SidebarView: View {
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Search conversations", text: $store.search).textFieldStyle(.plain).accessibilityLabel("Search conversations")
-                }.font(.system(size: 12)).padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                }.font(.system(size: 12)).padding(8).coincideSurface(cornerRadius: 8)
             }.padding(.horizontal, 16).padding(.vertical, 14)
         }
         .safeAreaInset(edge: .bottom) {

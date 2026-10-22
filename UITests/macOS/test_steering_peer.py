@@ -18,7 +18,7 @@ class NativeSteeringPeerTests(unittest.TestCase):
         return checkout, state, wire
 
     def exchange(self, state, wire, calls):
-        process = subprocess.run([sys.executable, str(Path(__file__).with_name("codex_steering_ui.py")), str(state), str(wire)],
+        process = subprocess.run([sys.executable, "-I", "-S", str(Path(__file__).with_name("codex_steering_ui.py")), str(state), str(wire)],
             input="".join(json.dumps(dict(id=index + 1, method=method, params=params), ensure_ascii=False) + "\n"
                 for index, (method, params) in enumerate(calls)), text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
@@ -78,7 +78,7 @@ class NativeSteeringPeerTests(unittest.TestCase):
             for path in [state, root / "linked-state.json"]:
                 if path != state:
                     path.symlink_to(state)
-                process = subprocess.run([sys.executable, str(Path(__file__).with_name("codex_steering_ui.py")), str(path), str(wire)],
+                process = subprocess.run([sys.executable, "-I", "-S", str(Path(__file__).with_name("codex_steering_ui.py")), str(path), str(wire)],
                     input=json.dumps(dict(id=1, method="initialize")) + "\n", text=True,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
                 self.assertNotEqual(process.returncode, 0)

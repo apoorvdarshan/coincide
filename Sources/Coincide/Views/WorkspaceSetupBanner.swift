@@ -57,7 +57,7 @@ struct WorkspaceSetupBanner: View {
                     }
                 }
                 .padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+                .coincideSurface()
                 .accessibilityElement(children: .contain).accessibilityIdentifier(identifier())
             }
         }

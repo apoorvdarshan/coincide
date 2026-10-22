@@ -19,7 +19,7 @@ struct MessageView: View {
                         if let error = message.submissionError { Label(error, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                     }.padding(.horizontal, 18).padding(.vertical, 12)
                         .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 22))
-                }
+                }.coincideGlassGroup()
             } else if message.role == .tool || message.role == .reasoning {
                 DisclosureGroup {
                     Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)

@@ -13,7 +13,7 @@ struct WorktreePreparationBanner: View {
             } icon: { Image(systemName: "exclamationmark.triangle") }
                 .foregroundStyle(.secondary).padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+                .coincideSurface()
                 .accessibilityIdentifier("worktree-submodule-warning")
         } else if !preparation.isReady {
             VStack(alignment: .leading, spacing: 8) {
@@ -43,7 +43,7 @@ struct WorktreePreparationBanner: View {
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(12).background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+            .padding(12).coincideSurface()
             .accessibilityElement(children: .contain).accessibilityLabel("Worktree preparation")
         }
     }
