@@ -130,12 +130,14 @@ private struct RuntimeFixture {
     var project: WorkspaceProject
     var thread: CodingThread
 }
-private func withRuntime(_ body: (RuntimeFixture) async throws -> Void) async throws {
+private func withRuntime(checkpointFactory: @escaping WorkspaceEngine.CheckpointFactory = { GitCheckpointService(root: $0) },
+                         _ body: (RuntimeFixture) async throws -> Void) async throws {
     let root = try temporaryWorkspace()
     defer { try? FileManager.default.removeItem(at: root) }
     let harness = RuntimeHarness(), project = WorkspaceProject(path: root.path)
     let thread = CodingThread(project: project)
-    let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), providerFactory: { harness.make($0) })
+    let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), providerFactory: { harness.make($0) },
+                                     checkpointFactory: checkpointFactory)
     do {
         _ = try await engine.load(); try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
         try await body(.init(root: root, engine: engine, harness: harness, project: project, thread: thread))
@@ -164,31 +166,91 @@ private func waitRuntime(_ condition: () async throws -> Bool) async throws {
     }
 }
 
-@Test(.timeLimit(.minutes(1))) func runtimeQueuesInOrderAndKeepsCapturedModel() async throws {
-    try await withRuntime { f in
-        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "first"))
-        try await waitRuntime { await f.harness.providers(f.thread.id).first?.prompts().count == 1 }
-        try await f.engine.dispatch(.editThread(f.thread.id, .model("captured")))
-        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "second"))
-        try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "third"))
-        try await f.engine.dispatch(.editThread(f.thread.id, .model("new preference")))
-        #expect(await f.engine.current().snapshot.threads[0].queuedTurns.count == 2)
-        let provider = try #require(f.harness.providers(f.thread.id).first)
-        await provider.finish()
-        try await waitRuntime { await provider.prompts().count == 2 }
-        await provider.finish()
-        try await waitRuntime { await provider.prompts().count == 3 }
-        #expect(await provider.prompts() == ["first", "second", "third"])
-        #expect(await provider.usedModels() == ["", "captured", "captured"])
-        await provider.finish()
-        try await waitRuntime { await f.engine.current().snapshot.threads[0].state == .idle }
-        #expect(await f.engine.current().snapshot.threads[0].messages.filter { $0.role == .user }.map(\.text) == ["first", "second", "third"])
-        let saved = await f.engine.current().snapshot, records = try #require(saved.threads[0].runHistory)
-        #expect(records.map(\.configuration.model) == ["", "captured", "captured"])
-        #expect(records.allSatisfy { $0.status == .completed && $0.endReason == .providerCompleted && $0.endedAt != nil && $0.turnIDs.count == 1 })
-        #expect(records.compactMap(\.userMessageID) == saved.threads[0].messages.filter { $0.role == .user }.map(\.id))
-        let database = try WorkspaceDatabase(url: f.root.appendingPathComponent("workspace.sqlite"))
-        #expect(try await database.rebuildProjection().snapshot == saved)
+private actor RuntimeHeldCheckpoint: RunCheckpointSession {
+    private var holdNext = false
+    private var released = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    private(set) var heldAttemptID: UUID?
+    func arm() { holdNext = true }
+    func release() {
+        released = true; holdNext = false
+        let pending = waiter; waiter = nil; pending?.resume()
+    }
+    func prepare(id: UUID) async throws -> GitCheckpointPlan {
+        if holdNext && !released {
+            holdNext = false; heldAttemptID = id
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { waiter = $0 }
+            } onCancel: { Task { await self.release() } }
+        }
+        try Task.checkCancellation()
+        throw GitCheckpointError(.notRepository)
+    }
+    func capture(_ plan: GitCheckpointPlan) throws -> GitCheckpointReceipt { throw GitCheckpointError(.invalidPlan) }
+    func inspect(_ plan: GitCheckpointPlan) throws -> GitCheckpointInspection { throw GitCheckpointError(.invalidPlan) }
+    func finalizeScratch(_ receipt: GitCheckpointReceipt) throws -> GitCheckpointScratchResult { throw GitCheckpointError(.invalidPlan) }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func runtimeQueuesInOrderAndKeepsCapturedModel(holdPost: Bool) async throws {
+    let checkpoint = RuntimeHeldCheckpoint()
+    let factory: WorkspaceEngine.CheckpointFactory = { root in
+        if holdPost { return checkpoint }
+        return GitCheckpointService(root: root)
+    }
+    try await withRuntime(checkpointFactory: factory) { f in
+        do {
+            try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "first"))
+            try await waitRuntime { await f.harness.providers(f.thread.id).first?.prompts().count == 1 }
+            try await f.engine.dispatch(.editThread(f.thread.id, .model("captured")))
+            try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "second"))
+            try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "third"))
+            try await f.engine.dispatch(.editThread(f.thread.id, .model("new preference")))
+            #expect(await f.engine.current().snapshot.threads[0].queuedTurns.count == 2)
+            let provider = try #require(f.harness.providers(f.thread.id).first)
+            await provider.finish()
+            try await waitRuntime { await provider.prompts().count == 2 }
+            await provider.finish()
+            try await waitRuntime { await provider.prompts().count == 3 }
+            #expect(await provider.prompts() == ["first", "second", "third"])
+            #expect(await provider.usedModels() == ["", "captured", "captured"])
+            let thirdRunID = try #require(await f.engine.current().snapshot.threads[0].activeRun?.id)
+            if holdPost { await checkpoint.arm() }
+            await provider.finish()
+            if holdPost {
+                try await waitRuntime { await checkpoint.heldAttemptID != nil }
+                let pending = await f.engine.current().snapshot, thread = pending.threads[0]
+                let record = try #require(thread.runHistory?.first { $0.id == thirdRunID })
+                let post = try #require(record.checkpoints?.postRun)
+                let heldAttemptID = await checkpoint.heldAttemptID
+                // Idle and the completed run are already durable while this exact
+                // post-run observation still owns a later journal mutation.
+                #expect(thread.state == .idle && thread.activeRun == nil && record.status == .completed)
+                #expect(thread.queuedTurns.isEmpty && thread.runtimeRequests.isEmpty)
+                #expect(post.id == heldAttemptID && post.phase == .resolving)
+                #expect(!pending.providerReady(for: thread))
+                await checkpoint.release()
+            }
+            try await waitRuntime {
+                let snapshot = await f.engine.current().snapshot, thread = snapshot.threads[0]
+                guard thread.state == .idle, thread.activeRun == nil, thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty,
+                      let record = thread.runHistory?.first(where: { $0.id == thirdRunID }), record.status == .completed,
+                      record.checkpoints?.providerReleased == true,
+                      record.checkpoints?.postRun?.phase == .unavailable,
+                      record.checkpoints?.postRun?.unavailableReason == .notRepository else { return false }
+                return snapshot.providerReady(for: thread)
+            }
+            #expect(await f.engine.current().snapshot.threads[0].messages.filter { $0.role == .user }.map(\.text) == ["first", "second", "third"])
+            let saved = await f.engine.current().snapshot, records = try #require(saved.threads[0].runHistory)
+            #expect(records.map(\.configuration.model) == ["", "captured", "captured"])
+            #expect(records.allSatisfy { $0.status == .completed && $0.endReason == .providerCompleted && $0.endedAt != nil && $0.turnIDs.count == 1 })
+            #expect(records.compactMap(\.userMessageID) == saved.threads[0].messages.filter { $0.role == .user }.map(\.id))
+            let database = try WorkspaceDatabase(url: f.root.appendingPathComponent("workspace.sqlite"))
+            #expect(try await database.rebuildProjection().snapshot == saved)
+        } catch {
+            await checkpoint.release()
+            throw error
+        }
     }
 }
 
