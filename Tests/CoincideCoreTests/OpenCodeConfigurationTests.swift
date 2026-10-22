@@ -108,7 +108,7 @@ func nativeOpenCodeStorage32MigratesPriorVersionsReopensAndKeepsACPConversations
     #expect(try await database.rebuildProjection().snapshot == f.snapshot)
     #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
     var statement: OpaquePointer?; #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 37)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 38)
     sqlite3_finalize(statement); sqlite3_close(raw)
     #expect(try JSONDecoder().decode(CodingThread.self, from: JSONEncoder().encode(acp)).openCodeConfiguration == nil)
 }

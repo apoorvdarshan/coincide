@@ -28,6 +28,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     case submissionFailed(clientMessageID: String, reason: String)
     case steeringCapabilitiesChanged
     case claudeHistoryEvidence(ClaudeRunHistoryEvidence)
+    case piHistoryEvidence(PiRunHistoryEvidence)
     indirect case context(runID: UUID, event: ProviderEvent)
 }
 
@@ -41,6 +42,13 @@ public protocol ProviderSession: Actor {
     func acpConnectionInfo() async throws -> ACPConnectionInfo
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
+    /// Captures an owned native baseline without sending input. The caller must
+    /// persist this preparation before admitting its exact one-use prompt.
+    func preparePiRun(input: ProviderInput, thread: CodingThread) async throws -> PiRunHistoryPreparation
+    func sendPreparedPi(input: ProviderInput, thread: CodingThread, preparation: PiRunHistoryPreparation) async throws
+    func preparePiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String) async throws -> PiSteeringHistoryPreparation
+    func sendPreparedPiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String, preparation: PiSteeringHistoryPreparation) async throws -> ProviderSteeringReceipt
+    func cancelPiSteeringPreparation(_ preparation: PiSteeringHistoryPreparation) async
     func interrupt() async throws
     func interrupt(expectedRunID: UUID) async throws
     func steeringCapabilities() async -> ProviderSteeringCapabilities
@@ -69,6 +77,19 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func preparePiRun(input: ProviderInput, thread: CodingThread) async throws -> PiRunHistoryPreparation {
+        throw ProviderHistoryError(.unsupported)
+    }
+    public func sendPreparedPi(input: ProviderInput, thread: CodingThread, preparation: PiRunHistoryPreparation) async throws {
+        throw ProviderHistoryError(.unsupported)
+    }
+    public func preparePiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String) async throws -> PiSteeringHistoryPreparation {
+        throw ProviderSteeringError(.unsupported)
+    }
+    public func sendPreparedPiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String, preparation: PiSteeringHistoryPreparation) async throws -> ProviderSteeringReceipt {
+        throw ProviderSteeringError(.unsupported)
+    }
+    public func cancelPiSteeringPreparation(_ preparation: PiSteeringHistoryPreparation) async {}
     public func codexSkills(forceReload: Bool = false) async throws -> ProviderSkillInventory {
         throw ProviderSkillError(.unsupported)
     }
@@ -174,7 +195,8 @@ public enum ProviderSessions {
         }
         if thread.provider == .pi {
             try PiConfigurationValidation.configuration(.init(thread: thread))
-            guard let configuration = thread.piConfiguration, let executable = ProcessChannel.findExecutable(configuration.executable) else {
+            guard let configuration = thread.piConfiguration,
+                  let executable = ProcessChannel.findExecutable(configuration.runtime?.executable ?? configuration.executable) else {
                 throw CoincideError("Install and sign in to Pi before sending a message.")
             }
             return PiSession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration, permission: thread.permission)

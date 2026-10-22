@@ -29,6 +29,9 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
     public var messageAttributionVersion: Int?
     /// Nil on legacy records. Never inferred from today's ambient CLI or text.
     public var claude: ClaudeRunHistoryEvidence?
+    /// Prospective native entry evidence. Nil legacy records are never upgraded
+    /// from a file tail, timestamp window or local run UUID.
+    public var pi: PiRunHistoryEvidence?
     public var removedByHistoryOperationID: UUID?
 
     public init(run: ActiveRun, origin: ThreadRunOrigin, userMessageID: String? = nil) {
@@ -105,6 +108,13 @@ extension CodingThread {
               records.filter({ !$0.status.isTerminal }).count <= 1 else { throw CoincideError("The conversation has invalid or duplicate run history.") }
         for record in records {
             try CodexReasoningValidation.configuration(record.configuration)
+            if let pi = record.pi {
+                try pi.validate()
+                guard record.origin == .user, record.configuration.provider == .pi,
+                      pi.runID == record.id, pi.runtimeIdentity == record.configuration.piConfiguration?.runtimeIdentity,
+                      pi.preparation.openingInput.clientMessageID == record.userMessageID,
+                      pi.nativeSessionFile == record.providerThreadID else { throw PiHistoryGraphError(.invalidWindow) }
+            }
             try record.configuration.claudeRuntimeConfiguration?.validate()
             if let selection = record.configuration.claudeLaunchSelection {
                 guard record.configuration.provider == .claude, let runtime = record.configuration.claudeRuntimeConfiguration else { throw ClaudeRuntimeConfiguration.invalid() }

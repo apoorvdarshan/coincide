@@ -80,7 +80,7 @@ regression.
 
 The native provider choice is separate from ACP. Storage version 36 introduced
 the native configuration, run, effect and message-history recovery fields; the
-current workspace version is 37. Older binaries cannot reopen unfamiliar storage.
+current workspace version is 38. Older binaries cannot reopen unfamiliar storage.
 Legacy Codex, Claude and ACP payloads still
 decode without native OpenCode settings. The durable value captures instance identity, generation,
 one local executable, exact provider/model/variant IDs and agent ID. Runtime

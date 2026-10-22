@@ -94,7 +94,7 @@ func codexRuntimeRejectsNonliteralExecutableWithoutEchoingIt(_ executable: Strin
     #expect(f.thread.activeRun?.id == queued.id && f.thread.activeRun?.configuration.codexRuntimeConfiguration == captured)
     #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
     var statement: OpaquePointer?; #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 37)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 38)
     sqlite3_finalize(statement); sqlite3_close(raw)
 }
 

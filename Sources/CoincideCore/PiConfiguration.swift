@@ -8,46 +8,56 @@ public struct PiConfiguration: Codable, Sendable, Equatable, Hashable {
     public let executable: String
     public let model: PiModelSelection?
     public let thinkingLevel: String?
-    public init(instanceID: UUID = UUID(), executable: String = "pi", model: PiModelSelection? = nil, thinkingLevel: String? = nil) {
-        self.instanceID = instanceID; self.executable = executable; self.model = model; self.thinkingLevel = thinkingLevel
+    public let runtime: PiRuntimeConfiguration?
+    public init(instanceID: UUID = UUID(), executable: String = "pi", model: PiModelSelection? = nil, thinkingLevel: String? = nil, runtime: PiRuntimeConfiguration? = nil) {
+        self.instanceID = instanceID; self.executable = executable; self.model = model; self.thinkingLevel = thinkingLevel; self.runtime = runtime
     }
-    public var runtimeIdentity: PiRuntimeIdentity { .init(instanceID: instanceID, executable: executable) }
+    public var runtimeIdentity: PiRuntimeIdentity { .init(instanceID: instanceID, executable: executable, runtime: runtime) }
     public static let thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
     public func validate() throws {
         try Self.identifier(executable, maximum: 16_384)
         guard !executable.contains("://"), !executable.contains("="),
               executable.hasPrefix("/") || !executable.contains("/") else { throw Self.invalid() }
         if executable.hasPrefix("/") {
-            guard URL(fileURLWithPath: executable).standardizedFileURL.path == executable else { throw Self.invalid() }
+            try PiRuntimeConfiguration.lexicalPath(executable)
         } else {
             guard !executable.contains(where: \.isWhitespace), executable != ".", executable != ".." else { throw Self.invalid() }
         }
         try model?.validate()
         if let thinkingLevel { guard Self.thinkingLevels.contains(thinkingLevel) else { throw Self.invalid() } }
+        if let runtime {
+            try runtime.validate()
+            guard runtime.instanceID == instanceID, runtime.requestedExecutable == executable else { throw Self.invalid() }
+        }
     }
     public func selecting(model: PiModelSelection?, thinkingLevel: String? = nil) -> Self {
-        .init(instanceID: instanceID, executable: executable, model: model, thinkingLevel: thinkingLevel)
+        .init(instanceID: instanceID, executable: executable, model: model, thinkingLevel: thinkingLevel, runtime: runtime)
     }
     public func selecting(thinkingLevel: String?) -> Self {
-        .init(instanceID: instanceID, executable: executable, model: model, thinkingLevel: thinkingLevel)
+        .init(instanceID: instanceID, executable: executable, model: model, thinkingLevel: thinkingLevel, runtime: runtime)
     }
     static func identifier(_ value: String, maximum: Int = 4_096) throws {
         guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, value.utf8.count <= maximum,
               !value.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw invalid() }
     }
     static func invalid() -> CoincideError { .init("The Pi configuration is invalid. Refresh its models and choose again.") }
-    private enum CodingKeys: String, CodingKey { case instanceID, executable, model, thinkingLevel }
+    private enum CodingKeys: String, CodingKey { case instanceID, executable, model, thinkingLevel, runtime }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init(instanceID: try values.decode(UUID.self, forKey: .instanceID), executable: try values.decode(String.self, forKey: .executable),
-            model: try values.decodeIfPresent(PiModelSelection.self, forKey: .model), thinkingLevel: try values.decodeIfPresent(String.self, forKey: .thinkingLevel))
+            model: try values.decodeIfPresent(PiModelSelection.self, forKey: .model), thinkingLevel: try values.decodeIfPresent(String.self, forKey: .thinkingLevel),
+            runtime: try values.decodeIfPresent(PiRuntimeConfiguration.self, forKey: .runtime))
         try validate()
     }
 }
 
-public struct PiRuntimeIdentity: Sendable, Equatable, Hashable {
+public struct PiRuntimeIdentity: Codable, Sendable, Equatable, Hashable {
     public let instanceID: UUID
     public let executable: String
+    public let runtime: PiRuntimeConfiguration?
+    public init(instanceID: UUID, executable: String, runtime: PiRuntimeConfiguration? = nil) {
+        self.instanceID = instanceID; self.executable = executable; self.runtime = runtime
+    }
 }
 
 public struct PiRuntimeBinding: Sendable, Equatable {
@@ -84,6 +94,9 @@ enum PiConfigurationValidation {
         if value.provider == .pi {
             guard let native = value.piConfiguration, value.model == (native.model?.catalogID ?? "") else { throw PiConfiguration.invalid() }
             try native.validate()
+            if let runtime = native.runtime {
+                guard runtime.registeredWorkspacePath == value.workspacePath else { throw PiConfiguration.invalid() }
+            }
             if let file = value.nativeThreadID { try ProviderHistoryValidation.path(file) }
         } else if value.piConfiguration != nil { throw PiConfiguration.invalid() }
     }

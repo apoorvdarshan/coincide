@@ -154,14 +154,19 @@ must each be mapped and verified before declaring parity.
   Pi has no native expected-turn check or per-prompt turn ID. Pending admission
   invalidates old idle probes and holds settlement; unknown delivery is not
   retried. `/compact` uses the separate native compact command. Existing
-  conversation stdio/Engine and native view/store checks have passed; the new
-  steering fixtures pass the focused serial run. Native v3 history primitives
-  now keep append inventory, explicit runtime leaf and file-reload leaf separate,
-  follow active compaction/custom-message context, and read only an exact anchored
-  file with stat/hash proof. Prospective ancestor windows preserve native entry
-  IDs without assigning run ownership or inventing turn IDs. Native history
-  controls, runtime entry capture, setup/auth, usage and installed acceptance
-  remain open. No installed Pi calls were made.
+  conversation stdio/Engine and native view/store checks have passed. New inputs
+  capture the launcher, registered/physical workspace and native storage-selection
+  intent. For captured runtimes, an observed 0.80.5+ profile and exact idle
+  entries/leaf baseline are committed before prompt admission; steering reserves
+  the actor before its durable input marker. Terminal entry evidence precedes
+  completion and maps owned inputs only when the unchanged baseline, native
+  ancestry, order and payload digests agree. Unknown or rewritten windows remain
+  unavailable; process-loss recovery keeps the preparation without replay.
+  Storage 38 preserves these captures and proofs. The source-oracle, runtime,
+  journal, Engine and Store checks are recorded separately in VALIDATION.md.
+  Native fork/rollback, session browsing/import, history recovery controls,
+  setup/auth, usage and installed acceptance remain open. No installed Pi calls
+  were made. See [native run-evidence boundaries](PI_HISTORY.md).
 - Native Muse uses a separate MSP JSON-RPC connection with bounded framing,
   exact command admission, initialized-before-use ordering and an owned process.
   Captured model/effort/permission values govern each input; session identity and

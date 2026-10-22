@@ -88,11 +88,13 @@ private struct ConversationHistoryInspection {
 final class WorkspaceStore {
     typealias ProjectCreator = @Sendable (String, URL) async throws -> ManagedProjectCreationResult
     typealias ClaudeRuntimeCapture = @Sendable (String) throws -> ClaudeRuntimeConfiguration
+    typealias PiRuntimeCapture = @Sendable (String, String, UUID) throws -> PiRuntimeConfiguration
     let managedProjectsRoot: URL
     let worktreesRoot: URL
     private let projectCreator: ProjectCreator
     private let projectScriptReader: NativeProjectScriptService.Reader
     @ObservationIgnored private let claudeRuntimeCapture: ClaudeRuntimeCapture
+    @ObservationIgnored private let piRuntimeCapture: PiRuntimeCapture
     var snapshot = WorkspaceSnapshot()
     var selectedThreadID: UUID? {
         didSet {
@@ -201,8 +203,10 @@ final class WorkspaceStore {
          codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
          codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
+         piRuntimeCapture: PiRuntimeCapture? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
         self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
+        self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot, installation: codexInstallation)
         codexAuthentication = .init(configuration: codexRuntime.configuration)
@@ -240,9 +244,11 @@ final class WorkspaceStore {
          codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization,
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
+         piRuntimeCapture: PiRuntimeCapture? = nil,
          projectScriptReader: NativeProjectScriptService.Reader? = nil,
          projectCreator: ProjectCreator? = nil) {
         self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
+        self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
         codexAuthentication = .init(configuration: codexRuntime.configuration)
@@ -477,6 +483,11 @@ final class WorkspaceStore {
         if source.provider == .claude, configuration.claudeRuntimeConfiguration == nil {
             guard let captured = try? claudeRuntimeCapture(source.workspacePath) else { return nil }
             configuration.claudeRuntimeConfiguration = captured
+        }
+        if source.provider == .pi, let native = source.piConfiguration, native.runtime == nil {
+            guard let captured = try? piRuntimeCapture(source.workspacePath, native.executable, native.instanceID) else { return nil }
+            configuration.piConfiguration = .init(instanceID: native.instanceID, executable: native.executable,
+                model: native.model, thinkingLevel: native.thinkingLevel, runtime: captured)
         }
         return (configuration, source.checkpointPolicy)
     }
@@ -1240,6 +1251,15 @@ final class WorkspaceStore {
     func setProvider(_ provider: ProviderKind, id: UUID) {
         let previousProvider = thread(id)?.provider
         guard provider != previousProvider else { return }
+        if provider == .pi {
+            guard let current = thread(id) else { return }
+            do {
+                let captured = try piRuntimeCapture(current.workspacePath, ProviderKind.pi.executable, UUID())
+                cancelCodexModelDefaultsRead(id)
+                sendCommand(.editThread(id, .piProvider(captured)))
+            } catch { errorMessage = "Choose an available Pi runtime and storage namespace before sending a message." }
+            return
+        }
         if provider == .claude {
             guard let current = thread(id) else { return }
             do {
@@ -1614,7 +1634,16 @@ final class WorkspaceStore {
             do { capturedClaude = try claudeRuntimeCapture(thread.workspacePath) }
             catch { errorMessage = "Install and sign in to Claude before sending a message."; return Task { false } }
         } else { capturedClaude = nil }
-        let executable = thread.provider == .claude ? (thread.claudeRuntimeConfiguration ?? capturedClaude)?.executable ?? thread.provider.executable : thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.antigravityConfiguration?.executable ?? thread.museConfiguration?.executable ?? thread.piConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable
+        let capturedPi: PiRuntimeConfiguration?
+        if thread.provider == .pi, thread.piConfiguration?.runtime == nil {
+            guard let native = thread.piConfiguration else { return Task { false } }
+            do { capturedPi = try piRuntimeCapture(thread.workspacePath, native.executable, native.instanceID) }
+            catch { errorMessage = "Choose an available Pi runtime and storage namespace before sending a message."; return Task { false } }
+        } else { capturedPi = nil }
+        let executable: String
+        if thread.provider == .claude { executable = (thread.claudeRuntimeConfiguration ?? capturedClaude)?.executable ?? thread.provider.executable }
+        else if thread.provider == .pi { executable = (thread.piConfiguration?.runtime ?? capturedPi)?.executable ?? thread.piConfiguration?.executable ?? thread.provider.executable }
+        else { executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.antigravityConfiguration?.executable ?? thread.museConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable }
         if thread.provider == .codex {
             do { _ = try codexRuntimeInstallation.resolve(configuration: thread.codexRuntimeConfiguration ?? .init()) }
             catch { errorMessage = error.localizedDescription; return Task { false } }
@@ -1627,8 +1656,10 @@ final class WorkspaceStore {
         }
         pendingDrafts.removeValue(forKey: id)
         draftOverrides[id] = ""
-        let command: WorkspaceCommand = capturedClaude.map { .submitCapturedClaude(threadID: id, text: prompt, configuration: $0) }
-            ?? .submit(threadID: id, text: prompt)
+        let command: WorkspaceCommand
+        if let capturedClaude { command = .submitCapturedClaude(threadID: id, text: prompt, configuration: capturedClaude) }
+        else if let capturedPi { command = .submitCapturedPi(threadID: id, text: prompt, configuration: capturedPi) }
+        else { command = .submit(threadID: id, text: prompt) }
         let task = enqueue(command)
         return Task {
             do { _ = try await task.value; if draftOverrides[id] == "" { draftOverrides.removeValue(forKey: id) }; return true }
@@ -1846,7 +1877,15 @@ final class WorkspaceStore {
                       ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding else { return }
                 museModels[thread.id] = models
             } else if kind == .pi {
-                guard let thread = selectedThread, thread.provider == .pi else { throw CoincideError("Choose Pi in a conversation before refreshing its models.") }
+                guard var thread = selectedThread, thread.provider == .pi, let native = thread.piConfiguration else { throw CoincideError("Choose Pi in a conversation before refreshing its models.") }
+                if native.runtime == nil {
+                    let captured = try piRuntimeCapture(thread.workspacePath, native.executable, native.instanceID)
+                    _ = try await enqueue(.editThread(thread.id, .piRuntimeConfiguration(captured))).value
+                    guard let current = self.thread(thread.id), current.provider == .pi,
+                          current.projectID == thread.projectID, current.workspacePath == thread.workspacePath,
+                          current.piConfiguration?.runtime == captured else { throw CancellationError() }
+                    thread = current
+                }
                 let models = try await engine.models(thread: thread)
                 guard let current = self.thread(thread.id), current.projectID == thread.projectID, current.provider == .pi,
                       current.workspacePath == thread.workspacePath,

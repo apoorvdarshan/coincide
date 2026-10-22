@@ -153,7 +153,8 @@ extension WorkspaceDecision {
             guard !reserved.contains(project.id), !snapshot.isPullRequestCreationLocked(path: project.path) else { throw WorkspaceCommandError("This project overlaps a pending pull request creation.") }
         case .editThread(let id, let edit):
             switch edit { case .draft, .title, .pinned: return; case .workspacePath(let path): guard !snapshot.isPullRequestCreationLocked(path: path) else { throw WorkspaceCommandError("The destination is held by pull request creation.") }
-            case .claudeWorkspace(let configuration): guard !snapshot.isPullRequestCreationLocked(path: configuration.registeredWorkspacePath) else { throw WorkspaceCommandError("The destination is held by pull request creation.") }; default: break }
+            case .claudeWorkspace(let configuration): guard !snapshot.isPullRequestCreationLocked(path: configuration.registeredWorkspacePath) else { throw WorkspaceCommandError("The destination is held by pull request creation.") }
+            case .piWorkspace(let configuration): guard !snapshot.isPullRequestCreationLocked(path: configuration.registeredWorkspacePath) else { throw WorkspaceCommandError("The destination is held by pull request creation.") }; default: break }
             try requirePullRequestCreationUnlocked([id])
         case .removeProject(let id, _), .retryProjectClone(let id, _), .cancelProjectClone(let id):
             guard let project = snapshot.projects.first(where: { $0.id == id }) else { return }
@@ -162,7 +163,7 @@ extension WorkspaceDecision {
         case .removeProjectGroup(_, let projects, _):
             guard !projects.contains(where: { member in snapshot.isPullRequestCreationLocked(path: member.path) || (snapshot.pullRequestCreations ?? []).contains { $0.projectID == member.id && $0.locksSource } }) else { throw WorkspaceCommandError("This group owns a pending pull request creation.") }
             try requirePullRequestCreationUnlocked(snapshot.threads.filter { thread in projects.contains { $0.id == thread.projectID } }.map(\.id))
-        case .submit(let id, _), .submitCapturedClaude(let id, _, _), .interrupt(let id), .respond(let id, _, _), .resumeQueue(let id), .removeQueued(let id, _), .editQueued(let id, _),
+        case .submit(let id, _), .submitCapturedClaude(let id, _, _), .submitCapturedPi(let id, _, _), .interrupt(let id), .respond(let id, _, _), .resumeQueue(let id), .removeQueued(let id, _), .editQueued(let id, _),
              .settleThread(let id, _, _), .resumeThread(let id, _), .cancelWorktreePreparation(let id), .approveProjectScript(let id, _, _),
              .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .retryPostRunCheckpoint(let id, _, _),
              .continueAfterPostRunCheckpoint(let id, _, _): try requirePullRequestCreationUnlocked([id])

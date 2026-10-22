@@ -107,6 +107,31 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
     }
 }
 
+/// Validation needs ownership and authored content, not another captured runtime
+/// configuration. Keep these small projections across the validation phases.
+private struct PromptSteeringAudit {
+    let id: UUID
+    let effectID: UUID
+    let threadID: UUID
+    let projectID: UUID
+    let runID: UUID
+    let inputID: UUID
+    let messageID: String
+    let phase: PromptSteeringPhase
+    let text: String
+    let attachments: [ChatAttachment]?
+    let holdsQueue: Bool
+
+    @inline(never)
+    init(_ operation: borrowing PromptSteeringOperation) {
+        id = operation.id; effectID = operation.effectID; threadID = operation.threadID
+        projectID = operation.projectID; runID = operation.runID; inputID = operation.input.id
+        messageID = operation.messageID; phase = operation.phase
+        text = operation.input.text; attachments = operation.input.attachments
+        holdsQueue = operation.holdsQueue
+    }
+}
+
 extension WorkspaceSnapshot {
     public func promptSteering(_ id: UUID) -> PromptSteeringOperation? { promptSteerings?.first { $0.id == id } }
     public func isPromptSteeringHoldingQueue(threadID: UUID) -> Bool {
@@ -135,55 +160,102 @@ extension WorkspaceSnapshot {
         }
         return nil
     }
+    // Keep captured configurations, whole threads and checkpoint payloads out of
+    // the same validation frame. These boundaries also apply in debug builds.
+    @inline(never)
     func validatePromptSteerings() throws {
         let operations = promptSteerings ?? []
-        let ids = operations.flatMap { [$0.id, $0.effectID, $0.input.id] }
+        let audits = operations.map { PromptSteeringAudit($0) }
+        let ids = audits.flatMap { [$0.id, $0.effectID, $0.inputID] }
         guard Set(ids).count == ids.count else { throw CoincideError("Steering inputs must reserve distinct operation, effect and input identities.") }
+        let external = promptSteeringExternalIdentities(audits: audits)
+        guard Set(ids).isDisjoint(with: external) else { throw CoincideError("A steering identity belongs to another workspace action.") }
+        for index in operations.indices {
+            try validatePromptSteeringOperation(operations[index], audit: audits[index])
+        }
+        for index in threads.indices {
+            try validatePromptSteeringThreadAudit(threads[index], audits: audits)
+        }
+    }
+
+    @inline(never)
+    private func promptSteeringExternalIdentities(audits: [PromptSteeringAudit]) -> Set<UUID> {
         var external = Set(projects.map(\.id) + threads.map(\.id) +
             (pullRequestCreations ?? []).flatMap { [$0.id, $0.effectID] } +
             (pullRequestCheckouts ?? []).flatMap { [$0.id, $0.effectID, $0.targetThreadID, $0.review.plan.id] } +
             (checkpointRestoreOperations ?? []).map(\.id) +
             (conversationHistoryOperations ?? []).flatMap { [$0.id] + ($0.review.targetThreadID.map { [$0] } ?? []) + ($0.review.files.map { [$0.id] } ?? []) })
         for project in projects { if let clone = project.clone { external.formUnion((clone.previousPlans + [clone.plan]).map(\.id)) } }
-        for thread in threads {
-            external.formUnion((thread.runHistory ?? []).map(\.id).filter { runID in !operations.contains { $0.threadID == thread.id && $0.phase == .queued && $0.input.id == runID } })
-            external.formUnion(thread.queuedTurns.filter { queued in !operations.contains { $0.threadID == thread.id && $0.phase == .queued && $0.input.id == queued.id } }.map(\.id))
-            if let preparation = thread.workspacePreparation { external.formUnion([preparation.id] + preparation.previousAttempts.map { $0.request.id }) }
-            if let settlement = thread.settlement { external.insert(settlement.id) }
-            for (_, script) in thread.projectScripts { external.formUnion(script.previousPlans.map(\.id) + [script.id]) }
-            for run in thread.runHistory ?? [] {
-                if let checkpoints = run.checkpoints { external.formUnion(([checkpoints.baseline] + checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? [])).map(\.id)) }
-            }
+        for index in threads.indices {
+            appendPromptSteeringThreadIdentities(threads[index], audits: audits, to: &external)
         }
-        guard Set(ids).isDisjoint(with: external) else { throw CoincideError("A steering identity belongs to another workspace action.") }
-        for operation in operations {
-            try operation.validate()
-            guard let thread = threads.first(where: { $0.id == operation.threadID }) else { continue }
-            guard thread.projectID == operation.projectID,
-                  let row = thread.messages.first(where: { $0.id == operation.messageID }), row.role == .user,
-                  row.promptSteeringID == operation.id, row.text == operation.input.text,
-                  row.attachments == operation.input.attachments,
-                  row.runReference == .init(threadID: thread.id, runID: operation.phase == .queued ? operation.input.id : operation.runID) ||
-                    (operation.phase == .queued && row.runReference == .init(threadID: thread.id, runID: operation.runID)),
-                  thread.runHistory?.contains(where: { $0.id == operation.runID }) == true else {
-                throw CoincideError("The steering input lost its original transcript or run ownership.")
-            }
-            for other in threads {
-                guard !other.queuedTurns.contains(where: { ($0.id == operation.id || $0.id == operation.effectID) || ($0.id == operation.input.id && (other.id != operation.threadID || operation.phase != .queued || $0.existingMessageID != operation.messageID)) }),
-                      !(other.runHistory ?? []).contains(where: { $0.id == operation.id || $0.id == operation.effectID || ($0.id == operation.input.id && (other.id != operation.threadID || operation.phase != .queued)) }) else {
-                    throw CoincideError("A steering input identity was reused by another turn.")
-                }
-            }
+        return external
+    }
+
+    @inline(never)
+    private func appendPromptSteeringThreadIdentities(_ thread: borrowing CodingThread, audits: [PromptSteeringAudit], to external: inout Set<UUID>) {
+        let threadID = thread.id
+        external.formUnion((thread.runHistory ?? []).map(\.id).filter { runID in !audits.contains { $0.threadID == threadID && $0.phase == .queued && $0.inputID == runID } })
+        external.formUnion(thread.queuedTurns.filter { queued in !audits.contains { $0.threadID == threadID && $0.phase == .queued && $0.inputID == queued.id } }.map(\.id))
+        if let preparation = thread.workspacePreparation { external.formUnion([preparation.id] + preparation.previousAttempts.map { $0.request.id }) }
+        if let settlement = thread.settlement { external.insert(settlement.id) }
+        for (_, script) in thread.projectScripts { external.formUnion(script.previousPlans.map(\.id) + [script.id]) }
+        let runs = thread.runHistory ?? []
+        for index in runs.indices {
+            appendPromptSteeringCheckpointIdentities(runs[index], to: &external)
         }
-        for thread in threads {
-            guard operations.filter({ $0.threadID == thread.id && $0.holdsQueue }).count <= 1 else { throw CoincideError("Only one steering delivery can own a conversation at a time.") }
-            for row in thread.messages where row.promptSteeringID != nil {
-                guard let operation = operations.first(where: { $0.id == row.promptSteeringID }), operation.messageID == row.id,
-                      operation.input.text == row.text, operation.input.attachments == row.attachments else { throw CoincideError("A transcript steering row has no captured delivery audit.") }
-            }
-            for queued in thread.queuedTurns where queued.existingMessageID != nil {
-                guard operations.contains(where: { $0.threadID == thread.id && $0.phase == .queued && $0.input.id == queued.id && $0.messageID == queued.existingMessageID }) else { throw CoincideError("The queued follow-up has no retained steering acceptance.") }
-            }
+    }
+
+    @inline(never)
+    private func appendPromptSteeringCheckpointIdentities(_ run: borrowing ThreadRunRecord, to external: inout Set<UUID>) {
+        if let checkpoints = run.checkpoints {
+            external.formUnion(([checkpoints.baseline] + checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? [])).map(\.id))
+        }
+    }
+
+    @inline(never)
+    private func validatePromptSteeringOperation(_ operation: borrowing PromptSteeringOperation, audit: PromptSteeringAudit) throws {
+        try operation.validate()
+        guard let index = threads.firstIndex(where: { $0.id == audit.threadID }) else { return }
+        try validatePromptSteeringTranscript(threads[index], audit: audit)
+        for index in threads.indices {
+            try validatePromptSteeringTurnIdentities(threads[index], audit: audit)
+        }
+    }
+
+    @inline(never)
+    private func validatePromptSteeringTranscript(_ thread: borrowing CodingThread, audit: PromptSteeringAudit) throws {
+        let threadID = thread.id
+        guard thread.projectID == audit.projectID,
+              let row = thread.messages.first(where: { $0.id == audit.messageID }), row.role == .user,
+              row.promptSteeringID == audit.id, row.text == audit.text,
+              row.attachments == audit.attachments,
+              row.runReference == .init(threadID: threadID, runID: audit.phase == .queued ? audit.inputID : audit.runID) ||
+                (audit.phase == .queued && row.runReference == .init(threadID: threadID, runID: audit.runID)),
+              thread.runHistory?.contains(where: { $0.id == audit.runID }) == true else {
+            throw CoincideError("The steering input lost its original transcript or run ownership.")
+        }
+    }
+
+    @inline(never)
+    private func validatePromptSteeringTurnIdentities(_ thread: borrowing CodingThread, audit: PromptSteeringAudit) throws {
+        let threadID = thread.id
+        guard !thread.queuedTurns.contains(where: { ($0.id == audit.id || $0.id == audit.effectID) || ($0.id == audit.inputID && (threadID != audit.threadID || audit.phase != .queued || $0.existingMessageID != audit.messageID)) }),
+              !(thread.runHistory ?? []).contains(where: { $0.id == audit.id || $0.id == audit.effectID || ($0.id == audit.inputID && (threadID != audit.threadID || audit.phase != .queued)) }) else {
+            throw CoincideError("A steering input identity was reused by another turn.")
+        }
+    }
+
+    @inline(never)
+    private func validatePromptSteeringThreadAudit(_ thread: borrowing CodingThread, audits: [PromptSteeringAudit]) throws {
+        let threadID = thread.id
+        guard audits.filter({ $0.threadID == threadID && $0.holdsQueue }).count <= 1 else { throw CoincideError("Only one steering delivery can own a conversation at a time.") }
+        for row in thread.messages where row.promptSteeringID != nil {
+            guard let audit = audits.first(where: { $0.id == row.promptSteeringID }), audit.messageID == row.id,
+                  audit.text == row.text, audit.attachments == row.attachments else { throw CoincideError("A transcript steering row has no captured delivery audit.") }
+        }
+        for queued in thread.queuedTurns where queued.existingMessageID != nil {
+            guard audits.contains(where: { $0.threadID == threadID && $0.phase == .queued && $0.inputID == queued.id && $0.messageID == queued.existingMessageID }) else { throw CoincideError("The queued follow-up has no retained steering acceptance.") }
         }
     }
     /// A submitted frame is not a native acknowledgement of its input content.

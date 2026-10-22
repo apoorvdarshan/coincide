@@ -1,5 +1,63 @@
 # Validation record
 
+## 2026-10-23 — captured Pi runtime and durable native entry evidence
+
+- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with
+  1579 declarations: 1568 pass and eleven optional installed-provider checks
+  skip. Core's 1358 declarations across eight suites finish in 305.858 seconds;
+  all 202 native view/store declarations pass in 65.268 seconds, terminal six
+  in 1.354 seconds and Markdown thirteen in 0.130 seconds. These results include
+  immutable Pi capture storage, both reducer boundaries and phased steering validation.
+- The separate opt-in installed Claude history check passes in 20.384 seconds:
+  four actual model turns exercise production Engine fork/deferred-rewind context,
+  unchanged native source, selected-chain proof and SQLite restart. The native
+  app also packages successfully with `--build-only`, passes strict signature
+  verification and renders its bundled math resources through the verification
+  CLI. No app window or system installation is used for these checks.
+- The final focused serial run passes all 74 declarations: sixteen native
+  view/store checks in 4.058 seconds and 58 Core checks in 5.447 seconds. These include the
+  real stdio peer through the production factory, independent SQLite admission
+  observations, exact prepared steering reservations, Stop/incarnation fencing,
+  forged and stale proof containment, held responses/terminal reads, legacy
+  configuration preservation, FIFO/restart, native Store capture ordering and
+  five existing Claude history Engine declarations, including all three rewind shapes.
+  This is offline coverage, not installed Pi authentication or model acceptance.
+- Storage 38 retains the selected launcher/workspace/storage namespace and the
+  prospective baseline/input audit. Entry evidence precedes completion; invalid
+  or rewritten windows stay unavailable. Pi fork/rollback, session browsing and
+  native history recovery controls remain unfinished. See [the contract](PI_HISTORY.md).
+- The original-source generator reproduces the 87,371-byte golden fixture
+  exactly (SHA-256 `7760a7c6d72e11176331d996dad119ca40b950ddbfcd03e3611374a99d55aa2b`).
+  Eleven histories cover 41 live branch/reset observations and thirteen exclusive
+  user cuts. Restricted original source execution records zero forbidden
+  operations; all 44 read descriptors close. Existing output, changed source
+  hashes, source symlinks and non-private output are refused. Swift consumes the
+  committed fixture without Node or an installed provider. This is a graph,
+  context classification and reload comparison, not full native mutation proof.
+- New synchronous journal scenarios exposed 544 KiB worker-stack guard faults
+  in steering validation and general command admission/submission. Validation
+  now uses small ownership projections and separate noninlined phases; admission
+  and submission release unrelated broad-switch temporaries. Independent review
+  confirms the extracted submission body and timestamp/writeback tail are
+  unchanged, along with validation order, error text and snapshot semantics.
+  The first full attempt also exposes a guard fault in existing Claude history
+  ledger validation. Pi captures now retain immutable payload storage with the
+  same flat Codable keys and content equality/hash; a standalone native layout
+  observation measures capture values at eight bytes rather than 168, and
+  provider configurations at 1000 rather than 1160. Pure semantic checks verify
+  independent decoding, hashing, namespace intent and workspace rebinding.
+  The unchanged focused scenarios pass without increasing stack limits,
+  deadlines or retries. The compiled async-default guard passes on 846 objects
+  (app 218, Core 542), with three local records and zero weak records.
+- Hosted [run 39857290147](https://github.com/apoorvdarshan/coincide/actions/runs/39857290147)
+  at `968e2af` reaches all 1550 declarations without the previous native crash,
+  but fails with thirteen issues in checkout Store tests: their legacy Claude
+  source depended on a host-installed CLI during runtime capture. The shared
+  fixture now injects a private synthetic runtime; all nine checkout declarations
+  pass in the focused run with every assertion/deadline retained. That failed
+  run skipped native GUI execution. The new 21-scenario hosted GUI gate remains
+  unverified; its local build-only evidence is recorded below.
+
 ## 2026-10-23 — hosted native Claude history scenarios
 
 - `bash script/test_macos_ui.sh --build-for-testing` compiles and signs the

@@ -124,6 +124,16 @@ extension WorkspaceEngine {
         default: return true
         }
     }
+    private func ownsPiHistoryEvent(_ command: EngineCommand) -> Bool {
+        switch command {
+        case .piRunHistoryPrepared(let threadID, let runtimeID, _, let incarnation):
+            return threadIncarnations[threadID] == incarnation && runtimes[threadID]?.id == runtimeID
+        case .piSteeringInputPrepared(let operationID, _, let incarnation):
+            guard let operation = revision.snapshot.promptSteering(operationID) else { return false }
+            return threadIncarnations[operation.threadID] == incarnation && runtimes[operation.threadID]?.id == operation.runtimeID
+        default: return true
+        }
+    }
     private func steeringTargetIsActive(_ operation: PromptSteeringOperation) -> Bool {
         guard !closing, !stoppingEffects, fatalError == nil, !isCodexAuthenticationLocked(operation.configuration), threadIncarnations[operation.threadID] == operation.sourceIncarnation,
               let thread = revision.snapshot.threads.first(where: { $0.id == operation.threadID }), !thread.isArchived,
@@ -160,6 +170,9 @@ extension WorkspaceEngine {
             guard capabilities.supportsActiveSteering, let target = operation.target, advertisedTarget == target else {
                 return .failed(PromptSteeringOperation.failureMessage)
             }
+            if operation.configuration.provider == .pi, operation.configuration.piConfiguration?.runtime != nil {
+                return await performPreparedPiSteering(operation, input: input, session: runtime.session, target: target)
+            }
             try Task.checkCancellation()
             let receipt = try await enqueue(.promptSteeringDispatching(operationID: id, incarnation: operation.sourceIncarnation))
             guard receipt.rejection == nil else { return steeringUnsentResult(operation) }
@@ -187,6 +200,56 @@ extension WorkspaceEngine {
                 return .failed(PromptSteeringOperation.failureMessage)
             } catch { return .promptSteeringUnconfirmed }
         } catch { return .failed(PromptSteeringOperation.failureMessage) }
+    }
+    private func performPreparedPiSteering(_ operation: PromptSteeringOperation, input: ProviderInput,
+        session: any ProviderSession, target: ProviderSteeringTarget) async -> EffectResult {
+        let preparation: PiSteeringHistoryPreparation
+        do {
+            guard steeringTargetIsActive(operation), let current = revision.snapshot.threads.first(where: { $0.id == operation.threadID }) else { return steeringUnsentResult(operation) }
+            preparation = try await session.preparePiSteering(input: input, thread: current, target: target, clientMessageID: operation.messageID)
+        } catch { return await piSteeringFailure(error, operation: operation) }
+        let result: EffectResult
+        do { result = try await dispatchPreparedPiSteering(operation, input: input, session: session, target: target, preparation: preparation) }
+        catch { result = await piSteeringFailure(error, operation: operation) }
+        // Release/join this exact reservation on every exit, including a stale
+        // reducer marker or cancellation. This never transmits an input.
+        await session.cancelPiSteeringPreparation(preparation)
+        return result
+    }
+    private func dispatchPreparedPiSteering(_ operation: PromptSteeringOperation, input: ProviderInput,
+        session: any ProviderSession, target: ProviderSteeringTarget, preparation: PiSteeringHistoryPreparation) async throws -> EffectResult {
+        try preparation.validate(); try Task.checkCancellation()
+        guard steeringTargetIsActive(operation), preparation.runID == operation.runID,
+              preparation.runtimeIdentity == operation.configuration.piConfiguration?.runtimeIdentity,
+              preparation.input == (try PiHistoryInputEvidence.steering(clientMessageID: operation.messageID, input: input)),
+              revision.snapshot.threads.first(where: { $0.id == operation.threadID })?.runHistory?.first(where: { $0.id == operation.runID })?.pi?.preparation.id == preparation.runPreparationID else {
+            return steeringUnsentResult(operation)
+        }
+        let dispatched = try await enqueue(.promptSteeringDispatching(operationID: operation.id, incarnation: operation.sourceIncarnation))
+        guard dispatched.rejection == nil, steeringTargetIsActive(operation) else { return steeringUnsentResult(operation) }
+        let saved = try await enqueue(.piSteeringInputPrepared(operationID: operation.id, input: preparation.input, incarnation: operation.sourceIncarnation))
+        guard saved.rejection == nil, steeringTargetIsActive(operation),
+              var current = revision.snapshot.threads.first(where: { $0.id == operation.threadID }),
+              current.runHistory?.first(where: { $0.id == operation.runID })?.pi?.inputs.contains(preparation.input) == true else { return .failed(PromptSteeringOperation.failureMessage) }
+        try Task.checkCancellation()
+        current.piConfiguration = operation.configuration.piConfiguration; current.model = operation.configuration.model
+        current.permission = operation.configuration.permission; current.workspacePath = operation.configuration.workspacePath
+        current.providerThreadID = operation.nativeThreadID
+        let receipt = try await session.sendPreparedPiSteering(input: input, thread: current, target: target,
+            clientMessageID: operation.messageID, preparation: preparation)
+        try receipt.validate()
+        guard receipt.target == target else { return .promptSteeringUnconfirmed }
+        return .promptSteeringDelivered(receipt)
+    }
+    private func piSteeringFailure(_ error: any Error, operation: PromptSteeringOperation) async -> EffectResult {
+        if let error = error as? ProviderSteeringError {
+            if error.mayHaveBeenDelivered { return .promptSteeringUnconfirmed }
+            if error.kind == .noActiveTurn || error.kind == .staleTarget {
+                await drainCommands()
+                return steeringUnsentResult(operation)
+            }
+        }
+        return .failed(PromptSteeringOperation.failureMessage)
     }
     private func threadNativeSteeringTarget(threadID: UUID) -> ProviderSteeringTarget? {
         revision.snapshot.threads.first(where: { $0.id == threadID })?.activeRun?.nativeTurnID.map(ProviderSteeringTarget.nativeTurn)
@@ -1855,6 +1918,11 @@ public actor WorkspaceEngine {
             let captured = try runtime.replacingWorkspace(path, physicalPath: ClaudeRuntimeValidation.physical(path, allowMissing: false))
             capturedCommand = .editThread(threadID, .claudeWorkspace(captured))
         }
+        if case .editThread(let threadID, .workspacePath(let path)) = command,
+           let runtime = revision.snapshot.threads.first(where: { $0.id == threadID })?.piConfiguration?.runtime {
+            let captured = try runtime.replacingWorkspace(path, physicalPath: PiRuntimeConfiguration.physical(path))
+            capturedCommand = .editThread(threadID, .piWorkspace(captured))
+        }
         let receipt = try await enqueue(.client(capturedCommand), id: id)
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
         return receipt
@@ -1888,7 +1956,7 @@ public actor WorkspaceEngine {
             throw WorkspaceCommandError("Stop this conversation's setup or background jobs before choosing another worktree.")
         }
         let request = GitWorktreeRequest(sourcePath: source, destinationRoot: worktreesRoot.path, selection: selection, submodules: submodules)
-        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: nil, incarnation: incarnation, reviewSetup: reviewSetup, claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true))))
+        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: nil, incarnation: incarnation, reviewSetup: reviewSetup, claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true)), piRuntimeConfiguration: try thread.piConfiguration?.runtime?.replacingWorkspace(request.destinationPath, physicalPath: PiRuntimeConfiguration.physical(request.destinationPath, allowMissing: true))))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
     @discardableResult public func cancelWorktreePreparation(_ threadID: UUID) async throws -> WorkspaceCommandReceipt {
@@ -1928,7 +1996,7 @@ public actor WorkspaceEngine {
         }
         guard ownsWorktree(threadID: threadID, attemptID: state.id, incarnation: incarnation) else { throw CancellationError() }
         let request = GitWorktreeRequest(sourcePath: state.request.sourcePath, destinationRoot: worktreesRoot.path, selection: state.request.selection, submodules: state.request.submodules)
-        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation, reviewSetup: state.setup != nil, claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true))))
+        let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation, reviewSetup: state.setup != nil, claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true)), piRuntimeConfiguration: try thread.piConfiguration?.runtime?.replacingWorkspace(request.destinationPath, physicalPath: PiRuntimeConfiguration.physical(request.destinationPath, allowMissing: true))))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
     private func enqueue(_ command: EngineCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
@@ -1977,11 +2045,11 @@ public actor WorkspaceEngine {
                        threadIncarnations[review.sourceThreadID] != review.sourceIncarnation {
                         throw WorkspaceCommandError("This conversation changed. Review its current history before continuing.")
                     }
-                    if case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation, _, _) = envelope.command,
+                    if case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation, _, _, _) = envelope.command,
                        (threadIncarnations[threadID] != incarnation || request.destinationRoot != worktreesRoot.path) {
                         throw WorkspaceCommandError("This conversation changed. Choose the worktree again in its current workspace.")
                     }
-                    if !ownsPromptSteeringEvent(envelope.command) || !ownsPullRequestCheckoutEvent(envelope.command) || !ownsPullRequestCreationEvent(envelope.command) || !ownsCheckpointRestoreEvent(envelope.command) || !ownsHistoryEvent(envelope.command) || !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
+                    if !ownsPromptSteeringEvent(envelope.command) || !ownsPiHistoryEvent(envelope.command) || !ownsPullRequestCheckoutEvent(envelope.command) || !ownsPullRequestCreationEvent(envelope.command) || !ownsCheckpointRestoreEvent(envelope.command) || !ownsHistoryEvent(envelope.command) || !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else if case .worktreeRecovered(let threadID, let attemptID, let incarnation, _) = envelope.command,
                        !ownsWorktree(threadID: threadID, attemptID: attemptID, incarnation: incarnation) {
@@ -2465,7 +2533,29 @@ public actor WorkspaceEngine {
             try Task.checkCancellation()
             guard !providerHistoryScopeLocked(configuration: configuration,
                 nativeThreadID: configuration.nativeThreadID ?? revision.snapshot.threads.first(where: { $0.id == thread.id })?.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? configured.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
-            try await runtime.session.send(input: input, thread: configured)
+            if configuration.provider == .pi, configuration.piConfiguration?.runtime != nil {
+                guard let incarnation = threadIncarnations[thread.id] else { return .cancelled }
+                let preparation = try await runtime.session.preparePiRun(input: input, thread: configured)
+                guard !closing, !stoppingEffects, fatalError == nil, !Task.isCancelled,
+                      threadIncarnations[thread.id] == incarnation, runtimes[thread.id]?.id == runtime.id,
+                      let current = revision.snapshot.threads.first(where: { $0.id == thread.id }),
+                      current.activeRun?.id == runID, current.activeRun?.configuration == configuration,
+                      current.activeRun?.stopRequested == false, current.runtimeID == runtime.id,
+                      revision.snapshot.workspaceReady(for: current) else { return .cancelled }
+                guard preparation.runID == runID, preparation.runtimeIdentity == configuration.piConfiguration?.runtimeIdentity,
+                      preparation.inputDigest == (try PiHistoryInputEvidence.digest(input)) else { throw PiHistoryGraphError(.invalidWindow) }
+                let saved = try await enqueue(.piRunHistoryPrepared(threadID: thread.id, runtimeID: runtime.id, preparation: preparation, incarnation: incarnation))
+                guard saved.rejection == nil else { throw PiHistoryGraphError(.invalidWindow) }
+                guard !closing, !stoppingEffects, fatalError == nil, !Task.isCancelled,
+                      threadIncarnations[thread.id] == incarnation, runtimes[thread.id]?.id == runtime.id,
+                      let committed = revision.snapshot.threads.first(where: { $0.id == thread.id }),
+                      committed.activeRun?.id == runID, committed.activeRun?.configuration == configuration,
+                      committed.activeRun?.stopRequested == false, committed.runtimeID == runtime.id,
+                      committed.runHistory?.first(where: { $0.id == runID })?.pi?.preparation == preparation,
+                      revision.snapshot.workspaceReady(for: committed) else { return .cancelled }
+                configured.runHistory = committed.runHistory; configured.providerThreadID = preparation.nativeSessionFile
+                try await runtime.session.sendPreparedPi(input: input, thread: configured, preparation: preparation)
+            } else { try await runtime.session.send(input: input, thread: configured) }
             return .succeeded
         case .providerInterrupt(_, let runID):
             guard thread.activeRun?.id == runID else { return .cancelled }
@@ -3029,6 +3119,11 @@ extension WorkspaceEngine {
         } else if targetBusy { throw WorkspaceCommandError("Finish work in the affected checkout before changing its files.") }
         var target = configuration; target.nativeThreadID = nil; target.workspacePath = plan.destinationPath
         target.claudeRuntimeConfiguration = try configuration.claudeRuntimeConfiguration?.replacingWorkspace(plan.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(plan.destinationPath, allowMissing: true))
+        if let native = configuration.piConfiguration, let runtime = native.runtime {
+            target.piConfiguration = .init(instanceID: native.instanceID, executable: native.executable,
+                model: native.model, thinkingLevel: native.thinkingLevel,
+                runtime: try runtime.replacingWorkspace(plan.destinationPath, physicalPath: PiRuntimeConfiguration.physical(plan.destinationPath, allowMissing: true)))
+        }
         target.claudeLaunchSelection = nil
         let review = try PullRequestCheckoutReview(projectID: projectID, projectPath: project.path, registeredWorkspacePath: workspacePath,
             sourceIncarnation: incarnation, targetConfiguration: target, checkpointPolicy: checkpointPolicy,

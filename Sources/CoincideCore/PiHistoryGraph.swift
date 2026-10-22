@@ -311,7 +311,8 @@ public struct PiHistoryFileReader: Sendable {
     }
 }
 
-private enum PiHistoryValidation {
+/// Shared only by native file and live-RPC validation within CoincideCore.
+enum PiHistoryValidation {
     static func identifier(_ raw: JSONValue, kind: PiHistoryGraphError.Kind = .invalidEntry) throws -> String {
         guard let string = raw.string, !string.isEmpty, string.utf8.count <= 4_096,
               !string.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw PiHistoryGraphError(kind) }
