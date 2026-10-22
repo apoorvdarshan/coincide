@@ -24,12 +24,6 @@ struct ContentView: View {
                     }
                 }
                     .frame(minWidth: 0, maxWidth: .infinity)
-                    .inspector(isPresented: $store.inspectorVisible) {
-                        Group {
-                            if store.workspaceReady(for: thread) { WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath) }
-                            else { ContentUnavailableView("Workspace Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when checkout preparation finishes.")) }
-                        }.inspectorColumnWidth(min: 280, ideal: 360, max: 600)
-                    }
             } else {
                 ContentUnavailableView {
                     Label("Coincide", systemImage: "square.stack.3d.up")
@@ -54,6 +48,21 @@ struct ContentView: View {
                     .accessibilityIdentifier("project-scripts")
             }
             ToolbarItem { Button { store.inspectorVisible.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") } }
+        }
+        // Keep the inspector host stable while selection and the detail's native split view change.
+        // Nesting it inside that conditional split view can re-enter AppKit's toolbar/constraint pass.
+        .inspector(isPresented: $store.inspectorVisible) {
+            Group {
+                if let thread = store.selectedThread {
+                    if store.workspaceReady(for: thread) {
+                        WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath)
+                    } else {
+                        ContentUnavailableView("Workspace Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when checkout preparation finishes."))
+                    }
+                } else {
+                    ContentUnavailableView("No Thread Selected", systemImage: "sidebar.right", description: Text("Select a thread to browse its files and source control."))
+                }
+            }.inspectorColumnWidth(min: 280, ideal: 360, max: 600)
         }
         .alert("Coincide", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("OK") { store.errorMessage = nil }
