@@ -634,14 +634,15 @@ struct WorkspaceDecision: Sendable {
         thread.activeRun = ActiveRun(id: queued.id, configuration: configuration, startedAt: now)
         if thread.messages.isEmpty { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
         var message = ChatMessage(id: "user-\(queued.id.uuidString)", role: .user, text: queued.text, attachments: queued.attachments); message.createdAt = queued.createdAt
+        message.runReference = .init(threadID: thread.id, runID: queued.id)
         thread.messages.append(message); thread.state = .running; thread.runtimeRequests.removeAll { $0.sessionScoped != true }
         if queued.checkpointPolicy == .automatic {
             let baseline = ThreadRunCheckpointAttempt(workspacePath: configuration.workspacePath, now: now)
             let checkpoints = ThreadRunCheckpoints(baseline: baseline, pendingStart: .init(configuration: configuration, prompt: queued.text, attachments: queued.attachments))
-            if let run = thread.activeRun { thread.beginRunRecord(run, origin: .user, userMessageID: message.id, checkpoints: checkpoints) }
+            if let run = thread.activeRun { thread.beginRunRecord(run, origin: .user, userMessageID: message.id, checkpoints: checkpoints, attributesMessages: true) }
             effects.append(.init(request: .resolveRunCheckpoint(threadID: thread.id, runID: queued.id, stage: .baseline, attemptID: baseline.id)))
         } else {
-            if let run = thread.activeRun { thread.beginRunRecord(run, origin: .user, userMessageID: message.id) }
+            if let run = thread.activeRun { thread.beginRunRecord(run, origin: .user, userMessageID: message.id, attributesMessages: true) }
             effects.append(.init(id: queued.id, request: .providerStart(threadID: thread.id, runID: queued.id, configuration: configuration, prompt: queued.text, attachments: queued.attachments)))
         }
     }
@@ -674,7 +675,7 @@ struct WorkspaceDecision: Sendable {
                     let run = ActiveRun(id: activity.id, configuration: .init(thread: thread), startedAt: now)
                     thread.activeRun = run
                     let baseline = ThreadRunCheckpointAttempt(workspacePath: thread.workspacePath, phase: .unavailable, now: now, unavailableReason: .agentInitiated)
-                    thread.beginRunRecord(run, origin: .agent, checkpoints: thread.effectiveCheckpointPolicy == .automatic ? .init(baseline: baseline, providerReleased: true) : nil)
+                    thread.beginRunRecord(run, origin: .agent, checkpoints: thread.effectiveCheckpointPolicy == .automatic ? .init(baseline: baseline, providerReleased: true) : nil, attributesMessages: true)
                 }
                 thread.activeRun?.nativeTurnID = activity.id.uuidString
                 thread.state = activity.state == .requiresAction ? .awaitingApproval : .running
@@ -689,10 +690,10 @@ struct WorkspaceDecision: Sendable {
                 if run.stopRequested || reason == "cancelled" { thread.state = .interrupted }
                 else if reason == "error" {
                     thread.state = .failed
-                    thread.messages.append(.init(role: .system, text: activity.error?["message"].string ?? "The agent stopped because of an error."))
+                    thread.appendRunMessage(role: .system, text: activity.error?["message"].string ?? "The agent stopped because of an error.", runID: run.id)
                 } else { thread.state = .idle }
                 if thread.state == .idle, normalCompletion, reason != "end_turn" {
-                    thread.messages.append(.init(role: .system, text: "The agent stopped: \((reason ?? "").replacingOccurrences(of: "_", with: " "))."))
+                    thread.appendRunMessage(role: .system, text: "The agent stopped: \((reason ?? "").replacingOccurrences(of: "_", with: " ")).", runID: run.id)
                 }
                 if thread.state != .idle || !normalCompletion { thread.queuePaused = true }
                 else { startNext(in: &thread, now: now) }
@@ -708,7 +709,9 @@ struct WorkspaceDecision: Sendable {
             } else {
                 let entity = try update.apply(to: nil)
                 var message = ChatMessage(id: entity.key.messageID, role: entity.role, text: entity.text)
-                message.createdAt = now; message.providerEntity = entity; thread.messages.append(message)
+                message.createdAt = now; message.providerEntity = entity
+                message.runReference = thread.activeRun.map { .init(threadID: thread.id, runID: $0.id) }
+                thread.messages.append(message)
             }
         case .associateEntity(let key, let clientID):
             guard key.type == "user_message", let target = thread.messages.firstIndex(where: { $0.id == clientID && $0.role == .user }) else { return }
@@ -725,11 +728,16 @@ struct WorkspaceDecision: Sendable {
         case .delta(let itemID, let role, let text):
             guard thread.activeRun != nil else { return }
             if let i = thread.messages.firstIndex(where: { $0.id == itemID }) { thread.messages[i].text += text }
-            else { thread.messages.append(.init(id: itemID, role: role, text: text)) }
-        case .message(let message):
+            else { thread.appendRunMessage(id: itemID, role: role, text: text) }
+        case .message(var message):
             guard thread.activeRun != nil else { return }
-            if let i = thread.messages.firstIndex(where: { $0.id == message.id }) { thread.messages[i] = message }
-            else { thread.messages.append(message) }
+            if let i = thread.messages.firstIndex(where: { $0.id == message.id }) {
+                message.runReference = thread.messages[i].runReference
+                thread.messages[i] = message
+            } else {
+                message.runReference = thread.activeRun.map { .init(threadID: thread.id, runID: $0.id) }
+                thread.messages.append(message)
+            }
         case .approval(let request):
             guard thread.activeRun != nil, thread.activeRun?.stopRequested == false else { return }
             if !thread.runtimeRequests.contains(where: { $0.id == request.id }) { thread.runtimeRequests.append(.init(request: request)) }
@@ -759,7 +767,7 @@ struct WorkspaceDecision: Sendable {
                 if thread.state == .interrupted, let runID = thread.activeRun?.id {
                     requestPostRunCheckpoint(runID: runID, in: &thread, now: now); closeRuntimes.insert(thread.id); thread.runtimeID = nil
                 }
-                thread.messages.append(.init(role: .system, text: message))
+                thread.appendRunMessage(role: .system, text: message)
             }
             thread.activeRun = nil; thread.runtimeRequests = []; thread.queuePaused = true
         case .context: break
@@ -845,7 +853,7 @@ struct WorkspaceDecision: Sendable {
             if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
             else {
                 thread.runtimeRequests[i].responding = false
-                if case .failed(let message) = result { thread.messages.append(.init(role: .system, text: message)) }
+                if case .failed(let message) = result { thread.appendRunMessage(role: .system, text: message) }
             }
         case .providerStart(_, let runID, _, _, _):
             guard thread.activeRun?.id == runID else { return }
@@ -853,7 +861,7 @@ struct WorkspaceDecision: Sendable {
                 thread.state = thread.activeRun?.stopRequested == true ? .interrupted : .failed
                 thread.finishRunRecord(status: thread.state == .interrupted ? .interrupted : .failed, reason: .startFailed, now: now)
                 thread.activeRun = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.queuePaused = true
-                thread.messages.append(.init(role: .system, text: message)); closeRuntimes.insert(thread.id); thread.runtimeID = nil
+                thread.appendRunMessage(role: .system, text: message, runID: runID); closeRuntimes.insert(thread.id); thread.runtimeID = nil
             }
         case .providerInterrupt(_, let runID):
             guard thread.activeRun?.id == runID else { return }
@@ -868,7 +876,7 @@ struct WorkspaceDecision: Sendable {
             if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
             else {
                 thread.runtimeRequests[i].responding = false
-                if case .failed(let message) = result { thread.messages.append(.init(role: .system, text: message)) }
+                if case .failed(let message) = result { thread.appendRunMessage(role: .system, text: message) }
             }
             thread.state = thread.runtimeRequests.isEmpty ? .running : .awaitingApproval
             thread.updateRunRecord(status: thread.state == .awaitingApproval ? .awaitingApproval : .running)

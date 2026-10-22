@@ -50,6 +50,7 @@ public struct ChatMessage: Codable, Identifiable, Sendable, Equatable {
     public var attachments: [ChatAttachment]?
     public var providerEntity: ProviderEntity?
     public var submissionError: String?
+    public var runReference: TranscriptRunReference?
     public init(id: String = UUID().uuidString, role: MessageRole, text: String, attachments: [ChatAttachment]? = nil) {
         self.id = id; self.role = role; self.text = text; self.createdAt = Date(); self.attachments = attachments
     }
@@ -201,7 +202,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             if threads[i].isBusy {
                 threads[i].finishRunRecord(status: .interrupted, reason: .applicationClosed, now: Date())
                 threads[i].state = .interrupted
-                threads[i].messages.append(.init(role: .system, text: "The app closed during this turn. Resume by sending another message."))
+                threads[i].appendRunMessage(role: .system, text: "The app closed during this turn. Resume by sending another message.")
             }
             threads[i].activeRun = nil; threads[i].runtimeID = nil; threads[i].runtimeRequests = []
             threads[i].providerActivity = nil

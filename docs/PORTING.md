@@ -52,7 +52,7 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 15 protects these fields
+  hold it for explicit resumption. Database storage version 16 protects these fields
   from older binaries. No exactly-once provider execution is claimed.
 - Each newly started run retains its captured settings, user-message reference
   or explicit agent/legacy origin, observed adapter turn references, stop intent,
@@ -62,6 +62,25 @@ must each be mapped and verified before declaring parity.
   not backfilled with guessed turn boundaries. A read-only native Run History
   sheet exposes these records. Adapter references may be locally generated and
   do not by themselves establish native provider fork or rollback support.
+- Newly produced transcript messages retain their originating app conversation
+  and run. Replacements keep that local attribution rather than accepting a
+  provider-supplied reference. Journal replay preserves attribution changes;
+  earlier messages remain unmodified. A prefix boundary requires a terminal,
+  attributed run and rejects interleaved or unattributed later messages. Before-run
+  boundaries additionally require the recorded opening user message.
+- Native provider history contracts distinguish opaque provider thread/turn IDs
+  from app run IDs and Git objects. A bounded Codex 0.163 adapter reads paginated
+  turn summaries, forks at an exact inclusive/exclusive boundary into a fresh
+  target connection, and reverts conversation history before a reviewed turn.
+  Revert requires a loaded idle thread, a null/paused/complete goal and the same
+  reviewed head immediately before its RPC. Fork defers goal continuation and
+  verifies the new identity, workspace and resulting head. Unknown contracts and
+  unverified boundaries fail explicitly; uncertain mutations are not retried and
+  prevent further writes on that connection. New threads explicitly select the
+  paginated contract on the reviewed profile; existing legacy threads are not
+  migrated. These are Core adapter primitives, not usable app fork/rewind actions:
+  durable history intents, recovery, transcript adoption and native review controls
+  still need integration. No live provider history mutation has been verified.
 - A standalone native checkpoint service prepares immutable local plans, captures
   Git working bytes into private refs, inspects owned completion receipts and
   returns bounded snapshot diffs. Captures use a separate index and a frozen

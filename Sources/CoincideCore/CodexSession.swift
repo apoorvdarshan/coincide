@@ -11,6 +11,11 @@ public actor CodexSession: ProviderSession {
     private var completedTurnIDs: [String] = []
     private var sendGeneration = 0
     private var initialized = false
+    private var connectionTask: Task<Void, Never>?
+    private var connectionWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
+    private var serverUserAgent: String?
+    private var historyMutationInFlight = false
+    private var historyMutationUncertain = false
     private var working = false
     private var shuttingDown = false
     private var eventRunID: UUID?
@@ -21,16 +26,91 @@ public actor CodexSession: ProviderSession {
         rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd, maximumFrameSize: 128 * 1_024 * 1_024)
     }
     public func connect() async throws {
+        try Task.checkCancellation()
+        guard !shuttingDown else { throw CancellationError() }
         guard !initialized else { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { (waiter: CheckedContinuation<Void, any Error>) in
+                guard !Task.isCancelled else { waiter.resume(throwing: CancellationError()); return }
+                connectionWaiters[id] = waiter
+                if connectionTask == nil {
+                    connectionTask = Task {
+                        do { try await self.initializeConnection(); self.finishConnection(.success(())) }
+                        catch { self.finishConnection(.failure(error)) }
+                    }
+                }
+            }
+            try Task.checkCancellation()
+        } onCancel: { Task { await self.cancelConnectionWaiter(id) } }
+    }
+    private func cancelConnectionWaiter(_ id: UUID) { connectionWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError()) }
+    private func finishConnection(_ result: Result<Void, any Error>) {
+        connectionTask = nil
+        let waiters = connectionWaiters; connectionWaiters = [:]
+        for waiter in waiters.values { waiter.resume(with: result) }
+    }
+    private func initializeConnection() async throws {
         let stream = rpc.events
         eventTask = Task { [weak self] in
             for await event in stream { await self?.consume(event) }
         }
-        _ = try await rpc.request("initialize", params: .object([
-            "clientInfo": .object(["name": .string("coincide"), "title": .string("Coincide"), "version": .string("0.1.0")]),
-            "capabilities": .object(["experimentalApi": .bool(true)])
-        ]))
-        try await rpc.notify("initialized"); initialized = true
+        do {
+            let response = try await rpc.request("initialize", params: .object([
+                "clientInfo": .object(["name": .string("coincide"), "title": .string("Coincide"), "version": .string("0.1.0")]),
+                "capabilities": .object(["experimentalApi": .bool(true)])
+            ]))
+            guard !shuttingDown else { throw CancellationError() }
+            serverUserAgent = response["userAgent"].string
+            try await rpc.notify("initialized"); initialized = true
+        } catch {
+            // A failed handshake cannot leave a consumer behind for a second
+            // initialization attempt on this same transport.
+            shuttingDown = true; await rpc.close(); eventTask?.cancel(); eventTask = nil; continuation.finish()
+            throw error
+        }
+    }
+    public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities {
+        try ProviderHistoryValidation.id(threadID); try await connectForHistory()
+        return try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).capabilities(threadID: threadID)
+    }
+    public func historyPage(threadID: String, cursor: String? = nil, limit: Int = 100) async throws -> ProviderHistoryPage {
+        try ProviderHistoryValidation.id(threadID); try await connectForHistory()
+        return try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).page(threadID: threadID, cursor: cursor, limit: limit)
+    }
+    public func forkConversation(source: ProviderConversationReference, boundary: ProviderHistoryBoundary, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot {
+        // A fork belongs to a fresh target actor. It must never retarget the source runtime.
+        guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
+        guard threadID == nil, !working, !historyMutationInFlight else { throw ProviderHistoryError(.notIdle) }
+        historyMutationInFlight = true; defer { historyMutationInFlight = false }
+        try await connectForHistory()
+        do {
+            let result = try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).fork(source: source, boundary: boundary, configuration: configuration)
+            try Task.checkCancellation(); guard !shuttingDown else { throw CancellationError() }
+            threadID = result.reference.nativeThreadID; turnID = nil; completedTurnIDs = []
+            return result
+        } catch {
+            if error is CancellationError || (error as? ProviderHistoryError)?.kind == .outcomeUncertain { historyMutationUncertain = true }
+            throw error
+        }
+    }
+    public func revertConversation(thread: ProviderConversationReference, beforeTurnID: String, expectedHeadTurnID: String) async throws -> ProviderConversationSnapshot {
+        guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
+        guard !working, !historyMutationInFlight, threadID == nil || threadID == thread.nativeThreadID else { throw ProviderHistoryError(.notIdle) }
+        historyMutationInFlight = true; defer { historyMutationInFlight = false }
+        try await connectForHistory()
+        do {
+            let result = try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).revert(thread: thread, beforeTurnID: beforeTurnID, expectedHeadTurnID: expectedHeadTurnID)
+            try Task.checkCancellation(); guard !shuttingDown else { throw CancellationError() }
+            // Old delayed notifications retain their old run scope until an explicit
+            // next send installs a new one; rewind never turns them into idle events.
+            threadID = result.reference.nativeThreadID; turnID = nil; completedTurnIDs = []
+            return result
+        } catch {
+            if error is CancellationError || (error as? ProviderHistoryError)?.kind == .outcomeUncertain { historyMutationUncertain = true }
+            throw error
+        }
     }
     public func models() async throws -> [ProviderModel] {
         try await connect()
@@ -40,11 +120,18 @@ public actor CodexSession: ProviderSession {
             return ProviderModel(id: id, name: $0["displayName"].string ?? id)
         }
     }
+    private func connectForHistory() async throws {
+        do { try await connect() }
+        catch is CancellationError { throw CancellationError() }
+        catch let error as ProviderHistoryError { throw error }
+        catch { throw ProviderHistoryError(.invalidResponse) }
+    }
     public func send(text: String, thread: CodingThread) async throws {
         try await send(input: ProviderInput(text: text), thread: thread)
     }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
-        guard !working else { throw CoincideError("A turn is already running in this thread.") }
+        guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
+        guard !working, !historyMutationInFlight else { throw CoincideError("A turn or conversation history operation is already running in this thread.") }
         working = true
         sendGeneration += 1
         let generation = sendGeneration, submittedRunID = thread.activeRun?.id
@@ -60,7 +147,15 @@ public actor CodexSession: ProviderSession {
                 if let existing = thread.providerThreadID {
                     params["threadId"] = .string(existing)
                     response = try await rpc.request("thread/resume", params: .object(params))
-                } else { response = try await rpc.request("thread/start", params: .object(params)) }
+                } else {
+                    // Select the durable modern contract explicitly for new
+                    // threads. Existing/legacy resumes are never migrated here.
+                    if CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile { params["historyMode"] = .string("paginated") }
+                    response = try await rpc.request("thread/start", params: .object(params))
+                    if params["historyMode"] == .string("paginated"), response["thread"]["historyMode"] != .string("paginated") {
+                        throw ProviderHistoryError(.invalidResponse)
+                    }
+                }
                 guard let id = response["thread"]["id"].string else { throw CoincideError("Codex did not return a thread id.") }
                 threadID = id; emit(.thread(id))
             }
@@ -92,7 +187,9 @@ public actor CodexSession: ProviderSession {
         try await rpc.respond(id: request.id, result: .object(["answers": .object(encoded)]))
     }
     public func close() async {
-        shuttingDown = true; await rpc.close(); eventTask?.cancel(); eventTask = nil; continuation.finish()
+        shuttingDown = true; let connecting = connectionTask; connecting?.cancel(); await rpc.close()
+        await connecting?.value; connectionTask = nil
+        eventTask?.cancel(); eventTask = nil; continuation.finish()
     }
     private func consume(_ event: RPCEvent) async {
         switch event {

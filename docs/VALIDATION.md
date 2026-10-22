@@ -1,5 +1,50 @@
 # Validation record
 
+## 2026-10-22 — provider history contracts and durable transcript attribution
+
+- Newly accepted and agent-initiated runs attribute their messages to their local
+  conversation/run. Provider replacements cannot forge that reference; existing
+  rows, user-echo association, late entity updates, terminal notices and recovery
+  preserve it. Earlier transcripts are not backfilled. Verified prefix slicing
+  rejects active, unknown, interleaved or unattributed later boundaries and does
+  not invent an opening user message for agent-initiated work.
+- Journal text-append optimization now requires unchanged run attribution. A
+  same-text or appended-text attribution change uses a full message mutation;
+  rebuilding the journal preserves the exact resulting snapshot.
+- Native history contracts use opaque provider IDs. The reviewed Codex 0.163
+  adapter reads bounded paginated summaries, forks an exact inclusive/exclusive
+  boundary into a distinct target connection with goal continuation deferred,
+  and reverts before a selected turn only on a loaded idle thread with a safe
+  goal and an unchanged reviewed head. It verifies the resulting provider
+  identity, workspace and head. Unsupported contracts do not drop the boundary.
+  An uncertain mutation blocks further writes on that connection and is never
+  automatically repeated; read-only inspection remains available.
+- Initialization has one shared handshake with independently cancellable waiters.
+  An isolated installed-CLI initialize-only check confirmed the actual
+  `coincide/0.163.0` server user-agent prefix. It made no thread/model requests.
+  New threads explicitly request paginated history only on the reviewed profile;
+  existing legacy resume remains unchanged. History handshake errors are generic
+  and do not expose the provider's private message/data.
+- Deterministic protocol peers test exact request parameters, cursor/page bounds,
+  cross-page boundaries, missing/unknown turns, unsafe goals, changed heads,
+  unrelated identities, uncertain replies and target adoption. These do not
+  establish live provider history mutation or complete provider parity.
+- `swift test --no-parallel` passes **491 tests**: 405 Core, 67 native UI/Store,
+  6 terminal and 13 Markdown, with no compiler warnings. This includes the
+  repaired settlement fixture: it waits for the final checkpoint to finish
+  before testing archive/unarchive against a retained provider-close owner.
+- The repository-owned app packages and launches; deep/strict app/helper
+  signature verification and native math-resource rendering pass. Storage
+  upgrades from 15 to 16 with the complete canonical saved workspace unchanged
+  against its private SQLite backup: three conversations and 25 messages.
+- Exact `c5622dd` [run 39710791452](https://github.com/apoorvdarshan/coincide/actions/runs/39710791452)
+  previously failed that one timing boundary in its 460-test production job;
+  the dependent GUI job did not execute. The new native inspector replacement
+  therefore still requires an actual hosted GUI verdict.
+- App-level durable fork/rewind intents, recovery, transcript adoption and native
+  controls remain to be implemented. Filesystem restoration and full T3 parity
+  remain open.
+
 ## 2026-10-22 — automatic run checkpoints and native workspace comparisons
 
 - Newly accepted input captures its checkpoint policy, defaulting to automatic.

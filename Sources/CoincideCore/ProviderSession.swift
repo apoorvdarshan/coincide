@@ -38,9 +38,17 @@ public protocol ProviderSession: Actor {
     func answer(_ request: ApprovalRequest, answers: [String: String]) async throws
     func choose(_ request: ApprovalRequest, optionID: String) async throws
     func close() async
+    func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities
+    func historyPage(threadID: String, cursor: String?, limit: Int) async throws -> ProviderHistoryPage
+    func forkConversation(source: ProviderConversationReference, boundary: ProviderHistoryBoundary, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
+    func revertConversation(thread: ProviderConversationReference, beforeTurnID: String, expectedHeadTurnID: String) async throws -> ProviderConversationSnapshot
 }
 
 extension ProviderSession {
+    public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities { throw ProviderHistoryError(.unsupported) }
+    public func historyPage(threadID: String, cursor: String? = nil, limit: Int = 100) async throws -> ProviderHistoryPage { throw ProviderHistoryError(.unsupported) }
+    public func forkConversation(source: ProviderConversationReference, boundary: ProviderHistoryBoundary, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
+    public func revertConversation(thread: ProviderConversationReference, beforeTurnID: String, expectedHeadTurnID: String) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
     public func choose(_ request: ApprovalRequest, optionID: String) async throws {
         throw CoincideError("This provider does not offer selectable permission options.")
     }

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-private struct RunHistoryFixture {
+struct RunHistoryFixture {
     var snapshot: WorkspaceSnapshot
     let threadID: UUID
     let runtimeID = UUID()
