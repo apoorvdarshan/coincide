@@ -59,10 +59,19 @@ must retain the last saved bytes; relaunch must restore the composer draft and
 open those saved bytes while the Git commit remains unchanged. Selected text is
 not exposed by public XCTest attributes; the match/file assertions and retained
 pixels do not claim an automated selected-range check.
+The fifth test discovers scripts in a private t3.json without running declared
+setup/settle roles, checks Cancel preserves the draft, and rejects Run after the
+configuration changes. Reload must display the replacement command before an
+explicit launch. A controlled /bin/sh command writes private cwd and T3CODE
+environment receipts, appears in its own terminal tab, and reports exit7.
+The test then launches a private holding command, checks closing it requires
+confirmation, verifies Cancel retains both tabs and the unsent draft, and
+confirms closure removes only that running tab. Original Git HEAD is preserved;
+process-group shutdown remains covered by the terminal unit tests.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all four tests to pass with zero
+gate requires all five tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 

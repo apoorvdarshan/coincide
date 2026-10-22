@@ -71,3 +71,32 @@ func nativeTerminalInterruptKeepsShellAndCloseStopsForegroundJob() async throws 
     session.close()
     try await waitForTerminal { kill(child, 0) == -1 }
 }
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func commandTerminalUsesLiteralShellArgumentEnvironmentAndRetainsExitStatus() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide command ' space \(UUID())")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let command = #"printf '%s\n' "$PWD" "$COINCIDE_SCRIPT_LITERAL" > 'result with spaces.txt'; printf '\033]0;Changed title\007SCRIPT_FINISHED\n'; exit 9"#
+    let session = try LocalTerminalSession(directory: directory, executable: "/bin/sh", arguments: ["-c", command],
+        environmentOverrides: ["COINCIDE_SCRIPT_LITERAL": "literal ' $(not evaluated) space"], commandTitle: "Fixture\nscript")
+    defer { session.close() }
+    try await waitForTerminal { if case .exited = session.lifecycle { true } else { false } }
+    #expect(session.lifecycle == .exited(9) && session.isCommand && !session.hasForegroundCommand)
+    #expect(session.title == "Fixturescript" && session.visibleText.contains("SCRIPT_FINISHED"))
+    let result = try String(contentsOf: directory.appendingPathComponent("result with spaces.txt"), encoding: .utf8)
+    #expect(result == directory.resolvingSymlinksInPath().path + "\nliteral ' $(not evaluated) space\n")
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func commandTerminalCloseRecognizesExecInItsOwnForegroundProcessGroup() async throws {
+    let session = try LocalTerminalSession(directory: FileManager.default.temporaryDirectory, executable: "/bin/sh",
+        arguments: ["-c", "printf 'COMMAND_OWN_GROUP_READY\\n'; exec sleep 120"], commandTitle: "Long script")
+    defer { session.close() }
+    try await waitForTerminal { session.visibleText.contains("COMMAND_OWN_GROUP_READY") }
+    #expect(session.hasForegroundCommand, "A command exec'd into the shell's group must still require confirmation before closing.")
+    let pid = session.processID
+    session.close(); await session.waitForClose()
+    try await waitForTerminal { if case .exited = session.lifecycle { true } else { false } }
+    #expect(kill(pid, 0) == -1)
+}

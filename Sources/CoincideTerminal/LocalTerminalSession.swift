@@ -17,8 +17,10 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
     public private(set) var lifecycle = TerminalLifecycle.running
     @ObservationIgnored public let view: LocalProcessTerminalView
     @ObservationIgnored private var closeTask: Task<Void, Never>?
+    @ObservationIgnored private let commandTitle: String?
 
-    public init(directory: URL, executable: String? = nil, arguments: [String] = ["-l"]) throws {
+    public init(directory: URL, executable: String? = nil, arguments: [String] = ["-l"],
+                environmentOverrides: [String: String] = [:], unsetEnvironment: Set<String> = [], commandTitle: String? = nil) throws {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw CoincideError("The terminal workspace folder is unavailable.")
@@ -26,6 +28,8 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
         let requested = executable ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         guard let shell = ProcessChannel.findExecutable(requested) else { throw CoincideError("The selected shell is unavailable.") }
         self.directory = directory.standardizedFileURL.path
+        self.commandTitle = commandTitle.map(Self.cleanTitle)
+        if let commandTitle = self.commandTitle { title = commandTitle }
         var options = TerminalOptions()
         options.scrollback = 5_000
         view = WorkspaceTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 260),
@@ -35,15 +39,24 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
         view.setAccessibilityLabel("Workspace terminal")
         view.processDelegate = self
         var environment = ProcessChannel.environment()
+        for key in unsetEnvironment { environment.removeValue(forKey: key) }
+        environment.merge(environmentOverrides) { _, new in new }
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
         environment["PWD"] = self.directory
-        view.startProcess(executable: shell.path, args: arguments,
-                          environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: self.directory)
+        ProcessChannel.withChildLaunch {
+            view.startProcess(executable: shell.path, args: arguments,
+                              environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: self.directory)
+        }
     }
 
     public var processID: pid_t { view.process.shellPid }
+    public var isCommand: Bool { commandTitle != nil }
     public var hasForegroundCommand: Bool {
+        guard lifecycle == .running else { return false }
+        // A shell executing a script may exec its final command into its own process
+        // group. Closing that tab still needs the running-command confirmation.
+        if commandTitle != nil { return true }
         let group = tcgetpgrp(view.process.childfd)
         return group > 0 && group != processID
     }
@@ -87,8 +100,12 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
 
     public func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
     public func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+        guard commandTitle == nil else { return }
+        self.title = Self.cleanTitle(title)
+    }
+    private static func cleanTitle(_ title: String) -> String {
         let clean = title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
-        self.title = String(String.UnicodeScalarView(clean)).isEmpty ? "Terminal" : String(String.UnicodeScalarView(clean).prefix(120))
+        return clean.isEmpty ? "Terminal" : String(String.UnicodeScalarView(clean).prefix(120))
     }
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     public func processTerminated(source: TerminalView, exitCode: Int32?) { lifecycle = .exited(exitCode) }

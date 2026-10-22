@@ -153,6 +153,16 @@ must each be mapped and verified before declaring parity.
   addition to the pinned T3 editor catalog.
 - Default permission mode is supervised. Full access is available as an explicit
   per-thread choice. Unsupported interactive provider requests fail explicitly.
+- Native project-script discovery reads the current checkout's anchored `t3.json`
+  (up to 256 KiB), including comments/trailing commas and the pinned declaration
+  schema. Discovery never executes scripts. A native sheet displays the chosen
+  command and checkout; explicit Run rechecks its file revision, conversation,
+  window and anchored root before creating a dedicated PTY. The user's login
+  shell receives the command as one argument and the T3 project/worktree variables.
+  Tabs retain output and exit status, and running scripts use close confirmation
+  even when the shell execs its command into its own process group. Imported setup,
+  settle, async and preview fields do not yet trigger automatic behavior. Parsed
+  icon/environment/submodule fields do not yet override native project settings.
 
 ## Current implementation and evidence requirements
 
@@ -167,7 +177,7 @@ must each be mapped and verified before declaring parity.
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
 | Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery | PRs/stacks/host integrations, checkpoints/revert, worktree setup scripts/submodules/removal, automatic pull policies, broader credential and network failure coverage |
 | Files | Async hidden/empty/ignored directory browsing, bounded path/content/regex search with Unicode ranges and ignored-file inventory, bounded UTF-8 preview with binary rejection, safe exclusive creation and revision-checked saves, advisory native watching, retained dirty editor buffers, normal-Quit discard confirmation, contained composer path references and match/file-link navigation, explicit inspected external-editor and Finder handoffs with preferred-editor settings | Arbitrary-host and remote reads/browsing/metadata, broader binary/media previews, cross-editor Unicode columns and live installed-editor verification, crash recovery of unsaved buffers, cached index/ranking and regex-dialect parity |
-| Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup | Durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
+| Terminal | Native SwiftTerm emulator and local PTYs, per-window/thread tabs, resize/input, 5,000-line scrollback, hide/show persistence, interrupt and process cleanup, bounded t3.json script discovery with explicit native selection and dedicated command tabs/cwd/environment/exit status | Automatic trusted setup/settle and preview behavior, project-script settings/editing, durable restart restoration, remote attachment/replay, search/settings, activity/idle detection, broader terminal compatibility and accessibility |
 | Remote environments | Not implemented | Authenticated transport, pairing, capabilities, reconnect, SSH/relay/LAN, multi-environment ownership |
 | Desktop integration | App bundle, commands/shortcuts, appearance | Notifications, deep links, updates, browser/preview, screenshot/import features, power/resources, accessibility QA |
 | Distribution | Local development-identity or ad-hoc signed bundle | Release signing/notarization, installer/update validation, full notices |

@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var terminalVisible = false
     @State private var cloneSheetPresented = false
     @State private var newProjectSheetPresented = false
+    @State private var scriptThread: CodingThread?
     var body: some View {
         NavigationSplitView {
             SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true })
@@ -47,6 +48,11 @@ struct ContentView: View {
                 Button { terminalVisible.toggle() } label: { Label("Terminal", systemImage: "terminal") }
                     .keyboardShortcut("t", modifiers: [.command, .option]).disabled(store.selectedThread.map { !store.workspaceReady(for: $0) } ?? true)
             }
+            ToolbarItem {
+                Button { scriptThread = store.selectedThread } label: { Label("Run Script…", systemImage: "play") }
+                    .disabled(store.selectedThread.map { !store.canOpenTerminal(for: $0) } ?? true)
+                    .accessibilityIdentifier("project-scripts")
+            }
             ToolbarItem { Button { store.inspectorVisible.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") } }
         }
         .alert("Coincide", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
@@ -54,6 +60,10 @@ struct ContentView: View {
         } message: { Text(store.errorMessage ?? "") }
         .sheet(isPresented: $cloneSheetPresented) { CloneRepositorySheet(store: store) }
         .sheet(isPresented: $newProjectSheetPresented) { NewProjectSheet(store: store) }
+        .sheet(item: $scriptThread) { thread in
+            ProjectScriptsSheet(store: store, thread: thread, terminals: terminals,
+                didRun: { terminalVisible = true; scriptThread = nil }, close: { scriptThread = nil })
+        }
         .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented ? nil : $cloneSheetPresented)
         .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented ? nil : $newProjectSheetPresented)
         .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }

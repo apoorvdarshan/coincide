@@ -45,6 +45,14 @@ saved completion evidence; unproven folders and branches are preserved. To chang
 a failed setup, remove queued messages and choose another worktree. Coincide
 does not reset branches, delete worktrees, or fetch a missing base automatically.
 
+Use **Run Script…** in the toolbar to choose a script declared in the current
+checkout's `t3.json`. Review its command and checkout, then run it in a dedicated
+native terminal tab. Scripts receive `T3CODE_PROJECT_ROOT` and, for a separate
+checkout, `T3CODE_WORKTREE_PATH`. Changing the configuration requires reloading
+the list. Setup/settle flags are imported as data; scripts currently run only
+when explicitly selected. Output and exit status stay in the terminal, and
+closing a running script asks before stopping it.
+
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a
 UTF-8 file, edit it, and save. Files over 1 MiB open as read-only previews. Binary

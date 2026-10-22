@@ -1,5 +1,49 @@
 # Validation record
 
+## 2026-10-22 — explicit native project scripts and process pipe isolation
+
+- Native discovery reads the current checkout's anchored `t3.json`, capped at
+  256 KiB, with the pinned declaration schema, comments and trailing commas.
+  Eight core cases cover strict known types/null rejection, ordered duplicate
+  declarations, literal strings, malformed JSON, size/depth limits, file revisions,
+  contained links, special files, cancellation and root replacement. Foundation's
+  decoder accepted a malformed repeated-comma fixture; grammar validation now
+  rejects it before normalization. Diagnostics do not include configuration values.
+- The native sheet displays the chosen command and checkout. Explicit Run checks
+  the displayed file revision and script, fresh anchored root metadata, captured
+  conversation incarnation and current window ownership before synchronous PTY
+  creation/registration. Replacing the root during a gated read preserves both
+  folders and launches nothing. Removal/re-add and switching away/back invalidate
+  old actions even when a surviving owner keeps the same file session. Removal and
+  shutdown cancel and drain late reads. These checks do not claim cross-process
+  locking against an external filesystem mutation after the final check.
+- Script tabs receive literal shell-command arguments and T3 project/worktree
+  environment values, retain output and exit status, and preserve the draft,
+  provider/model settings and existing terminal tabs. Setup/settle/async/preview
+  fields remain data: discovery does not run commands or open URLs. Eight native
+  Store/process workflows and two command-terminal cases use controlled local
+  shells and private fixtures; none submit a provider turn.
+- Hosted worktree-head run `39696929949` failed the existing terminal-removal
+  fixture at its 60-second limit and resumed after its unrelated 120-second child
+  exited. Native GUI execution was skipped. Investigation found inheritable
+  Foundation pipe descriptors: a new deterministic test failed before the fix
+  because a terminal child kept another process's stdin open, and passed after
+  setting close-on-exec on all six provider pipe descriptors. Pipe setup and the
+  app's native terminal fork now share a short synchronous lock. This proves the
+  inheritance defect; its exact interleaving in the hosted failure is inferred.
+  The unchanged removal fixture passes locally with CI's serial settings.
+- `swift test --no-parallel`: **336 passed** (265 core, 6 terminal, 13 Markdown,
+  52 native UI/Store). The five-method Xcode runner builds and passes deep signature
+  verification; Python CI configuration checks pass 3/3. A fifth actual GUI workflow
+  covers discovery/Cancel, changed-config rejection/Reload, explicit command cwd/env
+  and exit status, and running-tab close confirmation with retained drafts. The
+  strict hosted gate requires all five actual tests and zero skips; compilation
+  does not establish their runtime result. Hosted execution remains pending.
+- `./script/build_and_run.sh --verify` packages and launches the repository-owned
+  app. Deep strict signature and bundled math-font rendering checks pass. Storage
+  remains version 10, with the entire canonical user workspace unchanged against
+  its private checkpoint, including all three conversations and 25 messages.
+
 ## 2026-10-22 — durable native worktree preparation
 
 - Worktree choices now save an intent and target cwd before asynchronous local Git

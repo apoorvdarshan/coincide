@@ -5,6 +5,7 @@ public enum ProcessEvent: Sendable { case stdout(Data), stderr(Data), exited(Int
 
 /// Owns exactly one child process. Both pipes are drained concurrently to avoid pipe deadlocks.
 public final class ProcessChannel: @unchecked Sendable {
+    private static let descriptorSetupLock = NSLock()
     public let events: AsyncStream<ProcessEvent>
     private let process: Process
     private let input: Pipe
@@ -15,8 +16,23 @@ public final class ProcessChannel: @unchecked Sendable {
     public init(executable: URL, arguments: [String], cwd: URL? = nil, environment: [String: String]? = nil) throws {
         let (stream, continuation) = AsyncStream<ProcessEvent>.makeStream()
         events = stream
-        process = Process(); input = Pipe()
-        let output = Pipe(), errors = Pipe()
+        process = Process()
+        let pipes = try Self.withChildLaunch {
+            let pipes = [Pipe(), Pipe(), Pipe()]
+            // Foundation Pipe descriptors are inheritable on Darwin. A forkpty
+            // child must not retain another provider's stdin or output writers.
+            for pipe in pipes {
+                for handle in [pipe.fileHandleForReading, pipe.fileHandleForWriting] {
+                    let flags = fcntl(handle.fileDescriptor, F_GETFD)
+                    guard flags >= 0, fcntl(handle.fileDescriptor, F_SETFD, flags | FD_CLOEXEC) == 0 else {
+                        throw CoincideError("Could not configure child process pipes.")
+                    }
+                }
+            }
+            return pipes
+        }
+        input = pipes[0]
+        let output = pipes[1], errors = pipes[2]
         process.executableURL = executable; process.arguments = arguments; process.currentDirectoryURL = cwd
         process.environment = environment ?? Self.environment()
         process.standardInput = input; process.standardOutput = output; process.standardError = errors
@@ -109,6 +125,13 @@ public final class ProcessChannel: @unchecked Sendable {
         }
     }
     deinit { stop() }
+
+    /// Coordinate an app-owned fork with the short interval between Darwin pipe
+    /// creation and setting close-on-exec. The closure must be synchronous.
+    public static func withChildLaunch<T>(_ launch: () throws -> T) rethrows -> T {
+        descriptorSetupLock.lock(); defer { descriptorSetupLock.unlock() }
+        return try launch()
+    }
 
     private static func drain(_ file: FileHandle, emit: (Data) -> Void) {
         defer { try? file.close() }

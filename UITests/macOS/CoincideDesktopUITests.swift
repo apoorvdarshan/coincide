@@ -112,6 +112,118 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
+    @MainActor func testProjectScriptsRequireReviewedLaunchAndPreserveDrafts() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "scripts")
+        let app = fixture.app
+        app.launchEnvironment["SHELL"] = "/bin/sh"
+        app.launchEnvironment["T3CODE_PROJECT_ROOT"] = "/synthetic-inherited-project"
+        app.launchEnvironment["T3CODE_WORKTREE_PATH"] = "/synthetic-inherited-worktree"
+        let project = fixture.root.appendingPathComponent("Native Scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let configuration = project.appendingPathComponent("t3.json")
+        let staleCommand = "printf 'stale\\n' > script-stale.txt; exit 3"
+        let inspectedCommand = "pwd -P > script-cwd.txt; printf '%s\\n' \"$T3CODE_PROJECT_ROOT\" > script-root.txt; printf '%s\\n' \"${T3CODE_WORKTREE_PATH-unset}\" > script-worktree.txt; printf 'native-script-finished\\n'; exit 7"
+        let holdingCommand = "printf 'running\\n' > script-holding.txt; exec /bin/sleep 120"
+        func writeConfiguration(_ command: String) throws {
+            let scripts: [[String: Any]] = [
+                ["name": "Inspect Workspace", "command": command, "runOnWorktreeCreate": true, "runOnSettle": true],
+                ["name": "Hold Workspace", "command": holdingCommand]
+            ]
+            try JSONSerialization.data(withJSONObject: ["scripts": scripts], options: [.sortedKeys, .prettyPrinted]).write(to: configuration, options: .atomic)
+        }
+        try writeConfiguration(staleCommand)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "t3.json"], ["commit", "--message", "Synthetic script fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration,
+                           name: "scripts-fixture-\(arguments[0])")
+        }
+        let initialHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "scripts-initial-head")
+        let receiptNames = ["script-stale.txt", "script-cwd.txt", "script-root.txt", "script-worktree.txt", "script-holding.txt"]
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        try openProject(project, in: app)
+        XCTAssertTrue(app.buttons["Collapse Native Scripts"].waitForExistence(timeout: 10))
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let draft = "Keep this unsent discussion while running project scripts"
+        composer.click(); composer.typeText(draft)
+        let launcher = app.buttons["project-scripts"]
+        XCTAssertTrue(launcher.waitForExistence(timeout: 5)); launcher.click()
+        let review = app.sheets.containing(.button, identifier: "run-project-script").element
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        let cwd = review.staticTexts["project-script-cwd"]
+        XCTAssertTrue(waitForValue(cwd, value: project.path, timeout: 10))
+        let command = review.descendants(matching: .any).matching(identifier: "project-script-command").element
+        XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", staleCommand, staleCommand)).element.waitForExistence(timeout: 10))
+        for name in receiptNames { XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent(name).path), "Discovery must not run project scripts, including setup/settle roles.") }
+        XCTAssertTrue(review.buttons["run-project-script"].isHittable && CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
+        let discovery = XCTAttachment(screenshot: review.screenshot()); discovery.name = "scripts-discovery-without-execution"; discovery.lifetime = .keepAlways; add(discovery)
+        review.buttons["Cancel"].click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5)); XCTAssertEqual(composer.value as? String, draft)
+        launcher.click()
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", staleCommand, staleCommand)).element.waitForExistence(timeout: 10))
+        try writeConfiguration(inspectedCommand)
+        review.buttons["run-project-script"].click()
+        let changed = review.staticTexts["project-script-error"]
+        XCTAssertTrue(changed.waitForExistence(timeout: 10))
+        let changedText = [changed.label, (changed.value as? String) ?? ""].joined(separator: " ")
+        XCTAssertTrue(changedText.contains("The project scripts changed. Reload the list before running a script."))
+        for name in receiptNames { XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent(name).path), "Run must reject both the stale and unreviewed replacement script.") }
+        review.buttons["Reload"].click()
+        XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", inspectedCommand, inspectedCommand)).element.waitForExistence(timeout: 10))
+        let run = review.buttons["run-project-script"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: run)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed); run.click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        let inspectedTab = app.buttons["Inspect Workspace"]
+        XCTAssertTrue(inspectedTab.waitForExistence(timeout: 10))
+        let terminal = app.textViews["Workspace terminal"]
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value CONTAINS %@", "native-script-finished"), object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 10), .completed)
+        let exitStatus = "Command exited (7)."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", exitStatus, exitStatus)).element.waitForExistence(timeout: 10))
+        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-cwd.txt"), encoding: .utf8), project.path + "\n")
+        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-root.txt"), encoding: .utf8), project.path + "\n")
+        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-worktree.txt"), encoding: .utf8), "unset\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-stale.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-holding.txt").path))
+        XCTAssertEqual(composer.value as? String, draft)
+        capture(app, name: "scripts-reviewed-command-cwd-and-exit-status")
+        launcher.click(); XCTAssertTrue(review.waitForExistence(timeout: 5))
+        let picker = review.descendants(matching: .any).matching(identifier: "project-script-picker").element
+        XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.click()
+        let holdChoice = app.menuItems["Hold Workspace"]
+        XCTAssertTrue(holdChoice.waitForExistence(timeout: 5)); holdChoice.click()
+        XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", holdingCommand, holdingCommand)).element.waitForExistence(timeout: 5))
+        run.click(); XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        let holdingTab = app.buttons["Hold Workspace"]
+        XCTAssertTrue(holdingTab.waitForExistence(timeout: 10))
+        let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (try? String(contentsOf: project.appendingPathComponent("script-holding.txt"), encoding: .utf8)) == "running\n"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 10), .completed)
+        let close = app.buttons["Close Hold Workspace"]
+        XCTAssertTrue(close.isHittable); close.click()
+        let confirmation = terminalCloseReview(in: app)
+        let closeImage = XCTAttachment(screenshot: confirmation.screenshot()); closeImage.name = "scripts-close-running-command-review"; closeImage.lifetime = .keepAlways; add(closeImage)
+        confirmation.buttons["Cancel"].click()
+        XCTAssertTrue(waitForAbsence(confirmation.buttons["Close Terminal"], timeout: 5))
+        XCTAssertTrue(holdingTab.exists && inspectedTab.exists)
+        XCTAssertEqual(composer.value as? String, draft)
+        close.click()
+        let confirmed = terminalCloseReview(in: app)
+        confirmed.buttons["Close Terminal"].click()
+        XCTAssertTrue(waitForAbsence(holdingTab, timeout: 10))
+        XCTAssertTrue(inspectedTab.exists)
+        XCTAssertEqual(composer.value as? String, draft)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "scripts-final-head"), initialHead)
+        capture(app, name: "scripts-running-tab-closed-draft-retained")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
     @MainActor func testRepositoryGroupingKeepsCheckoutDrafts() throws {
         let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "grouping")
         let app = fixture.app
@@ -518,6 +630,20 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", title, title)).element.exists)
         let warning = "Unsaved file edits will be discarded. Cancel to return to your files and save them before quitting."
         XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", warning, warning)).element.exists)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
+        return review
+    }
+
+    @MainActor private func terminalCloseReview(in app: XCUIApplication) -> XCUIElement {
+        let review = app.descendants(matching: .any).matching(NSPredicate(
+            format: "elementType == %d OR elementType == %d OR elementType == %d OR elementType == %d OR elementType == %d",
+            XCUIElement.ElementType.dialog.rawValue, XCUIElement.ElementType.sheet.rawValue, XCUIElement.ElementType.window.rawValue,
+            XCUIElement.ElementType.popover.rawValue, XCUIElement.ElementType.alert.rawValue
+        )).containing(.button, identifier: "Close Terminal").firstMatch
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        let text = ([review.label, review.title] + review.staticTexts.allElementsBoundByIndex.flatMap { [$0.label, ($0.value as? String) ?? ""] }).joined(separator: " ")
+        XCTAssertTrue(text.contains("Close terminal and stop its running command?"))
+        XCTAssertTrue(review.buttons["Close Terminal"].isHittable && review.buttons["Cancel"].isHittable)
         XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
         return review
     }

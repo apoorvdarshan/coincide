@@ -58,6 +58,7 @@ final class WorkspaceStore {
     let managedProjectsRoot: URL
     let worktreesRoot: URL
     private let projectCreator: ProjectCreator
+    private let projectScriptReader: NativeProjectScriptService.Reader
     var snapshot = WorkspaceSnapshot()
     var selectedThreadID: UUID? {
         didSet {
@@ -100,6 +101,7 @@ final class WorkspaceStore {
     private var fileBrowsers: [String: FileBrowserStore] = [:]
     private var fileServiceCleanupTasks: [String: WorkspaceFileCleanup] = [:]
     private var externalEditorService: NativeExternalEditorService?
+    private var projectScriptService: NativeProjectScriptService?
     private(set) var availableExternalEditors: [ExternalEditorDescriptor] = []
     private var retryingProjectClones: Set<UUID> = []
     private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
@@ -107,6 +109,7 @@ final class WorkspaceStore {
     private var terminating = false
 
     init(databaseURL: URL? = nil) {
+        projectScriptReader = { try await ProjectConfigurationService.load(using: $0) }
         managedProjectsRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Projects", isDirectory: true)
         worktreesRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Worktrees", isDirectory: true)
         projectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }
@@ -118,11 +121,13 @@ final class WorkspaceStore {
         } catch { errorMessage = error.localizedDescription }
     }
     init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil,
+         projectScriptReader: @escaping NativeProjectScriptService.Reader = { try await ProjectConfigurationService.load(using: $0) },
          projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
         self.engine = engine
         self.managedProjectsRoot = managedProjectsRoot ?? Self.applicationDataRoot.appendingPathComponent("Projects", isDirectory: true)
         self.worktreesRoot = engine.worktreesRoot
         self.projectCreator = projectCreator
+        self.projectScriptReader = projectScriptReader
     }
     private static var applicationDataRoot: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -185,6 +190,22 @@ final class WorkspaceStore {
             return current === captured
         })
         externalEditorService = service; return service
+    }
+    func projectScripts() -> NativeProjectScriptService {
+        if let projectScriptService { return projectScriptService }
+        let service = NativeProjectScriptService(resolve: { [weak self] thread in
+            guard let self, self.canOpenTerminal(for: thread),
+                  let project = self.snapshot.projects.first(where: { $0.id == thread.projectID }) else { throw CancellationError() }
+            return .init(projectRoot: project.path, files: try self.fileService(path: thread.workspacePath))
+        }, authorize: { [weak self] thread, workspace in
+            guard let self, self.canOpenTerminal(for: thread),
+                  self.snapshot.projects.contains(where: { $0.id == thread.projectID && $0.path == workspace.projectRoot }),
+                  let current = try? self.fileService(path: thread.workspacePath) else { return false }
+            return current === workspace.files
+        }, authorizeWindow: { [weak self] terminals in
+            self?.terminalStores[ObjectIdentifier(terminals)]?.value === terminals
+        }, read: projectScriptReader)
+        projectScriptService = service; return service
     }
     func refreshExternalEditors(forceRefresh: Bool = false) async {
         guard !terminating else { return }
@@ -423,6 +444,13 @@ final class WorkspaceStore {
         }
         let removedThreads = Set(snapshot.threads.map(\.id)).subtracting(update.snapshot.threads.map(\.id))
         let removedProjects = Set(snapshot.projects.map(\.id)).subtracting(update.snapshot.projects.map(\.id))
+        let changedScriptThreads = Set(snapshot.threads.compactMap { old -> UUID? in
+            guard let next = update.snapshot.threads.first(where: { $0.id == old.id }),
+                  old.projectID == next.projectID, old.workspacePath == next.workspacePath,
+                  old.workspacePreparation?.id == next.workspacePreparation?.id else { return old.id }
+            return nil
+        })
+        projectScriptService?.invalidate(threadIDs: changedScriptThreads)
         let previous = snapshot
         lastSequence = update.sequence; snapshot = update.snapshot
         closeUnreferencedFileServices(previous: previous)
@@ -436,6 +464,7 @@ final class WorkspaceStore {
         let imports = attachmentImportTasks.compactMap { key, task in attachmentImportOwners[key].map { threadIDs.contains($0) } == true ? task : nil }
         let worktrees = worktreeTasks.filter { threadIDs.contains($0.key) }.map(\.value)
         let worktreeReads = worktreeOptionsReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
+        let scriptReads = projectScriptService?.invalidate(threadIDs: threadIDs) ?? []
         let retries = projectCloneRetryTasks.filter { projectIDs.contains($0.key) }.map(\.value)
         for task in imports { task.cancel() }; for task in worktrees { task.cancel() }; for task in retries { task.cancel() }
         for task in worktreeReads { task.cancel() }
@@ -462,6 +491,7 @@ final class WorkspaceStore {
             for task in imports { await task.value }
             for task in worktrees { _ = await task.result }
             for task in worktreeReads { _ = await task.result }
+            for task in scriptReads { await task.value }
             for task in retries { await task.value }
             for terminal in closingTerminals { await terminal.waitForClose() }
             for inspector in discardedInspectors.values { await inspector.shutdown() }
@@ -893,6 +923,7 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        await projectScriptService?.shutdown()
         await externalEditorService?.shutdown()
         let creations = Array(projectCreationTasks.values)
         for task in creations { task.cancel() }

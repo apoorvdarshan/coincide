@@ -39,7 +39,10 @@ struct TerminalPanel: View {
             if let selected {
                 NativeTerminalView(session: selected).id(selected.id).padding(6)
                 if case .exited(let status) = selected.lifecycle {
-                    HStack { Text(status.map { "Shell exited (\($0))." } ?? "Shell stopped."); Spacer(); Button("New Terminal") { add() } }
+                    HStack {
+                        Text(selected.isCommand ? status.map { "Command exited (\($0))." } ?? "Command stopped." : status.map { "Shell exited (\($0))." } ?? "Shell stopped.")
+                        Spacer(); Button("New Terminal") { add() }
+                    }
                         .font(.caption).foregroundStyle(.secondary).padding(8)
                 } else if case .failed(let message) = selected.lifecycle {
                     Text(message).font(.caption).foregroundStyle(.secondary).padding(8)
