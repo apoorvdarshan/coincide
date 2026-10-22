@@ -113,6 +113,11 @@ final class WorkspaceStore {
     var isLoading = true
     var isRefreshingModels = false
     let codexAccount = CodexAccountStore()
+    let codexRuntime: CodexRuntimeStore
+    @ObservationIgnored private let codexRuntimeInstallation: CodexInstallation
+    var codexModels: [UUID: [ProviderModel]] = [:]
+    @ObservationIgnored private var codexCatalogReads: [UUID: Task<[ProviderModel], any Error>] = [:]
+    @ObservationIgnored private var codexMetadataScope = UUID()
     let acpConnections = ACPConnectionStore()
     var inspectorVisible = false
     var fileNavigation: FileNavigation?
@@ -173,7 +178,9 @@ final class WorkspaceStore {
     private var lastSequence: Int64 = -1
     private var terminating = false
 
-    init(databaseURL: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared) {
+    init(databaseURL: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared) {
+        codexRuntimeInstallation = codexInstallation
+        codexRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot, installation: codexInstallation)
         let runtimeRoot = databaseURL.map { $0.deletingLastPathComponent().appendingPathComponent("Providers/Antigravity", isDirectory: true) } ?? AntigravityRuntime.defaultStateRoot
         antigravityRuntimeInstallation = runtimeInstallation
         antigravityInstallation = .init(installation: runtimeInstallation)
@@ -181,7 +188,7 @@ final class WorkspaceStore {
                                   sessionFactory: AntigravityAuthentication.nativeSessionFactory(stateRoot: runtimeRoot, installation: runtimeInstallation))
         defer {
             if let engine { antigravityAccount.bind(engine: engine) }
-            bindAntigravityInstallation()
+            bindAntigravityInstallation(); bindCodexRuntime()
         }
         projectScriptReader = { try await ProjectConfigurationService.load(using: $0) }
         managedProjectsRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Projects", isDirectory: true)
@@ -190,7 +197,7 @@ final class WorkspaceStore {
         let accountRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AntigravitySettings", isDirectory: true)
         let providers: WorkspaceEngine.ProviderFactory = {
             try ProviderSessions.make(for: $0, antigravityStateRoot: runtimeRoot,
-                antigravityInstallation: runtimeInstallation, antigravityAccountRoot: accountRoot)
+                antigravityInstallation: runtimeInstallation, antigravityAccountRoot: accountRoot, codexInstallation: codexInstallation)
         }
         do {
             if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory); return }
@@ -199,9 +206,11 @@ final class WorkspaceStore {
             engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), providerFactory: providers, projectScriptFactory: Self.managedScriptFactory)
         } catch { errorMessage = error.localizedDescription }
     }
-    init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared,
+    init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
          projectScriptReader: @escaping NativeProjectScriptService.Reader = { try await ProjectConfigurationService.load(using: $0) },
          projectCreator: @escaping ProjectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }) {
+        codexRuntimeInstallation = codexInstallation
+        codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
         antigravityRuntimeInstallation = runtimeInstallation
         antigravityInstallation = .init(installation: runtimeInstallation)
         antigravityAccount = .init(stateRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AntigravitySettings", isDirectory: true),
@@ -212,7 +221,38 @@ final class WorkspaceStore {
         self.projectCreator = projectCreator
         self.projectScriptReader = projectScriptReader
         antigravityAccount.bind(engine: engine)
-        bindAntigravityInstallation()
+        bindAntigravityInstallation(); bindCodexRuntime()
+    }
+    private func bindCodexRuntime() {
+        codexRuntime.bind(apply: { [weak self] configuration in
+            try configuration.validate()
+            guard let self, !self.terminating else { throw CancellationError() }
+            self.codexMetadataScope = UUID()
+            self.codexModels.removeAll(); self.providerModels.removeValue(forKey: .codex)
+            let catalogs = Array(self.codexCatalogReads.values)
+            for task in catalogs { task.cancel() }
+            let defaults = self.codexModelDefaultsReads.values.map(\.task)
+            self.codexModelDefaultsReads.removeAll()
+            for task in defaults { task.cancel() }
+            await self.codexAccount.invalidate()
+            for task in catalogs { _ = try? await task.value }
+            for task in defaults { _ = await task.value }
+            guard !self.terminating else { throw CancellationError() }
+        }, protectedCustomPaths: { [weak self] in
+            guard let self else { return [] }
+            var configurations = [self.codexRuntime.configuration]
+            for thread in self.snapshot.threads {
+                if let value = thread.codexRuntimeConfiguration { configurations.append(value) }
+                if let value = thread.activeRun?.configuration.codexRuntimeConfiguration { configurations.append(value) }
+                configurations += thread.queuedTurns.compactMap { $0.configuration.codexRuntimeConfiguration }
+            }
+            return configurations.filter { $0.selection == .custom }.map(\.executable)
+        })
+    }
+    private func newCodingThread(project: WorkspaceProject) -> CodingThread {
+        var thread = CodingThread(project: project)
+        if codexRuntime.configuration != .init() { thread.codexRuntimeConfiguration = codexRuntime.configuration }
+        return thread
     }
     private func bindAntigravityInstallation() {
         antigravityInstallation.bind { [weak self] in
@@ -305,7 +345,7 @@ final class WorkspaceStore {
         guard let projectID = pullRequestProjectID(path: path), let project = snapshot.projects.first(where: { $0.id == projectID }) else { return nil }
         let source = selectedThread.flatMap { $0.projectID == projectID && Self.canonicalPath($0.workspacePath) == path ? $0 : nil }
             ?? snapshot.threads.first { $0.projectID == projectID && Self.canonicalPath($0.workspacePath) == path }
-            ?? CodingThread(project: project)
+            ?? newCodingThread(project: project)
         var configuration = ProviderConfiguration(thread: source); configuration.nativeThreadID = nil
         return (configuration, source.checkpointPolicy)
     }
@@ -798,6 +838,13 @@ final class WorkspaceStore {
                 museModels.removeValue(forKey: id)
             }
         }
+        for id in Array(codexModels.keys) {
+            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
+            if next?.provider != .codex || old?.workspacePath != next?.workspacePath ||
+                old.map({ ProviderConfiguration(thread: $0).codexRuntimeBinding }) != next.map({ ProviderConfiguration(thread: $0).codexRuntimeBinding }) {
+                codexModels.removeValue(forKey: id)
+            }
+        }
         for id in Array(antigravityModels.keys) {
             let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
             if next?.provider != .antigravity || old?.workspacePath != next?.workspacePath ||
@@ -961,7 +1008,7 @@ final class WorkspaceStore {
         let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
         try Task.checkCancellation()
         guard !terminating else { throw CancellationError() }
-        let thread = CodingThread(project: result.project)
+        let thread = newCodingThread(project: result.project)
         do { _ = try await enqueue(.addProjectWithThread(project: result.project, thread: thread)).value }
         catch {
             throw CoincideError("The project files are preserved at \(result.project.path), but the project could not be opened. \(GitService.redactURLs(error.localizedDescription))")
@@ -972,7 +1019,7 @@ final class WorkspaceStore {
     func cloneRepository(source: String, destination: URL) async throws {
         let plan = try GitClonePlan.prepare(source: source, destination: destination)
         var project = WorkspaceProject(path: plan.destinationPath); project.clone = .init(plan: plan)
-        let thread = CodingThread(project: project)
+        let thread = newCodingThread(project: project)
         _ = try await enqueue(.startProjectClone(project: project, thread: thread)).value
         if snapshot.threads.contains(where: { $0.id == thread.id }) { selectedProjectID = project.id; selectedThreadID = thread.id; showArchived = false }
     }
@@ -999,7 +1046,7 @@ final class WorkspaceStore {
             project = selected
         } else if let selected = snapshot.projects.first { project = selected }
         else { addProject(); return }
-        let thread = CodingThread(project: project)
+        let thread = newCodingThread(project: project)
         let task = enqueue(.createThread(thread))
         Task {
             do {
@@ -1048,12 +1095,19 @@ final class WorkspaceStore {
             }
             return
         }
-        if thread(id)?.provider == .codex, let advertised = models(for: .codex).first(where: { $0.id == model }) {
+        if let current = thread(id), current.provider == .codex, let advertised = models(for: current).first(where: { $0.id == model }) {
             sendCommand(.editThread(id, .codexModel(advertised)))
         } else { sendCommand(.editThread(id, .model(model))) }
     }
     func setProvider(_ provider: ProviderKind, id: UUID) {
+        let previousProvider = thread(id)?.provider
         cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .provider(provider)))
+        if provider == .codex, previousProvider != .codex {
+            _ = enqueuePreparing { [weak self] in
+                guard let self, !self.terminating, self.thread(id)?.provider == .codex else { throw CancellationError() }
+                return .editThread(id, .codexRuntimeConfiguration(self.codexRuntime.configuration))
+            }
+        }
         if provider == .antigravity {
             _ = enqueuePreparing { [weak self] in
                 guard let self, !self.terminating, self.thread(id)?.provider == .antigravity else { throw CancellationError() }
@@ -1151,7 +1205,7 @@ final class WorkspaceStore {
     }
     func codexReasoningModel(threadID: UUID) -> ProviderModel? {
         guard let thread = thread(threadID), thread.provider == .codex else { return nil }
-        return models(for: .codex).first { $0.id == thread.model }
+        return models(for: thread).first { $0.id == thread.model }
     }
     func setCodexReasoningEffort(_ effort: String?, model: ProviderModel, threadID: UUID) -> Task<Bool, Never> {
         guard !terminating, let thread = thread(threadID), thread.provider == .codex, thread.model == model.id else { return Task { false } }
@@ -1178,7 +1232,7 @@ final class WorkspaceStore {
         codexModelDefaultsReads.removeValue(forKey: threadID)?.task.cancel()
     }
     func useCodexDefaultModel(_ threadID: UUID) -> Task<Bool, Never> {
-        guard !terminating, let engine, let captured = thread(threadID), captured.provider == .codex,
+        guard !terminating, !codexRuntime.isApplying, let engine, let captured = thread(threadID), captured.provider == .codex,
               workspaceReady(for: captured), !actionsPreventPromptSteering(threadID: threadID) else { return Task { false } }
         cancelCodexModelDefaultsRead(threadID)
         let id = UUID()
@@ -1196,16 +1250,22 @@ final class WorkspaceStore {
                           let current = self.thread(threadID), current.projectID == captured.projectID,
                           current.workspacePath == captured.workspacePath, current.provider == .codex,
                           current.model == captured.model, current.reasoningEffort == captured.reasoningEffort,
+                          ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: captured).codexRuntimeBinding,
                           current.codexReasoningPreferences == captured.codexReasoningPreferences,
                           current.codexModelSelectionSource == captured.codexModelSelectionSource,
                           !self.actionsPreventPromptSteering(threadID: threadID) else { throw CancellationError() }
                 }
                 _ = try await commit.value
-                if let advertised = selection.catalogModel {
-                    var values = self.providerModels[.codex] ?? []
+                if !Task.isCancelled, !self.terminating, !self.codexRuntime.isApplying,
+                   self.codexModelDefaultsReads[threadID]?.id == id,
+                   let current = self.thread(threadID), current.provider == .codex,
+                   current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
+                   ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: captured).codexRuntimeBinding,
+                   let advertised = selection.catalogModel {
+                    var values = self.models(for: captured)
                     if let index = values.firstIndex(where: { $0.id == advertised.id }) { values[index] = advertised }
                     else { values.append(advertised) }
-                    self.providerModels[.codex] = values
+                    self.codexModels[threadID] = values
                 }
                 return true
             } catch {
@@ -1229,6 +1289,7 @@ final class WorkspaceStore {
     func saveACPAgent(_ agent: ACPAgentConfiguration) async throws { _ = try await enqueue(.saveACPAgent(agent)).value }
     func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] {
+        if provider == .codex, let selectedThread, selectedThread.provider == .codex { return models(for: selectedThread) }
         if provider == .opencode || provider == .pi || provider == .muse || provider == .antigravity {
             guard let selectedThread, selectedThread.provider == provider else { return [] }
             return models(for: selectedThread)
@@ -1236,6 +1297,10 @@ final class WorkspaceStore {
         return providerModels[provider] ?? []
     }
     func models(for thread: CodingThread) -> [ProviderModel] {
+        if thread.provider == .codex {
+            if let models = codexModels[thread.id] { return models }
+            return ProviderConfiguration(thread: thread).codexRuntimeBinding == CodexRuntimeConfiguration() && codexRuntime.configuration == .init() ? providerModels[.codex] ?? [] : []
+        }
         if thread.provider == .pi { return piModels[thread.id] ?? [] }
         if thread.provider == .muse { return museModels[thread.id] ?? [] }
         if thread.provider == .antigravity { return antigravityModels[thread.id] ?? [] }
@@ -1392,7 +1457,10 @@ final class WorkspaceStore {
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
         let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.antigravityConfiguration?.executable ?? thread.museConfiguration?.executable ?? thread.piConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable
-        if let native = thread.antigravityConfiguration {
+        if thread.provider == .codex {
+            do { _ = try codexRuntimeInstallation.resolve(configuration: thread.codexRuntimeConfiguration ?? .init()) }
+            catch { errorMessage = error.localizedDescription; return Task { false } }
+        } else if let native = thread.antigravityConfiguration {
             do { _ = try antigravityRuntimeInstallation.resolve(configuration: native) }
             catch { errorMessage = error.localizedDescription; return Task { false } }
         } else if executable.isEmpty || ProcessChannel.findExecutable(executable) == nil {
@@ -1566,7 +1634,27 @@ final class WorkspaceStore {
         defer { isRefreshingModels = false }
         do {
             let kind = provider ?? selectedThread?.provider ?? .codex
-            if kind == .opencode {
+            if kind == .codex {
+                guard !codexRuntime.isApplying else { return }
+                let captured = selectedThread.flatMap { $0.provider == .codex ? $0 : nil }
+                let configuration = captured?.codexRuntimeConfiguration ?? (captured == nil ? codexRuntime.configuration : .init())
+                let scope = codexMetadataScope, id = UUID()
+                let task = Task {
+                    if let captured { return try await engine.models(thread: captured) }
+                    return try await engine.models(provider: .codex, codexRuntimeConfiguration: configuration)
+                }
+                codexCatalogReads[id] = task
+                defer { codexCatalogReads.removeValue(forKey: id) }
+                let models = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+                try Task.checkCancellation()
+                guard !terminating, codexMetadataScope == scope else { return }
+                if let captured {
+                    guard let current = thread(captured.id), current.provider == .codex,
+                          current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
+                          ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: captured).codexRuntimeBinding else { return }
+                    codexModels[captured.id] = models
+                } else if codexRuntime.configuration == configuration { providerModels[.codex] = models }
+            } else if kind == .opencode {
                 guard let thread = selectedThread, thread.provider == .opencode else {
                     throw CoincideError("Choose OpenCode in a conversation before refreshing its workspace models.")
                 }
@@ -1606,8 +1694,9 @@ final class WorkspaceStore {
         catch { if !terminating { errorMessage = error.localizedDescription } }
     }
     func refreshCodexAccount() async {
-        guard !terminating, let engine else { return }
-        await codexAccount.refresh { try await engine.codexAccountSnapshot() }
+        guard !terminating, !codexRuntime.isApplying, let engine else { return }
+        let configuration = codexRuntime.configuration
+        await codexAccount.refresh { try await engine.codexAccountSnapshot(configuration: configuration) }
     }
     func refreshACPConnection(agent: ACPAgentConfiguration) async {
         guard !terminating, let engine, snapshot.acpAgents.contains(agent) else { return }
@@ -2224,6 +2313,10 @@ final class WorkspaceStore {
         await antigravityAccount.shutdown()
         await antigravityInstallation.shutdown()
         await codexAccount.cancel()
+        await codexRuntime.shutdown()
+        let codexReads = Array(codexCatalogReads.values)
+        for task in codexReads { task.cancel() }
+        for task in codexReads { _ = try? await task.value }
         await acpConnections.cancel()
         let modelReads = codexModelDefaultsReads.values.map(\.task); codexModelDefaultsReads.removeAll()
         for task in modelReads { task.cancel() }; for task in modelReads { _ = await task.value }

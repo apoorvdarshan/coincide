@@ -90,8 +90,8 @@ func nativeOpenCodeConfigurationRejectsInvalidInvocationWithoutExposingIt(_ exec
     try f.edit(.provider(.claude)); #expect(f.thread.openCodeConfiguration == nil && f.thread.acpAgent == nil)
 }
 
-@Test(arguments: [25, 26, 27, 28, 29, 30])
-func nativeOpenCodeStorage31MigratesPriorVersionsReopensAndKeepsACPConversationsUnchanged(_ priorVersion: Int) async throws {
+@Test(arguments: [25, 26, 27, 28, 29, 30, 31])
+func nativeOpenCodeStorage32MigratesPriorVersionsReopensAndKeepsACPConversationsUnchanged(_ priorVersion: Int) async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let url = root.appendingPathComponent("native-configuration.sqlite")
     var raw: OpaquePointer?; #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
@@ -108,7 +108,7 @@ func nativeOpenCodeStorage31MigratesPriorVersionsReopensAndKeepsACPConversations
     #expect(try await database.rebuildProjection().snapshot == f.snapshot)
     #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
     var statement: OpaquePointer?; #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 31)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 32)
     sqlite3_finalize(statement); sqlite3_close(raw)
     #expect(try JSONDecoder().decode(CodingThread.self, from: JSONEncoder().encode(acp)).openCodeConfiguration == nil)
 }

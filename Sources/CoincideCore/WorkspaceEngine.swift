@@ -51,6 +51,7 @@ extension WorkspaceEngine {
               thread.provider == .codex, thread.projectID == reviewed.projectID,
               thread.provider == reviewed.configuration.provider, thread.workspacePath == reviewed.configuration.workspacePath,
               thread.model == reviewed.configuration.model, thread.reasoningEffort == reviewed.configuration.reasoningEffort,
+              ProviderConfiguration(thread: thread).codexRuntimeBinding == reviewed.configuration.codexRuntimeBinding,
               thread.codexReasoningPreferences == reviewed.preferences, thread.codexModelSelectionSource == reviewed.selectionSource else { return false }
         return true
     }
@@ -161,7 +162,7 @@ extension WorkspaceEngine {
             thread.provider = configuration.provider; thread.workspacePath = configuration.workspacePath
             thread.model = configuration.model; thread.reasoningEffort = configuration.reasoningEffort; thread.permission = configuration.permission
             thread.agentModeID = configuration.agentModeID; thread.agentConfigValues = configuration.agentConfigValues
-            thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent; thread.openCodeConfiguration = configuration.openCodeConfiguration; thread.piConfiguration = configuration.piConfiguration; thread.museConfiguration = configuration.museConfiguration; thread.antigravityConfiguration = configuration.antigravityConfiguration
+            thread.agentConfiguration = configuration.agentConfiguration; thread.acpAgent = configuration.acpAgent; thread.openCodeConfiguration = configuration.openCodeConfiguration; thread.piConfiguration = configuration.piConfiguration; thread.museConfiguration = configuration.museConfiguration; thread.antigravityConfiguration = configuration.antigravityConfiguration; thread.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration
             thread.providerThreadID = operation.nativeThreadID
             do {
                 let result = try await runtime.session.steer(input: input, thread: thread, expectedTurnID: operation.nativeTurnID, clientMessageID: operation.messageID)
@@ -649,7 +650,7 @@ extension WorkspaceEngine {
         guard !closing, !stoppingEffects, fatalError == nil, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
         let token = UUID(), metadataID: UUID?, session: any ProviderSession
         if !forceOwnedMetadata, let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
-           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding {
+           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding {
             metadataID = nil; session = runtime.session
         } else {
             var configured = thread
@@ -758,7 +759,7 @@ extension WorkspaceEngine {
         }
         let metadataID: UUID?, session: any ProviderSession
         if review.kind == .rewindBeforeRun, let runtime = runtimes[threadID], runtime.id == thread.runtimeID,
-           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding {
+           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding {
             metadataID = nil; session = runtime.session
         } else {
             var configured = thread
@@ -767,7 +768,7 @@ extension WorkspaceEngine {
                 configured = CodingThread(project: project, model: review.targetConfiguration.model)
                 configured.id = review.targetThreadID!; configured.workspacePath = review.targetConfiguration.workspacePath
                 configured.provider = review.targetConfiguration.provider; configured.reasoningEffort = review.targetConfiguration.reasoningEffort; configured.permission = review.targetConfiguration.permission
-                configured.acpAgent = review.targetConfiguration.acpAgent; configured.openCodeConfiguration = review.targetConfiguration.openCodeConfiguration; configured.piConfiguration = review.targetConfiguration.piConfiguration; configured.museConfiguration = review.targetConfiguration.museConfiguration; configured.antigravityConfiguration = review.targetConfiguration.antigravityConfiguration; configured.agentModeID = review.targetConfiguration.agentModeID
+                configured.acpAgent = review.targetConfiguration.acpAgent; configured.openCodeConfiguration = review.targetConfiguration.openCodeConfiguration; configured.piConfiguration = review.targetConfiguration.piConfiguration; configured.museConfiguration = review.targetConfiguration.museConfiguration; configured.antigravityConfiguration = review.targetConfiguration.antigravityConfiguration; configured.codexRuntimeConfiguration = review.targetConfiguration.codexRuntimeConfiguration; configured.agentModeID = review.targetConfiguration.agentModeID
                 configured.agentConfigValues = review.targetConfiguration.agentConfigValues; configured.agentConfiguration = review.targetConfiguration.agentConfiguration
             }
             let id = UUID(); metadataID = id; session = try factory(configured)
@@ -1300,6 +1301,7 @@ public actor WorkspaceEngine {
         var piBinding: PiRuntimeBinding?
         var museBinding: MuseRuntimeBinding?
         var antigravityBinding: AntigravityRuntimeBinding?
+        var codexBinding: CodexRuntimeConfiguration?
         var reader: Task<Void, Never>?
     }
     private struct MetadataRuntime: Sendable {
@@ -2007,7 +2009,7 @@ public actor WorkspaceEngine {
             var configured = thread
             configured.provider = configuration.provider; configured.workspacePath = configuration.workspacePath
             configured.providerThreadID = configuration.nativeThreadID; configured.model = configuration.model; configured.reasoningEffort = configuration.reasoningEffort; configured.permission = configuration.permission
-            configured.acpAgent = configuration.acpAgent; configured.openCodeConfiguration = configuration.openCodeConfiguration; configured.piConfiguration = configuration.piConfiguration; configured.museConfiguration = configuration.museConfiguration; configured.antigravityConfiguration = configuration.antigravityConfiguration; configured.agentModeID = configuration.agentModeID
+            configured.acpAgent = configuration.acpAgent; configured.openCodeConfiguration = configuration.openCodeConfiguration; configured.piConfiguration = configuration.piConfiguration; configured.museConfiguration = configuration.museConfiguration; configured.antigravityConfiguration = configuration.antigravityConfiguration; configured.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration; configured.agentModeID = configuration.agentModeID
             configured.agentConfigValues = configuration.agentConfigValues
             configured.agentConfiguration = configuration.agentConfiguration
             let runtime = try await runtime(for: configured, runID: runID)
@@ -2023,6 +2025,7 @@ public actor WorkspaceEngine {
             guard thread.activeRun?.id == runID else { return .cancelled }
             let expectedRuntimeID = runtimes[thread.id]?.id
             if let runtime = runtimes[thread.id], runtime.id == thread.runtimeID,
+               runtime.codexBinding == thread.activeRun?.configuration.codexRuntimeBinding,
                thread.activeRun?.nativeTurnID != nil ||
                 (thread.activeRun?.configuration.provider == .pi && runtime.provider == .pi &&
                  runtime.piBinding == thread.activeRun?.configuration.piRuntimeBinding) ||
@@ -2182,14 +2185,14 @@ public actor WorkspaceEngine {
                 throw CoincideError("This queued input belongs to an earlier Antigravity account or runtime. Review it before sending with the current settings.")
             }
         }
-        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding { return existing }
+        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, existing.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding { return existing }
         await closeRuntime(thread.id)
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         // Closing the previous process is an await: removal may have committed during that I/O.
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
         let id = UUID(), session = try factory(thread)
-        var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding, antigravityBinding: ProviderConfiguration(thread: thread).antigravityRuntimeBinding)
+        var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding, antigravityBinding: ProviderConfiguration(thread: thread).antigravityRuntimeBinding, codexBinding: ProviderConfiguration(thread: thread).codexRuntimeBinding)
         runtimes[thread.id] = runtime
         if let native = session as? AntigravitySession {
             do {
@@ -2327,15 +2330,19 @@ public actor WorkspaceEngine {
             _ = startCleanup(projectIDs: [id], sessions: [], jobs: [Task { _ = try? await refresh.task.value }])
         }
     }
-    public func models(provider: ProviderKind) async throws -> [ProviderModel] {
+    public func models(provider: ProviderKind, codexRuntimeConfiguration: CodexRuntimeConfiguration? = nil) async throws -> [ProviderModel] {
+        guard provider == .codex || codexRuntimeConfiguration == nil else { throw CodexRuntimeConfiguration.invalid() }
+        try codexRuntimeConfiguration?.validate()
         var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path)); thread.provider = provider
+        thread.codexRuntimeConfiguration = codexRuntimeConfiguration
         return try await queryModels(thread: thread, owned: false)
     }
     /// Provider-level CLI account metadata is deliberately never published in a
     /// workspace snapshot, command journal, transcript, or database.
-    public func codexAccountSnapshot() async throws -> CodexAccountSnapshot {
+    public func codexAccountSnapshot(configuration: CodexRuntimeConfiguration? = nil) async throws -> CodexAccountSnapshot {
+        try configuration?.validate()
         var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path))
-        thread.provider = .codex
+        thread.provider = .codex; thread.codexRuntimeConfiguration = configuration
         return try await queryProviderMetadata(thread: thread, owned: false) { try await $0.codexAccountSnapshot() }
     }
     public func acpConnectionInfo(agent: ACPAgentConfiguration) async throws -> ACPConnectionInfo {
@@ -2349,7 +2356,7 @@ public actor WorkspaceEngine {
         guard !closing, !stoppingEffects,
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
-              current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding else { throw CancellationError() }
+              current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding else { throw CancellationError() }
         if !revision.snapshot.providerReady(for: current) {
             throw CoincideError("Wait for the workspace to finish preparing before refreshing this agent's models.")
         }
@@ -2360,7 +2367,7 @@ public actor WorkspaceEngine {
         guard !closing, !stoppingEffects, thread.provider == .opencode,
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
               current.provider == .opencode, current.workspacePath == thread.workspacePath,
-              current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding,
+              current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding,
               revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         return try await queryProviderMetadata(thread: current, owned: true) { try await $0.openCodeInventory() }
     }
@@ -2373,11 +2380,19 @@ public actor WorkspaceEngine {
         if owned {
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
             guard let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
-                  current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding,
+                  current.provider == thread.provider, current.workspacePath == thread.workspacePath, current.acpAgent == thread.acpAgent, current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: current).effectiveGrokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding,
                   revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         }
         guard !closing, !stoppingEffects, !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else { throw CancellationError() }
-        let id = UUID(), session = try factory(thread)
+        var metadataLaunch = thread
+        if metadataLaunch.provider == .codex {
+            // Metadata owns the original conversation binding, but it must not
+            // ask the factory for a live turn's actor or carry its submissions.
+            metadataLaunch.activeRun = nil; metadataLaunch.runtimeID = nil
+            metadataLaunch.runtimeRequests = []; metadataLaunch.queuedTurns = []
+            metadataLaunch.state = .idle
+        }
+        let id = UUID(), session = try factory(metadataLaunch)
         metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: owned ? thread.id : nil,
                                      projectID: owned ? thread.projectID : nil, configuration: owned ? .init(thread: thread) : nil)
         do {
@@ -2410,7 +2425,7 @@ public actor WorkspaceEngine {
         guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID && $0.projectID == metadata.projectID }),
               revision.snapshot.projects.contains(where: { $0.id == thread.projectID }),
               let configuration = metadata.configuration,
-              thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent, thread.openCodeConfiguration?.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode == configuration.effectiveGrokRuntimeMode, ProviderConfiguration(thread: thread).piRuntimeBinding == configuration.piRuntimeBinding, ProviderConfiguration(thread: thread).museRuntimeBinding == configuration.museRuntimeBinding, ProviderConfiguration(thread: thread).antigravityRuntimeBinding == configuration.antigravityRuntimeBinding,
+              thread.provider == configuration.provider, thread.workspacePath == configuration.workspacePath, thread.acpAgent == configuration.acpAgent, thread.openCodeConfiguration?.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity, ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode == configuration.effectiveGrokRuntimeMode, ProviderConfiguration(thread: thread).piRuntimeBinding == configuration.piRuntimeBinding, ProviderConfiguration(thread: thread).museRuntimeBinding == configuration.museRuntimeBinding, ProviderConfiguration(thread: thread).antigravityRuntimeBinding == configuration.antigravityRuntimeBinding, ProviderConfiguration(thread: thread).codexRuntimeBinding == configuration.codexRuntimeBinding,
               revision.snapshot.providerReady(for: thread) else { return false }
         return true
     }

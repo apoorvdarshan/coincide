@@ -56,6 +56,7 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
               sourceConfiguration.provider == sourceReference.provider, targetConfiguration.provider == sourceReference.provider,
               sourceConfiguration.nativeThreadID == sourceReference.nativeThreadID,
               sourceConfiguration.workspacePath == targetConfiguration.workspacePath,
+              sourceConfiguration.codexRuntimeBinding == targetConfiguration.codexRuntimeBinding,
               sourceFingerprint.utf8.count == 64, sourceFingerprint.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
               Set(prefix.map(\.id)).count == prefix.count, prefix.allSatisfy({ $0.removedByHistoryOperationID == nil }),
               Set(removedRunIDs).count == removedRunIDs.count, Set(removedMessageIDs).count == removedMessageIDs.count,
@@ -410,7 +411,7 @@ extension WorkspaceDecision {
             var target = CodingThread(project: project, model: configuration.model)
             target.id = targetID; target.title = operation.targetTitle ?? review.suggestedTitle
             target.workspacePath = configuration.workspacePath; target.provider = configuration.provider
-            target.reasoningEffort = configuration.reasoningEffort; target.permission = configuration.permission; target.acpAgent = configuration.acpAgent; target.openCodeConfiguration = configuration.openCodeConfiguration; target.piConfiguration = configuration.piConfiguration; target.museConfiguration = configuration.museConfiguration; target.antigravityConfiguration = configuration.antigravityConfiguration
+            target.reasoningEffort = configuration.reasoningEffort; target.permission = configuration.permission; target.acpAgent = configuration.acpAgent; target.openCodeConfiguration = configuration.openCodeConfiguration; target.piConfiguration = configuration.piConfiguration; target.museConfiguration = configuration.museConfiguration; target.antigravityConfiguration = configuration.antigravityConfiguration; target.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration
             target.agentModeID = configuration.agentModeID; target.agentConfigValues = configuration.agentConfigValues
             target.agentConfiguration = configuration.agentConfiguration; target.providerThreadID = result.reference.nativeThreadID
             target.messages = review.prefix; target.forkedFromHistoryOperationID = operation.id

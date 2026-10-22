@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CodexAccountSection: View {
     let account: CodexAccountStore
+    var runtimeConfiguration: CodexRuntimeConfiguration? = nil
     let refresh: @MainActor () async -> Void
     @State private var revealEmail = false
 
@@ -49,7 +50,9 @@ struct CodexAccountSection: View {
                     .accessibilityIdentifier("codex-account-refresh")
                 if account.isRefreshing { ProgressView().controlSize(.small).accessibilityLabel("Refreshing Codex account") }
             }
-            Text("Coincide uses the Codex CLI sign-in on this Mac. To sign in or change accounts, run codex login in Terminal, then refresh here.")
+            Text(runtimeConfiguration == nil || runtimeConfiguration == CodexRuntimeConfiguration()
+                 ? String(localized: "Coincide uses the Codex CLI sign-in on this Mac. To sign in or change accounts, run codex login in Terminal, then refresh here.")
+                 : String(localized: "Account information comes from the runtime and Codex home chosen above. Sign in using that executable and home in Terminal, then refresh here. Installing a runtime does not sign in."))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .onChange(of: account.snapshot?.identity) { _, _ in revealEmail = false }

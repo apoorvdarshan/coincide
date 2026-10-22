@@ -37,6 +37,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case piModel(ProviderModel?), piThinking(model: ProviderModel, level: String?)
     case museModel(ProviderModel?), museReasoning(model: ProviderModel, effort: String?)
     case antigravityConfiguration(AntigravityConfiguration)
+    case codexRuntimeConfiguration(CodexRuntimeConfiguration)
 }
 
 public enum WorkspaceCommand: Codable, Sendable, Equatable {
@@ -568,6 +569,15 @@ struct WorkspaceDecision: Sendable {
             switch action {
             case .editThread(_, let edit):
                 switch edit {
+                case .codexRuntimeConfiguration(let configuration):
+                    guard thread.provider == .codex, !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty,
+                          thread.providerThreadID == nil, thread.runtimeRequests.isEmpty else {
+                        throw WorkspaceCommandError("Change the Codex runtime in a new, empty conversation.")
+                    }
+                    do { try configuration.validate() } catch { throw WorkspaceCommandError(CodexRuntimeConfiguration.invalid().localizedDescription) }
+                    decision.closeRuntimes.insert(thread.id); thread.codexRuntimeConfiguration = configuration
+                    thread.model = ""; thread.reasoningEffort = nil; thread.codexReasoningPreferences = nil; thread.codexModelSelectionSource = nil
+                    thread.providerMetadata = nil; thread.runtimeID = nil
                 case .antigravityConfiguration(let configuration):
                     guard thread.provider == .antigravity, !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty,
                           thread.runtimeRequests.isEmpty else { throw WorkspaceCommandError("Change the Antigravity runtime in a new, empty conversation.") }
@@ -660,6 +670,7 @@ struct WorkspaceDecision: Sendable {
                     thread.piConfiguration = kind == .pi ? .init(instanceID: id) : nil
                     thread.museConfiguration = kind == .muse ? .init(instanceID: id) : nil
                     thread.antigravityConfiguration = kind == .antigravity ? .init() : nil
+                    thread.codexRuntimeConfiguration = nil
                     if kind == .muse, thread.permission != .supervised && thread.permission != .fullAccess { thread.permission = .supervised }
                 case .acpAgent(let agent):
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
@@ -668,7 +679,7 @@ struct WorkspaceDecision: Sendable {
                     thread.openCodeConfiguration = nil
                     thread.piConfiguration = nil
                     thread.museConfiguration = nil
-                    thread.antigravityConfiguration = nil
+                    thread.antigravityConfiguration = nil; thread.codexRuntimeConfiguration = nil
                     thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
                 case .draft(let value): thread.draft = value

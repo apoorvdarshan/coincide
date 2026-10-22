@@ -28,7 +28,8 @@ private actor NativeReasoningReadGate {
 
 private actor NativeReasoningCatalog {
     private var values = [nativeReasoningA, nativeReasoningB]
-    func models() -> [ProviderModel] { values }
+    private(set) var metadataLaunches: [CodingThread] = []
+    func models(launch: CodingThread) -> [ProviderModel] { metadataLaunches.append(launch); return values }
     func replace(_ model: ProviderModel) {
         if let index = values.firstIndex(where: { $0.id == model.id }) { values[index] = model }
     }
@@ -40,11 +41,12 @@ private actor NativeReasoningMetadata: ProviderSession {
     let selection: CodexDefaultModelSelection
     let gate: NativeReasoningReadGate
     let catalog: NativeReasoningCatalog
+    let launched: CodingThread
     private var readDefaults = false
-    init(selection: CodexDefaultModelSelection, gate: NativeReasoningReadGate, catalog: NativeReasoningCatalog) {
-        self.selection = selection; self.gate = gate; self.catalog = catalog
+    init(selection: CodexDefaultModelSelection, gate: NativeReasoningReadGate, catalog: NativeReasoningCatalog, launched: CodingThread) {
+        self.selection = selection; self.gate = gate; self.catalog = catalog; self.launched = launched
     }
-    func models() async -> [ProviderModel] { await catalog.models() }
+    func models() async -> [ProviderModel] { await catalog.models(launch: launched) }
     func codexDefaultModelSelection() async -> CodexDefaultModelSelection {
         readDefaults = true; await gate.enter(); return selection
     }
@@ -105,7 +107,7 @@ private actor NativeReasoningRuntime: ProviderSession {
     let runtime: NativeReasoningRuntime
     let engine: WorkspaceEngine
     let store: WorkspaceStore
-    static func make(held: Bool = false) async throws -> Self {
+    static func make(held: Bool = false, codexRuntimeConfiguration: CodexRuntimeConfiguration? = nil) async throws -> Self {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-native-reasoning-" + UUID().uuidString)
             .standardizedFileURL.resolvingSymlinksInPath()
         let checkout = root.appendingPathComponent("Checkout")
@@ -115,6 +117,7 @@ private actor NativeReasoningRuntime: ProviderSession {
         var thread = CodingThread(project: project, model: nativeReasoningA.id)
         thread.reasoningEffort = "medium"; thread.codexModelSelectionSource = .explicitModel
         thread.checkpointPolicy = .disabled
+        thread.codexRuntimeConfiguration = codexRuntimeConfiguration
         var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
         try await WorkspaceDatabase(url: database).save(snapshot, event: "native.reasoning.fixture")
         let selection = try CodexDefaultModelSelection(workspacePath: project.path, model: nativeReasoningB.id,
@@ -123,7 +126,7 @@ private actor NativeReasoningRuntime: ProviderSession {
         let runtime = NativeReasoningRuntime(selection: selection, gate: gate)
         let engine = try WorkspaceEngine(url: database, providerFactory: { requested in
             if requested.activeRun != nil { return runtime }
-            return NativeReasoningMetadata(selection: selection, gate: gate, catalog: catalog)
+            return NativeReasoningMetadata(selection: selection, gate: gate, catalog: catalog, launched: requested)
         }, identityResolver: { _ in nil })
         let store = WorkspaceStore(engine: engine); await store.load(); await store.refreshModels(provider: .codex)
         return .init(root: root, database: database, projectID: project.id, threadID: thread.id, gate: gate, catalog: catalog,
@@ -275,19 +278,30 @@ func nativeCodexDelayedDefaultReadCannotUndoManualSelectionOrResurrectRemovedPro
     await f.cleanup()
 }
 
-@MainActor @Test(.timeLimit(.minutes(1)))
-func nativeCodexReasoningQueueAndSteerUseCapturedEffortsWhileFutureChoicesStayEditable() async throws {
-    let f = try await NativeReasoningFixture.make()
+@MainActor @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func nativeCodexReasoningQueueAndSteerUseCapturedEffortsWhileFutureChoicesStayEditable(capturedCustomRuntime: Bool) async throws {
+    let configuration: CodexRuntimeConfiguration? = capturedCustomRuntime
+        ? CodexRuntimeConfiguration(selection: .custom, executable: "/fixture/native-reasoning/codex", homeDirectory: "/fixture/native-reasoning/Home") : nil
+    let f = try await NativeReasoningFixture.make(codexRuntimeConfiguration: configuration)
     do {
         try await f.start()
         let original = try #require(f.store.thread(f.threadID)?.activeRun)
+        #expect(original.configuration.codexRuntimeConfiguration == configuration)
         #expect(await f.store.setCodexReasoningEffort("high", model: nativeReasoningA, threadID: f.threadID).value)
         _ = try await f.engine.dispatch(.submit(threadID: f.threadID, text: "Captured high-effort queued input"))
         try await waitNativeReasoning { f.store.thread(f.threadID)?.queuedTurns.count == 1 }
         let queued = try #require(f.store.thread(f.threadID)?.queuedTurns.first)
         #expect(queued.configuration.reasoningEffort == "high")
+        #expect(queued.configuration.codexRuntimeConfiguration == configuration)
         #expect(await f.store.setCodexReasoningEffort("low", model: nativeReasoningA, threadID: f.threadID).value)
+        let metadataBefore = await f.catalog.metadataLaunches.count
         await f.store.refreshModels(provider: .codex)
+        let metadataLaunches = await f.catalog.metadataLaunches
+        #expect(metadataLaunches.count == metadataBefore + 1, "A model refresh during a run must create its own metadata peer.")
+        let metadata = try #require(metadataLaunches.last)
+        #expect(metadata.codexRuntimeConfiguration == configuration && metadata.workspacePath == original.configuration.workspacePath)
+        #expect(metadata.activeRun == nil && metadata.runtimeID == nil && metadata.runtimeRequests.isEmpty && metadata.queuedTurns.isEmpty && metadata.state == .idle,
+                "The metadata factory keeps the captured runtime/home but must not inherit active-stream ownership.")
         #expect(await f.runtime.closes == 0, "Closing a fresh catalog reader must not close the active stream.")
         await f.store.refreshPromptSteeringAvailability(threadID: f.threadID)
         f.store.setDraft("A follow-up for the existing medium-effort run", id: f.threadID)
@@ -295,6 +309,7 @@ func nativeCodexReasoningQueueAndSteerUseCapturedEffortsWhileFutureChoicesStayEd
         try await waitNativeReasoning { f.store.snapshot.promptSteerings?.last?.phase == .delivered }
         let steered = try #require(await f.runtime.steers.first)
         #expect(steered.configuration.reasoningEffort == "medium" && steered.runID == original.id)
+        #expect(steered.configuration.codexRuntimeConfiguration == configuration)
         #expect(f.store.thread(f.threadID)?.reasoningEffort == "low")
         #expect(f.store.thread(f.threadID)?.queuedTurns.first?.configuration.reasoningEffort == "high")
         f.store.setDraft("Latest unsent draft after changing reasoning", id: f.threadID)
@@ -302,6 +317,7 @@ func nativeCodexReasoningQueueAndSteerUseCapturedEffortsWhileFutureChoicesStayEd
         try await waitNativeReasoning { await f.runtime.starts.count == 2 }
         let started = try #require(await f.runtime.starts.last)
         #expect(started.text == queued.text && started.configuration.reasoningEffort == "high" && started.runID == queued.id)
+        #expect(started.configuration.codexRuntimeConfiguration == configuration)
         #expect(f.store.thread(f.threadID)?.reasoningEffort == "low")
         #expect(f.store.thread(f.threadID)?.draft == "Latest unsent draft after changing reasoning")
         await f.runtime.finish()

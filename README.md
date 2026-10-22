@@ -17,8 +17,8 @@ and what still needs implementation and verification.
 ## Build and run
 
 Requires macOS 14+, a Swift 6.2+ toolchain, and Xcode Command Line Tools. Codex
-conversations require an installed, authenticated `codex` CLI; Claude conversations
-use the installed, authenticated `claude` CLI.
+conversations use an authenticated installed, custom, or explicitly managed CLI;
+Claude conversations use the installed, authenticated `claude` CLI.
 Native OpenCode conversations use the matching installed OpenCode 1 or 2 CLI
 through separate HTTP adapters. Choose **Server Generation** before the first
 message. Both adapters have offline-fixture verification; installed conversation
@@ -51,6 +51,24 @@ reasoning options. Reasoning preferences are saved separately for each model;
 current checkout's CLI configuration and captures its concrete default model,
 keeping any saved reasoning preference for it. These choices apply to future
 turns. Active and queued turns retain the settings they already captured.
+
+**Settings → Providers → Codex Runtime** keeps **Installed CLI** as the default.
+Choose a custom executable or explicitly install the managed package, then choose
+**Use Runtime** for future conversations. An optional absolute Codex home replaces
+the inherited `CODEX_HOME`; no accounts, settings, or history are copied. Runtime
+and home choices are captured in conversations and queued inputs, and model
+catalogs remain scoped to each conversation's runtime. **Check Runtime** uses
+bounded executable checks in a private temporary home and reports the actual
+source, path and version; it does not check account access.
+
+The managed installer pins the complete Codex **0.156.1** package, verifies its
+archive and package layout, and retains active-session leases across updates.
+Removal protects running sessions and custom paths into the installation. The
+reviewed **0.163.x** gates for native fork/rewind and in-flight steering remain
+unchanged; installing 0.156.1 does not enable those capabilities. Managed binary
+installation uses the selected CLI home's authentication. Native ChatGPT OAuth,
+managed account profiles, broader usage history, skills and MCP controls remain
+unfinished.
 
 For native OpenCode, **Refresh Models** reads the current workspace's models,
 variants and primary agents. These choices apply to future inputs; queued turns

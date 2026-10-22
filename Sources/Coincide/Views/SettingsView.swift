@@ -32,7 +32,9 @@ struct SettingsView: View {
                 }
                 LabeledContent("Available models", value: "\(store.models(for: provider).count)")
                 if provider == .codex {
-                    CodexAccountSection(account: store.codexAccount) { await store.refreshCodexAccount() }
+                    CodexRuntimeSettingsSection(runtime: store.codexRuntime)
+                    CodexAccountSection(account: store.codexAccount, runtimeConfiguration: store.codexRuntime.configuration) { await store.refreshCodexAccount() }
+                        .id(store.codexRuntime.configuration)
                 }
                 }
                 Section("ACP Agents") {

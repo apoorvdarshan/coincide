@@ -12,6 +12,7 @@ public enum AntigravityArchiveExtractor {
         let work = Task.detached(priority: .utility) { try extractOwned(release: release, archive: archive, destination: destination) }
         try await withTaskCancellationHandler {
             do { try await work.value } catch {
+                if let error = error as? PinnedArchiveError, let mapped = AntigravityArchiveError(rawValue: error.rawValue) { throw mapped }
                 throw error is CancellationError ? AntigravityArchiveError.cancelled : error as? AntigravityArchiveError ?? .archiveInvalid
             }
         } onCancel: { work.cancel() }
@@ -20,13 +21,13 @@ public enum AntigravityArchiveExtractor {
         let source = try AntigravityZIPSource(archive, expected: release.archiveBytes)
         try source.verify(sha256: release.sha256)
         let entries = try source.entries(release: release)
-        let directory = try AntigravityArchiveDirectory(destination)
+        let directory = try PinnedArchiveDirectory(destination)
         try requireEmpty(directory)
-        var outputs: [AntigravityArchiveOutput] = []
+        var outputs: [PinnedArchiveOutput] = []
         do {
             for entry in entries {
                 try Task.checkCancellation()
-                let output = try AntigravityArchiveOutput(directory: directory, name: entry.name, mode: 0o700)
+                let output = try PinnedArchiveOutput(directory: directory, name: entry.name, mode: 0o700)
                 outputs.append(output)
                 try source.extract(entry, output: output)
                 try output.finish(mode: release.platform == "win32" ? 0o700 : 0o755)
@@ -37,7 +38,7 @@ public enum AntigravityArchiveExtractor {
             throw error
         }
     }
-    private static func requireEmpty(_ directory: AntigravityArchiveDirectory) throws {
+    private static func requireEmpty(_ directory: PinnedArchiveDirectory) throws {
         try directory.validate()
         let copy = dup(directory.fd)
         guard copy >= 0 else { throw AntigravityArchiveError.io }
@@ -191,7 +192,7 @@ private final class AntigravityZIPSource {
         }
         return result
     }
-    func extract(_ entry: AntigravityZIPEntry, output: AntigravityArchiveOutput) throws {
+    func extract(_ entry: AntigravityZIPEntry, output: PinnedArchiveOutput) throws {
         var consumed: Int64 = 0, written: Int64 = 0, checksum = crc32(0, nil, 0)
         func emit(_ bytes: UnsafeRawBufferPointer, count: Int) throws {
             try Task.checkCancellation()

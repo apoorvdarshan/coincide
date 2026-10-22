@@ -42,6 +42,10 @@ import Observation
     }
 
     /// Replaced reads remain owned until their cancellation-resistant work returns.
+    func invalidate() async {
+        snapshot = nil; errorMessage = nil; accountReadFailed = false
+        await cancel()
+    }
     func cancel() async {
         currentRead = nil; isRefreshing = false
         let owned = Array(reads.values)

@@ -14,6 +14,7 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
     public var nativeThreadID: String?
     public var model: String
     public var reasoningEffort: String?
+    public var codexRuntimeConfiguration: CodexRuntimeConfiguration?
     public var permission: PermissionMode
     public var acpAgent: ACPAgentConfiguration?
     public var openCodeConfiguration: OpenCodeConfiguration?
@@ -26,6 +27,7 @@ public struct ProviderConfiguration: Codable, Sendable, Equatable {
     public init(thread: CodingThread) {
         provider = thread.provider; workspacePath = thread.workspacePath
         nativeThreadID = thread.providerThreadID; model = thread.model; reasoningEffort = thread.provider == .codex ? thread.reasoningEffort : nil; permission = thread.permission
+        codexRuntimeConfiguration = thread.codexRuntimeConfiguration
         acpAgent = thread.acpAgent; openCodeConfiguration = thread.openCodeConfiguration; piConfiguration = thread.piConfiguration; agentModeID = thread.agentModeID
         museConfiguration = thread.museConfiguration
         antigravityConfiguration = thread.antigravityConfiguration

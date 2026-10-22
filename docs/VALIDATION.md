@@ -1,5 +1,72 @@
 # Validation record
 
+## 2026-10-22 — captured Codex runtime and complete managed package
+
+- Installed CLI behavior stays the default. Explicit managed/custom executable
+  and optional absolute home choices are saved privately and captured in new
+  conversations, active inputs, FIFO queues and history reviews. Storage 32
+  preserves legacy captures. Catalogs and metadata ownership include the exact
+  runtime/home binding; applying a future preference drains old account, catalog
+  and CLI-default reads without retargeting accepted inputs.
+- The pinned complete Codex 0.156.1 distribution uses bounded HTTPS download,
+  SHA-256, native gzip/TAR/PAX extraction, complete package inventory and atomic
+  activation. Private-home version/CLI checks are separate from authentication.
+  Leases protect running processes, metadata, admitted native writers and custom
+  aliases into an installed package. Existing reviewed 0.163 history, steering
+  and inferred-default capability guards remain unchanged.
+- The first focused run compiles and executes 36 declarations. It finds one
+  fixture inventory mismatch; all expected file-byte and mode checks pass. The
+  relative-path helper now validates canonical path-component prefixes instead
+  of assuming directory URL character spelling. Exact full-set equality remains
+  and then passes. Fresh reads attempted during a held runtime Apply are refused;
+  cancellation-resistant old results cannot republish account/catalog state.
+- A serial run of the already-built test products completes all 1025 Core
+  declarations (273.873 seconds), 166 native view/store declarations, six
+  terminal declarations and 13 Markdown declarations. The native store reports
+  one failed declaration: refreshing an active conversation passes its active
+  run to the metadata factory, allowing catalog cleanup to close the fixture's
+  active stream. The metadata launch copy now clears active run/request/queue
+  state while retaining the original owned runtime/home configuration. The
+  existing queue/steer regression covers both legacy and custom home captures.
+  The final focused canonical run passes all 38 declarations: 29 Core in
+  1.719 seconds and nine native view/store in 3.938 seconds.
+- The exact public 127394863-byte macOS arm64 archive was independently downloaded
+  and SHA-256 verified. A standalone probe linked to the production Core library
+  installs that previously verified archive through the real extractor,
+  inventory, verifier and activation paths; native app-server initialization,
+  in-use removal rejection, close/drain/lease release and owned removal pass.
+  A fresh credential-free home uses file-only auth storage and disabled analytics.
+  No account, model, thread, turn or authentication RPC is sent. This proves the
+  real package execution path, not the native network download path.
+- The separate opt-in production URLSession download is interrupted to rebuild
+  after the native-store regression. Its file continues growing, but a bounded
+  process/network sample finds about 14 KB/s and substantial out-of-order TCP
+  traffic, with idle CPU/queues and no writer/hash backlog. That check is not
+  reported as passed, nor is its network impairment attributed to source code.
+- Twenty-four offscreen narrow/wide, light/dark and LTR/RTL runtime settings
+  captures pass geometry checks. Representative captures are inspected. Dark
+  vibrant text is black in the offscreen export; these images do not prove actual
+  composited Liquid Glass contrast. A real development-window capture remains
+  separate evidence.
+- Packaging the already-built product, strict/deep signature verification and
+  native math-resource rendering pass. A consistent private backup precedes
+  storage 31-to-32; integrity is `ok`, with the same four conversations, 25
+  messages and canonical workspace payload hash after reopening.
+- Hosted run `39795980219` at `694068c` completes all 1172 declarations without a
+  crash report but fails the FIFO projection equality assertion. Its idle check
+  can precede a post-run checkpoint journal commit. Commit `3465bf6` retains full
+  equality and existing FIFO/model/history assertions, adds a deterministic held
+  post-checkpoint case, and waits for that exact final run's observation. Both
+  cases pass locally. Hosted run `39801874334` is pending.
+- Final canonical `swift test --no-parallel` verification passes all 1210
+  declarations: 1200 pass and ten optional installed-provider checks skip. Core
+  reports 1025 declarations in 270.844 seconds; all 166 native view/store
+  declarations (59.133 seconds), six terminal declarations (1.383 seconds) and
+  13 Markdown declarations (0.128 seconds) pass. The normal packaging build then
+  completes in 0.60 seconds; strict/deep signing and native math-resource checks
+  pass again. Managed OAuth/accounts, broader provider controls and full T3
+  parity remain unfinished.
+
 ## 2026-10-22 — managed Antigravity runtime and history acceptance stack
 
 - Explicit native install/verify/update/cancel/remove actions keep account setup

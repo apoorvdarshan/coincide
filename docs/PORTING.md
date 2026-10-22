@@ -42,8 +42,10 @@ must each be mapped and verified before declaring parity.
   models, native SwiftUI blocks, lexical code coloring, and contained file links.
   SwiftMath/CoreText renders closed display formulas without a webview. Font
   resources ship inside the app and have a separate runtime-loading CI check.
-- Codex and Claude run as installed CLI processes over stdio. Coincide uses existing
-  provider authentication; no API key is embedded or copied into the workspace.
+- Codex and Claude run as CLI processes over stdio. Codex keeps the installed CLI
+  default and offers explicit managed or custom executables; Claude uses its
+  installed CLI. Existing provider authentication stays in the selected CLI home;
+  no API key is embedded or copied into the workspace.
 - The dedicated [OpenCode HTTP integration](OPENCODE_HTTP.md) has native
   generation-aware identity/catalog reads, an owned loopback subprocess and
   bounded HTTP/SSE networking. Separate v1/v2 native conversation actors preserve
@@ -59,6 +61,23 @@ must each be mapped and verified before declaring parity.
   with identity consistency, sparse update and stale/unsupported handling. Email
   is hidden by default and observations stay outside persistence. Native sign-in,
   managed account profiles and broader usage telemetry still remain.
+- Codex Runtime Settings saves an explicit installed/managed/custom selection and
+  optional absolute home in private bounded preferences. Existing CLI behavior is
+  the default; no home contents or authentication are migrated. New conversations
+  capture the preference, while active and queued inputs keep their own runtime
+  and home. Thread catalogs and metadata ownership include that binding. Applying
+  a preference invalidates account/catalog/default reads and drains their owned
+  work without retargeting an active conversation.
+- Explicit Codex installation pins the complete 0.156.1 package. Bounded download,
+  archive identity, extraction and package-layout checks precede activation;
+  runtime leases retain in-use versions and protect removal. Explicit runtime
+  inspection uses private temporary homes and bounded `--version` and
+  `app-server --help` checks, reporting the observed executable/source/version
+  separately from account access. The existing 0.163.x history/steering and
+  inferred CLI-default guards remain unchanged. A managed binary is not managed
+  ChatGPT authentication: native OAuth, account profiles, broader usage, skills
+  and MCP/configuration parity remain unfinished. Installed managed-package and
+  conversation evidence must be recorded separately from offline checks.
 - Custom installed ACP agents use a native JSON-RPC 2.0 adapter. Saved named
   invocations pass literal arguments and are captured in each conversation/queue.
   Config options take precedence over legacy model/mode fields. Permissions keep
@@ -499,7 +518,7 @@ must each be mapped and verified before declaring parity.
 | Area | Implemented now | Remaining work for parity |
 | --- | --- | --- |
 | Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, logical repository/folder/physical grouping and overrides, explicit checkout choice for new conversations, restored conversation selection, physical/group renaming and collapse, persistent manual ordering and aggregated activity/thread-creation sorting, confirmed atomic physical/group removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, explicit settlement generations and Resume, settings | Snooze/automatic settlement, undo, scratch projects, import/migration |
-| Codex | Handshake, bounded paginated model discovery, native advertised reasoning controls with per-model preferences and concrete cwd-aware CLI default selection, captured reasoning in turns/queues/history, start/resume, streaming, command/file approvals, user questions, interrupt, reviewed same-workspace native fork and history-only rewind on the 0.163.x profile | Full protocol coverage, auth/setup UI, multi-account/usage, remaining provider controls, broader history contracts and cross-workspace transfer, all tool events |
+| Codex | Installed CLI default, explicit managed complete 0.156.1 package or custom executable, captured runtime/home and scoped catalogs, private bounded runtime checks and in-use package leases; handshake, bounded paginated model discovery, native advertised reasoning controls with per-model preferences and concrete cwd-aware CLI default selection, captured reasoning in turns/queues/history, start/resume, streaming, command/file approvals, user questions, interrupt, reviewed same-workspace native fork and history-only rewind on the 0.163.x profile | Native downloader acceptance and authenticated managed conversations, full protocol coverage, native OAuth/sign-in/logout and managed account profiles, broader usage telemetry, skills/MCP/configuration controls, broader history contracts and cross-workspace transfer, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, explicit Cursor/Copilot profiles, initialize-only connection checks, Cursor question/plan/todo/task/image extensions, original-run Copilot child attribution, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, complete OpenCode/Cursor/Copilot/Grok/Antigravity/Pi/Muse behavior and installed end-to-end evidence |
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind, standalone restoration and combined provider-then-files intents with retained audit, explicit partial outcomes, inspect-only recovery and one-time latest-draft recall, legacy migration | Complete provider recovery, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |

@@ -97,7 +97,16 @@ extension ProviderSession {
 public enum ProviderSessions {
     public static func make(for thread: CodingThread, antigravityStateRoot: URL? = nil,
                             antigravityInstallation: AntigravityInstallation = .shared,
-                            antigravityAccountRoot: URL? = nil) throws -> any ProviderSession {
+                            antigravityAccountRoot: URL? = nil,
+                            codexInstallation: CodexInstallation = .shared) throws -> any ProviderSession {
+        if thread.provider == .codex {
+            try CodexRuntimeConfigurationValidation.configuration(.init(thread: thread))
+            let configuration = thread.codexRuntimeConfiguration ?? .init()
+            let lease = try codexInstallation.acquire(configuration: configuration)
+            let environment = try CodexRuntimeEnvironment.make(configuration: configuration)
+            return try CodexSession(executable: lease.resolved.executable, cwd: URL(fileURLWithPath: thread.workspacePath),
+                                    environment: environment, installationLease: lease, runtimeConfiguration: configuration)
+        }
         if thread.provider == .antigravity {
             try AntigravityConfigurationValidation.configuration(.init(thread: thread))
             guard let configuration = thread.antigravityConfiguration else {
@@ -155,7 +164,7 @@ public enum ProviderSessions {
         }
         let cwd = URL(fileURLWithPath: thread.workspacePath)
         switch thread.provider {
-        case .codex: return try CodexSession(executable: executable, cwd: cwd)
+        case .codex: throw CodexRuntimeConfiguration.invalid()
         case .claude: return try ClaudeSession(executable: executable, cwd: cwd, resumeID: thread.providerThreadID)
         case .opencode: throw OpenCodeConfiguration.invalid()
         case .pi: throw PiConfiguration.invalid()

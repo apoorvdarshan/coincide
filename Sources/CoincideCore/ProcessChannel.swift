@@ -167,6 +167,9 @@ public final class ProcessChannel: @unchecked Sendable {
         let status = await stopAndWait()
         drainState.cancel()
         await withCheckedContinuation { continuation in
+            writer.async { continuation.resume() }
+        }
+        await withCheckedContinuation { continuation in
             readers.notify(queue: .global(qos: .utility)) { continuation.resume() }
         }
         return status

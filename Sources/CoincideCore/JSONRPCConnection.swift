@@ -52,7 +52,9 @@ public actor JSONRPCConnection {
     private let continuation: AsyncStream<RPCEvent>.Continuation
     private let channel: ProcessChannel
     private let dialect: StdioDialect
+    private let drainProcessOnClose: Bool
     private var reader: Task<Void, Never>?
+    private var closeTask: Task<Void, Never>?
     private var pending: [JSONValue: CheckedContinuation<JSONValue, any Error>] = [:]
     private var timeouts: [JSONValue: Task<Void, Never>] = [:]
     private var writes: [JSONValue: Task<Void, Never>] = [:]
@@ -62,12 +64,14 @@ public actor JSONRPCConnection {
     private var decoder: NDJSONDecoder
     private var ended = false
 
-    public init(executable: URL, arguments: [String], cwd: URL? = nil, dialect: StdioDialect = .jsonRPC, maximumFrameSize: Int = 16 * 1_024 * 1_024) throws {
+    public init(executable: URL, arguments: [String], cwd: URL? = nil, dialect: StdioDialect = .jsonRPC, maximumFrameSize: Int = 16 * 1_024 * 1_024,
+                environment: [String: String]? = nil, drainProcessOnClose: Bool = false) throws {
         let (events, continuation) = AsyncStream<RPCEvent>.makeStream()
         self.events = events; self.continuation = continuation
         self.dialect = dialect
+        self.drainProcessOnClose = drainProcessOnClose
         decoder = NDJSONDecoder(maximumFrameSize: maximumFrameSize)
-        channel = try ProcessChannel(executable: executable, arguments: arguments, cwd: cwd)
+        channel = try ProcessChannel(executable: executable, arguments: arguments, cwd: cwd, environment: environment)
     }
     public func start() {
         guard reader == nil else { return }
@@ -128,8 +132,15 @@ public actor JSONRPCConnection {
         } else { try await send(.object(["id": id, "error": .object(["code": .number(-32601), "message": .string(message)])])) }
     }
     public func close() async {
-        disconnect("Connection closed."); reader?.cancel(); reader = nil
-        await channel.stopAndWait()
+        if let closeTask { await closeTask.value; return }
+        disconnect("Connection closed."); let reading = reader; reading?.cancel(); reader = nil
+        let channel = channel, drain = drainProcessOnClose
+        let task = Task {
+            if drain { _ = await channel.stopAndDrain() }
+            else { _ = await channel.stopAndWait() }
+            await reading?.value
+        }
+        closeTask = task; await task.value
     }
     /// Completes after the event consumer has processed all notifications already decoded.
     public func flushEvents() async {

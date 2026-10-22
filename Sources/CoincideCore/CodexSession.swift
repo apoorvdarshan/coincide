@@ -6,6 +6,9 @@ public actor CodexSession: ProviderSession {
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
     private let processWorkspace: URL
+    private let installationLease: CodexInstallationLease?
+    private let runtimeConfiguration: CodexRuntimeConfiguration?
+    private var closeTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var threadID: String?
     private var turnID: String?
@@ -26,11 +29,18 @@ public actor CodexSession: ProviderSession {
     private var accountReadID: UUID?
     private var accountUsageProjection: (value: CodexUsageSnapshot?, invalidated: Bool)?
 
-    public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"]) throws {
+    public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"],
+                environment: [String: String]? = nil, installationLease: CodexInstallationLease? = nil,
+                runtimeConfiguration: CodexRuntimeConfiguration? = nil) throws {
+        try runtimeConfiguration?.validate()
+        guard installationLease == nil || installationLease?.resolved.executable == executable else { throw CodexRuntimeConfiguration.invalid() }
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
         self.events = events; self.continuation = continuation
         processWorkspace = cwd
-        rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd, maximumFrameSize: 128 * 1_024 * 1_024)
+        self.installationLease = installationLease
+        self.runtimeConfiguration = runtimeConfiguration
+        rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd, maximumFrameSize: 128 * 1_024 * 1_024,
+                                    environment: environment, drainProcessOnClose: true)
     }
     public func connect() async throws {
         try Task.checkCancellation()
@@ -91,6 +101,7 @@ public actor CodexSession: ProviderSession {
         return try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).page(threadID: threadID, cursor: cursor, limit: limit)
     }
     public func forkConversation(source: ProviderConversationReference, boundary: ProviderHistoryBoundary, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot {
+        try validateRuntimeBinding(configuration)
         // A fork belongs to a fresh target actor. It must never retarget the source runtime.
         guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
         guard threadID == nil, !working, !historyMutationInFlight else { throw ProviderHistoryError(.notIdle) }
@@ -314,6 +325,7 @@ public actor CodexSession: ProviderSession {
         try await send(input: ProviderInput(text: text), thread: thread)
     }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
+        try validateRuntimeBinding(.init(thread: thread))
         guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
         guard !working, !historyMutationInFlight else { throw CoincideError("A turn or conversation history operation is already running in this thread.") }
         if let effort = thread.reasoningEffort {
@@ -427,10 +439,21 @@ public actor CodexSession: ProviderSession {
         try await rpc.respond(id: request.id, result: .object(["answers": .object(encoded)]))
     }
     public func close() async {
+        if let closeTask { await closeTask.value; return }
+        let task = Task { [self] in await finishClose() }
+        closeTask = task; await task.value
+    }
+    private func finishClose() async {
         shuttingDown = true; let connecting = connectionTask; connecting?.cancel(); await rpc.close()
         _ = try? await steeringTask?.task.value; steeringTask = nil
         await connecting?.value; connectionTask = nil
-        eventTask?.cancel(); eventTask = nil; continuation.finish()
+        let reading = eventTask; reading?.cancel(); await reading?.value; eventTask = nil; continuation.finish()
+        installationLease?.release()
+    }
+    private func validateRuntimeBinding(_ configuration: ProviderConfiguration) throws {
+        if let runtimeConfiguration, configuration.codexRuntimeBinding != runtimeConfiguration {
+            throw CoincideError("This input belongs to another Codex runtime or home. Reopen the intended conversation before sending it.")
+        }
     }
     private func consume(_ event: RPCEvent) async {
         switch event {
@@ -510,5 +533,9 @@ public actor CodexSession: ProviderSession {
         if let id = runID ?? eventRunID { continuation.yield(.context(runID: id, event: event)) }
         else { continuation.yield(event) }
     }
-    deinit { eventTask?.cancel() }
+    deinit {
+        eventTask?.cancel()
+        let rpc = rpc, lease = installationLease
+        Task { await rpc.close(); lease?.release() }
+    }
 }
