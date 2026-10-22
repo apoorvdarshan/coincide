@@ -57,9 +57,11 @@ must each be mapped and verified before declaring parity.
   metadata is separate evidence, and installed 1.x chat is unverified. V2 active
   steering preserves original-run inbox ownership. Native v2 message-ordered
   history, reviewed fork/rewind and explicit staged-revert recovery are now
-  implemented with passing local protocol, Engine and native view checks. V1 steering
-  and history, session browsing/import and reconnect reconciliation remain
-  unfinished. Existing OpenCode ACP conversations retain their original path and
+  implemented with passing local protocol, Engine and native view checks. V1
+  history now copies and adopts an exact prefix with durable candidate publication,
+  immutable run-reference mapping and explicit keep-original recovery; its focused
+  local protocol/Engine/native-view checks pass. V1 steering, session browsing/import
+  and reconnect reconciliation remain unfinished. Existing OpenCode ACP conversations retain their original path and
   do not inherit native v2 history.
 - Native Codex Settings reads existing CLI account/plan and subscription allowance
   with identity consistency, sparse update and stale/unsupported handling. Email
@@ -279,11 +281,20 @@ must each be mapped and verified before declaring parity.
   stages or create sessions. Source/descendant quiet checks are process-local
   observations, not native CAS or external-writer exclusion. Direct, reducer,
   native view and real TCP/SSE-to-Engine history checks pass locally; no
-  installed/hosted history acceptance is claimed. V1 and ACP history remain
-  distinct unfinished paths. See [OpenCode HTTP boundaries](OPENCODE_HTTP.md).
+  installed/hosted history acceptance is claimed. ACP history remains a separate
+  unfinished path. See [OpenCode HTTP boundaries](OPENCODE_HTTP.md).
+- Native OpenCode v1 history uses exclusive native message cuts and complete
+  semantic copy proof. It never uses the file-restoring native revert. Rewind
+  adopts a verified fresh native session while keeping immutable run references;
+  later cuts follow validated positional maps. Candidate acknowledgement is saved
+  before further native I/O. Unknown outcomes are not replayed: exact known rewind
+  candidates can be re-proved by reads, or an explicit fresh unchanged-source
+  confirmation keeps the original with a separate-conversation warning. Quiet
+  checks do not exclude independent native writers; installed/hosted acceptance
+  remains unverified.
 - Native Run History now integrates explicit reviewed Fork After Run and Rewind
   Before Run actions. Eligibility requires verified native IDs or exact OpenCode
-  v2 input-message boundaries, local message attribution, a matching current
+  v1/v2 input-message boundaries, local message attribution, a matching current
   checkout, and an idle source without queued work, pending questions or
   unresolved workspace/setup/settlement/checkpoint
   gates. Completed runs can fork; rewind also requires a verified opening user
@@ -577,7 +588,7 @@ must each be mapped and verified before declaring parity.
 | Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, logical repository/folder/physical grouping and overrides, explicit checkout choice for new conversations, restored conversation selection, physical/group renaming and collapse, persistent manual ordering and aggregated activity/thread-creation sorting, confirmed atomic physical/group removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, explicit settlement generations and Resume, settings | Snooze/automatic settlement, undo, scratch projects, import/migration |
 | Codex | Installed CLI default, explicit managed complete 0.156.1 package or custom executable, captured runtime/home and scoped catalogs, private bounded runtime checks and in-use package leases; explicit native owned ChatGPT account Settings, vault and runtime admission; handshake, bounded paginated model discovery, native advertised reasoning controls with per-model preferences and concrete cwd-aware CLI default selection, captured reasoning in turns/queues/history, start/resume, streaming, command/file approvals, user questions, interrupt, reviewed same-workspace native fork and history-only rewind on the 0.163.x profile; bounded workspace-scoped skill discovery and literal composer mentions | Native downloader acceptance and actual owned ChatGPT sign-in/model execution, portable account profiles, full protocol coverage, broader usage telemetry, native commands/MCP/configuration controls, broader history contracts and cross-workspace transfer, all tool events; hosted skill-picker acceptance |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
-| OpenCode HTTP | Separate native v1/v2 actors, captured model/variant/agent/rules, bounded HTTP/SSE, text/tool/child ownership, permissions, questions/forms and Stop; v2 active steering; new v2 message-ordered reads, reviewed fork/history-only rewind and explicit staged-maintenance recovery with passing local protocol/Engine/native view checks | V1 steering/history, session browsing/import, native setup/auth, commands/skills, broader child/reconnect recovery, usage, broader history compatibility and installed/hosted acceptance; existing ACP remains separate |
+| OpenCode HTTP | Separate native v1/v2 actors, captured model/variant/agent/rules, bounded HTTP/SSE, text/tool/child ownership, permissions, questions/forms and Stop; v2 active steering; v2 message-ordered reads, reviewed fork/history-only rewind and explicit staged-maintenance recovery; v1 verified clone/adoption, durable candidate, repeated-run mapping and keep-original recovery with passing focused local checks | V1 steering, session browsing/import, native setup/auth, commands/skills, broader child/reconnect recovery, usage, broader history compatibility and installed/hosted acceptance; existing ACP remains separate |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, explicit Cursor/Copilot profiles, initialize-only connection checks, Cursor question/plan/todo/task/image extensions, original-run Copilot child attribution, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, complete OpenCode/Cursor/Copilot/Grok/Antigravity/Pi/Muse behavior and installed end-to-end evidence |
 | Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind, standalone restoration and combined provider-then-files intents with retained audit, explicit partial outcomes, inspect-only recovery and one-time latest-draft recall, legacy migration | Complete provider recovery, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, direct Codex/Claude/OpenCode v2/Muse same-turn steering and typed Pi adapter-run steering with passing offline checks, Queue/Steer preference and exact compatible queued promotion, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, workspace-scoped Codex skill chooser with `$` and optional `/skill:` triggers, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, native slash commands and broader inline triggers, other-provider skills, plans, restart/configuration-changing steering and remaining-provider delivery; hosted skill-picker acceptance |

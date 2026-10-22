@@ -60,8 +60,8 @@ extension WorkspaceSnapshot {
         guard let files = historyReview.files else { return }
         try files.validate()
         guard historyReview.kind == .rewindBeforeRun,
-              let thread = threads.first(where: { $0.id == historyReview.sourceThreadID && $0.projectID == historyReview.projectID }),
-              thread.conversationHistoryFileTarget(beforeRunID: historyReview.runID) == .available(files.target) else { throw WorkspaceCommandError("The rewind's exact workspace observation changed. Review it again.") }
+              threads.contains(where: { $0.id == historyReview.sourceThreadID && $0.projectID == historyReview.projectID }),
+              try conversationHistoryFileTarget(for: historyReview) == .available(files.target) else { throw WorkspaceCommandError("The rewind's exact workspace observation changed. Review it again.") }
         let restore = try combinedRestoreReview(history: historyReview, files: files, sourceFingerprint: files.sourceFingerprint)
         try validateCheckpointRestoreSource(restore, excludingOperationID: excludingOperationID)
     }
@@ -76,9 +76,16 @@ extension WorkspaceSnapshot {
               files.acknowledgedAt == nil, let fingerprint = files.postHistorySourceFingerprint,
               let thread = threads.first(where: { $0.id == operation.review.sourceThreadID && $0.projectID == operation.review.projectID }),
               operation.review.removedRunIDs.allSatisfy({ id in thread.runHistory?.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) == true }),
-              operation.review.removedMessageIDs.allSatisfy({ id in thread.messages.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) }),
-              thread.conversationHistoryFileTarget(beforeRunID: operation.review.runID, includingRemovedByHistoryOperationID: operation.id) == .available(files.review.target),
-              ProviderConfiguration(thread: thread) == operation.review.sourceConfiguration else { throw WorkspaceCommandError("The rewound conversation or its exact file target changed.") }
+              operation.review.removedMessageIDs.allSatisfy({ id in thread.messages.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) }) else { throw WorkspaceCommandError("The rewound conversation or its exact file target changed.") }
+        var expectedConfiguration = operation.review.sourceConfiguration
+        if operation.review.openCodeV1 != nil {
+            // The validated V1 result adopts a new native conversation while
+            // retaining the exact pre-adoption checkpoint/run audit. Only the
+            // current native reference changes; no other reviewed setting does.
+            expectedConfiguration.nativeThreadID = operation.result?.reference.nativeThreadID
+        }
+        guard ProviderConfiguration(thread: thread) == expectedConfiguration,
+              try conversationHistoryFileTarget(for: operation.review, includingRemovedByHistoryOperationID: operation.id) == .available(files.review.target) else { throw WorkspaceCommandError("The rewound conversation or its exact file target changed.") }
         let restore = try combinedRestoreReview(history: operation.review, files: files.review, sourceFingerprint: fingerprint)
         try validateCheckpointRestoreSource(restore, excludingOperationID: operation.id)
     }

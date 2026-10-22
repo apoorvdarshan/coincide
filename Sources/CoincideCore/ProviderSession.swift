@@ -52,6 +52,12 @@ public protocol ProviderSession: Actor {
     func choose(_ request: ApprovalRequest, optionID: String) async throws
     func close() async
     func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities
+    func openCodeV1HistorySnapshot(threadID: String) async throws -> OpenCodeV1HistorySnapshot
+    func applyOpenCodeV1History(review: OpenCodeV1HistoryReviewEvidence, kind: ConversationHistoryKind,
+        configuration: ProviderConfiguration,
+        candidate: @escaping @Sendable (OpenCodeV1HistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot
+    func inspectOpenCodeV1HistoryCandidate(review: OpenCodeV1HistoryReviewEvidence, candidate: OpenCodeV1HistoryCandidate,
+        configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
     func openCodeV2HistorySnapshot(threadID: String) async throws -> OpenCodeV2HistorySnapshot
     func applyOpenCodeV2History(review: OpenCodeV2HistoryReviewEvidence, kind: ConversationHistoryKind, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
     func clearOpenCodeV2HistoryStage(expected: OpenCodeV2HistorySnapshot) async throws -> OpenCodeV2HistorySnapshot
@@ -94,6 +100,12 @@ extension ProviderSession {
     }
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt { throw ProviderSteeringError(.unsupported) }
     public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities { throw ProviderHistoryError(.unsupported) }
+    public func openCodeV1HistorySnapshot(threadID: String) async throws -> OpenCodeV1HistorySnapshot { throw ProviderHistoryError(.unsupported) }
+    public func applyOpenCodeV1History(review: OpenCodeV1HistoryReviewEvidence, kind: ConversationHistoryKind,
+        configuration: ProviderConfiguration,
+        candidate: @escaping @Sendable (OpenCodeV1HistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
+    public func inspectOpenCodeV1HistoryCandidate(review: OpenCodeV1HistoryReviewEvidence, candidate: OpenCodeV1HistoryCandidate,
+        configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
     public func openCodeV2HistorySnapshot(threadID: String) async throws -> OpenCodeV2HistorySnapshot { throw ProviderHistoryError(.unsupported) }
     public func applyOpenCodeV2History(review: OpenCodeV2HistoryReviewEvidence, kind: ConversationHistoryKind, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
     public func clearOpenCodeV2HistoryStage(expected: OpenCodeV2HistorySnapshot) async throws -> OpenCodeV2HistorySnapshot { throw ProviderHistoryError(.unsupported) }

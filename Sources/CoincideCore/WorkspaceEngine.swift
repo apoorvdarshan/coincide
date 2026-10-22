@@ -420,7 +420,8 @@ extension WorkspaceEngine {
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
               let incarnation = threadIncarnations[threadID],
               let record = thread.runHistory?.first(where: { $0.id == runID && $0.removedByHistoryOperationID == nil }),
-              record.status.isTerminal, record.providerThreadID == thread.providerThreadID,
+              record.status.isTerminal,
+              record.providerThreadID == thread.providerThreadID || (thread.provider == .opencode && thread.openCodeConfiguration?.generation == .v1),
               record.configuration.provider == thread.provider,
               record.configuration.workspacePath == thread.workspacePath else {
             throw WorkspaceCommandError("Finish this conversation's work and select a run with verified provider history before continuing.")
@@ -429,19 +430,30 @@ extension WorkspaceEngine {
         let rawPrefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
         let prefix = kind == .forkAfterRun ? try revision.snapshot.verifiedForkPrefix(rawPrefix) : rawPrefix
         let native: ReviewedNativeHistory
+        let openCodeV1: OpenCodeV1HistoryReviewEvidence?
         let openCodeV2: OpenCodeV2HistoryReviewEvidence?
-        if thread.provider == .opencode, thread.openCodeConfiguration?.generation == .v2 {
+        if thread.provider == .opencode, thread.openCodeConfiguration?.generation == .v1 {
+            guard openCodeHistoryScopeIsolated(thread: thread), let nativeID = thread.providerThreadID else { throw ProviderHistoryError(.notIdle) }
+            let observed = try await readHistory(thread: thread) { try await $0.openCodeV1HistorySnapshot(threadID: nativeID) }
+            guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: fingerprint),
+                  openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            let evidence = try OpenCodeV1HistoryReviewEvidence.make(source: observed, snapshot: revision.snapshot,
+                thread: thread, runID: runID, kind: kind)
+            openCodeV1 = evidence; openCodeV2 = nil
+            native = .init(snapshot: try .init(reference: observed.reference, workspacePath: observed.workspacePath,
+                historyMode: .messageOrdered, openCodeV1: observed), boundary: evidence.boundary, resultingHead: nil)
+        } else if thread.provider == .opencode, thread.openCodeConfiguration?.generation == .v2 {
             guard openCodeHistoryScopeIsolated(thread: thread), let nativeID = thread.providerThreadID else { throw ProviderHistoryError(.notIdle) }
             let observed = try await readHistory(thread: thread) { try await $0.openCodeV2HistorySnapshot(threadID: nativeID) }
             guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: fingerprint),
                   openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
             let evidence = try OpenCodeV2HistoryReviewEvidence.make(source: observed, snapshot: revision.snapshot,
                 thread: thread, runID: runID, kind: kind)
-            openCodeV2 = evidence
+            openCodeV1 = nil; openCodeV2 = evidence
             native = .init(snapshot: try .init(reference: observed.reference, workspacePath: observed.workspacePath,
                 historyMode: .messageOrdered, openCodeV2: observed), boundary: evidence.boundary, resultingHead: nil)
         } else {
-            openCodeV2 = nil
+            openCodeV1 = nil; openCodeV2 = nil
             native = try await readHistory(thread: thread) { session in
                 try await Self.readReviewedNativeHistory(session: session, thread: thread, runID: runID, kind: kind)
             }
@@ -450,7 +462,7 @@ extension WorkspaceEngine {
               revision.snapshot.canReviewConversationHistory(threadID: threadID) else { throw ProviderHistoryError(.historyChanged) }
         let activeRecords = (thread.runHistory ?? []).filter { $0.removedByHistoryOperationID == nil }
         guard let index = activeRecords.firstIndex(where: { $0.id == runID }),
-              native.snapshot.headTurnID != nil || openCodeV2 != nil else { throw ProviderHistoryError(.boundaryUnavailable) }
+              native.snapshot.headTurnID != nil || openCodeV2 != nil || openCodeV1 != nil else { throw ProviderHistoryError(.boundaryUnavailable) }
         let review = try ConversationHistoryReview(kind: kind, sourceThreadID: threadID, projectID: thread.projectID,
             runID: runID, sourceIncarnation: incarnation, sourceConfiguration: .init(thread: thread),
             targetConfiguration: record.configuration, sourceReference: native.snapshot.reference,
@@ -459,7 +471,8 @@ extension WorkspaceEngine {
             removedMessageIDs: kind == .rewindBeforeRun ? thread.visibleMessages.dropFirst(prefix.count).map(\.id) : [],
             sourceFingerprint: fingerprint, targetThreadID: kind == .forkAfterRun ? UUID() : nil,
             suggestedTitle: String((thread.title + " — Fork").prefix(200)),
-            recallPromptOnSuccess: kind == .rewindBeforeRun && recallPromptOnSuccess ? true : nil, openCodeV2: openCodeV2)
+            recallPromptOnSuccess: kind == .rewindBeforeRun && recallPromptOnSuccess ? true : nil,
+            openCodeV2: openCodeV2, openCodeV1: openCodeV1)
         historyReviews[review.id] = .init(review: review, digest: try historyReviewDigest(review))
         return review
     }
@@ -480,7 +493,7 @@ extension WorkspaceEngine {
             guard fresh.boundary == keepReview.boundary, fresh.reviewedHeadTurnID == keepReview.reviewedHeadTurnID,
                   let thread = revision.snapshot.threads.first(where: { $0.id == fresh.sourceThreadID }),
                   revision.snapshot.canReviewCheckpointRestore(threadID: thread.id),
-                  case .available(let target) = thread.conversationHistoryFileTarget(beforeRunID: fresh.runID),
+                  case .available(let target) = try revision.snapshot.conversationHistoryFileTarget(for: fresh),
                   restoreRuntimeScopeIsolated(thread: thread, path: target.receipt.plan.repositoryPath) else {
                 throw WorkspaceCommandError("This boundary has no verified checkpoint in an isolated workspace. Rewind and keep files instead.")
             }
@@ -498,7 +511,8 @@ extension WorkspaceEngine {
                 expectedResultHeadTurnID: fresh.expectedResultHeadTurnID, prefix: fresh.prefix,
                 removedRunIDs: fresh.removedRunIDs, removedMessageIDs: fresh.removedMessageIDs,
                 sourceFingerprint: fresh.sourceFingerprint, targetThreadID: fresh.targetThreadID,
-                suggestedTitle: fresh.suggestedTitle, files: files, recallPromptOnSuccess: fresh.recallPromptOnSuccess, openCodeV2: fresh.openCodeV2)
+                suggestedTitle: fresh.suggestedTitle, files: files, recallPromptOnSuccess: fresh.recallPromptOnSuccess,
+                openCodeV2: fresh.openCodeV2, openCodeV1: fresh.openCodeV1)
             guard ownsHistorySource(threadID: review.sourceThreadID, incarnation: review.sourceIncarnation, fingerprint: review.sourceFingerprint),
                   restoreRuntimeScopeIsolated(thread: thread, path: git.currentPlan.repositoryPath) else { throw CancellationError() }
             try revision.snapshot.validateConversationHistoryFilesReview(review)
@@ -558,6 +572,7 @@ extension WorkspaceEngine {
               thread.runtimeRequests.isEmpty,
               try revision.snapshot.historySourceFingerprint(threadID: thread.id) == operation.review.sourceFingerprint else { throw ProviderHistoryError(.historyChanged) }
         let expected = operation.review
+        if expected.openCodeV1 != nil { return try await reconcileOpenCodeV1History(operation: operation, thread: thread, incarnation: incarnation) }
         if expected.openCodeV2 != nil { return try await reconcileOpenCodeV2History(operation: operation, thread: thread, incarnation: incarnation) }
         let snapshot = try await readHistory(thread: thread) { session in
             let capabilities = try await session.historyCapabilities(threadID: expected.sourceReference.nativeThreadID)
@@ -659,6 +674,9 @@ extension WorkspaceEngine {
         case .conversationHistoryAccepted(let review, _):
             return threadIncarnations[review.sourceThreadID] == review.sourceIncarnation
         case .conversationHistoryDispatching(let thread, _, let incarnation): return threadIncarnations[thread] == incarnation
+        case .conversationHistoryCandidateObserved(let id, _, let incarnation):
+            guard let operation = revision.snapshot.conversationHistoryOperation(id) else { return false }
+            return operation.review.sourceIncarnation == incarnation && threadIncarnations[operation.review.sourceThreadID] == incarnation
         case .conversationHistoryEffectResult(let request, _, let incarnation): return request.threadID.map { threadIncarnations[$0] == incarnation } ?? false
         case .conversationHistoryReconciled(let id, let incarnation, _):
             guard let operation = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == id }) else { return false }
@@ -783,7 +801,13 @@ extension WorkspaceEngine {
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
               ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint) else { return .cancelled }
         let review = operation.review
-        if review.openCodeV2 != nil, !openCodeHistoryScopeIsolated(thread: thread) { return .failed(ConversationHistoryOperation.failureMessage) }
+        if review.openCodeV1 != nil || review.openCodeV2 != nil {
+            do { try await drainOpenCodeHistoryCleanup(thread: thread) }
+            catch { return .failed(ConversationHistoryOperation.failureMessage) }
+            guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+                  revision.snapshot.conversationHistoryOperation(operationID) == operation,
+                  openCodeHistoryScopeIsolated(thread: thread) else { return .failed(ConversationHistoryOperation.failureMessage) }
+        }
         if let files = review.files {
             do {
                 try revision.snapshot.validateConversationHistoryFilesReview(review, excludingOperationID: operationID)
@@ -811,6 +835,7 @@ extension WorkspaceEngine {
             let id = UUID(); metadataID = id; session = try factory(configured)
             metadataSessions[id] = .init(session: session, path: configured.workspacePath, threadID: threadID, projectID: thread.projectID, configuration: .init(thread: thread), launchConfiguration: .init(thread: configured))
         }
+        let reusedRuntimeID = metadataID == nil ? runtimes[threadID]?.id : nil
         var dispatched = false
         let result: EffectResult
         do {
@@ -825,7 +850,14 @@ extension WorkspaceEngine {
             }
             try Task.checkCancellation(); dispatched = true
             let snapshot: ProviderConversationSnapshot
-            if let evidence = review.openCodeV2 {
+            if let evidence = review.openCodeV1 {
+                guard openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
+                let configuration = review.kind == .rewindBeforeRun ? review.sourceConfiguration : review.targetConfiguration
+                snapshot = try await session.applyOpenCodeV1History(review: evidence, kind: review.kind, configuration: configuration) { [weak self] candidate in
+                    guard let self else { throw CancellationError() }
+                    try await self.publishOpenCodeV1HistoryCandidate(candidate, review: review, incarnation: incarnation)
+                }
+            } else if let evidence = review.openCodeV2 {
                 guard openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
                 snapshot = try await session.applyOpenCodeV2History(review: evidence, kind: review.kind, configuration: review.targetConfiguration)
             }
@@ -837,6 +869,10 @@ extension WorkspaceEngine {
             try Task.checkCancellation()
             guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint) else { throw CancellationError() }
             try review.validateResult(snapshot)
+            if review.openCodeV1 != nil {
+                guard revision.snapshot.conversationHistoryOperation(operationID)?.openCodeV1Candidate?.reference == snapshot.reference,
+                      openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.outcomeUncertain) }
+            }
             result = .conversationHistoryConfirmed(snapshot)
         } catch {
             if dispatched, error is CancellationError || (error as? ProviderHistoryError)?.kind == .outcomeUncertain {
@@ -845,39 +881,82 @@ extension WorkspaceEngine {
             else { result = .failed(ConversationHistoryOperation.failureMessage) }
         }
         let retireSource: Bool
-        if review.openCodeV2 != nil, case .failed = result { retireSource = false }
+        if review.openCodeV2 != nil || review.openCodeV1 != nil, case .failed = result { retireSource = false }
         else { retireSource = review.kind == .rewindBeforeRun }
         if let metadataID {
             if let close = beginMetadataClose(metadataID) { await close.value }
             metadataSessions.removeValue(forKey: metadataID)
-        } else if retireSource {
-            // Retire the old event stream after every attempted native rewind.
-            // Delayed notifications cannot become messages on its new history.
-            await closeRuntime(threadID)
+        } else if retireSource, let reusedRuntimeID {
+            // Retire this exact old event stream after success/uncertainty.
+            // A proved pre-write refusal keeps its healthy OpenCode actor.
+            await closeRuntime(threadID, matching: reusedRuntimeID)
         }
         return result
+    }
+
+    private func publishOpenCodeV1HistoryCandidate(_ candidate: OpenCodeV1HistoryCandidate,
+        review: ConversationHistoryReview, incarnation: UUID) async throws {
+        guard let evidence = review.openCodeV1,
+              ownsHistorySource(threadID: review.sourceThreadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              let operation = revision.snapshot.conversationHistoryOperation(review.id), operation.review == review,
+              operation.phase == .dispatching,
+              let thread = revision.snapshot.threads.first(where: { $0.id == review.sourceThreadID }),
+              openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [candidate.reference.nativeThreadID]) else {
+            throw ProviderHistoryError(.outcomeUncertain)
+        }
+        try evidence.validateCandidate(candidate)
+        let receipt = try await enqueue(.conversationHistoryCandidateObserved(operationID: review.id, candidate: candidate, incarnation: incarnation))
+        guard receipt.rejection == nil,
+              ownsHistorySource(threadID: review.sourceThreadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              let current = revision.snapshot.conversationHistoryOperation(review.id), current.review == review,
+              current.phase == .dispatching, current.openCodeV1Candidate == candidate,
+              openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [candidate.reference.nativeThreadID]) else {
+            throw ProviderHistoryError(.outcomeUncertain)
+        }
     }
 }
 
 extension WorkspaceEngine {
     private func openCodeHistoryScopeOwnedElsewhere(thread: CodingThread) -> Bool {
         guard let nativeID = thread.providerThreadID, let identity = thread.openCodeConfiguration?.runtimeIdentity else { return false }
-        return (revision.snapshot.conversationHistoryOperations ?? []).contains {
-            $0.locksSource && $0.review.sourceThreadID != thread.id && $0.review.openCodeV2?.source.runtimeIdentity == identity &&
-                $0.review.sourceReference.nativeThreadID == nativeID
+        return (revision.snapshot.conversationHistoryOperations ?? []).contains { operation in
+            guard operation.review.sourceThreadID != thread.id,
+                  (operation.review.openCodeV1?.source.runtimeIdentity ?? operation.review.openCodeV2?.source.runtimeIdentity) == identity else { return false }
+            if operation.locksSource && operation.review.sourceReference.nativeThreadID == nativeID { return true }
+            return operation.reservesOpenCodeV1Candidate && operation.openCodeV1Candidate?.reference.nativeThreadID == nativeID
         }
     }
-    private func openCodeHistoryScopeIsolated(thread: CodingThread) -> Bool {
-        guard let identity = thread.openCodeConfiguration?.runtimeIdentity, identity.generation == .v2,
+    private func openCodeHistoryScopeIsolated(thread: CodingThread, additionalNativeIDs: Set<String> = []) -> Bool {
+        guard thread.provider == .opencode, let identity = thread.openCodeConfiguration?.runtimeIdentity,
               let nativeID = thread.providerThreadID else { return false }
-        if revision.snapshot.threads.contains(where: {
-            $0.id != thread.id && $0.provider == .opencode && $0.openCodeConfiguration?.runtimeIdentity == identity && $0.providerThreadID == nativeID
-        }) { return false }
+        var ids = additionalNativeIDs.union([nativeID])
+        for operation in revision.snapshot.conversationHistoryOperations ?? [] where operation.locksSource && operation.review.sourceThreadID == thread.id {
+            guard (operation.review.openCodeV1?.source.runtimeIdentity ?? operation.review.openCodeV2?.source.runtimeIdentity) == identity else { continue }
+            ids.insert(operation.review.sourceReference.nativeThreadID)
+            if let candidate = operation.openCodeV1Candidate { ids.insert(candidate.reference.nativeThreadID) }
+        }
+        // Native ownership is runtime-wide even when a stale header names a
+        // different cwd. Exact workspace equality remains part of copy proof.
+        let nativeIDs = ids
+        func captured(_ configuration: ProviderConfiguration, native: String?) -> Bool {
+            guard let value = native ?? configuration.nativeThreadID else { return false }
+            return configuration.provider == .opencode && configuration.openCodeConfiguration?.runtimeIdentity == identity &&
+                nativeIDs.contains(value)
+        }
+        for other in revision.snapshot.threads where other.id != thread.id {
+            if captured(.init(thread: other), native: other.providerThreadID) { return false }
+            if let run = other.activeRun, captured(run.configuration,
+                native: run.configuration.nativeThreadID ?? other.runHistory?.first(where: { $0.id == run.id })?.providerThreadID) { return false }
+            if other.queuedTurns.contains(where: { captured($0.configuration, native: $0.configuration.nativeThreadID) }) { return false }
+        }
+        if let runtime = runtimes[thread.id], runtime.provider != thread.provider || runtime.path != thread.workspacePath ||
+            runtime.openCodeIdentity != identity || runtime.id != thread.runtimeID { return false }
         if metadataSessions.values.contains(where: {
-            $0.threadID != thread.id && $0.configuration?.openCodeConfiguration?.runtimeIdentity == identity && $0.configuration?.nativeThreadID == nativeID
+            $0.threadID != thread.id && (captured($0.launchConfiguration, native: $0.launchConfiguration.nativeThreadID) ||
+                $0.configuration.map { captured($0, native: $0.nativeThreadID) } == true)
         }) { return false }
         if historyReads.values.contains(where: {
-            $0.threadID != thread.id && $0.configuration.openCodeConfiguration?.runtimeIdentity == identity && $0.configuration.nativeThreadID == nativeID
+            $0.threadID != thread.id && captured($0.configuration, native: $0.configuration.nativeThreadID)
         }) { return false }
         // A detached owner has lost its thread/header reference. Wait for its
         // exact recorded cleanup rather than infer a different native session.
@@ -885,6 +964,25 @@ extension WorkspaceEngine {
             cleanup.workspacePaths.contains {
                 WorkspaceSnapshot.checkpointRestorePathsOverlap($0, thread.workspacePath)
             }
+        }
+    }
+
+    /// Wait for known owned closes before opening another observer of the same
+    /// checkout. A mismatched retained actor is drained, never reused by path.
+    private func drainOpenCodeHistoryCleanup(thread: CodingThread) async throws {
+        guard thread.provider == .opencode else { return }
+        if let runtime = runtimes[thread.id], runtime.provider != thread.provider || runtime.path != thread.workspacePath ||
+            runtime.openCodeIdentity != thread.openCodeConfiguration?.runtimeIdentity || runtime.id != thread.runtimeID {
+            await closeRuntime(thread.id, matching: runtime.id)
+        }
+        while true {
+            try Task.checkCancellation()
+            guard !closing, !stoppingEffects, fatalError == nil else { throw CancellationError() }
+            let tasks = cleanupTasks.values.filter { cleanup in
+                cleanup.workspacePaths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap($0, thread.workspacePath) }
+            }.map(\.task)
+            guard !tasks.isEmpty else { return }
+            for task in tasks { await task.value }
         }
     }
 
@@ -899,6 +997,91 @@ extension WorkspaceEngine {
                observed.stage == result.stage, observed.fork == result.fork { return result }
         }
         return observed
+    }
+
+    private func reconcileOpenCodeV1History(operation: ConversationHistoryOperation, thread: CodingThread,
+                                            incarnation: UUID) async throws -> WorkspaceCommandReceipt {
+        let review = operation.review
+        guard let evidence = review.openCodeV1, let candidate = operation.openCodeV1Candidate else {
+            throw ProviderHistoryError(.boundaryUnavailable)
+        }
+        try evidence.validateCandidate(candidate)
+        try await drainOpenCodeHistoryCleanup(thread: thread)
+        guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperation(operation.id) == operation,
+              openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [candidate.reference.nativeThreadID]) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        let oldRuntimeID = runtimes[thread.id]?.id
+        // A candidate is an exact acknowledged ID, not native ancestry. This
+        // method must prove both source and copy plus installed policy by reads;
+        // it cannot finish missing configuration or repeat the native fork.
+        let observed = try await readHistory(thread: thread, forceOwnedMetadata: true) { session in
+            try await session.inspectOpenCodeV1HistoryCandidate(review: evidence, candidate: candidate, configuration: review.sourceConfiguration)
+        }
+        try review.validateResult(observed)
+        guard observed.reference == candidate.reference,
+              ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperation(operation.id) == operation,
+              openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [candidate.reference.nativeThreadID]) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        if let oldRuntimeID { await closeRuntime(thread.id, matching: oldRuntimeID) }
+        guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: review.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperation(operation.id) == operation,
+              openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [candidate.reference.nativeThreadID]) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        let receipt = try await enqueue(.conversationHistoryReconciled(operationID: operation.id, incarnation: incarnation, result: .applied(observed)))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+
+    /// Inspect only the exact original native session. An unknown fork may
+    /// remain elsewhere; neither enumeration nor a guessed ID is recovery proof.
+    public func inspectOpenCodeV1Original(operationID: UUID) async throws -> OpenCodeV1HistorySnapshot {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let operation = revision.snapshot.conversationHistoryOperation(operationID), operation.phase == .unconfirmed,
+              operation.review.kind == .rewindBeforeRun, let evidence = operation.review.openCodeV1,
+              let thread = revision.snapshot.threads.first(where: { $0.id == operation.review.sourceThreadID }),
+              let incarnation = threadIncarnations[thread.id], !thread.isBusy, thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty,
+              ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint) else {
+            throw ProviderHistoryError(.historyChanged)
+        }
+        try await drainOpenCodeHistoryCleanup(thread: thread)
+        guard revision.snapshot.conversationHistoryOperation(operationID) == operation,
+              ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint),
+              openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+        let observed = try await readHistory(thread: thread, forceOwnedMetadata: true) {
+            try await $0.openCodeV1HistorySnapshot(threadID: evidence.source.reference.nativeThreadID)
+        }
+        try observed.validate()
+        guard observed == evidence.source,
+              ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperation(operationID) == operation,
+              openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+        return observed
+    }
+
+    /// Explicitly keep the re-proved original; this changes only the durable
+    /// local resolution and preserves every possible native orphan/candidate.
+    @discardableResult public func keepOpenCodeV1Original(operationID: UUID,
+        expected: OpenCodeV1HistorySnapshot) async throws -> WorkspaceCommandReceipt {
+        try expected.validate()
+        let observed = try await inspectOpenCodeV1Original(operationID: operationID)
+        guard observed == expected, let operation = revision.snapshot.conversationHistoryOperation(operationID),
+              operation.phase == .unconfirmed, let thread = revision.snapshot.threads.first(where: { $0.id == operation.review.sourceThreadID }),
+              let incarnation = threadIncarnations[thread.id],
+              ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint),
+              openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+        let receipt = try await enqueue(.conversationHistoryReconciled(operationID: operationID, incarnation: incarnation,
+            result: .openCodeV1NotAdopted(observed)))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        if let files = operation.review.files {
+            await discardCheckpointRestoreScratch(files.gitReview, threadID: thread.id, projectID: thread.projectID)
+        }
+        return receipt
     }
 
     private func reconcileOpenCodeV2History(operation: ConversationHistoryOperation, thread: CodingThread,
@@ -2209,8 +2392,8 @@ public actor WorkspaceEngine {
         case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false, !isCodexAuthenticationLocked(configuration) else { return .cancelled }
-            guard !revision.snapshot.isOpenCodeV2HistoryScopeLocked(configuration: configuration,
-                nativeThreadID: configuration.nativeThreadID ?? thread.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
+            guard !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration,
+                nativeThreadID: configuration.nativeThreadID ?? thread.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? thread.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
             await awaitCheckpointDrains(threadID: thread.id)
             guard checkpointProviderReleased(threadID: thread.id, runID: runID) else { return .cancelled }
             let input = try await attachments.prepare(text: prompt, attachments: references ?? [])
@@ -2231,8 +2414,8 @@ public actor WorkspaceEngine {
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false,
                   runtimes[thread.id]?.id == runtime.id else { return .cancelled }
             try Task.checkCancellation()
-            guard !revision.snapshot.isOpenCodeV2HistoryScopeLocked(configuration: configuration,
-                nativeThreadID: configuration.nativeThreadID ?? configured.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
+            guard !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration,
+                nativeThreadID: configuration.nativeThreadID ?? revision.snapshot.threads.first(where: { $0.id == thread.id })?.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? configured.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
             try await runtime.session.send(input: input, thread: configured)
             return .succeeded
         case .providerInterrupt(_, let runID):
@@ -2394,6 +2577,11 @@ public actor WorkspaceEngine {
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
+        let configuration = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
+        let nativeID = configuration.nativeThreadID ?? thread.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? thread.providerThreadID
+        guard !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) else {
+            throw WorkspaceCommandError("This provider conversation is held by a pending history action.")
+        }
         if let captured = ProviderConfiguration(thread: thread).codexRuntimeBinding, captured.authenticationMode == .ownedChatGPT {
             guard captured.accountBinding != nil, let current = revision.snapshot.threads.first(where: { $0.id == thread.id }),
                   ProviderConfiguration(thread: current).codexRuntimeBinding == captured else { throw CodexAccountError.staleAccount }
@@ -2411,6 +2599,9 @@ public actor WorkspaceEngine {
         try Task.checkCancellation()
         // Closing the previous process is an await: removal may have committed during that I/O.
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
+        guard !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) else {
+            throw WorkspaceCommandError("This provider conversation is held by a pending history action.")
+        }
         let id = UUID(), session = try factory(thread)
         var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding, antigravityBinding: ProviderConfiguration(thread: thread).antigravityRuntimeBinding, codexBinding: ProviderConfiguration(thread: thread).codexRuntimeBinding)
         runtimes[thread.id] = runtime
@@ -2630,6 +2821,7 @@ public actor WorkspaceEngine {
                   revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         }
         guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(.init(thread: thread)),
+              !revision.snapshot.isOpenCodeHistoryScopeLocked(configuration: .init(thread: thread), nativeThreadID: thread.providerThreadID),
               !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else { throw CancellationError() }
         var metadataLaunch = thread
         if metadataLaunch.provider == .codex {

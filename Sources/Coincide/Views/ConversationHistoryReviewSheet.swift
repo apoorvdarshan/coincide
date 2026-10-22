@@ -127,6 +127,11 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
                         if let files = review.files { ConversationHistoryFilesReviewSection(files: files) }
+                        if review.openCodeV1 != nil, kind == .rewindBeforeRun {
+                            Text("OpenCode v1 creates and verifies a separate native conversation, then switches this conversation to it. The original native conversation is kept. Your current settings and latest draft stay unchanged until the optional prompt recall.")
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("conversation-history-v1-adoption")
+                        }
                         if kind == .forkAfterRun, operation == nil {
                             TextField("New conversation name", text: $title)
                                 .accessibilityIdentifier("conversation-history-title").disabled(accepting)
@@ -148,7 +153,12 @@ struct ConversationHistoryReviewContent<Status: View>: View {
                                 if let head = review.reviewedHeadTurnID {
                                     LabeledContent("Reviewed head", value: head)
                                 }
-                                if let evidence = review.openCodeV2 {
+                                if let evidence = review.openCodeV1 {
+                                    if let head = evidence.source.messages.last?.id { LabeledContent("Reviewed message head", value: head) }
+                                    LabeledContent("Selected opening message", value: evidence.selectedOpeningMessageID)
+                                    Text("OpenCode v1 copies native messages at the exact reviewed cut. Copied message IDs change; historical run IDs and their audit are retained.")
+                                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                } else if let evidence = review.openCodeV2 {
                                     if let head = evidence.source.headMessageID { LabeledContent("Reviewed message head", value: head) }
                                     LabeledContent("Selected opening message", value: evidence.selectedOpeningMessageID)
                                     Text("OpenCode message references identify the exact reviewed inputs; they are not native provider turn IDs.")
@@ -243,6 +253,7 @@ enum ConversationHistoryPresentation {
         operation.isWorking
     }
     static func status(_ operation: ConversationHistoryOperation) -> String {
+        if operation.error == ConversationHistoryOperation.openCodeV1NotAdoptedMessage { return String(localized: "Original conversation kept") }
         if operation.phase == .unconfirmed, let maintenance = operation.maintenance {
             switch maintenance.phase {
             case .accepted, .dispatching: return String(localized: "Clearing pending provider revert…")

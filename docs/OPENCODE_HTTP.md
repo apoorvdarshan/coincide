@@ -8,9 +8,10 @@ a real loopback HTTP/SSE-to-Engine FIFO test for v1, pass. Hosted acceptance
 is pending. Installed 2.1.2 metadata observation is distinct from a native
 conversation test; installed 1.x execution has not been verified. Existing ACP
 conversations retain their original transport and captured configuration. Native
-v2 history reads, reviewed fork/rewind and explicit staged-revert recovery are
-implemented and pass local protocol, Engine and native view checks. No
-installed-provider or hosted history acceptance is claimed.
+v1 history uses verified native clone/adoption with durable candidate recovery;
+v2 history uses reviewed fork/rewind and explicit staged-revert recovery. Both
+pass local protocol, Engine, reducer and native view checks. No installed-provider
+or hosted history acceptance is claimed.
 
 ## Generation and connection boundaries
 
@@ -63,7 +64,7 @@ make OpenCode's global stream durable.
 
 ## Captured native conversation configuration
 
-The native provider choice is separate from ACP. Storage version 35 prevents an
+The native provider choice is separate from ACP. Storage version 36 prevents an
 older binary from reopening unfamiliar native configuration, run, effect and
 message-history recovery semantics. Legacy Codex, Claude and ACP payloads still
 decode without native OpenCode settings. The durable value captures instance identity, generation,
@@ -160,6 +161,55 @@ A late Stop cannot target a successor run. V1 does not inherit these v2 routes.
 Offline protocol and production TCP/SSE-to-Engine checks are separate from
 installed-provider acceptance.
 
+## Native OpenCode 1 history
+
+The v1 implementation reads chronological `{info, parts}` pages using only the
+opaque `X-Next-Cursor` header. It prepends older pages and refuses repeated
+cursors, duplicate identities, oversized pages or inventories. Reads are bounded
+to 10,000 messages, 100 pages, 40,000 parts, 4 MiB per page, 16 MiB in total and
+30 seconds. Two complete inventories, session metadata, descendant ownership,
+statuses and pending permissions/questions must agree. A source with a native
+revert marker is refused. These are quiet observations within one process;
+OpenCode v1 provides no expected-head compare-and-swap or external-writer lease.
+
+V1's native revert can restore files, so history-only Rewind Before Run instead
+forks the exact retained prefix and adopts the verified new native session inside
+the same local conversation. Fork After Run creates a separate local conversation.
+Both use the native exclusive lexical message cut, verified against the observed
+chronological prefix. No revert, unrevert, model turn or native deletion is sent.
+An empty retained prefix is valid. Native compaction and its explicit continuation
+remain inside their owning run; unrelated synthetic or replayed user input is
+not silently claimed.
+
+The canonical copy proof covers complete message information and parts. It
+normalizes only native-regenerated message/part/session ownership IDs and the
+assistant parent's earlier-user position. Native compaction `tail_start_id`,
+tool data, attachments, settings and every other payload field remain literal.
+Copied message and part IDs must be disjoint from the entire source inventory.
+V1 exposes no fork ancestry field: title, time and subagent `parentID` are never
+used to infer one.
+
+After an acknowledged fork, the Engine durably records the exact candidate before
+further native reads or clone-only permission configuration. Adoption requires the
+full copy proof, exact captured agent/permission readback and an unchanged source.
+Rewind preserves the latest local settings, draft and immutable original run IDs;
+subsequent cuts resolve those IDs through prior verified positional copy maps.
+Storage 36 retains the candidate and mapping evidence. Source and candidate native
+sessions remain reserved while the action is pending, including aliases captured
+by current headers, active runs or queued inputs.
+
+A lost fork response can leave an unknown separate native conversation. The app
+never guesses its ID or retries the fork. A known rewind candidate can be adopted after
+restart only through read-only copy and permission verification. An unconfirmed
+fork remains a recorded uncertainty; it is not retried or automatically adopted. Otherwise an
+explicit **Keep Original Conversation** confirmation rechecks the complete
+unchanged source and releases the local hold, warning that a separate native
+conversation may remain. It does not delete native history, resend input or alter
+files. Installed-provider and hosted history acceptance remain unverified.
+
+The native semantics above follow the pinned [1.14.19 session implementation](https://github.com/anomalyco/opencode/blob/27db54c859be74aa4caed3e58ae14ecc8bc34b30/packages/opencode/src/session/index.ts)
+and [session routes](https://github.com/anomalyco/opencode/blob/27db54c859be74aa4caed3e58ae14ecc8bc34b30/packages/opencode/src/server/routes/session.ts).
+
 ## Native OpenCode 2 history
 
 Native v2 history now has a dedicated message-ordered read, reviewed Fork After
@@ -239,7 +289,7 @@ establish installed or hosted history acceptance.
 
 Remaining work includes a shared instance lease registry,
 bounded reconnect/backfill reconciliation, complete autonomous/early-child
-recovery, v1 steering and history, session browsing/import, broader native history
+recovery, v1 steering, session browsing/import, broader native history
 compatibility and installed/hosted history acceptance. V1 and v2 history have
 distinct semantics; existing ACP history remains unsupported and does not inherit
 the native v2 path. Native setup/authentication, commands, skills, usage and

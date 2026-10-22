@@ -120,6 +120,7 @@ enum EngineCommand: Codable, Sendable {
     case conversationHistoryAccepted(review: ConversationHistoryReview, title: String?)
     case conversationHistoryDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case conversationHistoryEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
+    case conversationHistoryCandidateObserved(operationID: UUID, candidate: OpenCodeV1HistoryCandidate, incarnation: UUID)
     case conversationHistoryReconciled(operationID: UUID, incarnation: UUID, result: ConversationHistoryReconciliation)
     case conversationHistoryMaintenanceAccepted(operationID: UUID, attempt: ConversationHistoryMaintenanceAttempt, incarnation: UUID)
     case conversationHistoryMaintenanceDispatching(threadID: UUID, operationID: UUID, attemptID: UUID, incarnation: UUID)
@@ -175,7 +176,7 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         let reduced: GeneralReduction
         switch command {
-        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult,
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved,
              .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
              .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt):
             reduced = .init(decision: try reduceConversationHistory(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
@@ -221,6 +222,8 @@ struct WorkspaceDecision: Sendable {
             try decision.dispatchConversationHistory(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
         case .conversationHistoryEffectResult(let request, let result, let incarnation):
             decision.finishConversationHistory(request, result: result, incarnation: incarnation, now: now)
+        case .conversationHistoryCandidateObserved(let operationID, let candidate, let incarnation):
+            try decision.recordOpenCodeV1HistoryCandidate(operationID: operationID, candidate: candidate, incarnation: incarnation, now: now)
         case .conversationHistoryReconciled(let operationID, _, let result):
             try decision.reconcileConversationHistory(operationID: operationID, result: result, now: now)
         case .conversationHistoryMaintenanceAccepted(let operationID, let attempt, let incarnation):
@@ -316,7 +319,7 @@ struct WorkspaceDecision: Sendable {
         if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
         if case .provider(let threadID, _, _) = command, snapshot.isCheckpointRestoreLocked(threadID: threadID) || snapshot.isPullRequestCreationLocked(threadID: threadID) || snapshot.isPullRequestCheckoutLocked(threadID: threadID) { return .init(decision: decision, requiresFinalization: false) }
         switch command {
-        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult,
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved,
              .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
              .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt),
              .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
@@ -1138,11 +1141,9 @@ struct WorkspaceDecision: Sendable {
         if case .thread(let nativeID) = event {
             let owner = snapshot.threads[index]
             let configuration = owner.activeRun?.configuration ?? ProviderConfiguration(thread: owner)
-            if (snapshot.conversationHistoryOperations ?? []).contains(where: {
-                $0.locksSource && $0.review.sourceThreadID != owner.id &&
-                    $0.review.openCodeV2?.source.runtimeIdentity == configuration.openCodeConfiguration?.runtimeIdentity &&
-                    $0.review.openCodeV2 != nil && $0.review.sourceReference.nativeThreadID == nativeID
-            }) { event = .connectionClosed("This provider conversation is held by another conversation's pending history action.") }
+            if snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) {
+                event = .connectionClosed("This provider conversation is held by another conversation's pending history action.")
+            }
         }
         var thread = snapshot.threads[index]
         if let run = thread.activeRun, thread.runHistory?.first(where: { $0.id == run.id })?.checkpoints?.providerReleased == false {

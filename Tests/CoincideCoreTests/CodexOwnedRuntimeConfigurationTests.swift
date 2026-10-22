@@ -131,7 +131,7 @@ private func ownedConfigurationContainsPrivateField(_ value: JSONValue) -> Bool 
     let database = try WorkspaceDatabase(url: url)
     let migrated = try await database.load()
     let migratedVersion = try ownedConfigurationStorageVersion(url)
-    #expect(migrated == expectedLegacy && migratedVersion == 35)
+    #expect(migrated == expectedLegacy && migratedVersion == 36)
     #expect(migrated.threads[0].activeRun?.configuration.codexRuntimeConfiguration == legacyConfiguration)
     #expect(migrated.threads[0].queuedTurns.first?.configuration.codexRuntimeConfiguration == legacyConfiguration)
     let instance = UUID(), oldBinding = CodexAccountBinding(profileID: UUID(), generation: UUID()), newBinding = CodexAccountBinding(profileID: UUID(), generation: UUID())
@@ -165,10 +165,10 @@ private func ownedConfigurationContainsPrivateField(_ value: JSONValue) -> Bool 
 @Test func codexOwnedConfigurationAcceptsCurrentStorage35AndRefusesFuture36WithoutDowngradingIt() throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let current = root.appendingPathComponent("current.sqlite"), future = root.appendingPathComponent("future.sqlite")
-    try ownedConfigurationSQL(current, "PRAGMA user_version=35")
+    try ownedConfigurationSQL(current, "PRAGMA user_version=36")
     _ = try WorkspaceDatabase(url: current)
-    #expect(try ownedConfigurationStorageVersion(current) == 35)
-    try ownedConfigurationSQL(future, "PRAGMA user_version=36")
+    #expect(try ownedConfigurationStorageVersion(current) == 36)
+    try ownedConfigurationSQL(future, "PRAGMA user_version=37")
     #expect(throws: (any Error).self) { try WorkspaceDatabase(url: future) }
-    #expect(try ownedConfigurationStorageVersion(future) == 36)
+    #expect(try ownedConfigurationStorageVersion(future) == 37)
 }

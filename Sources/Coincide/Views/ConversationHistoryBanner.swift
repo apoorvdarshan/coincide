@@ -7,7 +7,8 @@ struct ConversationHistoryBanner: View {
     var body: some View {
         if let operation = store.conversationHistoryOperations(threadID: threadID).first,
            operation.isWorking || operation.phase == .unconfirmed || operation.locksFiles ||
-            operation.needsPromptRecall || store.canRecallConversationHistoryPrompt(operation) {
+            operation.needsPromptRecall || store.canRecallConversationHistoryPrompt(operation) ||
+            operation.error == ConversationHistoryOperation.openCodeV1NotAdoptedMessage {
             ConversationHistoryOperationView(store: store, operation: operation)
                 .padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .coincideSurface()
@@ -21,6 +22,7 @@ struct ConversationHistoryOperationView: View {
     @State private var error: String?
     @State private var confirmingKeepFiles = false
     @State private var confirmingMaintenance = false
+    @State private var confirmingKeepOriginal = false
 
     private var recalling: Bool { store.isRecallingConversationHistoryPrompt(operation.id) }
     private var incompleteFiles: ConversationHistoryFilesState? {
@@ -85,6 +87,13 @@ struct ConversationHistoryOperationView: View {
             } message: {
                 Text("Coincide checks the exact staged boundary before clearing it and waits for OpenCode’s empty cleanup execution to finish. This does not repeat the rewind, restore files or send your draft. Conversation work stays paused until its history is verified.")
             }
+            .alert("Keep the original conversation?", isPresented: $confirmingKeepOriginal) {
+                Button("Cancel", role: .cancel) { }.keyboardShortcut(.defaultAction)
+                Button("Keep Original Conversation") { perform { try await store.keepOpenCodeV1Original(operation.id) } }
+                    .accessibilityIdentifier("conversation-history-keep-original-confirm")
+            } message: {
+                Text("Coincide verifies that the original native conversation is unchanged before releasing this hold. Your latest draft, settings and workspace files stay unchanged. A separate native conversation may remain; this does not repeat the history action or delete any native conversation.")
+            }
     }
 
     @ViewBuilder private var providerState: some View {
@@ -101,6 +110,15 @@ struct ConversationHistoryOperationView: View {
                     Button("Clear Pending Revert…") { confirmingMaintenance = true }
                         .disabled(!store.canClearConversationHistoryMaintenance(operation)).controlSize(.small)
                         .accessibilityIdentifier("conversation-history-clear")
+                } else if operation.review.openCodeV1 != nil {
+                    detail(String(localized: "OpenCode v1 rewinds through a separate native conversation. Inspect can adopt only the exact recorded candidate after its copy is verified. You can instead verify and keep the unchanged original; another native conversation may remain."))
+                    if let candidate = operation.openCodeV1Candidate {
+                        Text(candidate.reference.nativeThreadID).font(.caption.monospaced()).textSelection(.enabled)
+                            .accessibilityIdentifier("conversation-history-native-candidate")
+                    }
+                    Button("Keep Original Conversation…") { confirmingKeepOriginal = true }
+                        .disabled(!store.canKeepOpenCodeV1Original(operation)).controlSize(.small)
+                        .accessibilityIdentifier("conversation-history-keep-original")
                 }
             }
         }

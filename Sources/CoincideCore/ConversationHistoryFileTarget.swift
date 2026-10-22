@@ -68,6 +68,12 @@ extension CodingThread {
     /// own retained audit. The caller must separately prove operation ownership.
     public func conversationHistoryFileTarget(beforeRunID selectedRunID: UUID,
         includingRemovedByHistoryOperationID operationID: UUID? = nil) -> ConversationHistoryFileTargetResolution {
+        conversationHistoryFileTarget(beforeRunID: selectedRunID, includingRemovedByHistoryOperationID: operationID,
+                                      verifiedNativeRunIDs: [])
+    }
+
+    func conversationHistoryFileTarget(beforeRunID selectedRunID: UUID,
+        includingRemovedByHistoryOperationID operationID: UUID?, verifiedNativeRunIDs: Set<UUID>) -> ConversationHistoryFileTargetResolution {
         var projected = self
         if let operationID {
             for index in projected.messages.indices where projected.messages[index].removedByHistoryOperationID == operationID {
@@ -79,10 +85,11 @@ extension CodingThread {
                 }
             }
         }
-        return projected.resolveConversationHistoryFileTarget(beforeRunID: selectedRunID)
+        return projected.resolveConversationHistoryFileTarget(beforeRunID: selectedRunID, verifiedNativeRunIDs: verifiedNativeRunIDs)
     }
 
-    private func resolveConversationHistoryFileTarget(beforeRunID selectedRunID: UUID) -> ConversationHistoryFileTargetResolution {
+    private func resolveConversationHistoryFileTarget(beforeRunID selectedRunID: UUID,
+                                                      verifiedNativeRunIDs: Set<UUID>) -> ConversationHistoryFileTargetResolution {
         let retained = runHistory ?? []
         guard let selected = retained.first(where: { $0.id == selectedRunID }) else { return .unavailable(.missingRun) }
         guard selected.removedByHistoryOperationID == nil else { return .unavailable(.removedRun) }
@@ -93,7 +100,7 @@ extension CodingThread {
         }
         guard selected.origin == .user, selected.messageAttributionVersion == 1,
               selected.status.isTerminal, selected.status != .unknown else { return .unavailable(.unsupportedBoundary) }
-        guard hasCurrentFileTargetOwnership(selected) else { return .unavailable(.workspaceChanged) }
+        guard hasCurrentFileTargetOwnership(selected, verifiedNativeRunIDs: verifiedNativeRunIDs) else { return .unavailable(.workspaceChanged) }
         do {
             try validateRunHistory()
             guard Set(messages.map(\.id)).count == messages.count else { return .unavailable(.ambiguousBoundary) }
@@ -117,7 +124,7 @@ extension CodingThread {
                   visible.contains(where: { $0.runReference == .init(threadID: id, runID: previous.id) }) else {
                 return .unavailable(.ambiguousBoundary)
             }
-            guard hasCurrentFileTargetOwnership(previous) else { return .unavailable(.workspaceChanged) }
+            guard hasCurrentFileTargetOwnership(previous, verifiedNativeRunIDs: verifiedNativeRunIDs) else { return .unavailable(.workspaceChanged) }
             guard let checkpoints = previous.checkpoints, checkpoints.providerReleased,
                   let attempt = (checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? [])).last(where: { $0.phase == .ready }) else {
                 return .unavailable(.previousPostUnavailable)
@@ -133,7 +140,7 @@ extension CodingThread {
               original.configuration.nativeThreadID == nil,
               let opening = messages.first, opening.id == original.userMessageID, opening.role == .user,
               opening.runReference == .init(threadID: id, runID: original.id),
-              hasCurrentFileTargetOwnership(original), let checkpoints = original.checkpoints,
+              hasCurrentFileTargetOwnership(original, verifiedNativeRunIDs: verifiedNativeRunIDs), let checkpoints = original.checkpoints,
               checkpoints.providerReleased, checkpoints.pendingStart == nil,
               checkpoints.baseline.phase == .ready, !checkpoints.baseline.isLaterObservation else {
             return .unavailable(.originalBaselineUnavailable)
@@ -141,10 +148,17 @@ extension CodingThread {
         return fileTarget(selectedRunID: selectedRunID, record: original, stage: .baseline, attempt: checkpoints.baseline)
     }
 
-    private func hasCurrentFileTargetOwnership(_ record: ThreadRunRecord) -> Bool {
+    private func hasCurrentFileTargetOwnership(_ record: ThreadRunRecord, verifiedNativeRunIDs: Set<UUID>) -> Bool {
         guard let nativeID = providerThreadID, !nativeID.isEmpty,
-              record.providerThreadID == nativeID, record.configuration.provider == provider,
+              record.configuration.provider == provider,
               record.configuration.workspacePath == workspacePath else { return false }
+        if verifiedNativeRunIDs.contains(record.id) {
+            guard provider == .opencode, openCodeConfiguration?.generation == .v1,
+                  record.configuration.openCodeConfiguration?.runtimeIdentity == openCodeConfiguration?.runtimeIdentity,
+                  let originalID = record.providerThreadID, !originalID.isEmpty else { return false }
+            return record.configuration.nativeThreadID == nil || record.configuration.nativeThreadID == originalID
+        }
+        guard record.providerThreadID == nativeID else { return false }
         return record.configuration.nativeThreadID == nil || record.configuration.nativeThreadID == nativeID
     }
 
@@ -156,5 +170,41 @@ extension CodingThread {
             return .available(try .init(selectedRunID: selectedRunID, checkpointRunID: record.id, stage: stage,
                                         attemptID: attempt.id, receipt: receipt))
         } catch { return .unavailable(.invalidCheckpoint) }
+    }
+}
+
+extension WorkspaceSnapshot {
+    /// Only a reviewed V1 native-copy proof may retain checkpoints whose immutable
+    /// run references precede adoption of the current native conversation.
+    func conversationHistoryFileTarget(for review: ConversationHistoryReview,
+        includingRemovedByHistoryOperationID operationID: UUID? = nil) throws -> ConversationHistoryFileTargetResolution {
+        try review.validate()
+        guard let thread = threads.first(where: { $0.id == review.sourceThreadID && $0.projectID == review.projectID }) else {
+            return .unavailable(.missingRun)
+        }
+        guard let evidence = review.openCodeV1 else {
+            return thread.conversationHistoryFileTarget(beforeRunID: review.runID, includingRemovedByHistoryOperationID: operationID)
+        }
+        guard thread.provider == .opencode, thread.openCodeConfiguration?.runtimeIdentity == evidence.source.runtimeIdentity,
+              thread.workspacePath == evidence.source.workspacePath else { return .unavailable(.workspaceChanged) }
+        if thread.providerThreadID != review.sourceReference.nativeThreadID {
+            guard operationID == review.id, let operation = conversationHistoryOperation(review.id), operation.review == review,
+                  operation.phase == .applied, operation.result?.reference.nativeThreadID == thread.providerThreadID else {
+                return .unavailable(.workspaceChanged)
+            }
+            try operation.validate()
+        }
+        var verified = Set<UUID>()
+        for input in evidence.inputs {
+            guard let record = thread.runHistory?.first(where: { $0.id == input.runID }), record.origin == .user,
+                  record.messageAttributionVersion == 1, record.configuration.provider == .opencode,
+                  record.configuration.openCodeConfiguration?.runtimeIdentity == evidence.source.runtimeIdentity,
+                  record.configuration.workspacePath == evidence.source.workspacePath,
+                  record.providerThreadID == input.originalReference.nativeThreadID,
+                  record.turnIDs == [input.originalMessageID] else { return .unavailable(.workspaceChanged) }
+            verified.insert(record.id)
+        }
+        return thread.conversationHistoryFileTarget(beforeRunID: review.runID,
+            includingRemovedByHistoryOperationID: operationID, verifiedNativeRunIDs: verified)
     }
 }

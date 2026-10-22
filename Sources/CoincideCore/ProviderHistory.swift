@@ -108,29 +108,37 @@ public struct ProviderConversationSnapshot: Codable, Sendable, Equatable {
     public let historyMode: ProviderHistoryMode
     public let headTurnID: String?
     public let openCodeV2: OpenCodeV2HistorySnapshot?
+    public let openCodeV1: OpenCodeV1HistorySnapshot?
     public init(reference: ProviderConversationReference, workspacePath: String,
-                historyMode: ProviderHistoryMode, headTurnID: String? = nil, openCodeV2: OpenCodeV2HistorySnapshot? = nil) throws {
+                historyMode: ProviderHistoryMode, headTurnID: String? = nil, openCodeV2: OpenCodeV2HistorySnapshot? = nil,
+                openCodeV1: OpenCodeV1HistorySnapshot? = nil) throws {
         try reference.validate(); try ProviderHistoryValidation.path(workspacePath)
         if let headTurnID { try ProviderHistoryValidation.id(headTurnID) }
         self.reference = reference; self.workspacePath = workspacePath
-        self.historyMode = historyMode; self.headTurnID = headTurnID; self.openCodeV2 = openCodeV2
+        self.historyMode = historyMode; self.headTurnID = headTurnID; self.openCodeV2 = openCodeV2; self.openCodeV1 = openCodeV1
         try validate()
     }
     public func validate() throws {
         try reference.validate(); try ProviderHistoryValidation.path(workspacePath)
         if let headTurnID { try ProviderHistoryValidation.id(headTurnID) }
-        if let openCodeV2 {
+        guard openCodeV1 == nil || openCodeV2 == nil else { throw ProviderHistoryError(.invalidResponse) }
+        if let openCodeV1 {
+            try openCodeV1.validate()
+            guard reference == openCodeV1.reference, workspacePath == openCodeV1.workspacePath,
+                  historyMode == .messageOrdered, headTurnID == nil else { throw ProviderHistoryError(.invalidResponse) }
+        } else if let openCodeV2 {
             try openCodeV2.validate()
             guard reference == openCodeV2.reference, workspacePath == openCodeV2.workspacePath,
                   historyMode == .messageOrdered, headTurnID == nil else { throw ProviderHistoryError(.invalidResponse) }
         } else if historyMode == .messageOrdered { throw ProviderHistoryError(.invalidResponse) }
     }
-    private enum CodingKeys: String, CodingKey { case reference, workspacePath, historyMode, headTurnID, openCodeV2 }
+    private enum CodingKeys: String, CodingKey { case reference, workspacePath, historyMode, headTurnID, openCodeV2, openCodeV1 }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(reference: c.decode(ProviderConversationReference.self, forKey: .reference),
             workspacePath: c.decode(String.self, forKey: .workspacePath), historyMode: c.decode(ProviderHistoryMode.self, forKey: .historyMode),
-            headTurnID: c.decodeIfPresent(String.self, forKey: .headTurnID), openCodeV2: c.decodeIfPresent(OpenCodeV2HistorySnapshot.self, forKey: .openCodeV2))
+            headTurnID: c.decodeIfPresent(String.self, forKey: .headTurnID), openCodeV2: c.decodeIfPresent(OpenCodeV2HistorySnapshot.self, forKey: .openCodeV2),
+            openCodeV1: c.decodeIfPresent(OpenCodeV1HistorySnapshot.self, forKey: .openCodeV1))
     }
 }
 

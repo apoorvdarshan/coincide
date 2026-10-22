@@ -1,7 +1,80 @@
 # Validation record
 
+## 2026-10-23 — native OpenCode v1 clone and adoption history
+
+- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits 0 with
+  1464 declarations: 1454 pass and ten optional installed-provider checks skip.
+  Core reports 1255 declarations across eight suites in 298.657 seconds; all 190
+  native view/store declarations pass in 64.576 seconds, terminal six in 1.372
+  seconds and Markdown 13 in 0.130 seconds. This adds 36 declarations to the
+  prior suite without weakening existing deadlines or assertions. The compiled
+  ABI guard passes on 815 Mach-O objects (app coverage 217, Core 511), with
+  three local default records and zero weak default records. Native GUI
+  acceptance remains a separate hosted job; complete T3 parity is unfinished.
+- V1 history reads bounded native message/part inventories through opaque header
+  cursors. The exact native lexical fork cut must agree with the chronological
+  whole-run boundary. Copy proof compares complete normalized content, unique
+  regenerated message/part IDs and assistant parent positions; native compaction
+  references remain literal. Quiet snapshots include session metadata and owned
+  descendant/status/permission/question observations, without claiming native CAS.
+- Both actions use native fork. Rewind atomically adopts the verified new native
+  ID within the original local conversation, preserving immutable prior run IDs,
+  current settings and the latest draft. A candidate acknowledgement is durably
+  saved before later native reads or clone-only policy writes. Subsequent cuts
+  follow applied copy maps, checking exact user provenance while permitting native
+  assistant tool-output pruning. Indexed lookup and bounded per-call memoization
+  avoid repeated full inventory scans; no runtime speedup is claimed.
+- Unknown fork acknowledgements are not guessed or replayed. Known rewind
+  candidates can be adopted after read-only complete copy and policy verification.
+  Explicit Keep Original verifies the unchanged native source and retains an
+  orphan warning/candidate audit. Pending native source and candidate aliases are
+  held; an unconfirmed fork can release its source while reserving its candidate.
+  Native view/store checks exercise the separate confirmation, cancellation and
+  latest-draft preservation. Storage 36 prevents old readers from reopening the
+  new candidate and adoption semantics.
+- Cross-cut review found that combined file restoration still required the
+  pre-adoption native ID. The post-provider guard now permits only the verified
+  adopted ID, preserving all other captured settings. A reviewed-only checkpoint
+  resolver grants ownership to exact immutable input records, including mixed A/B
+  origins after repeated adoption; the public legacy resolver stays strict. New
+  reducer checks drive provider adoption, file dispatch/receipt and one-time
+  latest-draft recall. Their negative cases independently reject old/foreign IDs
+  and changed model/permission settings. This is separate from the existing real
+  Git restoration checks, not a live combined-v1 acceptance claim.
+- Adopted native candidates also stay reserved through incomplete file work or
+  pending prompt recall, then release after completion/dismissal. Applied fork
+  targets remain usable. Broader serial regression exposed an inadvertent wait
+  on an already-held close during review; that run was stopped. Review again
+  refuses pending cleanup immediately, while dispatched work still joins its
+  owned closes before I/O. The unchanged archived-source regression passes in
+  0.038 seconds; both new combined-file checks pass in the same focused run.
+- Initial focused checks pass 39 Core declarations and two native view/store declarations.
+  Real offline TCP/SSE peers exercise three A runs, A-to-B adoption, a B input,
+  another fork and B-to-C rewind through retained original run references; exact
+  dispatch/candidate persistence precedes native I/O. They verify copy ownership,
+  wrong same-count/reused-part refusal, changed-tail refusal, lost acknowledgement,
+  restart/read-only recovery, untouched Git files/index/HEAD and exact owned
+  process/event-stream drain. These are synthetic peers, not installed OpenCode.
+- Initial TCP execution exposed the fixture's strict parsing of an empty health
+  query under system Python; parsing only nonempty queries restores the exact
+  health route. A second test correction explicitly creates a new draft after
+  the B input, which intentionally clears the preceding draft. Original deadlines,
+  copy/ownership assertions and production transport behavior remain intact.
+  A separate 10,001-record legacy Codex audit regression ensures the v1 evidence
+  limit cannot reject unrelated history. Installed/hosted v1 history acceptance
+  and complete T3 Code parity remain unfinished.
+
 ## 2026-10-23 — async default closure context isolation
 
+- Hosted [run 39832918696 at 4fadc85](https://github.com/apoorvdarshan/coincide/actions/runs/39832918696)
+  now passes its complete Swift test/package job. The raw completed job log
+  confirms the fresh direct verifier in 2.070 seconds, the separate managed
+  inspection in 0.304 seconds and the full 1428-declaration suite in 713.038
+  seconds. The ABI guard inspects 708 hosted Mach-O objects (app coverage 131,
+  Core 432), finding two local default records and zero weak default records.
+  Strict app signature and native resource verification also pass. This is one
+  successful hosted mitigation observation; the separate native GUI job and
+  broader end-to-end parity remain pending.
 - Hosted run `39830400064` at `7513330` passes the direct public verifier check
   in 4.386 seconds, while the isolated managed-install inspection and unchanged
   full suite both terminate with SIGBUS. Its sanitized stack still reaches
@@ -29,7 +102,7 @@
   and zero parse errors. A native-object CI guard now checks this actual compiled
   property with explicit Core/app coverage; source text and a passing narrow test
   do not substitute for that evidence. The full suite and both fresh diagnostic
-  checks remain enforced; hosted mitigation acceptance is still pending.
+  checks remain enforced; the completed hosted observation is recorded above.
 - The production guard passes on 807 existing Mach-O objects, with defined app
   coverage in 216 objects, Core coverage in 503 and zero weak default records.
   Eleven synthetic parser/CLI checks cover 48/32-byte records, weak private
@@ -43,8 +116,8 @@
   Core reports 1221 declarations across eight suites in 291.564 seconds; all 188
   native view/store declarations pass in 64.073 seconds, terminal six in 1.365
   seconds and Markdown 13 in 0.133 seconds. No test deadlines or verification
-  assertions were weakened. Hosted crash resolution and native GUI acceptance
-  still require the new hosted run; complete T3 Code parity remains unfinished.
+  assertions were weakened. Hosted test/package confirmation is recorded above;
+  native GUI acceptance and complete T3 Code parity remain unfinished.
 
 ## 2026-10-22 — native OpenCode v2 history and staged-revert recovery
 

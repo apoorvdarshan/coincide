@@ -7,6 +7,7 @@ public enum ConversationHistoryReconciliation: Codable, Sendable, Equatable {
     case applied(ProviderConversationSnapshot)
     case unchanged
     case openCodeV2Unchanged(OpenCodeV2HistorySnapshot)
+    case openCodeV1NotAdopted(OpenCodeV1HistorySnapshot)
 }
 
 /// A reviewed local/provider history boundary. Creating this value never performs
@@ -34,13 +35,15 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
     public let files: ConversationHistoryFilesReview?
     public let recallPromptOnSuccess: Bool?
     public let openCodeV2: OpenCodeV2HistoryReviewEvidence?
+    public let openCodeV1: OpenCodeV1HistoryReviewEvidence?
     public init(id: UUID = UUID(), kind: ConversationHistoryKind, reviewedAt: Date = Date(), sourceThreadID: UUID,
                 projectID: UUID, runID: UUID, sourceIncarnation: UUID, sourceConfiguration: ProviderConfiguration,
                 targetConfiguration: ProviderConfiguration, sourceReference: ProviderConversationReference,
                 reviewedHeadTurnID: String?, boundary: ProviderHistoryBoundary, expectedResultHeadTurnID: String?,
                 prefix: [ChatMessage], removedRunIDs: [UUID], removedMessageIDs: [String], sourceFingerprint: String,
                 targetThreadID: UUID?, suggestedTitle: String, files: ConversationHistoryFilesReview? = nil, recallPromptOnSuccess: Bool? = nil,
-                openCodeV2: OpenCodeV2HistoryReviewEvidence? = nil) throws {
+                openCodeV2: OpenCodeV2HistoryReviewEvidence? = nil,
+                openCodeV1: OpenCodeV1HistoryReviewEvidence? = nil) throws {
         self.id = id; self.kind = kind; self.reviewedAt = reviewedAt; self.sourceThreadID = sourceThreadID
         self.projectID = projectID; self.runID = runID; self.sourceIncarnation = sourceIncarnation
         self.sourceConfiguration = sourceConfiguration; self.targetConfiguration = targetConfiguration
@@ -50,6 +53,7 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
         self.targetThreadID = targetThreadID; self.suggestedTitle = suggestedTitle
         self.files = files; self.recallPromptOnSuccess = recallPromptOnSuccess
         self.openCodeV2 = openCodeV2
+        self.openCodeV1 = openCodeV1
         try validate()
     }
     public func validate() throws {
@@ -69,7 +73,19 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
               !suggestedTitle.contains("\0"), try JSONEncoder().encode(prefix).count <= 4_194_304 else {
             throw CoincideError("This conversation history review is invalid or exceeds its bounded transcript limit.")
         }
-        if let openCodeV2 {
+        guard openCodeV1 == nil || openCodeV2 == nil else { throw CoincideError("A history review cannot combine native server generations.") }
+        if let openCodeV1 {
+            try openCodeV1.validate()
+            guard sourceReference.provider == .opencode, reviewedHeadTurnID == nil, expectedResultHeadTurnID == nil,
+                  openCodeV1.source.reference == sourceReference, openCodeV1.source.workspacePath == sourceConfiguration.workspacePath,
+                  openCodeV1.source.runtimeIdentity == sourceConfiguration.openCodeConfiguration?.runtimeIdentity,
+                  openCodeV1.source.runtimeIdentity == targetConfiguration.openCodeConfiguration?.runtimeIdentity,
+                  sourceConfiguration.openCodeConfiguration?.generation == .v1,
+                  openCodeV1.boundary == boundary,
+                  openCodeV1.inputs.contains(where: { $0.runID == runID && $0.openingMessageID == openCodeV1.selectedOpeningMessageID }) else {
+                throw CoincideError("The OpenCode history review has inconsistent native message ownership.")
+            }
+        } else if let openCodeV2 {
             try openCodeV2.validate()
             guard sourceReference.provider == .opencode, reviewedHeadTurnID == nil, expectedResultHeadTurnID == nil,
                   openCodeV2.source.reference == sourceReference, openCodeV2.source.workspacePath == sourceConfiguration.workspacePath,
@@ -89,14 +105,16 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
         case .forkAfterRun:
             guard targetThreadID != nil, targetThreadID != sourceThreadID, targetThreadID != id,
                   removedRunIDs.isEmpty, removedMessageIDs.isEmpty else { throw CoincideError("The fork review has inconsistent ownership or turn boundaries.") }
-            if openCodeV2 != nil {
+            if openCodeV2 != nil || openCodeV1 != nil {
                 switch boundary { case .beforeMessage, .head: break; default: throw CoincideError("The OpenCode fork has no exact message cut.") }
             } else {
                 guard case .throughTurn(let turn) = boundary, expectedResultHeadTurnID == turn else { throw CoincideError("The fork review has inconsistent ownership or turn boundaries.") }
             }
         case .rewindBeforeRun:
             guard targetThreadID == nil, removedRunIDs.contains(runID), !removedMessageIDs.isEmpty else { throw CoincideError("The rewind review has no exact retained transcript suffix.") }
-            if let openCodeV2 {
+            if let openCodeV1 {
+                guard boundary == .beforeMessage(openCodeV1.selectedOpeningMessageID) else { throw CoincideError("The OpenCode rewind does not precede its selected input.") }
+            } else if let openCodeV2 {
                 guard boundary == .beforeMessage(openCodeV2.selectedOpeningMessageID) else { throw CoincideError("The OpenCode rewind does not precede its selected input.") }
             } else {
                 guard case .beforeTurn = boundary else { throw CoincideError("The conversation history action does not match its reviewed boundary.") }
@@ -111,18 +129,22 @@ public struct ConversationHistoryReview: Codable, Sendable, Equatable, Identifia
     }
     public func validateResult(_ result: ProviderConversationSnapshot) throws {
         try result.validate()
-        let referenceMatches = kind == .forkAfterRun ? result.reference != sourceReference : result.reference == sourceReference
+        let referenceMatches = kind == .forkAfterRun || openCodeV1 != nil ? result.reference != sourceReference : result.reference == sourceReference
         guard referenceMatches, result.reference.provider == sourceReference.provider,
               result.workspacePath == targetConfiguration.workspacePath else {
             throw CoincideError("The conversation history result does not match its reviewed provider boundary.")
         }
-        if let openCodeV2 {
-            guard result.historyMode == .messageOrdered, result.headTurnID == nil, let evidence = result.openCodeV2 else {
+        if let openCodeV1 {
+            guard result.historyMode == .messageOrdered, result.headTurnID == nil, result.openCodeV2 == nil,
+                  let evidence = result.openCodeV1 else { throw CoincideError("OpenCode did not return its reviewed native message evidence.") }
+            try openCodeV1.validateResult(evidence, kind: kind)
+        } else if let openCodeV2 {
+            guard result.historyMode == .messageOrdered, result.headTurnID == nil, result.openCodeV1 == nil, let evidence = result.openCodeV2 else {
                 throw CoincideError("OpenCode did not return its reviewed native message evidence.")
             }
             try openCodeV2.validateResult(evidence, kind: kind)
         } else {
-            guard result.historyMode == .paginated, result.openCodeV2 == nil, result.headTurnID == expectedResultHeadTurnID else {
+            guard result.historyMode == .paginated, result.openCodeV2 == nil, result.openCodeV1 == nil, result.headTurnID == expectedResultHeadTurnID else {
                 throw CoincideError("The conversation history result does not match its reviewed provider boundary.")
             }
         }
@@ -189,22 +211,29 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
     public var recallDismissedAt: Date?
     public var maintenance: ConversationHistoryMaintenanceAttempt?
     public var previousMaintenanceAttempts: [ConversationHistoryMaintenanceAttempt]?
+    public var openCodeV1Candidate: OpenCodeV1HistoryCandidate?
     public var id: UUID { review.id }
     public init(review: ConversationHistoryReview, phase: ConversationHistoryPhase = .accepted, updatedAt: Date? = nil,
                 targetTitle: String? = nil, result: ProviderConversationSnapshot? = nil, error: String? = nil, recalledAt: Date? = nil,
                 files: ConversationHistoryFilesState? = nil, recallDismissedAt: Date? = nil,
                 maintenance: ConversationHistoryMaintenanceAttempt? = nil,
-                previousMaintenanceAttempts: [ConversationHistoryMaintenanceAttempt]? = nil) {
+                previousMaintenanceAttempts: [ConversationHistoryMaintenanceAttempt]? = nil,
+                openCodeV1Candidate: OpenCodeV1HistoryCandidate? = nil) {
         self.review = review; self.phase = phase; self.updatedAt = updatedAt ?? review.reviewedAt
         self.targetTitle = targetTitle; self.result = result; self.error = error; self.recalledAt = recalledAt
         self.files = files ?? review.files.map { .init(review: $0, updatedAt: updatedAt ?? review.reviewedAt) }
         self.recallDismissedAt = recallDismissedAt
         self.maintenance = maintenance; self.previousMaintenanceAttempts = previousMaintenanceAttempts
+        self.openCodeV1Candidate = openCodeV1Candidate
     }
     public static let failureMessage = "The conversation history action was not completed. No provider work was replayed."
     public static let unconfirmedMessage = "The provider history outcome could not be confirmed. Inspect it before continuing; the action was not repeated."
     public static let unchangedMessage = "Provider history is unchanged. Review again before retrying."
+    public static let openCodeV1NotAdoptedMessage = "The original OpenCode conversation was kept. A separate native conversation may remain; no history action was repeated or native conversation deleted."
     public var isPending: Bool { phase == .accepted || phase == .dispatching }
+    public var reservesOpenCodeV1Candidate: Bool {
+        openCodeV1Candidate != nil && (isPending || phase == .unconfirmed || (phase == .applied && locksSource))
+    }
     public var isWorking: Bool { isPending || files?.isWorking == true || maintenance?.phase.isWorking == true }
     public var allExternalWorkSucceeded: Bool { phase == .applied && (files == nil || files?.phase == .applied) }
     public var needsPromptRecall: Bool { review.recallPromptOnSuccess == true && allExternalWorkSucceeded && recalledAt == nil && recallDismissedAt == nil }
@@ -216,6 +245,14 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
     public var locksSource: Bool { isPending || (phase == .unconfirmed && review.kind == .rewindBeforeRun) || locksFiles || needsPromptRecall }
     public func validate() throws {
         try review.validate()
+        if let candidate = openCodeV1Candidate {
+            guard let evidence = review.openCodeV1, phase != .accepted else { throw CoincideError("The native history candidate has no dispatched owner.") }
+            try evidence.validateCandidate(candidate)
+            if let result, result.reference != candidate.reference { throw CoincideError("The history result does not match its recorded native candidate.") }
+        }
+        if phase == .applied, review.openCodeV1 != nil, openCodeV1Candidate == nil {
+            throw CoincideError("Applied OpenCode history requires its durably recorded native candidate.")
+        }
         let attempts = (previousMaintenanceAttempts ?? []) + (maintenance.map { [$0] } ?? [])
         guard (previousMaintenanceAttempts?.count ?? 0) <= 16, previousMaintenanceAttempts?.isEmpty != true,
               Set(attempts.map(\.id)).count == attempts.count,
@@ -241,7 +278,8 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
               recalledAt == nil || allExternalWorkSucceeded else { throw CoincideError("The combined rewind's file or recall evidence is inconsistent.") }
         try files?.validate(providerPhase: phase)
         guard updatedAt.timeIntervalSince1970.isFinite,
-              error == nil || [Self.failureMessage, Self.unconfirmedMessage, Self.unchangedMessage].contains(error!),
+              error == nil || [Self.failureMessage, Self.unconfirmedMessage, Self.unchangedMessage].contains(error!) ||
+                (review.openCodeV1 != nil && phase == .failed && error == Self.openCodeV1NotAdoptedMessage),
               (phase == .applied) == (result != nil), recalledAt == nil || (phase == .applied && review.kind == .rewindBeforeRun && recalledAt!.timeIntervalSince1970.isFinite),
               targetTitle.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 4_096 && !$0.contains("\0") }) ?? true else { throw CoincideError("The conversation history operation has inconsistent state.") }
         if let result { try review.validateResult(result) }
@@ -269,29 +307,37 @@ extension WorkspaceSnapshot {
     public func isConversationHistoryLocked(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
         let thread = threads.first { $0.id == threadID }
         return (conversationHistoryOperations ?? []).contains { operation in
-            guard operation.id != excludingOperationID, operation.locksSource else { return false }
-            if operation.review.sourceThreadID == threadID { return true }
-            guard let thread, let evidence = operation.review.openCodeV2 else { return false }
-            return hasOpenCodeV2HistoryCapture(thread, runtimeIdentity: evidence.source.runtimeIdentity,
-                                              nativeThreadID: operation.review.sourceReference.nativeThreadID)
+            guard operation.id != excludingOperationID else { return false }
+            if operation.locksSource, operation.review.sourceThreadID == threadID { return true }
+            guard let thread, let identity = operation.review.openCodeV1?.source.runtimeIdentity ?? operation.review.openCodeV2?.source.runtimeIdentity else { return false }
+            return (operation.locksSource && hasOpenCodeHistoryCapture(thread, runtimeIdentity: identity, nativeThreadID: operation.review.sourceReference.nativeThreadID)) ||
+                (operation.reservesOpenCodeV1Candidate && operation.openCodeV1Candidate.map {
+                    hasOpenCodeHistoryCapture(thread, runtimeIdentity: identity, nativeThreadID: $0.reference.nativeThreadID)
+                } == true)
         }
     }
     /// A staged native revert belongs to the provider session, even when another
     /// local conversation or an immutable queued input refers to that session.
     public func isOpenCodeV2HistoryScopeLocked(configuration: ProviderConfiguration, nativeThreadID: String?,
                                                excludingOperationID: UUID? = nil) -> Bool {
+        guard configuration.openCodeConfiguration?.generation == .v2 else { return false }
+        return isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeThreadID, excludingOperationID: excludingOperationID)
+    }
+    public func isOpenCodeHistoryScopeLocked(configuration: ProviderConfiguration, nativeThreadID: String?,
+                                             excludingOperationID: UUID? = nil) -> Bool {
         guard configuration.provider == .opencode, let runtime = configuration.openCodeConfiguration,
-              runtime.generation == .v2, let nativeThreadID = nativeThreadID ?? configuration.nativeThreadID else { return false }
+              let nativeThreadID = nativeThreadID ?? configuration.nativeThreadID else { return false }
         return (conversationHistoryOperations ?? []).contains { operation in
-            operation.id != excludingOperationID && operation.locksSource &&
-                operation.review.openCodeV2?.source.runtimeIdentity == runtime.runtimeIdentity &&
-                operation.review.sourceReference.nativeThreadID == nativeThreadID
+            operation.id != excludingOperationID &&
+                (operation.review.openCodeV1?.source.runtimeIdentity ?? operation.review.openCodeV2?.source.runtimeIdentity) == runtime.runtimeIdentity &&
+                ((operation.locksSource && operation.review.sourceReference.nativeThreadID == nativeThreadID) ||
+                 (operation.reservesOpenCodeV1Candidate && operation.openCodeV1Candidate?.reference.nativeThreadID == nativeThreadID))
         }
     }
-    private func hasOpenCodeV2HistoryCapture(_ thread: CodingThread, runtimeIdentity: OpenCodeRuntimeIdentity,
+    fileprivate func hasOpenCodeHistoryCapture(_ thread: CodingThread, runtimeIdentity: OpenCodeRuntimeIdentity,
                                             nativeThreadID: String) -> Bool {
         func matches(_ configuration: ProviderConfiguration, nativeID: String?) -> Bool {
-            configuration.provider == .opencode && configuration.openCodeConfiguration?.generation == .v2 &&
+            configuration.provider == .opencode &&
                 configuration.openCodeConfiguration?.runtimeIdentity == runtimeIdentity &&
                 (nativeID ?? configuration.nativeThreadID) == nativeThreadID
         }
@@ -345,13 +391,14 @@ extension WorkspaceSnapshot {
         guard let run = thread.activeHistoryRuns.first(where: { $0.id == runID }), run.status.isTerminal,
               run.messageAttributionVersion == 1, run.configuration.provider == thread.provider,
               run.configuration.workspacePath == thread.workspacePath, !run.turnIDs.isEmpty,
-              run.providerThreadID == thread.providerThreadID, run.providerThreadID != nil else { return "This run has no verified boundary in the current Codex conversation and checkout." }
+              (thread.provider == .opencode && thread.openCodeConfiguration?.generation == .v1) || run.providerThreadID == thread.providerThreadID,
+              run.providerThreadID != nil, thread.providerThreadID != nil else { return "This run has no verified boundary in the current provider conversation and checkout." }
         switch thread.provider {
         case .codex: break
         case .opencode:
-            guard let current = thread.openCodeConfiguration, current.generation == .v2,
+            guard let current = thread.openCodeConfiguration,
                   run.configuration.openCodeConfiguration?.runtimeIdentity == current.runtimeIdentity else {
-                return "This run has no verified boundary in the current OpenCode v2 conversation and checkout."
+                return "This run has no verified boundary in the current OpenCode conversation and checkout."
             }
         default: return "This provider does not expose a supported native conversation history boundary."
         }
@@ -374,30 +421,37 @@ extension WorkspaceSnapshot {
               run.messageAttributionVersion == 1, run.configuration == review.targetConfiguration,
               run.configuration.workspacePath == thread.workspacePath,
               run.configuration.provider == thread.provider,
-              run.providerThreadID == review.sourceReference.nativeThreadID, thread.providerThreadID == review.sourceReference.nativeThreadID,
+              review.openCodeV1 != nil || run.providerThreadID == review.sourceReference.nativeThreadID,
+              thread.providerThreadID == review.sourceReference.nativeThreadID,
               !run.turnIDs.isEmpty else { throw WorkspaceCommandError("This conversation or its reviewed history changed. Review the current run again.") }
         let rawPrefix = try thread.transcriptPrefix(runID: run.id, boundary: review.kind == .forkAfterRun ? .afterRun : .beforeRun)
         guard !hasUnverifiedSteering(in: rawPrefix) else { throw WorkspaceCommandError("This native history prefix includes unconfirmed steering delivery.") }
         let prefix = review.kind == .forkAfterRun ? try verifiedForkPrefix(rawPrefix) : rawPrefix
         guard prefix == review.prefix else { throw WorkspaceCommandError("The reviewed transcript prefix changed. Review it again.") }
-        if let evidence = review.openCodeV2 {
-            guard !threads.contains(where: {
-                $0.id != thread.id && hasOpenCodeV2HistoryCapture($0, runtimeIdentity: evidence.source.runtimeIdentity,
-                                                                nativeThreadID: review.sourceReference.nativeThreadID)
+        if let identity = review.openCodeV1?.source.runtimeIdentity ?? review.openCodeV2?.source.runtimeIdentity {
+            let candidateID = excludingOperationID.flatMap { conversationHistoryOperation($0)?.openCodeV1Candidate?.reference.nativeThreadID }
+            guard !threads.contains(where: { other in
+                other.id != thread.id && (hasOpenCodeHistoryCapture(other, runtimeIdentity: identity, nativeThreadID: review.sourceReference.nativeThreadID) ||
+                    candidateID.map { hasOpenCodeHistoryCapture(other, runtimeIdentity: identity, nativeThreadID: $0) } == true)
             }) else { throw WorkspaceCommandError("Another conversation owns this native OpenCode session. Use a separate native session before changing its history.") }
-            try validateOpenCodeV2HistoryInputs(evidence, thread: thread, selectedRunID: run.id, kind: review.kind)
+            if let evidence = review.openCodeV1 {
+                let expected = try OpenCodeV1HistoryReviewEvidence.make(source: evidence.source, snapshot: self, thread: thread, runID: run.id, kind: review.kind)
+                guard evidence == expected else { throw ProviderHistoryError(.boundaryUnavailable) }
+            } else if let evidence = review.openCodeV2 {
+                try validateOpenCodeV2HistoryInputs(evidence, thread: thread, selectedRunID: run.id, kind: review.kind)
+            }
         } else {
             guard thread.provider == .codex else { throw ProviderHistoryError(.unsupported) }
         }
         switch review.kind {
         case .forkAfterRun:
             guard run.status == .completed else { throw WorkspaceCommandError("The fork no longer matches the completed provider run.") }
-            if review.openCodeV2 == nil {
+            if review.openCodeV2 == nil && review.openCodeV1 == nil {
                 guard review.boundary == .throughTurn(run.turnIDs.last!), review.expectedResultHeadTurnID == run.turnIDs.last else { throw WorkspaceCommandError("The fork no longer matches the completed provider run.") }
             }
         case .rewindBeforeRun:
             guard let start = thread.activeHistoryRuns.firstIndex(where: { $0.id == run.id }),
-                  review.openCodeV2 != nil || review.boundary == .beforeTurn(run.turnIDs.first!) else { throw WorkspaceCommandError("The rewind no longer matches the selected provider run.") }
+                  review.openCodeV2 != nil || review.openCodeV1 != nil || review.boundary == .beforeTurn(run.turnIDs.first!) else { throw WorkspaceCommandError("The rewind no longer matches the selected provider run.") }
             let removedRuns = thread.activeHistoryRuns.dropFirst(start).map(\.id)
             let prefixIDs = Set(prefix.map(\.id))
             let removedMessages = thread.visibleMessages.filter { !prefixIDs.contains($0.id) }.map(\.id)
@@ -452,6 +506,7 @@ extension WorkspaceSnapshot {
                 guard operation.phase == .applied, target.forkedFromHistoryOperationID == operation.id else { throw CoincideError("A fork target is already owned by another conversation.") }
             }
         }
+        try OpenCodeV1HistoryReviewEvidence.validateAdoptionLedger(in: self)
         let byID = Dictionary(uniqueKeysWithValues: operations.map { ($0.id, $0) })
         for thread in threads {
             if let fork = thread.forkedFromHistoryOperationID {
@@ -497,7 +552,7 @@ extension WorkspaceDecision {
             (snapshot.conversationHistoryOperations ?? []).contains(where: { $0.id == created.id || $0.review.targetThreadID == created.id || $0.review.files?.id == created.id }) {
             throw WorkspaceCommandError("This conversation identity is reserved by a history action. Create a fresh conversation instead.")
         }
-        if let created, snapshot.isOpenCodeV2HistoryScopeLocked(configuration: .init(thread: created), nativeThreadID: created.providerThreadID) {
+        if let created, snapshot.isOpenCodeHistoryScopeLocked(configuration: .init(thread: created), nativeThreadID: created.providerThreadID) {
             throw WorkspaceCommandError("This native OpenCode session is held by a pending history action. Create a separate native session instead.")
         }
         let locked = Set(snapshot.threads.filter { snapshot.isConversationHistoryLocked(threadID: $0.id) }.map(\.id))
@@ -582,6 +637,36 @@ extension WorkspaceDecision {
         effects.append(.init(id: attempt.id, request: .conversationHistoryMaintenance(threadID: operation.review.sourceThreadID, operationID: operationID, attemptID: attempt.id)))
     }
 
+    mutating func recordOpenCodeV1HistoryCandidate(operationID: UUID, candidate: OpenCodeV1HistoryCandidate,
+                                                 incarnation: UUID, now: Date) throws {
+        guard let index = snapshot.conversationHistoryOperations?.firstIndex(where: { $0.id == operationID }),
+              var operation = snapshot.conversationHistoryOperations?[index], operation.phase == .dispatching,
+              operation.review.sourceIncarnation == incarnation, let evidence = operation.review.openCodeV1 else {
+            throw WorkspaceCommandError("The native history action no longer owns candidate publication.")
+        }
+        try evidence.validateCandidate(candidate)
+        if let previous = operation.openCodeV1Candidate {
+            guard previous == candidate else { throw WorkspaceCommandError("The history action already recorded a different native candidate.") }
+            return
+        }
+        try snapshot.validateConversationHistorySource(operation.review, excludingOperationID: operationID)
+        let previouslyOwned = (snapshot.conversationHistoryOperations ?? []).contains { previous in
+            guard previous.id != operationID, let source = previous.review.openCodeV1?.source,
+                  source.runtimeIdentity == candidate.runtimeIdentity, source.workspacePath == candidate.workspacePath else { return false }
+            if previous.openCodeV1Candidate?.reference == candidate.reference { return true }
+            return previous.phase == .applied && (source.reference == candidate.reference || previous.result?.reference == candidate.reference)
+        }
+        guard !snapshot.threads.contains(where: {
+            snapshot.hasOpenCodeHistoryCapture($0, runtimeIdentity: candidate.runtimeIdentity, nativeThreadID: candidate.reference.nativeThreadID)
+        }), !previouslyOwned, !snapshot.isOpenCodeHistoryScopeLocked(configuration: operation.review.sourceConfiguration,
+                                                  nativeThreadID: candidate.reference.nativeThreadID, excludingOperationID: operationID) else {
+            throw WorkspaceCommandError("The native candidate is already owned by another conversation.")
+        }
+        operation.openCodeV1Candidate = candidate; operation.updatedAt = now
+        try operation.validate()
+        snapshot.conversationHistoryOperations?[index] = operation
+    }
+
     mutating func dispatchConversationHistoryMaintenance(threadID: UUID, operationID: UUID, attemptID: UUID,
                                                         incarnation: UUID, now: Date) throws {
         guard let i = snapshot.conversationHistoryOperations?.firstIndex(where: { $0.id == operationID }),
@@ -662,6 +747,9 @@ extension WorkspaceDecision {
         try snapshot.validateConversationHistorySource(operation.review, excludingOperationID: operationID)
         switch result {
         case .applied(let result):
+            if operation.review.openCodeV1 != nil {
+                guard operation.openCodeV1Candidate?.reference == result.reference else { throw ProviderHistoryError(.invalidResponse) }
+            }
             operation.phase = .applied; operation.result = result; operation.error = nil; operation.updatedAt = now
             try operation.review.validateResult(result); try applyConversationHistory(operation, now: now)
             if var files = operation.files {
@@ -670,8 +758,13 @@ extension WorkspaceDecision {
                 files.updatedAt = now; operation.files = files
             }
         case .unchanged:
-            guard operation.review.openCodeV2 == nil else { throw ProviderHistoryError(.invalidResponse) }
+            guard operation.review.openCodeV2 == nil, operation.review.openCodeV1 == nil else { throw ProviderHistoryError(.invalidResponse) }
             operation.phase = .failed; operation.error = ConversationHistoryOperation.unchangedMessage; operation.updatedAt = now
+        case .openCodeV1NotAdopted(let observed):
+            guard let evidence = operation.review.openCodeV1 else { throw ProviderHistoryError(.invalidResponse) }
+            try observed.validate()
+            guard observed == evidence.source else { throw ProviderHistoryError(.historyChanged) }
+            operation.phase = .failed; operation.error = ConversationHistoryOperation.openCodeV1NotAdoptedMessage; operation.updatedAt = now
         case .openCodeV2Unchanged(let observed):
             guard let evidence = operation.review.openCodeV2 else { throw ProviderHistoryError(.invalidResponse) }
             try observed.validate()

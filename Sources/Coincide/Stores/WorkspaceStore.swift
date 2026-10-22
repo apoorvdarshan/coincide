@@ -2240,6 +2240,26 @@ final class WorkspaceStore {
         }
     }
     func isInspectingConversationHistory(_ id: UUID) -> Bool { historyInspections[id] != nil }
+    func canKeepOpenCodeV1Original(_ operation: ConversationHistoryOperation) -> Bool {
+        !terminating && operation.phase == .unconfirmed && operation.review.kind == .rewindBeforeRun &&
+            operation.review.openCodeV1 != nil && !operation.isWorking &&
+            historyInspections[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
+    }
+    func keepOpenCodeV1Original(_ id: UUID) async throws {
+        guard let engine, let operation = conversationHistoryOperation(id), canKeepOpenCodeV1Original(operation),
+              let source = thread(operation.review.sourceThreadID),
+              operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
+        let task = Task {
+            let expected = try await engine.inspectOpenCodeV1Original(operationID: id)
+            return try await engine.keepOpenCodeV1Original(operationID: id, expected: expected)
+        }
+        historyInspections[id] = .init(threadID: source.id, task: task)
+        defer { historyInspections.removeValue(forKey: id) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
     func canClearConversationHistoryMaintenance(_ operation: ConversationHistoryOperation) -> Bool {
         !terminating && operation.phase == .unconfirmed && operation.review.kind == .rewindBeforeRun &&
             operation.review.openCodeV2 != nil && operation.maintenance?.phase.isWorking != true &&

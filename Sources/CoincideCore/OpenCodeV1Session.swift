@@ -26,10 +26,15 @@ protocol OpenCodeV1SessionTransport: Sendable {
     func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot
     func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule]
     func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse
+    func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse
     func close() async
 }
 
 extension OpenCodeV1SessionTransport {
+    func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
+        guard query.isEmpty else { throw ProviderHistoryError(.unsupported) }
+        return try await request(method: method, path: path, body: body)
+    }
     func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule] { [] }
 }
 
@@ -39,6 +44,7 @@ public actor OpenCodeV1Session: ProviderSession {
     public nonisolated let events: AsyncStream<ProviderEvent>
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let cwd: URL
+    private let historyWorkspacePath: String
     private let configuration: OpenCodeConfiguration
     private let transport: any OpenCodeV1SessionTransport
     private var connecting: Task<Void, any Error>?
@@ -74,11 +80,19 @@ public actor OpenCodeV1Session: ProviderSession {
     private var reconciliation: [UUID: Task<Void, Never>] = [:]
     private var lastMessageMillis: UInt64 = 0
     private var messageCounter: UInt64 = 0
+    private var historyToken: UUID?
+    private var historyTask: Task<OpenCodeV1HistorySnapshot, any Error>?
+    private var historySources = Set<String>()
+    private var historyInterference = false
+    private var historyMayHaveWritten = false
+    private var historyUnsafe = false
+    private var historyCandidateID: String?
 
     public init(executable: URL, cwd: URL, configuration: OpenCodeConfiguration) {
         let pair = AsyncStream<ProviderEvent>.makeStream()
         events = pair.stream; continuation = pair.continuation
         self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
+        historyWorkspacePath = cwd.standardizedFileURL.path
         self.configuration = configuration
         transport = OpenCodeV1OwnedRuntime(executable: executable, cwd: cwd, configuration: configuration)
     }
@@ -87,6 +101,7 @@ public actor OpenCodeV1Session: ProviderSession {
         let pair = AsyncStream<ProviderEvent>.makeStream()
         events = pair.stream; continuation = pair.continuation
         self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
+        historyWorkspacePath = cwd.standardizedFileURL.path
         self.configuration = configuration; self.transport = transport
     }
 
@@ -102,6 +117,228 @@ public actor OpenCodeV1Session: ProviderSession {
             .init(id: $0.selection.catalogID, name: $0.name,
                   openCodeSelection: $0.selection, openCodeVariants: $0.variants)
         }
+    }
+
+    public func openCodeV1HistorySnapshot(threadID: String) async throws -> OpenCodeV1HistorySnapshot {
+        try await withHistory(sourceID: threadID, timeout: .seconds(30)) { token in
+            try await self.readHistorySnapshot(threadID, token: token)
+        }
+    }
+
+    public func applyOpenCodeV1History(review: OpenCodeV1HistoryReviewEvidence, kind: ConversationHistoryKind,
+                                      configuration captured: ProviderConfiguration,
+                                      candidate: @escaping @Sendable (OpenCodeV1HistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot {
+        try review.validate(); try OpenCodeConfigurationValidation.configuration(captured)
+        guard review.source.matchesBinding(captured), captured.openCodeConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
+              captured.workspacePath == historyWorkspacePath, let selected = captured.openCodeConfiguration else {
+            throw ProviderHistoryError(.invalidRequest)
+        }
+        guard let selectedIndex = review.inputs.firstIndex(where: { $0.openingMessageID == review.selectedOpeningMessageID }) else {
+            throw ProviderHistoryError(.invalidRequest)
+        }
+        let expectedBoundary: ProviderHistoryBoundary
+        if kind == .rewindBeforeRun { expectedBoundary = .beforeMessage(review.selectedOpeningMessageID) }
+        else if selectedIndex + 1 < review.inputs.count { expectedBoundary = .beforeMessage(review.inputs[selectedIndex + 1].openingMessageID) }
+        else { expectedBoundary = .head }
+        guard review.boundary == expectedBoundary else { throw ProviderHistoryError(.invalidRequest) }
+        let sourceID = review.source.reference.nativeThreadID
+        let result = try await withHistory(sourceID: sourceID, timeout: .seconds(90)) { token in
+            let current = try await self.readHistorySnapshot(sourceID, token: token)
+            guard current == review.source, !current.hasRevert else { throw ProviderHistoryError(.historyChanged) }
+            try await self.checkHistory(token)
+            // Resolve the captured agent policy before any clone mutation. No
+            // catalog, create, prompt or source-setting operation is needed.
+            let agent = try await self.transport.agentPermissionRules(directory: self.cwd, agentID: selected.agentID)
+            try await self.checkHistory(token)
+            let rules = Self.permissionRules(captured.permission, agent: selected.agentID, native: agent)
+            return try await self.copyHistory(review, kind: kind, rules: rules, token: token, candidate: candidate)
+        }
+        return try .init(reference: result.reference, workspacePath: result.workspacePath, historyMode: .messageOrdered, openCodeV1: result)
+    }
+
+    public func inspectOpenCodeV1HistoryCandidate(review: OpenCodeV1HistoryReviewEvidence,
+        candidate: OpenCodeV1HistoryCandidate, configuration captured: ProviderConfiguration) async throws -> ProviderConversationSnapshot {
+        try review.validate(); try review.validateCandidate(candidate)
+        try OpenCodeConfigurationValidation.configuration(captured)
+        guard review.source.matchesBinding(captured), captured.openCodeConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
+              captured.workspacePath == historyWorkspacePath, let selected = captured.openCodeConfiguration else {
+            throw ProviderHistoryError(.invalidRequest)
+        }
+        let sourceID = review.source.reference.nativeThreadID, cloneID = candidate.reference.nativeThreadID
+        let result = try await withHistory(sourceID: sourceID, timeout: .seconds(30)) { token in
+            let source = try await self.readHistorySnapshot(sourceID, token: token)
+            guard source == review.source, !source.hasRevert else { throw ProviderHistoryError(.historyChanged) }
+            let agent = try await self.transport.agentPermissionRules(directory: self.cwd, agentID: selected.agentID)
+            try await self.checkHistory(token)
+            let rules = Self.permissionRules(captured.permission, agent: selected.agentID, native: agent)
+            let before = try OpenCodeV1HistoryWire.session(try await self.historyCall(token, path: ["session", cloneID]), id: cloneID, directory: self.cwd.path)
+            guard before.permissions == rules else { throw ProviderHistoryError(.historyChanged) }
+            let observed = try await self.readHistorySnapshot(cloneID, token: token)
+            guard observed.sessionDigest == before.digest else { throw ProviderHistoryError(.historyChanged) }
+            // A rewind cuts at the selected opening; a fork cuts at its next
+            // opening or head. Reproof preserves that exact action boundary.
+            let kind: ConversationHistoryKind = review.boundary == .beforeMessage(review.selectedOpeningMessageID) ? .rewindBeforeRun : .forkAfterRun
+            try review.validateResult(observed, kind: kind)
+            let after = try await self.readHistorySnapshot(sourceID, token: token)
+            guard after == source else { throw ProviderHistoryError(.historyChanged) }
+            return observed
+        }
+        return try .init(reference: result.reference, workspacePath: result.workspacePath, historyMode: .messageOrdered, openCodeV1: result)
+    }
+
+    private func withHistory(sourceID: String, timeout: Duration,
+        operation: @escaping @Sendable (UUID) async throws -> OpenCodeV1HistorySnapshot) async throws -> OpenCodeV1HistorySnapshot {
+        try Task.checkCancellation(); try OpenCodeV1HistoryWire.identifier(sourceID, prefix: "ses_")
+        guard !closing, !uncertain, historyToken == nil, preparing == nil, activeRunID == nil,
+              inFlightSends.isEmpty, backgroundActive.isEmpty, pending.isEmpty, answering.isEmpty,
+              reconciliation.isEmpty, sessionID == nil || sessionID == sourceID else { throw ProviderHistoryError(.notIdle) }
+        let token = UUID()
+        historyToken = token; historySources = [sourceID]; historyInterference = false; historyMayHaveWritten = false
+        let task = Task {
+            try await withThrowingTaskGroup(of: OpenCodeV1HistorySnapshot.self) { group in
+                group.addTask { try await operation(token) }
+                group.addTask { try await Task.sleep(for: timeout); throw ProviderHistoryError(.limitExceeded) }
+                defer { group.cancelAll() }
+                guard let value = try await group.next() else { throw ProviderHistoryError(.invalidResponse) }
+                return value
+            }
+        }
+        historyTask = task
+        defer {
+            if historyToken == token {
+                historyToken = nil; historyTask = nil; historySources = []; historyMayHaveWritten = false; historyCandidateID = nil
+            }
+        }
+        do { return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() } }
+        catch {
+            if historyMayHaveWritten { throw ProviderHistoryError(.outcomeUncertain) }
+            throw error
+        }
+    }
+
+    private func checkHistory(_ token: UUID) throws {
+        try Task.checkCancellation()
+        guard !closing, !uncertain, historyToken == token else { throw CancellationError() }
+        guard !historyInterference else { throw ProviderHistoryError(.historyChanged) }
+    }
+
+    private func historyCall(_ token: UUID, method: String = "GET", path: [String], query: [URLQueryItem] = [],
+                             body: JSONValue? = nil) async throws -> OpenCodeHTTPResponse {
+        try checkHistory(token)
+        let value = try await call(method: method, path: path, query: query, body: body)
+        try checkHistory(token); return value
+    }
+
+    private func historyQuiet(_ sourceID: String, token: UUID) async throws -> Set<String> {
+        var queue = [sourceID], linked: Set<String> = [sourceID], bytes = 0
+        while !queue.isEmpty {
+            let parent = queue.removeFirst()
+            let response = try await historyCall(token, path: ["session", parent, "children"])
+            bytes += response.body.count
+            guard bytes <= OpenCodeV1HistoryWire.maximumPageBytes,
+                  let rows = try OpenCodeV1HistoryWire.json(response).array, rows.count <= 256 else { throw ProviderHistoryError(.limitExceeded) }
+            for row in rows {
+                guard row["parentID"] == .string(parent), let id = row["id"].string,
+                      let directory = row["directory"].string, OpenCodeV1HistoryWire.sameDirectory(directory, cwd.path),
+                      linked.insert(id).inserted, linked.count <= 256 else { throw ProviderHistoryError(.invalidResponse) }
+                try OpenCodeV1HistoryWire.identifier(id, prefix: "ses_")
+                queue.append(id)
+            }
+        }
+        historySources.formUnion(linked)
+        let statuses = try OpenCodeV1Protocol.statuses(try await historyCall(token, path: ["session", "status"]))
+        guard linked.allSatisfy({ statuses[$0] == nil || statuses[$0] == .idle }), backgroundActive.isEmpty,
+              activeRunID == nil, pending.isEmpty, answering.isEmpty else { throw ProviderHistoryError(.notIdle) }
+        for tail in ["permission", "question"] {
+            guard let rows = try OpenCodeV1HistoryWire.json(try await historyCall(token, path: [tail])).array,
+                  rows.count <= 4_096 else { throw ProviderHistoryError(.invalidResponse) }
+            for row in rows {
+                let owner = try OpenCodeV1HistoryWire.identifier(row["sessionID"], prefix: "ses_")
+                guard !linked.contains(owner) else { throw ProviderHistoryError(.notIdle) }
+            }
+        }
+        return linked
+    }
+
+    private func historyRecords(_ sourceID: String, token: UUID) async throws -> [OpenCodeV1HistoryMessage] {
+        var pages: [[JSONValue]] = [], cursor: String?, cursors = Set<String>(), messages = Set<String>(), bytes = 0
+        for _ in 0..<OpenCodeV1HistoryWire.maximumPages {
+            var query = [URLQueryItem(name: "limit", value: "200")]
+            if let cursor { query.append(.init(name: "before", value: cursor)) }
+            let response = try await historyCall(token, path: ["session", sourceID, "message"], query: query)
+            bytes += response.body.count
+            guard bytes <= OpenCodeV1HistoryWire.maximumBytes else { throw ProviderHistoryError(.limitExceeded) }
+            let page = try OpenCodeV1HistoryWire.page(response)
+            for row in page.values {
+                let id = try OpenCodeV1HistoryWire.identifier(row["info"]["id"], prefix: "msg_")
+                guard messages.insert(id).inserted, messages.count <= OpenCodeV1HistoryWire.maximumMessages else { throw ProviderHistoryError(.invalidResponse) }
+            }
+            pages.append(page.values)
+            if page.before == nil {
+                return try OpenCodeV1HistoryWire.records(pages.reversed().flatMap { $0 }, sessionID: sourceID)
+            }
+            guard let next = page.before, cursors.insert(next).inserted else { throw ProviderHistoryError(.invalidResponse) }
+            cursor = next
+        }
+        throw ProviderHistoryError(.limitExceeded)
+    }
+
+    private func readHistorySnapshot(_ sourceID: String, token: UUID) async throws -> OpenCodeV1HistorySnapshot {
+        try await connect(); try checkHistory(token)
+        let first = try OpenCodeV1HistoryWire.session(try await historyCall(token, path: ["session", sourceID]), id: sourceID, directory: cwd.path)
+        let firstChildren = try await historyQuiet(sourceID, token: token)
+        let before = try await historyRecords(sourceID, token: token)
+        let after = try await historyRecords(sourceID, token: token)
+        let lastChildren = try await historyQuiet(sourceID, token: token)
+        let last = try OpenCodeV1HistoryWire.session(try await historyCall(token, path: ["session", sourceID]), id: sourceID, directory: cwd.path)
+        guard first == last, before == after, firstChildren == lastChildren else { throw ProviderHistoryError(.historyChanged) }
+        return try .init(reference: .init(provider: .opencode, nativeThreadID: sourceID), runtimeIdentity: configuration.runtimeIdentity,
+            workspacePath: historyWorkspacePath, projectID: last.projectID, workspaceID: last.workspaceID,
+            sessionDigest: last.digest, messages: after, hasRevert: last.hasRevert)
+    }
+
+    private func copyHistory(_ review: OpenCodeV1HistoryReviewEvidence, kind: ConversationHistoryKind,
+        rules: [OpenCodeV1PermissionRule], token: UUID,
+        candidate: @escaping @Sendable (OpenCodeV1HistoryCandidate) async throws -> Void) async throws -> OpenCodeV1HistorySnapshot {
+        let sourceID = review.source.reference.nativeThreadID
+        let body: JSONValue
+        switch review.boundary {
+        case .head: body = .object([:])
+        case .beforeMessage(let cut):
+            guard let first = review.source.messages.firstIndex(where: { $0.id >= cut }), first == review.retainedMessageCount,
+                  review.source.messages[first].id == cut else { throw ProviderHistoryError(.invalidRequest) }
+            body = .object(["messageID": .string(cut)])
+        default: throw ProviderHistoryError(.invalidRequest)
+        }
+        try checkHistory(token)
+        historyMayHaveWritten = true; historyUnsafe = true
+        do {
+            let response = try await historyCall(token, method: "POST", path: ["session", sourceID, "fork"], body: body)
+            let clone = try OpenCodeV1HistoryWire.session(response, directory: cwd.path)
+            guard clone.id != sourceID, clone.projectID == review.source.projectID, clone.workspaceID == review.source.workspaceID,
+                  !clone.hasRevert else { throw ProviderHistoryError(.invalidResponse) }
+            let observed = try OpenCodeV1HistoryCandidate(reference: .init(provider: .opencode, nativeThreadID: clone.id),
+                sourceInventoryDigest: review.source.inventoryDigest, runtimeIdentity: configuration.runtimeIdentity,
+                workspacePath: historyWorkspacePath, boundary: review.boundary)
+            try review.validateCandidate(observed)
+            // The app must durably record this exact newly observed ID BEFORE
+            // any follow-up GET or settings write. No event adopts it early.
+            try await candidate(observed); try checkHistory(token)
+            historyCandidateID = clone.id
+            let copied = try await readHistorySnapshot(clone.id, token: token)
+            try review.validateResult(copied, kind: kind)
+            let updated = try OpenCodeV1HistoryWire.session(try await historyCall(token, method: "PATCH", path: ["session", clone.id],
+                body: .object(["permission": .array(rules.map(\.json))])), id: clone.id, directory: cwd.path)
+            guard updated.permissions == rules else { throw ProviderHistoryError(.invalidResponse) }
+            let verified = try OpenCodeV1HistoryWire.session(try await historyCall(token, path: ["session", clone.id]), id: clone.id, directory: cwd.path)
+            guard verified == updated, verified.permissions == rules else { throw ProviderHistoryError(.invalidResponse) }
+            let result = try await readHistorySnapshot(clone.id, token: token)
+            guard result.sessionDigest == verified.digest else { throw ProviderHistoryError(.historyChanged) }
+            try review.validateResult(result, kind: kind)
+            let source = try await readHistorySnapshot(sourceID, token: token)
+            guard source == review.source else { throw ProviderHistoryError(.historyChanged) }
+            return result
+        } catch { throw ProviderHistoryError(.outcomeUncertain) }
     }
 
     private func connect() async throws {
@@ -144,7 +381,7 @@ public actor OpenCodeV1Session: ProviderSession {
 
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard !closing, !uncertain else { throw OpenCodeV1SessionError.closed }
-        guard preparing == nil, activeRunID == nil else { throw OpenCodeV1SessionError.busy }
+        guard preparing == nil, activeRunID == nil, historyToken == nil, !historyUnsafe else { throw OpenCodeV1SessionError.busy }
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         guard let selected = captured.openCodeConfiguration,
               selected.runtimeIdentity == configuration.runtimeIdentity,
@@ -262,11 +499,11 @@ public actor OpenCodeV1Session: ProviderSession {
         guard !closing, !uncertain, preparing == token, !stoppedPreparations.contains(token) else { throw CancellationError() }
     }
 
-    private func call(method: String, path: [String], body: JSONValue? = nil) async throws -> OpenCodeHTTPResponse {
+    private func call(method: String, path: [String], query: [URLQueryItem] = [], body: JSONValue? = nil) async throws -> OpenCodeHTTPResponse {
         try Task.checkCancellation()
         guard !closing else { throw CancellationError() }
         let id = UUID(), transport = transport
-        let task = Task { try await transport.request(method: method, path: path, body: body) }
+        let task = Task { try await transport.request(method: method, path: path, query: query, body: body) }
         requests[id] = task
         defer { requests.removeValue(forKey: id) }
         return try await withTaskCancellationHandler {
@@ -281,6 +518,15 @@ public actor OpenCodeV1Session: ProviderSession {
         guard !closing, !uncertain else { return }
         do {
             guard let event = try OpenCodeV1Protocol.decode(frame) else { return }
+            if historyToken != nil, event.session?.parentID.map({ historySources.contains($0) }) == true { historyInterference = true }
+            if historyToken != nil, event.sessionID.map({ historySources.contains($0) }) == true {
+                // Preserve normal event projection even when a concurrent
+                // native writer invalidates this read-only/history attempt.
+                let ownCloneSettings = event.kind == .sessionUpdated && event.sessionID == historyCandidateID
+                if !ownCloneSettings && event.kind != .sessionIdle && !(event.kind == .sessionStatus && event.status == .idle) {
+                    historyInterference = true
+                }
+            }
             try await consume(event)
         } catch { failConnection(.invalidResponse) }
     }
@@ -495,6 +741,7 @@ public actor OpenCodeV1Session: ProviderSession {
     }
 
     public func interrupt() async throws {
+        guard historyToken == nil else { throw ProviderHistoryError(.notIdle) }
         if let token = preparing { stoppedPreparations.insert(token) }
         guard !closing else { throw CancellationError() }
         if let id = activeRunID, var run = runs[id] {
@@ -656,6 +903,8 @@ public actor OpenCodeV1Session: ProviderSession {
         if let token = preparing { stoppedPreparations.insert(token) }
         connecting?.cancel()
         let owned = Array(requests.values), reconciles = Array(reconciliation.values)
+        let ownedHistory = historyTask
+        ownedHistory?.cancel()
         for request in owned { request.cancel() }
         for task in reconciles { task.cancel() }
         let transport = transport
@@ -671,6 +920,7 @@ public actor OpenCodeV1Session: ProviderSession {
         await transport.close()
         for request in owned { _ = try? await request.value }
         for task in reconciles { await task.value }
+        if let ownedHistory { _ = await ownedHistory.result }
         if let connecting { _ = try? await connecting.value }
         reader?.cancel(); await reader?.value
         continuation.finish()
@@ -842,9 +1092,15 @@ private actor OpenCodeV1OwnedRuntime: OpenCodeV1SessionTransport {
     }
 
     func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
+        try await request(method: method, path: path, query: [], body: body)
+    }
+
+    func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
         guard !closing, let client else { throw OpenCodeV1SessionError.closed }
-        return try await client.request(method: method, path: path, query: [.init(name: "directory", value: cwd.path)],
-            body: try body.map { try JSONEncoder().encode($0) }, maximumBytes: path.last == "message" ? 16 * 1_024 * 1_024 : 4 * 1_024 * 1_024)
+        guard !query.contains(where: { $0.name == "directory" }) else { throw OpenCodeV1SessionError.invalidConfiguration }
+        return try await client.request(method: method, path: path, query: query + [.init(name: "directory", value: cwd.path)],
+            body: try body.map { try JSONEncoder().encode($0) },
+            maximumBytes: path.last == "message" && query.isEmpty ? 16 * 1_024 * 1_024 : 4 * 1_024 * 1_024)
     }
 
     func close() async {
