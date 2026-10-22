@@ -44,7 +44,9 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case claudeWorkspace(ClaudeRuntimeConfiguration)
 }
 
-public enum WorkspaceCommand: Codable, Sendable, Equatable {
+/// Keep captured payloads off the stack while commands pass through admission,
+/// steering and journal reduction. Codable cases and value semantics stay intact.
+public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case addProject(WorkspaceProject)
     case addProjectWithThread(project: WorkspaceProject, thread: CodingThread)
     case renameProject(projectID: UUID, title: String)

@@ -1,5 +1,59 @@
 # Validation record
 
+## 2026-10-23 — byte-bounded events, Pi history reads and client command storage
+
+- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with
+  1550 declarations: 1539 pass and eleven optional installed-provider checks
+  skip. All 1333 Core declarations across eight suites finish in 304.285 seconds;
+  all 198 native view/store declarations pass in 65.175 seconds, terminal six
+  in 1.352 seconds and Markdown thirteen in 0.131 seconds. The final compiled
+  async-default guard passes on 838 Mach-O objects (app 218, Core 534), with
+  three local records and zero weak records. These results include the indirect
+  `WorkspaceCommand` representation below. The unchanged ACP v2 regression that
+  crashed in hosted CI also passes separately with all three parameter cases in
+  0.324 seconds. Hosted Swift 6.3.3 and interactive GUI acceptance remain pending.
+- A separate opt-in installed Claude check passes in 13.426 seconds after the
+  command-storage change. Its four generated turns exercise the actual CLI
+  through Engine, native fork and deferred-rewind context recall, exact
+  unchanged-source/selected-chain checks and SQLite restart. It uses a new
+  private workspace and does not establish broader history compatibility or
+  interactive GUI acceptance.
+- A deterministic check at the real HTTP delegate-state boundary delivers 33
+  independent eleven-byte callbacks before consumption. The original queue loses
+  the last fragment: 352 of 363 bytes remain and `eventBufferOverflow` is reported.
+  URLProtocol/TCP writes can coalesce and did not establish that callback count.
+  Raw events now coalesce into at most 32 chunks of at most 16 KiB under the same
+  512 KiB byte budget. The unchanged over-limit check still preserves exactly
+  512 KiB before its fixed failure. The new tiny-callback case passes in 0.001
+  seconds; it, the existing overflow case and unread-stream abandonment pass
+  together in 0.072 seconds. Cancellation, EOF and first-error ordering retain
+  their owned request boundaries; no limit, fixture pacing or retry was increased.
+- Known HTTP failures survive the SSE boundary as finite diagnostic categories;
+  unknown errors remain sanitized. V1 logs only a fixed category and generated
+  local run UUID. A controlled existing EOF regression produces exactly one
+  matching unified-log line, while its generic connection-loss behavior remains.
+  These diagnostics do not retroactively prove the cause of the earlier
+  intermittent OpenCode connection loss.
+- Ten new Pi declarations cover 24 cases: append inventory versus runtime/reload
+  leaf, exact active ancestry, compaction/custom-message context, unchanged native
+  entry windows and exclusive user boundaries, malformed/legacy/deep inputs and
+  bounded anchored exact-file reads. An 18,000-entry chain passes in 0.785 seconds.
+  File checks include FIFO/symlink/hardlink refusal and file/parent replacement.
+  Raw records remain transient; a file reload does not prove a live branch pointer
+  or local run ownership. Native fork/rollback controls, original-source oracle,
+  installed Pi acceptance and complete provider parity remain unfinished.
+- Hosted [run 39853472698](https://github.com/apoorvdarshan/coincide/actions/runs/39853472698)
+  at `3c798cf` passes both isolated Codex checks (4.175 and 0.470 seconds), then
+  crashes in the unchanged ACP v2 Engine test on Swift 6.3.3. Its sanitized native
+  report identifies a guard-region fault at `___chkstk_darwin`, through an outlined
+  `WorkspaceCommand` copy, `preventDelayedPromptSteering`, command admission and
+  `makeGeneral`. The async-default guard separately reports zero weak records.
+  `WorkspaceCommand` now uses the same indirect owned-payload storage as
+  `EngineCommand`, avoiding its maximum-payload stack copy. Its case/payload JSON,
+  equality and receipt fingerprints retain their contracts. `ThreadEdit`, stack
+  sizes, assertions, deadlines and CI gates are unchanged. Fresh hosted verification
+  is required; local Swift 6.4 results alone cannot establish the 6.3.3 outcome.
+
 ## 2026-10-23 — durable native Claude history and deferred context
 
 - Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits 1 with
