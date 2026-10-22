@@ -89,6 +89,10 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
         let child = try await ensure(refresh: false)
         return try await call(epoch: child.epoch) { try await child.resource.session.models() }
     }
+    public func codexSkills(forceReload: Bool = false) async throws -> ProviderSkillInventory {
+        let child = try await ensure(refresh: false)
+        return try await call(epoch: child.epoch) { try await child.resource.session.codexSkills(forceReload: forceReload) }
+    }
     public func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
         let child = try await ensure(refresh: false)
         return try await call(epoch: child.epoch) { try await child.resource.session.openCodeInventory() }

@@ -2407,6 +2407,30 @@ public actor WorkspaceEngine {
               revision.snapshot.providerReady(for: current) else { throw CancellationError() }
         return try await queryProviderMetadata(thread: current, owned: true) { try await $0.openCodeInventory() }
     }
+    /// Skills belong to the selected conversation's exact workspace and Codex
+    /// account/runtime. Discovery uses a separate metadata connection and never
+    /// starts, resumes, or retargets that conversation's active provider actor.
+    public func skills(thread: CodingThread, forceReload: Bool = false) async throws -> ProviderSkillInventory {
+        _ = try await load(); try Task.checkCancellation()
+        guard thread.provider == .codex else { throw ProviderSkillError(.unsupported) }
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let incarnation = threadIncarnations[thread.id],
+              let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
+              current.provider == .codex, current.workspacePath == thread.workspacePath,
+              ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding,
+              revision.snapshot.providerReady(for: current) else { throw CancellationError() }
+        let inventory = try await queryProviderMetadata(thread: current, owned: true) {
+            try await $0.codexSkills(forceReload: forceReload)
+        }
+        try inventory.validate()
+        guard threadIncarnations[thread.id] == incarnation else { throw CancellationError() }
+        guard CodexSkillInventory.sameWorkspace(inventory.cwd, current.workspacePath) else {
+            throw ProviderSkillError(.invalidResponse)
+        }
+        // Keep the registered path spelling (including a valid symlink alias)
+        // after proving that the response names this physical workspace.
+        return .init(cwd: current.workspacePath, skills: inventory.skills, problems: inventory.problems, checkedAt: inventory.checkedAt)
+    }
     private func queryModels(thread: CodingThread, owned: Bool) async throws -> [ProviderModel] {
         try await queryProviderMetadata(thread: thread, owned: owned) { try await $0.models() }
     }

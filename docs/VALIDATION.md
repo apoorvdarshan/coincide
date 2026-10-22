@@ -1,5 +1,53 @@
 # Validation record
 
+## 2026-10-22 — scoped Codex skills and native OpenCode v2 steering
+
+- Codex `skills/list` reads use the exact workspace and captured runtime/account,
+  with a separate metadata actor, bounded response/items/problems and physical
+  directory ownership. Unsupported capability, an empty inventory and partial
+  errors remain distinct. Neither discovery nor choosing a skill creates a
+  provider thread, reads a skill file or sends a prompt.
+- The native glass chooser supports search, `$` and optional `/skill:` triggers,
+  keyboard selection and explicit refresh. It inserts the literal advertised
+  mention into the latest UTF-16 selection. Cancellation-resistant readers stay
+  retained through runtime/auth changes, removal and shutdown. A delayed healthy
+  inventory survives the initiating view task's cancellation while typing.
+  Focused checks found that Foundation's range conversion permits a split UTF-16
+  surrogate; explicit scalar-boundary validation fixes insertion and native
+  selection requests while retaining the original failing assertion.
+- OpenCode v2 steering binds its deterministic inbox identity and exact payload
+  to the captured native session/run. It preserves original-turn receipts and
+  model/agent/permission settings, holds successful terminals across outstanding
+  steering and the next execution, and cancels only exact pending inbox IDs on
+  Stop. A lost unproven write remains uncertain and cannot be resent as a queue.
+  V1 and provider history contracts are unchanged. A real offline TCP/SSE peer
+  exercises the production factory, Engine steering, captured future FIFO,
+  original execution ownership, Stop/process drain and durable replay.
+- Hosted run `39817860781` at `f22f7aa` fails with signal 10 in
+  `CodexInstallationVerifier.inspect`, through `memset_s` and the Swift task
+  allocator. It reaches beyond the previous run-history crash site. Local Swift
+  6.4 object inspection finds small verifier frames; this does not establish the
+  hosted Swift 6.3.3 cause. GUI checks skip. The collector now derives only fixed
+  fault-region and stack-distance enums from consistent bounded native evidence;
+  raw addresses, registers, private VM text and fingerprints remain private or
+  unchanged. Synthetic checks cover exact range ownership, adjacent/conflicting
+  guards, malformed data, bucket boundaries and private-canary non-disclosure.
+- All 46 Python harness checks pass. The selected Core run passes 48 declarations;
+  after the actual surrogate fix, all seven new native view/store declarations
+  pass. Offscreen geometry covers 320/680-point widths, both appearances and
+  LTR/RTL. Its composer bitmaps are blank and the dark picker capture resolves
+  foreground colors inconsistently with its assigned appearance, so those
+  captures are not accepted as visual or contrast evidence for the running app.
+- Final canonical `swift test --no-parallel` succeeds with 1367 declarations:
+  1357 pass and ten optional installed-provider checks skip. Core reports 1162
+  declarations in eight suites in 282.382 seconds; all 186 native view/store
+  declarations pass in 63.829 seconds, terminal six in 1.393 seconds and Markdown
+  13 in 0.129 seconds. No full-run failure, deadline change or test bypass is
+  hidden by the earlier focused fixes. The staged patch passes the secret scan.
+- Actual hosted skill-picker acceptance and installed OpenCode steering remain
+  unverified. Neither local protocol peers nor offscreen native layout rendering
+  establishes current vendor compatibility or full T3 Code parity.
+
 ## 2026-10-22 — native owned Codex account and runtime integration
 
 - Production Settings now connects the explicit owned ChatGPT mode to the actual

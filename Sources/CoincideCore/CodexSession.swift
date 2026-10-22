@@ -139,6 +139,22 @@ public actor CodexSession: ProviderSession {
     public func models() async throws -> [ProviderModel] {
         try await readModelCatalog(deadline: ContinuousClock.now + .seconds(30))
     }
+    public func codexSkills(forceReload: Bool = false) async throws -> ProviderSkillInventory {
+        let deadline = ContinuousClock.now + .seconds(30)
+        do {
+            try Task.checkCancellation(); try await connect()
+            guard !shuttingDown, ContinuousClock.now < deadline else { throw ProviderSkillError(.unavailable) }
+            let response = try await rpc.request("skills/list", params: .object([
+                "cwds": .array([.string(processWorkspace.path)]), "forceReload": .bool(forceReload)
+            ]), timeout: ContinuousClock.now.duration(to: deadline))
+            try Task.checkCancellation()
+            guard !shuttingDown, ContinuousClock.now < deadline else { throw ProviderSkillError(.unavailable) }
+            return try CodexSkillInventory.decode(response, cwd: processWorkspace.path)
+        } catch is CancellationError { throw CancellationError() }
+        catch let error as JSONRPCRemoteError where error.code == -32601 || error.code == -32602 { throw ProviderSkillError(.unsupported) }
+        catch let error as ProviderSkillError { throw error }
+        catch { throw ProviderSkillError(.unavailable) }
+    }
     public func codexAccountSnapshot() async throws -> CodexAccountSnapshot {
         try await readCodexAccountSnapshot(timeout: .seconds(30))
     }

@@ -141,11 +141,27 @@ prove that a still-pending POST was cancelled. Native history and unresolved wor
 are not automatically replayed, and cancelling local HTTP I/O is not represented
 as native Stop.
 
+Active v2 steering uses the captured run's native session and original input ID.
+Its deterministic, bounded inbox identity binds the run, client message and exact
+payload; repeated local requests cannot send the same input twice. The native
+`delivery: "steer"` prompt never changes the captured model, agent or permissions.
+The receipt retains the original turn even if its HTTP reply arrives after that
+run finishes. Exact delivery can establish admission after a lost reply; an
+unproven write remains uncertain and is not replayed or converted to a queue.
+
+Successful execution terminals wait for outstanding steers and the next owned
+execution when required. Native cancellation settles only its exact inbox entry.
+Stop deletes outstanding known-admitted steer entries before interrupting the
+original session; unknown admission closes the owned connection conservatively.
+A late Stop cannot target a successor run. V1 does not inherit these v2 routes.
+Offline protocol and production TCP/SSE-to-Engine checks are separate from
+installed-provider acceptance.
+
 ## Remaining integration
 
 Remaining work includes a shared instance lease registry,
 bounded reconnect/backfill reconciliation, complete autonomous/early-child
-recovery, native steering and session import/history. V1 and v2 history have distinct
+recovery, v1 steering and session import/history. V1 and v2 history have distinct
 semantics; files remain under Coincide's reviewed checkpoint service. Native
 setup/authentication, commands, skills, usage and installed-provider verification
 also remain required by [the full parity inventory](PROVIDER_PARITY.md).

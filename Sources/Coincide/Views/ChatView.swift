@@ -10,6 +10,7 @@ struct ChatView: View {
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
     @State private var runHistorySheet = false
+    @State private var skillsModel: ProviderSkillsStore?
     @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode, reviewSetup: Bool)?
     private var thread: CodingThread? { store.thread(threadID) }
     private var actionsLocked: Bool {
@@ -171,7 +172,8 @@ struct ChatView: View {
                                      }
                                  }, stop: { Task { await store.interrupt(threadID) } },
                                  grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode,
-                                 setGrokRuntimeMode: { store.setGrokRuntimeMode($0, threadID: threadID) })
+                                 setGrokRuntimeMode: { store.setGrokRuntimeMode($0, threadID: threadID) },
+                                 skills: skillsModel)
                 }
                 .coincideGlassGroup()
                 .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(minWidth: 0, maxWidth: .infinity)
@@ -181,6 +183,7 @@ struct ChatView: View {
             .task(id: store.promptSteeringKey(threadID: threadID)) {
                 await store.refreshPromptSteeringAvailability(threadID: threadID)
             }
+            .task(id: store.skillsScope(threadID: threadID)) { skillsModel = store.skillsStore(threadID: threadID) }
             .sheet(isPresented: $runHistorySheet) { RunHistorySheet(store: store, threadID: threadID) }
             .sheet(isPresented: $referenceFileSheet) {
                 WorkspaceFilePicker(workspace: store, path: thread.workspacePath) { path in

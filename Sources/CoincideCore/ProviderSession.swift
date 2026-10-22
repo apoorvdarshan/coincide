@@ -33,6 +33,7 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
 public protocol ProviderSession: Actor {
     nonisolated var events: AsyncStream<ProviderEvent> { get }
     func models() async throws -> [ProviderModel]
+    func codexSkills(forceReload: Bool) async throws -> ProviderSkillInventory
     func openCodeInventory() async throws -> OpenCodeMetadataSnapshot
     func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection
     func codexAccountSnapshot() async throws -> CodexAccountSnapshot
@@ -57,6 +58,9 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func codexSkills(forceReload: Bool = false) async throws -> ProviderSkillInventory {
+        throw ProviderSkillError(.unsupported)
+    }
     /// The default retains older adapters' behavior. Adapters with weak native
     /// turn identities can additionally fence interruption by the local run.
     public func interrupt(expectedRunID: UUID) async throws { try await interrupt() }

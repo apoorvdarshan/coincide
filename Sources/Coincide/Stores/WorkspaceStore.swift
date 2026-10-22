@@ -132,6 +132,8 @@ final class WorkspaceStore {
     var codexModels: [UUID: [ProviderModel]] = [:]
     @ObservationIgnored private var codexCatalogReads: [UUID: Task<[ProviderModel], any Error>] = [:]
     @ObservationIgnored private var codexMetadataScope = UUID()
+    private var providerSkills: [UUID: ProviderSkillsStore] = [:]
+    @ObservationIgnored private var providerSkillsDrains: [UUID: (scope: ProviderSkillsStore.Scope, task: Task<Void, Never>)] = [:]
     let acpConnections = ACPConnectionStore()
     var inspectorVisible = false
     var fileNavigation: FileNavigation?
@@ -263,6 +265,7 @@ final class WorkspaceStore {
             }
             self.codexMetadataScope = UUID()
             self.codexModels.removeAll(); self.providerModels.removeValue(forKey: .codex)
+            let skills = self.retireSkills()
             let catalogs = Array(self.codexCatalogReads.values)
             for task in catalogs { task.cancel() }
             let defaults = self.codexModelDefaultsReads.values.map(\.task)
@@ -271,6 +274,7 @@ final class WorkspaceStore {
             await self.codexAccount.invalidate()
             for task in catalogs { _ = try? await task.value }
             for task in defaults { _ = await task.value }
+            for task in skills { await task.value }
             guard !self.terminating || !self.codexAuthenticationLeases.isEmpty else { throw CancellationError() }
             if sameScope { self.codexAuthentication.updateConfiguration(configuration) }
             else { await self.bindCodexAuthentication(configuration: configuration) }
@@ -321,6 +325,7 @@ final class WorkspaceStore {
               codexAuthenticationChanges.insert(configuration.instanceID).inserted else { throw CancellationError() }
         let instanceID = configuration.instanceID
         codexMetadataScope = UUID(); codexModels.removeAll(); providerModels.removeValue(forKey: .codex)
+        let skills = retireSkills { $0.configuration.authenticationMode == .ownedChatGPT && $0.configuration.instanceID == instanceID }
         let catalogs = Array(codexCatalogReads.values), defaults = codexModelDefaultsReads.values.map(\.task)
         codexModelDefaultsReads.removeAll()
         catalogs.forEach { $0.cancel() }; defaults.forEach { $0.cancel() }
@@ -333,6 +338,7 @@ final class WorkspaceStore {
             runtimeLease = try await codexOwnedRuntime.beginMutation(instanceID: instanceID)
             for task in catalogs { _ = try? await task.value }
             for task in defaults { _ = await task.value }
+            for task in skills { await task.value }
             await codexAccount.invalidate()
             try Task.checkCancellation()
             guard !terminating, CodexAuthenticationStore.sameControllerScope(configuration, codexRuntime.configuration),
@@ -923,6 +929,11 @@ final class WorkspaceStore {
     }
     private func apply(_ update: WorkspaceUpdate) {
         guard update.sequence >= lastSequence else { return }
+        _ = retireSkills { scope in
+            guard let next = update.snapshot.threads.first(where: { $0.id == scope.threadID }),
+                  scope.matches(next), update.snapshot.providerReady(for: next) else { return true }
+            return false
+        }
         for id in Array(acpModels.keys) {
             let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
             if old?.providerMetadata != next?.providerMetadata || old?.acpAgent != next?.acpAgent || old?.workspacePath != next?.workspacePath {
@@ -987,6 +998,7 @@ final class WorkspaceStore {
     }
     private func reconcileRemovedResources(threadIDs: Set<UUID>, projectIDs: Set<UUID>) {
         let modelReads = threadIDs.compactMap { codexModelDefaultsReads[$0]?.task }
+        let skills = providerSkillsDrains.values.filter { projectIDs.contains($0.scope.projectID) || threadIDs.contains($0.scope.threadID) }.map(\.task)
         for id in threadIDs {
             pendingDrafts.removeValue(forKey: id); draftOverrides.removeValue(forKey: id); acpModels.removeValue(forKey: id)
             promptSteeringAvailability.removeValue(forKey: id)
@@ -1032,6 +1044,7 @@ final class WorkspaceStore {
         let cleanupID = UUID()
         let task: Task<Void, Never> = Task { [weak self] in
             for task in modelReads { _ = await task.value }
+            for task in skills { await task.value }
             for task in imports { await task.value }
             for task in worktrees { _ = await task.result }
             for task in worktreeReads { _ = await task.result }
@@ -1806,6 +1819,41 @@ final class WorkspaceStore {
         } catch is CancellationError { }
         catch { if !terminating { errorMessage = error.localizedDescription } }
     }
+    func skillsScope(threadID: UUID) -> ProviderSkillsStore.Scope? {
+        guard !terminating, !codexRuntime.isApplying, let thread = thread(threadID), thread.provider == .codex,
+              workspaceReady(for: thread), snapshot.providerReady(for: thread) else { return nil }
+        let scope = ProviderSkillsStore.Scope(thread)
+        guard scope.configuration.authenticationMode != .ownedChatGPT || !codexAuthenticationChanges.contains(scope.configuration.instanceID) else { return nil }
+        return scope
+    }
+    func skillsStore(threadID: UUID) -> ProviderSkillsStore? {
+        guard let scope = skillsScope(threadID: threadID), let thread = thread(threadID), let engine else { return nil }
+        if let cached = providerSkills[threadID], cached.scope == scope, !cached.isClosed { return cached }
+        _ = retireSkills { $0.threadID == threadID }
+        let id = UUID()
+        let model = ProviderSkillsStore(id: id, scope: scope, read: { forceReload in
+            try await engine.skills(thread: thread, forceReload: forceReload)
+        }, isCurrent: { [weak self] in
+            guard let self else { return false }
+            return self.providerSkills[threadID]?.id == id && self.skillsScope(threadID: threadID) == scope
+        })
+        providerSkills[threadID] = model; return model
+    }
+    /// Cancel synchronously so no old result can publish, then retain every
+    /// drain until callers have joined the exact metadata lifecycle.
+    private func retireSkills(where predicate: (ProviderSkillsStore.Scope) -> Bool = { _ in true }) -> [Task<Void, Never>] {
+        for (threadID, model) in providerSkills.filter({ predicate($0.value.scope) }) {
+            model.cancel(); providerSkills.removeValue(forKey: threadID)
+            let id = model.id
+            let task = Task { [weak self] in
+                await model.shutdown(); self?.providerSkillsDrains.removeValue(forKey: id)
+            }
+            providerSkillsDrains[id] = (model.scope, task)
+        }
+        // Previously retired readers may still be draining after a scope
+        // change. Joining all retained drains also covers that window.
+        return providerSkillsDrains.values.filter { predicate($0.scope) }.map(\.task)
+    }
     func refreshCodexAccount() async {
         guard !terminating, !codexRuntime.isApplying, codexRuntime.configuration.authenticationMode == .cliDefault, let engine else { return }
         let configuration = codexRuntime.configuration
@@ -2423,6 +2471,7 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        let skills = retireSkills()
         codexAuthenticationBinding?.cancel()
         await codexAuthenticationBinding?.value
         await codexAuthentication.shutdown()
@@ -2430,6 +2479,7 @@ final class WorkspaceStore {
         await antigravityInstallation.shutdown()
         await codexAccount.cancel()
         await codexRuntime.shutdown()
+        for task in skills { await task.value }
         let codexReads = Array(codexCatalogReads.values)
         for task in codexReads { task.cancel() }
         for task in codexReads { _ = try? await task.value }

@@ -74,6 +74,10 @@ public actor OpenCodeV2Session: ProviderSession {
     private var seenEventIDs: [String] = []
     private var lastSequences: [String: Int] = [:]
     private var backgroundActive: Set<String> = []
+    private var steers: [String: OpenCodeNativeSteer] = [:]
+    private var steeringTasks: [String: Task<ProviderSteeringReceipt, any Error>] = [:]
+    private var strandedSteers: Set<String> = []
+    private var interrupting: UUID?
 
     public init(executable: URL, cwd: URL, configuration: OpenCodeConfiguration) {
         let pair = AsyncStream<ProviderEvent>.makeStream()
@@ -144,7 +148,7 @@ public actor OpenCodeV2Session: ProviderSession {
 
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard !closing, !uncertain else { throw OpenCodeV2SessionError.closed }
-        guard preparing == nil, activeRunID == nil else { throw OpenCodeV2SessionError.busy }
+        guard preparing == nil, activeRunID == nil, interrupting == nil else { throw OpenCodeV2SessionError.busy }
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         guard let selected = captured.openCodeConfiguration,
               selected.runtimeIdentity == configuration.runtimeIdentity,
@@ -178,6 +182,7 @@ public actor OpenCodeV2Session: ProviderSession {
             let nativeID = try await ensureSession(thread: thread, captured: captured, selected: selected,
                                                    model: model, rules: rules, token: token)
             try requirePreparation(token)
+            try await cancelStrandedSteers(sessionID: nativeID, token: token)
             let active = try OpenCodeV2Protocol.activeSessions(try await call(method: "GET", path: ["api", "session", "active"]))
             try requirePreparation(token)
             guard !active.contains(nativeID) else { throw OpenCodeV2SessionError.busy }
@@ -198,6 +203,7 @@ public actor OpenCodeV2Session: ProviderSession {
             guard runs.count < 256 || activeRunID == nil else { throw OpenCodeV2SessionError.invalidResponse }
             trimRuns()
             runs[runID] = .init(id: runID, sessionID: nativeID, inputID: inputID, autonomous: false)
+            runs[runID]?.configuration = captured
             activeRunID = runID; owners[nativeID] = runID
             let projectionOwner = OpenCodeProjectionOwner(sessionID: nativeID, runID: runID)
             if projectors[projectionOwner] == nil { projectors[projectionOwner] = .init(instanceID: selected.instanceID, sessionID: nativeID) }
@@ -233,6 +239,107 @@ public actor OpenCodeV2Session: ProviderSession {
             if let safe = error as? OpenCodeV2SessionError { throw safe }
             throw OpenCodeV2SessionError.invalidResponse
         }
+    }
+
+    public func steeringCapabilities() async -> ProviderSteeringCapabilities {
+        pruneSteers()
+        guard !closing, !uncertain, connected, preparing == nil, interrupting == nil,
+              let id = activeRunID, let run = runs[id], !run.autonomous, !run.stopped, !run.finished,
+              run.configuration != nil, run.started, run.delivered, run.announced,
+              !pending.values.contains(where: { $0.owner == id }), run.steerIDs.count < 128, steers.count < 1_024 else {
+            return .init(unavailableReason: ProviderSteeringError(.noActiveTurn).localizedDescription)
+        }
+        return .init(supportsActiveSteering: true)
+    }
+
+    public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String,
+                      clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try Task.checkCancellation()
+        try ProviderSteeringValidation.id(clientMessageID)
+        try ProviderSteeringValidation.input(input)
+        guard !closing, !uncertain, connected, preparing == nil, interrupting == nil,
+              let id = activeRunID, let run = runs[id], !run.autonomous, !run.finished, !run.stopped,
+              run.started, run.delivered, run.announced, let captured = run.configuration,
+              !pending.values.contains(where: { $0.owner == id }) else { throw ProviderSteeringError(.noActiveTurn) }
+        try ProviderSteeringValidation.target(thread, provider: .opencode, configuration: captured, runID: id,
+            nativeThreadID: run.sessionID, turnID: run.inputID, expectedTurnID: expectedTurnID)
+        guard captured.openCodeConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
+              URL(fileURLWithPath: captured.workspacePath).standardizedFileURL.resolvingSymlinksInPath() == cwd else {
+            throw ProviderSteeringError(.staleTarget)
+        }
+        let identity = try JSONEncoder().encode([configuration.instanceID.uuidString, run.sessionID, id.uuidString, clientMessageID])
+        let inboxID = "msg_coincide_steer_" + Self.digest(String(decoding: identity, as: UTF8.self))
+        let body: JSONValue
+        do { body = try Self.prompt(input, inputID: inboxID, delivery: "steer") }
+        catch { throw ProviderSteeringError(.invalidRequest) }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let fingerprint = Self.digest(String(decoding: try encoder.encode(body), as: UTF8.self))
+        if let previous = steers[inboxID] {
+            guard previous.runID == id, previous.fingerprint == fingerprint else { throw ProviderSteeringError(.invalidRequest) }
+            if let task = steeringTasks[inboxID] { return try await waitForSteer(task) }
+            if previous.rejected { throw ProviderSteeringError(.rejected) }
+            guard previous.admitted || previous.observed else { throw ProviderSteeringError(.outcomeUncertain) }
+            return try .init(turnID: run.inputID)
+        }
+        pruneSteers()
+        guard run.steerIDs.count < 128, steers.count < 1_024 else { throw ProviderSteeringError(.rejected) }
+        // Install exact ownership before the native write or its first event.
+        steers[inboxID] = .init(runID: id, sessionID: run.sessionID, fingerprint: fingerprint)
+        runs[id]?.steerIDs.insert(inboxID); runs[id]?.pendingSteers.insert(inboxID)
+        let task = Task { try await self.submitSteer(inboxID: inboxID, originalTurnID: run.inputID, body: body) }
+        steeringTasks[inboxID] = task
+        defer { steeringTasks.removeValue(forKey: inboxID) }
+        return try await waitForSteer(task)
+    }
+
+    private func waitForSteer(_ task: Task<ProviderSteeringReceipt, any Error>) async throws -> ProviderSteeringReceipt {
+        try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    private func submitSteer(inboxID: String, originalTurnID: String, body: JSONValue) async throws -> ProviderSteeringReceipt {
+        guard let steer = steers[inboxID] else { throw ProviderSteeringError(.staleTarget) }
+        var posted = false
+        do {
+            try Task.checkCancellation()
+            guard !closing, !uncertain, activeRunID == steer.runID, runs[steer.runID]?.stopped == false,
+                  runs[steer.runID]?.finished == false else { throw ProviderSteeringError(.staleTarget) }
+            posted = true
+            let response = try await call(method: "POST", path: ["api", "session", steer.sessionID, "prompt"], body: body)
+            _ = try OpenCodeV2Protocol.admission(response, sessionID: steer.sessionID, inputID: inboxID)
+            guard !closing, !uncertain else { throw ProviderSteeringError(.outcomeUncertain) }
+            steers[inboxID]?.admitted = true
+            return try .init(turnID: originalTurnID)
+        } catch {
+            // Exact native delivery wins over a late/lost acknowledgement,
+            // including after this original run has already finished.
+            if !closing, !uncertain, let observed = steers[inboxID], observed.observed {
+                return try .init(turnID: originalTurnID)
+            }
+            if !posted || Self.definitelyRejected(error) {
+                steers[inboxID]?.rejected = true
+                runs[steer.runID]?.pendingSteers.remove(inboxID)
+                strandedSteers.remove(inboxID)
+                finishIfReady(steer.runID)
+                if !posted { throw ProviderSteeringError(.staleTarget) }
+                throw ProviderSteeringError(.rejected)
+            }
+            failConnection(.uncertainDelivery)
+            throw ProviderSteeringError(.outcomeUncertain)
+        }
+    }
+
+    private func cancelStrandedSteers(sessionID: String, token: UUID) async throws {
+        for id in strandedSteers.sorted() where steers[id]?.sessionID == sessionID {
+            // A DELETE cannot race an old POST which has not proved admission.
+            guard steers[id]?.admitted == true || steers[id]?.observed == true else { throw OpenCodeV2SessionError.busy }
+            try Self.noContent(try await call(method: "DELETE", path: ["api", "session", sessionID, "inbox", id]))
+            try requirePreparation(token)
+            strandedSteers.remove(id)
+        }
+    }
+
+    private func pruneSteers() {
+        steers = steers.filter { runs[$0.value.runID]?.finished != true || steeringTasks[$0.key] != nil || strandedSteers.contains($0.key) }
     }
 
     private func ensureSession(thread: CodingThread, captured: ProviderConfiguration, selected: OpenCodeConfiguration,
@@ -352,6 +459,22 @@ public actor OpenCodeV2Session: ProviderSession {
     private func consume(_ event: OpenCodeV2Event) throws {
         guard !event.requiresReconciliation else { throw OpenCodeV2SessionError.invalidResponse }
         let nativeID = event.sessionID
+        if let inbox = event.inboxID, var steer = steers[inbox], steer.sessionID == nativeID,
+           [.inboxEnqueued, .inboxDelivered, .inboxCancelled].contains(event.kind) {
+            steer.observed = true
+            if event.kind == .inboxDelivered {
+                steer.delivered = true; runs[steer.runID]?.pendingSteers.remove(inbox)
+                // Delivery after the previous execution ended belongs to the
+                // following execution. Its started event must clear the old end.
+                if runs[steer.runID]?.terminal != nil { runs[steer.runID]?.awaitingSteerStart = true }
+                strandedSteers.remove(inbox)
+            } else if event.kind == .inboxCancelled, !steer.delivered {
+                steer.cancelled = true; runs[steer.runID]?.pendingSteers.remove(inbox); strandedSteers.remove(inbox)
+            }
+            steers[inbox] = steer
+            if event.kind == .inboxCancelled { finishIfReady(steer.runID) }
+            return
+        }
         if event.kind == .sessionCreated, let parent = event.session?.parentID, owners[parent] != nil {
             guard childParents.count < 256 || childParents[nativeID] != nil else { throw OpenCodeV2SessionError.invalidResponse }
             if let link = childCalls[nativeID], link.parentID != parent { throw OpenCodeV2SessionError.invalidResponse }
@@ -395,7 +518,7 @@ public actor OpenCodeV2Session: ProviderSession {
                     continuation.yield(.activity(.init(id: id, state: .running)))
                     return
                 }
-                run.started = true; runs[owner] = run
+                run.started = true; run.terminal = nil; run.awaitingSteerStart = false; runs[owner] = run
                 try flushBuffered(owner); finishIfReady(owner); return
             case .executionSucceeded, .executionInterrupted, .executionFailed:
                 // An older execution can end after the new queue admission but
@@ -512,6 +635,9 @@ public actor OpenCodeV2Session: ProviderSession {
     private func finishIfReady(_ id: UUID) {
         guard var run = runs[id], !run.finished, let terminal = run.terminal,
               (run.started && run.delivered && (run.admitted || run.inputObserved)) || (run.stopped && !run.delivered) else { return }
+        if terminal == .executionSucceeded, !run.stopped,
+           (!run.pendingSteers.isEmpty || run.awaitingSteerStart) { return }
+        strandedSteers.formUnion(run.pendingSteers)
         run.finished = true; runs[id] = run
         if activeRunID == id { activeRunID = nil }
         if run.autonomous {
@@ -530,10 +656,29 @@ public actor OpenCodeV2Session: ProviderSession {
         }
     }
 
+    public func interrupt(expectedRunID: UUID) async throws {
+        guard activeRunID == expectedRunID else { throw ProviderSteeringError(.staleTarget) }
+        try await interrupt()
+    }
+
     public func interrupt() async throws {
+        guard interrupting == nil else { throw OpenCodeV2SessionError.busy }
+        let stopToken = UUID(); interrupting = stopToken
+        defer { if interrupting == stopToken { interrupting = nil } }
         if let token = preparing { stoppedPreparations.insert(token) }
         if let id = activeRunID, var run = runs[id] { run.stopped = true; runs[id] = run }
         guard !closing else { throw CancellationError() }
+        let stoppedRunID = activeRunID
+        if let id = stoppedRunID, let run = runs[id] {
+            for inboxID in run.pendingSteers.sorted() {
+                guard let steer = steers[inboxID], steer.admitted || steer.observed else {
+                    failConnection(.uncertainDelivery); await close(); throw OpenCodeV2SessionError.uncertainDelivery
+                }
+                try Self.noContent(try await call(method: "DELETE", path: ["api", "session", steer.sessionID, "inbox", inboxID]))
+                guard activeRunID == id || activeRunID == nil else { throw OpenCodeV2SessionError.staleRequest }
+                strandedSteers.remove(inboxID)
+            }
+        }
         if let id = activeRunID, let run = runs[id], !run.autonomous, !run.inputID.isEmpty {
             if !run.admitted && !run.inputObserved {
                 // Cancellation cannot retract a POST which may still be entering
@@ -550,6 +695,7 @@ public actor OpenCodeV2Session: ProviderSession {
         }
         let nativeIDs = Set(backgroundActive).union(sessionID.map { [$0] } ?? [])
         for nativeID in nativeIDs.sorted() {
+            guard activeRunID == stoppedRunID || activeRunID == nil else { throw OpenCodeV2SessionError.staleRequest }
             let response = try await call(method: "POST", path: ["api", "session", nativeID, "interrupt"], body: .object([:]))
             let value = try Self.json(response)
             guard case .bool = value["interrupted"] else { throw OpenCodeV2SessionError.invalidResponse }
@@ -696,6 +842,8 @@ public actor OpenCodeV2Session: ProviderSession {
         if let token = preparing { stoppedPreparations.insert(token) }
         connecting?.cancel()
         let ownedRequests = Array(requests.values)
+        let ownedSteers = Array(steeringTasks.values)
+        for task in ownedSteers { task.cancel() }
         for request in ownedRequests { request.cancel() }
         // A lost prompt response can still mean admitted native work. Best-effort
         // interruption uses only exact known IDs; a short transport-close deadline
@@ -716,6 +864,7 @@ public actor OpenCodeV2Session: ProviderSession {
         deadline.cancel(); await deadline.value
         await transport.close()
         for request in ownedRequests { _ = try? await request.value }
+        for task in ownedSteers { _ = try? await task.value }
         if let connecting { _ = try? await connecting.value }
         reader?.cancel(); await reader?.value
         continuation.finish()
@@ -724,9 +873,11 @@ public actor OpenCodeV2Session: ProviderSession {
     private func trimRuns() {
         guard runs.count >= 128 else { return }
         let retained = Set(backgroundActive.compactMap { owners[$0] }).union(pending.values.map(\.owner)).union(inFlightSends)
+            .union(steeringTasks.keys.compactMap { steers[$0]?.runID })
         for id in runs.keys where id != activeRunID && !retained.contains(id) && runs[id]?.finished == true { runs.removeValue(forKey: id) }
         assistantOwners = assistantOwners.filter { runs[$0.value] != nil }
         projectors = projectors.filter { runs[$0.key.runID] != nil }
+        steers = steers.filter { runs[$0.value.runID] != nil || steeringTasks[$0.key] != nil || strandedSteers.contains($0.key) }
     }
 
     private static func resolveModel(_ selected: OpenCodeModelSelection?, inventory: OpenCodeMetadataSnapshot) throws -> OpenCodeModelSelection {
@@ -756,12 +907,13 @@ public actor OpenCodeV2Session: ProviderSession {
         return .object(object)
     }
 
-    private static func prompt(_ input: ProviderInput, inputID: String) throws -> JSONValue {
+    private static func prompt(_ input: ProviderInput, inputID: String, delivery: String = "queue") throws -> JSONValue {
         guard input.text.utf8.count <= 2 * 1_024 * 1_024, input.images.count <= 100,
               input.images.allSatisfy({ $0.data.count <= 20 * 1_024 * 1_024 && ["image/png", "image/jpeg", "image/gif", "image/webp"].contains($0.mimeType) }) else {
             throw OpenCodeV2SessionError.unsupportedInput
         }
-        var object: [String: JSONValue] = ["id": .string(inputID), "text": .string(input.text), "delivery": .string("queue"), "resume": .bool(true)]
+        var object: [String: JSONValue] = ["id": .string(inputID), "text": .string(input.text), "delivery": .string(delivery)]
+        if delivery == "queue" { object["resume"] = .bool(true) }
         if !input.images.isEmpty {
             object["files"] = .array(input.images.map { .object(["uri": .string("data:" + $0.mimeType + ";base64," + $0.data.base64EncodedString())]) })
         }
@@ -808,6 +960,10 @@ private struct OpenCodeNativeRun {
     let sessionID: String
     let inputID: String
     let autonomous: Bool
+    var configuration: ProviderConfiguration?
+    var steerIDs: Set<String> = []
+    var pendingSteers: Set<String> = []
+    var awaitingSteerStart = false
     var admitted = false
     var inputObserved = false
     var delivered = false
@@ -818,6 +974,17 @@ private struct OpenCodeNativeRun {
     var terminal: OpenCodeV2Event.Kind?
     var buffer: [OpenCodeV2Event] = []
     var bufferBytes = 0
+}
+
+private struct OpenCodeNativeSteer {
+    let runID: UUID
+    let sessionID: String
+    let fingerprint: String
+    var admitted = false
+    var observed = false
+    var delivered = false
+    var cancelled = false
+    var rejected = false
 }
 
 private struct OpenCodePendingRequest {

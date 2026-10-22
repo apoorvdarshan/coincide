@@ -76,6 +76,73 @@ def _image_path(value):
     return None
 
 
+def _address(value):
+    return value if type(value) is int and 0 <= value < 2**64 else None
+
+
+def _fault_classification(payload, fault):
+    """Reduce private address/register/VM data to fixed diagnostic enums only.
+
+    A neighbouring guard or a stack mentioned elsewhere is not fault evidence.
+    Keep this independent of the stack fingerprint and never return raw input.
+    """
+    unknown = {"faultRegion": "unknown", "faultToStackPointer": "unknown"}
+    exception = payload.get("exception")
+    if not isinstance(exception, dict) or exception.get("type") != "EXC_BAD_ACCESS":
+        return unknown
+    addresses = []
+    if "rawCodes" in exception:
+        codes = exception["rawCodes"]
+        if not isinstance(codes, list) or len(codes) != 2 or any(_address(value) is None for value in codes):
+            return unknown
+        addresses.append(codes[1])
+    subtype = exception.get("subtype")
+    if isinstance(subtype, str) and len(subtype) <= 128:
+        match = re.fullmatch(r"KERN_[A-Z0-9_]{1,48} at 0x([0-9a-fA-F]{1,16})", subtype)
+        if match:
+            addresses.append(int(match.group(1), 16))
+    if not addresses or len(set(addresses)) != 1:
+        return unknown
+    address = addresses[0]
+    result = dict(unknown)
+    threads = payload.get("threads")
+    if isinstance(threads, list) and _integer(fault) and fault < len(threads) and isinstance(threads[fault], dict):
+        state = threads[fault].get("threadState")
+        if isinstance(state, dict):
+            register = {"ARM_THREAD_STATE64": "sp", "x86_THREAD_STATE64": "rsp"}.get(state.get("flavor")) if isinstance(state.get("flavor"), str) else None
+            saved = state.get(register) if register else None
+            pointer = _address(saved.get("value")) if isinstance(saved, dict) else None
+            if pointer is not None and pointer != 0:
+                distance = abs(address - pointer)
+                result["faultToStackPointer"] = ("lessThan4KiB" if distance < 4096 else
+                                                  "4KiBTo64KiB" if distance < 65536 else
+                                                  "64KiBTo1MiB" if distance < 1048576 else "atLeast1MiB")
+    regions = payload.get("vmRegionInfo")
+    if not isinstance(regions, str) or len(regions) > 65536:
+        return result
+    lines = regions.splitlines()
+    if len(lines) > 128:
+        return result
+    # Apple marks the fault's row with an arrow. Parse only a single exact row,
+    # cross-check its range, and discard all labels/details after classification.
+    marked = [line for line in lines if line.lstrip().startswith("--->")]
+    unmapped = [line for line in lines if re.fullmatch(r"0x[0-9a-fA-F]{1,16} is not in any region\.(?: [^\r\n]{0,256})?", line)]
+    if len(unmapped) == 1 and not marked:
+        native_address = int(unmapped[0].split(" ", 1)[0], 16)
+        if native_address == address:
+            result["faultRegion"] = "unmapped"
+    elif len(marked) == 1 and not unmapped:
+        match = re.fullmatch(r"\s*--->\s+(.{1,80}?)\s+(?:0x)?([0-9a-fA-F]{1,16})-(?:0x)?([0-9a-fA-F]{1,16})\s+\[[^\]\r\n]{1,32}\]\s+([rwx-]{3})/[rwx-]{3}(?:\s+[^\r\n]{0,512})?", marked[0])
+        if match:
+            label, start, end, protection = match.groups()
+            if int(start, 16) <= address < int(end, 16):
+                result["faultRegion"] = ("guard" if label.strip() == "STACK GUARD" and protection == "---" else
+                                         "stack" if label.strip() == "Stack" else
+                                         "readOnly" if "r" in protection and "w" not in protection else
+                                         "writable" if "w" in protection else "other")
+    return result
+
+
 def _timestamp(header, payload):
     value = payload.get("captureTime", header.get("timestamp"))
     if not isinstance(value, str) or len(value) > 64:
@@ -148,6 +215,9 @@ def sanitize_report(header, payload, since, now):
                       if isinstance(thread, dict) and thread.get("triggered") is True), None)
     if fault is not None:
         report["faultingThread"] = fault
+    classification = _fault_classification(payload, fault)
+    if any(value != "unknown" for value in classification.values()):
+        report["faultClassification"] = classification
     order = ([fault] if fault is not None else []) + [index for index in range(len(threads)) if index != fault]
     report["threads"] = []
     frame_count = 0
@@ -195,6 +265,7 @@ def sanitize_report(header, payload, since, now):
                                   and len(thread["frames"]) > MAX_FRAMES_PER_THREAD for thread in threads))
     # No report IDs, machine/user identifiers, private paths, registers, addresses, memory,
     # environment, ASI/assertion messages, or other arbitrary payload fields survive.
+    # faultClassification contains only fixed enums derived before this boundary.
     while len(json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2).encode()) > MAX_REPORT_BYTES - 100:
         report["truncated"] = True
         if len(report["threads"]) > 1:

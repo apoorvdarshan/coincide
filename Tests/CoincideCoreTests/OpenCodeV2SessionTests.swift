@@ -461,6 +461,268 @@ func openCodeV2SequentialRunsDoNotShareTheProjectionByteBudget() async throws {
     }
 }
 
+@Test func openCodeV2SteeringKeepsOriginalTurnAndCapturedControlsAndDoesNotReplayAnInboxID() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer()
+        let original = try #require(thread.activeRun?.nativeTurnID)
+        let before = await fixture.transport.calls
+        let receipt = try await fixture.session.steer(input: .init(text: "Steer 工作 🌍"), thread: thread,
+            expectedTurnID: original, clientMessageID: "local-steer-one")
+        #expect(receipt.turnID == original && receipt.delivery == .acknowledged)
+        let calls = await fixture.transport.calls
+        #expect(calls.count == before.count + 1)
+        let call = try #require(calls.last), body = try #require(call.body)
+        #expect(call.path == ["api", "session", thread.providerThreadID!, "prompt"])
+        #expect(body["id"].string?.hasPrefix("msg_coincide_steer_") == true)
+        #expect(body["delivery"] == .string("steer") && body["text"] == .string("Steer 工作 🌍"))
+        #expect(body["model"] == .null && body["agent"] == .null && body["permissions"] == .null && body["resume"] == .null)
+        let again = try await fixture.session.steer(input: .init(text: "Steer 工作 🌍"), thread: thread,
+            expectedTurnID: original, clientMessageID: "local-steer-one")
+        #expect(again == receipt)
+        await #expect(throws: ProviderSteeringError(.invalidRequest)) {
+            try await fixture.session.steer(input: .init(text: "Different input under the old ID"), thread: thread,
+                expectedTurnID: original, clientMessageID: "local-steer-one")
+        }
+        let afterDuplicate = await fixture.transport.calls
+        #expect(afterDuplicate.count == calls.count)
+        let turns = await fixture.record.turns
+        #expect(turns == [original], "Additional inbox messages never replace the original native run boundary.")
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV2SteerSpansExecutionEndAndDeliveredBeforeNextStartWhileLateReplyKeepsItsOriginalRun(_ lostReply: Bool) async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        let originalRun = try #require(thread.activeRun?.id)
+        await fixture.transport.setMode(lostReply ? .holdPromptReplyLost : .holdPromptReply)
+        let steering = Task { try await fixture.session.steer(input: .init(text: "Delayed steer"), thread: thread,
+            expectedTurnID: original, clientMessageID: "held-steer") }
+        do {
+            try await openCodeSessionEventually { await fixture.transport.promptCount == 2 }
+            let steerCalls = await fixture.transport.calls
+            let inbox = try #require(steerCalls.last?.body?["id"].string)
+            try await fixture.transport.emit(.executionSucceeded)
+            try await fixture.transport.snapshotBarrier("held-first-terminal")
+            try await openCodeSessionEventually { await fixture.record.assistantText == "held-first-terminal" }
+            #expect(await fixture.record.completions.isEmpty)
+            try await fixture.transport.emit(.inboxDelivered, fields: ["inboxID": .string(inbox)])
+            try await fixture.transport.snapshotBarrier("delivered-awaiting-next-start")
+            try await openCodeSessionEventually { await fixture.record.assistantText == "delivered-awaiting-next-start" }
+            #expect(await fixture.record.completions.isEmpty)
+            try await fixture.transport.emit(.executionStarted)
+            try await fixture.transport.step(assistant: "msg_steered_execution")
+            try await fixture.transport.text("second execution retained by original run", assistant: "msg_steered_execution")
+            try await fixture.transport.emit(.executionSucceeded)
+            try await openCodeSessionEventually { await fixture.record.completions == [.idle] }
+            #expect(await fixture.record.entityOwners == [originalRun])
+            #expect(await fixture.record.activities.isEmpty)
+            await fixture.transport.setMode(.manual)
+            let successor = fixture.thread(nativeID: await fixture.transport.nativeID)
+            try await fixture.session.send(text: "Independent successor", thread: successor)
+            try await fixture.transport.beginInput(assistant: "msg_successor_steer_test")
+            await fixture.transport.releasePrompt()
+            let receipt = try await steering.value
+            #expect(receipt.turnID == original)
+            #expect(await fixture.record.connectionFailures == 0)
+            try await fixture.transport.emit(.executionSucceeded)
+            try await openCodeSessionEventually { await fixture.record.completions == [.idle, .idle] }
+            #expect(await fixture.transport.promptCount == 3)
+        } catch { await fixture.transport.releasePrompt(); _ = await steering.result; throw error }
+    }
+}
+
+@Test func openCodeV2CancelledSteerReleasesOnlyItsHeldTerminalWithoutInventingAnotherExecution() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        _ = try await fixture.session.steer(input: .init(text: "Cancel this inbox item"), thread: thread,
+            expectedTurnID: original, clientMessageID: "cancelled-steer")
+        let calls = await fixture.transport.calls, inbox = try #require(calls.last?.body?["id"].string)
+        try await fixture.transport.emit(.executionSucceeded)
+        try await fixture.transport.snapshotBarrier("cancel-held-terminal")
+        try await openCodeSessionEventually { await fixture.record.assistantText == "cancel-held-terminal" }
+        #expect(await fixture.record.completions.isEmpty)
+        try await fixture.transport.emit(.inboxCancelled, fields: ["inboxID": .string(inbox)])
+        try await openCodeSessionEventually { await fixture.record.completions == [.idle] }
+        try await fixture.transport.emit(.inboxCancelled, fields: ["inboxID": .string(inbox)])
+        #expect(await fixture.record.activities.isEmpty)
+        #expect(await fixture.record.turns == [original])
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV2RejectedAndUncertainSteerNeverAutomaticallyResubmit(_ lost: Bool) async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        await fixture.transport.setMode(lost ? .lostPrompt : .rejectedPrompt)
+        await #expect(throws: ProviderSteeringError(lost ? .outcomeUncertain : .rejected)) {
+            try await fixture.session.steer(input: .init(text: "One attempted steer"), thread: thread,
+                expectedTurnID: original, clientMessageID: "one-attempt")
+        }
+        if lost {
+            try await openCodeSessionEventually { await fixture.record.connectionFailures == 1 }
+            await #expect(throws: ProviderSteeringError(.noActiveTurn)) {
+                try await fixture.session.steer(input: .init(text: "One attempted steer"), thread: thread,
+                    expectedTurnID: original, clientMessageID: "one-attempt")
+            }
+        } else {
+            #expect(await fixture.record.connectionFailures == 0)
+            try await fixture.transport.emit(.executionSucceeded)
+            try await openCodeSessionEventually { await fixture.record.completions == [.idle] }
+        }
+        #expect(await fixture.transport.promptCount == 2)
+    }
+}
+
+@Test func openCodeV2StaleSteeringAndPendingNativeQuestionRefuseBeforeAnyWrite() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        var future = thread
+        future.openCodeConfiguration = fixture.configuration.selecting(model: .init(providerID: "provider-fixture", id: "wire-model", variant: "fast"))
+        future.permission = .fullAccess
+        let futureCapture = future
+        await #expect(throws: ProviderSteeringError(.staleTarget)) {
+            try await fixture.session.steer(input: .init(text: "Wrong future capture"), thread: futureCapture,
+                expectedTurnID: original, clientMessageID: "future-capture")
+        }
+        await #expect(throws: ProviderSteeringError(.staleTarget)) {
+            try await fixture.session.steer(input: .init(text: "Wrong boundary"), thread: thread,
+                expectedTurnID: "msg_unrelated", clientMessageID: "wrong-boundary")
+        }
+        try await fixture.transport.permission(id: "per_blocks_steer")
+        try await openCodeSessionEventually { await fixture.record.approvals.count == 1 }
+        #expect(await fixture.session.steeringCapabilities().supportsActiveSteering == false)
+        await #expect(throws: ProviderSteeringError(.noActiveTurn)) {
+            try await fixture.session.steer(input: .init(text: "Question still pending"), thread: thread,
+                expectedTurnID: original, clientMessageID: "pending-question")
+        }
+        #expect(await fixture.transport.promptCount == 1)
+    }
+}
+
+@Test func openCodeV2StopCancelsExactAdmittedSteersAndTheOriginalInboxBeforeInterrupting() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        _ = try await fixture.session.steer(input: .init(text: "Pending steer"), thread: thread,
+            expectedTurnID: original, clientMessageID: "stop-owned-steer")
+        let before = await fixture.transport.calls, inbox = try #require(before.last?.body?["id"].string)
+        try await fixture.session.interrupt()
+        let calls = await fixture.transport.calls
+        #expect(calls.filter { $0.method == "DELETE" }.map { $0.path.last! } == [inbox, original])
+        #expect(calls.last?.path.last == "interrupt")
+        try await fixture.transport.emit(.inboxCancelled, fields: ["inboxID": .string(inbox)])
+        try await fixture.transport.emit(.executionInterrupted)
+        try await openCodeSessionEventually { await fixture.record.completions == [.interrupted] }
+        #expect(await fixture.transport.promptCount == 2)
+    }
+}
+
+@Test func openCodeV2StopWithUnknownSteerAdmissionDrainsTheExactOwnedRuntime() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        await fixture.transport.setMode(.holdPromptBeforeAdmission)
+        let steering = Task { try await fixture.session.steer(input: .init(text: "Unknown write at Stop"), thread: thread,
+            expectedTurnID: original, clientMessageID: "unknown-at-stop") }
+        do {
+            try await openCodeSessionEventually { await fixture.transport.promptHeldBeforeAdmission }
+            await #expect(throws: OpenCodeV2SessionError.uncertainDelivery) { try await fixture.session.interrupt() }
+            let result = await steering.result
+            if case .success = result { Issue.record("Unknown steering admission was reported delivered after Stop.") }
+            #expect(await fixture.transport.closeCount == 1)
+            #expect(await fixture.transport.nativeAdmissions == 1)
+            #expect(await fixture.record.connectionFailures == 1)
+        } catch { await fixture.transport.releasePrompt(); _ = await steering.result; throw error }
+    }
+}
+
+@Test func openCodeV2SteeringStateIsBoundedWithoutDroppingPreviouslyAcceptedInboxOwnership() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        for index in 0..<128 {
+            _ = try await fixture.session.steer(input: .init(text: "Bounded steering \(index)"), thread: thread,
+                expectedTurnID: original, clientMessageID: "bounded-\(index)")
+        }
+        #expect(await fixture.session.steeringCapabilities().supportsActiveSteering == false)
+        await #expect(throws: ProviderSteeringError(.rejected)) {
+            try await fixture.session.steer(input: .init(text: "Over the bounded limit"), thread: thread,
+                expectedTurnID: original, clientMessageID: "over-limit")
+        }
+        #expect(await fixture.transport.promptCount == 129)
+        let calls = await fixture.transport.calls
+        let inboxIDs = calls.filter { $0.path.last == "prompt" && $0.body?["delivery"] == .string("steer") }.compactMap { $0.body?["id"].string }
+        #expect(Set(inboxIDs).count == 128)
+        try await fixture.transport.emit(.executionSucceeded)
+        for inbox in inboxIDs { try await fixture.transport.emit(.inboxCancelled, fields: ["inboxID": .string(inbox)]) }
+        try await openCodeSessionEventually { await fixture.record.completions == [.idle] }
+    }
+}
+
+@Test func openCodeV2LateExpectedRunStopCannotInterruptTheSuccessorAfterSteeringSettles() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        let oldRun = try #require(thread.activeRun?.id)
+        _ = try await fixture.session.steer(input: .init(text: "Delivered within the first execution"), thread: thread,
+            expectedTurnID: original, clientMessageID: "old-run-steer")
+        let calls = await fixture.transport.calls, inbox = try #require(calls.last?.body?["id"].string)
+        try await fixture.transport.emit(.inboxDelivered, fields: ["inboxID": .string(inbox)])
+        try await fixture.transport.emit(.executionSucceeded)
+        try await openCodeSessionEventually { await fixture.record.completions == [.idle] }
+        let successor = fixture.thread(nativeID: await fixture.transport.nativeID)
+        try await fixture.session.send(text: "Owned successor", thread: successor)
+        try await fixture.transport.beginInput(assistant: "msg_owned_successor")
+        try await openCodeSessionEventually { await fixture.session.steeringCapabilities().supportsActiveSteering }
+        await #expect(throws: ProviderSteeringError(.staleTarget)) { try await fixture.session.interrupt(expectedRunID: oldRun) }
+        let after = await fixture.transport.calls
+        #expect(after.filter { $0.path.last == "interrupt" }.isEmpty)
+        try await fixture.transport.emit(.executionSucceeded)
+        try await openCodeSessionEventually { await fixture.record.completions == [.idle, .idle] }
+    }
+}
+
+@Test func openCodeV2FailedExecutionTakesBackOnlyItsStrandedSteerBeforeAnotherNormalPrompt() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        _ = try await fixture.session.steer(input: .init(text: "Stranded after native failure"), thread: thread,
+            expectedTurnID: original, clientMessageID: "stranded-steer")
+        let initialCalls = await fixture.transport.calls, inbox = try #require(initialCalls.last?.body?["id"].string)
+        try await fixture.transport.emit(.executionFailed)
+        try await openCodeSessionEventually { await fixture.record.completions == [.failed] }
+        let successor = fixture.thread(nativeID: await fixture.transport.nativeID)
+        try await fixture.session.send(text: "New input after exact inbox cleanup", thread: successor)
+        let calls = await fixture.transport.calls
+        let cancellation = try #require(calls.firstIndex { $0.method == "DELETE" })
+        let nextPrompt = try #require(calls.lastIndex { $0.path.last == "prompt" })
+        #expect(cancellation < nextPrompt && calls[cancellation].path.last == inbox)
+        #expect(calls.filter { $0.method == "DELETE" }.count == 1)
+        try await fixture.transport.beginInput(assistant: "msg_after_failure")
+        try await fixture.transport.emit(.inboxCancelled, fields: ["inboxID": .string(inbox)])
+        try await fixture.transport.text("successor remains alive", assistant: "msg_after_failure")
+        try await openCodeSessionEventually { await fixture.record.assistantText.contains("successor remains alive") }
+        #expect(await fixture.record.completions == [.failed])
+        #expect(await fixture.record.connectionFailures == 0)
+        try await fixture.transport.emit(.executionSucceeded)
+        try await openCodeSessionEventually { await fixture.record.completions == [.failed, .idle] }
+    }
+}
+
+@Test func openCodeV2CallerCancellationAfterSteeringWriteKeepsDeliveryUncertainWithoutRetry() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let thread = try await fixture.readyToSteer(), original = try #require(thread.activeRun?.nativeTurnID)
+        await fixture.transport.setMode(.holdPromptReply)
+        let steering = Task { try await fixture.session.steer(input: .init(text: "Cancelled local wait after write"), thread: thread,
+            expectedTurnID: original, clientMessageID: "cancelled-wait") }
+        do {
+            try await openCodeSessionEventually { await fixture.transport.promptCount == 2 }
+            steering.cancel(); await fixture.transport.releasePrompt()
+            var error: ProviderSteeringError?
+            do { _ = try await steering.value } catch let failure as ProviderSteeringError { error = failure }
+            #expect(error == .init(.outcomeUncertain))
+            try await openCodeSessionEventually { await fixture.record.connectionFailures == 1 }
+            #expect(await fixture.transport.promptCount == 2)
+        } catch { await fixture.transport.releasePrompt(); _ = await steering.result; throw error }
+    }
+}
+
 private struct OpenCodeSessionCall: Sendable {
     let method: String
     let path: [String]
@@ -515,6 +777,19 @@ private struct OpenCodeSessionFixture: Sendable {
         thread.checkpointPolicy = .disabled
         thread.activeRun = .init(id: UUID(), configuration: .init(thread: thread), startedAt: Date())
         return thread
+    }
+    func readyToSteer() async throws -> CodingThread {
+        var value = thread()
+        try await session.send(text: "Original foreground turn", thread: value)
+        try await transport.beginInput()
+        try await openCodeSessionEventually {
+            let capabilities = await session.steeringCapabilities(), turns = await record.turns
+            return capabilities.supportsActiveSteering && turns.count == 1
+        }
+        let turns = await record.turns
+        value.providerThreadID = await transport.nativeID
+        value.activeRun?.nativeTurnID = try #require(turns.first)
+        return value
     }
 }
 
@@ -622,7 +897,7 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
             guard !closed else { throw CancellationError() }
             if loseHeldReply { throw OpenCodeHTTPError.transportFailure }
             nativeAdmissions += 1
-            return try response(.object(["data": .object(["id": saved["id"], "sessionID": .string(savedNativeID), "type": .string("user"), "delivery": .string("queue"), "payload": .object(["text": saved["text"]])])]))
+            return try response(.object(["data": .object(["id": saved["id"], "sessionID": .string(savedNativeID), "type": .string("user"), "delivery": saved["delivery"], "payload": .object(["text": saved["text"]])])]))
         }
         if path.last == "interrupt" { return try response(.object(["interrupted": .bool(busy)])) }
         if path.last == "synthetic" { return try response(.object(["data": .object([:])])) }
@@ -646,6 +921,9 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
     func text(_ text: String, assistant: String, session: String? = nil) throws {
         try emit(.textStarted, session: session, fields: ["assistantMessageID": .string(assistant), "ordinal": .number(0)])
         try emit(.textDelta, session: session, fields: ["assistantMessageID": .string(assistant), "ordinal": .number(0), "delta": .string(text)])
+    }
+    func snapshotBarrier(_ text: String) throws {
+        try emit(.textEnded, fields: ["assistantMessageID": .string("msg_assistant_one"), "ordinal": .number(0), "text": .string(text)])
     }
     func permission(id: String) throws {
         try emit(.permissionAsked, fields: ["id": .string(id), "action": .string("shell"), "resources": .array([.string("printf safe")]), "save": .array([.string("printf safe")]),

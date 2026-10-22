@@ -156,13 +156,121 @@ func openCodeV2HTTPIntegrationRunsCapturedFIFOThroughEngineAndDrainsItsExactOwne
     }
 }
 
+@Test(.timeLimit(.minutes(1)))
+func openCodeV2HTTPIntegrationSteeringHoldsTheOriginalEngineRunAcrossExecutionsBeforeCapturedFIFOStarts() async throws {
+    let fixture = try OpenCodeV2EngineHTTPFixture(resource: "opencode_v2_steering_http")
+    let engine: WorkspaceEngine
+    do { engine = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil }) }
+    catch { try? fixture.removeFilesIfProcessStopped(); throw error }
+    do {
+        _ = try await engine.load()
+        let project = WorkspaceProject(path: fixture.workspace.path)
+        let balanced = OpenCodeModelSelection(providerID: "synthetic", id: "wire-model", variant: "balanced")
+        let menuModel = ProviderModel(id: balanced.catalogID, name: "Synthetic TCP model",
+            openCodeSelection: .init(providerID: "synthetic", id: "wire-model"), openCodeVariants: ["balanced", "fast"])
+        var initial = CodingThread(project: project)
+        initial.provider = .opencode; initial.model = balanced.catalogID; initial.checkpointPolicy = .disabled
+        initial.openCodeConfiguration = .init(executable: fixture.executable.path, model: balanced, agentID: "build")
+        let threadID = initial.id
+        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(initial))
+        try await engine.dispatch(.submit(threadID: threadID, text: "steering-root 工作 🌍"))
+        try await openCodeV2EngineHTTPEventually("the native foreground steering boundary") {
+            let thread = await engine.current().snapshot.threads.first { $0.id == threadID }
+            return fixture.hasMarker("step-ended-1") && thread?.activeRun?.nativeTurnID != nil &&
+                thread?.messages.contains { $0.text == " authoritative first 工作 🌍 " } == true
+        }
+        let firstUpdate = await engine.current()
+        let first = try #require(firstUpdate.snapshot.threads.first { $0.id == threadID })
+        let firstRun = try #require(first.activeRun), firstTurn = try #require(firstRun.nativeTurnID)
+        let availability = await engine.promptSteeringAvailability(threadID: threadID)
+        #expect(availability.canSteer && availability.runID == firstRun.id)
+        try await engine.dispatch(.editThread(threadID, .openCodeVariant(model: menuModel, variant: "fast")))
+        try await engine.dispatch(.editThread(threadID, .openCodeAgent("plan")))
+        try await engine.dispatch(.editThread(threadID, .permission(.fullAccess)))
+        try await engine.dispatch(.submit(threadID: threadID, text: "steering-queued FIFO"))
+        try await engine.steerPrompt(threadID: threadID, text: "steering-additional input", expectedRunID: firstRun.id)
+        try await openCodeV2EngineHTTPEventually("the real native steering admission") {
+            let update = await engine.current()
+            return update.snapshot.promptSteerings?.last?.phase == .delivered && (try? fixture.rows(kind: "prompt").count) == 2
+        }
+        try fixture.releaseFirst()
+        try await openCodeV2EngineHTTPEventually("delivered steering after the first execution end") {
+            let current = await engine.current().snapshot.threads.first { $0.id == threadID }
+            return fixture.hasMarker("steer-delivered") && current?.messages.contains { $0.text == " authoritative held steering boundary " } == true
+        }
+        let heldUpdate = await engine.current()
+        let held = try #require(heldUpdate.snapshot.threads.first { $0.id == threadID })
+        #expect(held.activeRun?.id == firstRun.id && held.activeRun?.nativeTurnID == firstTurn)
+        #expect(held.queuedTurns.map(\.text) == ["steering-queued FIFO"])
+        #expect(held.runHistory?.first?.status == .running)
+        #expect(try fixture.rows(kind: "prompt").count == 2,
+            "Neither HTTP steering acknowledgement nor an ended predecessor execution may start the FIFO successor.")
+        #expect(held.activeRun?.configuration.permission == .supervised && held.permission == .fullAccess)
+        try fixture.release("release-steered-execution")
+        try await openCodeV2EngineHTTPEventually("the completed steering execution and captured FIFO successor") {
+            let current = await engine.current().snapshot.threads.first { $0.id == threadID }
+            return fixture.hasMarker("step-ended-2") && (try? fixture.rows(kind: "prompt").count) == 3 &&
+                current?.activeRun?.id != nil && current?.activeRun?.id != firstRun.id &&
+                current?.messages.contains { $0.text == " authoritative steered 工作 🌍 " } == true
+        }
+        let runningUpdate = await engine.current()
+        let running = try #require(runningUpdate.snapshot.threads.first { $0.id == threadID })
+        let steeredText = try #require(running.messages.first { $0.text == " authoritative steered 工作 🌍 " })
+        #expect(steeredText.runReference?.runID == firstRun.id)
+        #expect(running.activeRun?.configuration.openCodeConfiguration?.agentID == "plan")
+        #expect(running.activeRun?.configuration.openCodeConfiguration?.model?.variant == "fast")
+        #expect(running.activeRun?.configuration.permission == .fullAccess && running.queuedTurns.isEmpty)
+        let prompts = try fixture.rows(kind: "prompt")
+        #expect(prompts.map { $0["delivery"].string } == ["queue", "steer", "queue"])
+        #expect(prompts.map { $0["model"]["variant"].string } == ["balanced", "balanced", "fast"])
+        #expect(prompts.map { $0["agent"].string } == ["build", "build", "plan"])
+        #expect(prompts[0]["permissions"] == prompts[1]["permissions"])
+        #expect(Set(prompts.compactMap { $0["inputID"].string }).count == 3)
+        let requests = try fixture.rows(kind: "request")
+        #expect(requests.filter { $0["method"] == .string("POST") && $0["path"].string?.hasSuffix("/model") == true }.count == 2)
+        #expect(requests.filter { $0["method"] == .string("POST") && $0["path"].string?.hasSuffix("/agent") == true }.count == 2)
+        let steering = try #require(runningUpdate.snapshot.promptSteerings?.last)
+        #expect(steering.phase == .delivered && steering.receipt?.turnID == firstTurn)
+        #expect(steering.configuration == firstRun.configuration)
+        try await engine.dispatch(.interrupt(threadID: threadID))
+        try await openCodeV2EngineHTTPEventually("the FIFO successor Stop") {
+            let current = await engine.current().snapshot.threads.first { $0.id == threadID }
+            return current?.activeRun == nil && current?.state == .interrupted
+        }
+        let finalUpdate = await engine.current()
+        let final = try #require(finalUpdate.snapshot.threads.first { $0.id == threadID })
+        #expect(final.runHistory?.map(\.status) == [.completed, .interrupted])
+        #expect(final.runHistory?.first?.turnIDs == [firstTurn])
+        #expect(final.queuePaused && finalUpdate.error == nil)
+        await engine.shutdown()
+        try await openCodeV2EngineHTTPEventually("the steering peer EOF and exact owned PID drain") {
+            fixture.hasMarker("closed-after-eof") && fixture.processStopped
+        }
+        let closed = try fixture.json("closed-after-eof"), startup = try fixture.json("process.json")
+        #expect(closed["stdinEOF"] == .bool(true) && closed["streamClosed"] == .bool(true))
+        #expect(startup["exactArguments"] == .bool(true) && startup["freshCredential"] == .bool(true))
+        #expect(requests.allSatisfy { $0["authenticated"] == .bool(true) })
+        #expect(try fixture.rows(kind: "fixture-handler-failed").isEmpty)
+        let wire = try String(contentsOf: fixture.root.appendingPathComponent("wire.jsonl"), encoding: .utf8).lowercased()
+        #expect(!wire.contains("authorization") && !wire.contains("password") && !wire.contains("http://"))
+        let rebuilt = try await WorkspaceDatabase(url: fixture.database).rebuildProjection().snapshot
+        let restored = try #require(rebuilt.threads.first { $0.id == threadID })
+        #expect(restored.messages == final.messages && restored.runHistory == final.runHistory)
+        try fixture.removeFilesIfProcessStopped()
+    } catch {
+        let update = await engine.current(); await engine.shutdown()
+        if let diagnostics = try? fixture.saveFailureDiagnostics(update: update) { print("Synthetic OpenCode steering diagnostics: \(diagnostics.path)") }
+        try? fixture.removeFilesIfProcessStopped(); throw error
+    }
+}
+
 private struct OpenCodeV2EngineHTTPFixture: Sendable {
     let root: URL
     let workspace: URL
     let database: URL
     let executable: URL
 
-    init() throws {
+    init(resource: String = "opencode_v2_http_engine") throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-opencode-v2-engine-\(UUID().uuidString)", isDirectory: true).resolvingSymlinksInPath()
         workspace = root.appendingPathComponent("checkout's 工作 & space", isDirectory: true)
         database = root.appendingPathComponent("workspace.sqlite")
@@ -177,7 +285,7 @@ private struct OpenCodeV2EngineHTTPFixture: Sendable {
             let directory: JSONValue = .object(["directory": .string(workspace.standardizedFileURL.resolvingSymlinksInPath().path)])
             try JSONEncoder().encode(directory).write(to: directoryFile, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: directoryFile.path)
-            let source = try #require(Bundle.module.url(forResource: "opencode_v2_http_engine", withExtension: "py", subdirectory: "Fixtures"))
+            let source = try #require(Bundle.module.url(forResource: resource, withExtension: "py", subdirectory: "Fixtures"))
             try FileManager.default.copyItem(at: source, to: executable)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         } catch {
@@ -199,7 +307,10 @@ private struct OpenCodeV2EngineHTTPFixture: Sendable {
             .filter { $0["kind"] == .string(kind) }
     }
     func releaseFirst() throws {
-        let path = root.appendingPathComponent("release-first")
+        try release("release-first")
+    }
+    func release(_ name: String) throws {
+        let path = root.appendingPathComponent(name)
         try Data().write(to: path, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }

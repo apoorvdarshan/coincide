@@ -200,6 +200,92 @@ class CrashCollectionTests(unittest.TestCase):
         self.assertEqual(frames[:2], [{"imageIndex": 0, "imageOffset": 0}, {"imageIndex": 0, "imageOffset": 2**48 - 1}])
         self.assertEqual(frames[2:], [{"imageIndex": 0}] * 5)
 
+    def test_fault_classification_derives_only_fixed_enums_from_the_exact_fault_region(self):
+        now = time.time()
+        cases = [("STACK GUARD", "---", "guard"), ("Stack", "rw-", "stack"),
+                 ("__TEXT", "r-x", "readOnly"), ("MALLOC_SMALL", "rw-", "writable"),
+                 ("VM_ALLOCATE", "---", "other")]
+        for label, protection, expected in cases:
+            with self.subTest(region=expected):
+                header, payload = fixture(now)
+                payload["exception"]["subtype"] = "KERN_PROTECTION_FAILURE at 0x70001234"
+                payload["exception"]["rawCodes"] = [2, 0x70001234]
+                payload["threads"][1]["threadState"] = {"flavor": "ARM_THREAD_STATE64", "sp": {"value": 0x70002000, "symbol": "PRIVATE_REGISTER_CANARY"}}
+                payload["vmRegionInfo"] = ("PRIVATE_VM_CANARY /Users/private-account/secret\n"
+                    "--->  %s 70000000-70004000 [16K] %s/rwx SM=PRV PRIVATE_REGION_CANARY" % (label, protection))
+                report = crashes.sanitize_report(header, payload, now - 60, now)
+                self.assertEqual(report["faultClassification"], {"faultRegion": expected, "faultToStackPointer": "lessThan4KiB"})
+                encoded = json.dumps(report)
+                for forbidden in ("0x70001234", "70000000", str(0x70001234), str(0x70002000), "PRIVATE_", "private-account", "rawCodes", "threadState", "vmRegionInfo", "SM=PRV"):
+                    self.assertNotIn(forbidden, encoded)
+                _, without = fixture(now)
+                self.assertEqual(report["fingerprint"], crashes.sanitize_report(header, without, now - 60, now)["fingerprint"])
+
+    def test_fault_distance_is_coarse_bounded_and_uses_only_the_faulting_thread(self):
+        now = time.time()
+        for distance, expected in [(0, "lessThan4KiB"), (4095, "lessThan4KiB"),
+                                   (4096, "4KiBTo64KiB"), (65535, "4KiBTo64KiB"),
+                                   (65536, "64KiBTo1MiB"), (1048575, "64KiBTo1MiB"),
+                                   (1048576, "atLeast1MiB")]:
+            for flavor, register in [("ARM_THREAD_STATE64", "sp"), ("x86_THREAD_STATE64", "rsp")]:
+                with self.subTest(distance=expected, flavor=flavor):
+                    header, payload = fixture(now)
+                    payload["exception"]["subtype"] = "KERN_PROTECTION_FAILURE at 0x70000000"
+                    payload["threads"][0]["threadState"] = {"flavor": flavor, register: {"value": 0x70000000}}
+                    payload["threads"][1]["threadState"] = {"flavor": flavor, register: {"value": 0x70000000 + distance}}
+                    report = crashes.sanitize_report(header, payload, now - 60, now)
+                    self.assertEqual(report["faultClassification"], {"faultRegion": "unknown", "faultToStackPointer": expected})
+
+    def test_fault_region_requires_exact_range_and_never_infers_from_adjacent_guard_text(self):
+        now = time.time()
+        header, payload = fixture(now)
+        payload["exception"]["subtype"] = "KERN_PROTECTION_FAILURE at 0x70001234"
+        cases = [
+            ("0x70001234 is not in any region. Bytes before following region: 500\n"
+             "      STACK GUARD 70002000-70004000 [8K] ---/rwx SM=NUL", "unmapped"),
+            ("---> Stack 70000000-70004000 [16K] rw-/rwx SM=PRV\n"
+             "      STACK GUARD 70004000-70008000 [16K] ---/rwx SM=NUL", "stack"),
+            ("---> STACK GUARD 70002000-70004000 [8K] ---/rwx SM=NUL", None),
+            ("---> STACK GUARD 70000000-70001234 [4K] ---/rwx SM=NUL", None),
+            ("---> Stack 70000000-70004000 [16K] rw-/rwx SM=PRV\n"
+             "---> STACK GUARD 70000000-70004000 [16K] ---/rwx SM=NUL", None),
+            ("0x70001111 is not in any region.", None),
+            ("0x70001234 is not in any region.\n---> Stack 70000000-70004000 [16K] rw-/rwx", None),
+        ]
+        for text, expected in cases:
+            with self.subTest(expected=expected):
+                payload["vmRegionInfo"] = text
+                report = crashes.sanitize_report(header, payload, now - 60, now)
+                if expected:
+                    self.assertEqual(report["faultClassification"], {"faultRegion": expected, "faultToStackPointer": "unknown"})
+                else:
+                    self.assertNotIn("faultClassification", report)
+
+    def test_malformed_or_conflicting_fault_data_is_omitted_without_exporting_private_inputs(self):
+        now = time.time()
+        header, valid = fixture(now)
+        valid["exception"]["subtype"] = "KERN_PROTECTION_FAILURE at 0x70001234"
+        valid["threads"][1]["threadState"] = {"flavor": "ARM_THREAD_STATE64", "sp": {"value": 0x70002000}}
+        cases = []
+        for codes in ([2, 0x70001235], [2, True], [2, -1], [2, 2**64], [2], "PRIVATE_RAW_CODES"):
+            changed = copy.deepcopy(valid); changed["exception"]["rawCodes"] = codes; cases.append(changed)
+        for state in (None, "PRIVATE_STATE", {"flavor": []}, {"flavor": "PRIVATE_FLAVOR", "sp": {"value": 0x70002000}},
+                      {"flavor": "ARM_THREAD_STATE64", "sp": {"value": True}},
+                      {"flavor": "ARM_THREAD_STATE64", "sp": {"value": 0}},
+                      {"flavor": "ARM_THREAD_STATE64", "sp": {"value": 2**64}}):
+            changed = copy.deepcopy(valid); changed["threads"][1]["threadState"] = state; cases.append(changed)
+        changed = copy.deepcopy(valid); changed["exception"]["type"] = "EXC_CRASH"; cases.append(changed)
+        changed = copy.deepcopy(valid); changed["exception"]["subtype"] = "PRIVATE_FAULT"; cases.append(changed)
+        for payload in cases:
+            report = crashes.sanitize_report(header, payload, now - 60, now)
+            self.assertNotIn("faultClassification", report)
+            for forbidden in ("PRIVATE_", "0x7000", str(0x70001234), "threadState", "rawCodes"):
+                self.assertNotIn(forbidden, json.dumps(report))
+        for text in (None, ["PRIVATE_REGION"], "x" * 65537, "\n" * 129):
+            payload = copy.deepcopy(valid); payload["vmRegionInfo"] = text
+            self.assertEqual(crashes.sanitize_report(header, payload, now - 60, now)["faultClassification"],
+                             {"faultRegion": "unknown", "faultToStackPointer": "lessThan4KiB"})
+
     def test_rejects_unrelated_old_malformed_and_extra_json_objects(self):
         now = time.time()
         header, payload = fixture(now)
