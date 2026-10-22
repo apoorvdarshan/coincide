@@ -1,5 +1,99 @@
 # Validation record
 
+## 2026-10-22 — reviewed native checkpoint file restoration
+
+- Ready baseline, post-run and retained earlier observations now offer explicit
+  native file restoration in an isolated conversation worktree. The selected
+  attempt is exact and independent of the other checkpoint or provider's history
+  capabilities. Review shows the checkout, observation time, affected paths,
+  bounded current-to-target patch and destructive working/staging/new-file
+  warning. Cancel is the default action. Conversation history, settings and the
+  latest unsent draft are retained.
+- Review prepares a frozen private Git administration/index and an owned shadow
+  checkout. Git restore/clean/reset runs only there. Publication requires the
+  unchanged reviewed working inventory, configuration, index, HEAD identity,
+  directory ownership and exact saved target. Exclusive file publication retains
+  displaced original bytes in private recovery storage; index publication follows
+  working-file verification. HEAD and branches remain unchanged. Ignored files,
+  nested repositories, symlinks, executable modes, empty scopes, outside-scope
+  staging and unborn/no-index behavior have real-Git coverage. A direct isolated
+  upstream Git probe corrected an invalid test expectation: deleting an untracked
+  ignore file in a single clean does not also delete the files it had ignored.
+- Accepted intent and outbox are journaled together, and dispatching is committed
+  before the sole filesystem writer. Conflicting provider/configuration/removal
+  work, dirty editors, active terminals and overlapping conversations are blocked.
+  Owned provider/model-discovery connections drain before first write; detached
+  closing connections retain their former working directory. JSON-RPC closure now
+  awaits its exact native parent process's exit, including caller cancellation.
+  This does not establish termination of all provider descendants.
+- Local acceptance bridges the asynchronous durable lock across windows. Clean
+  editor and Git caches remain read-only through authoritative refresh. A gated
+  regression releases an older canceled read after a newer read and proves it
+  cannot clear or replace the newer clean document. Deleted clean files close;
+  existing dirty buffers are preserved and prevent acceptance.
+- Restart never repeats a restore. Accepted undispatched work fails;
+  dispatched uncertain work remains held. Inspect Restore State reads the pinned
+  owned manifest/lock/completion and can confirm the exact result or untouched
+  state. Missing, altered or partial evidence stays unresolved. Explicit Keep
+  Current Files releases the hold without restoring or repeating anything.
+  Canceled unused reviews remove only sealed scratch; unknown additions,
+  interrupted cleanup and all started recovery data are preserved.
+- Real production Git through the durable engine verifies Cancel, exact restored
+  bytes, staging reset, ignored-file retention, nonignored-file removal, unchanged
+  main checkout/HEAD/branches, latest draft and complete conversation/audit,
+  journal rebuild, normal-close unused-review cleanup and reopen without replay.
+  Gated own/other metadata-close tests prove the old directory remains protected
+  through closure. Real process/RPC shutdown fixtures prove the close does not
+  return before the exact owned native parent exits.
+- Prior commit `22b140ac` [run 39715997685](https://github.com/apoorvdarshan/coincide/actions/runs/39715997685)
+  executed 530 production tests and failed two assertions in one project-group
+  removal fixture; its GUI job was skipped. The fixture now waits for its exact
+  surviving completed run's provider release and terminal post-checkpoint before
+  comparing/reopening projections. Its checkpoint policy, assertions and timeout
+  budget remain enabled. The local worktree FIFO replay fixture likewise waits
+  for both exact completed runs' final observations before comparing projections.
+  A legacy migration expectation also advances to storage 18 with the new
+  restoration journal field.
+- The hosted GUI gate requires all ten workflows, zero failures and zero skips.
+  The new workflow uses a native managed worktree, production automatic Git
+  checkpoints and a private offline peer that edits only its synthetic README.
+  It checks Cancel, real restore loss/preservation, original transcript/draft,
+  unchanged source/HEAD, applied audit and reopen without provider replay.
+  All original nine workflows remain. Seven GUI-free peer/configuration tests
+  pass, and the complete runner compiles. No interactive GUI tests ran locally;
+  the native inspector replacement and newest workflows still require an actual
+  hosted result. Offscreen 320/680-point reviews and unconfirmed controls render
+  and fit in light/dark appearances; 240-point action layout is unverified.
+- Final `swift test --no-parallel` passes **575 tests**: 479 Core, 77 native
+  UI/Store, six terminal and 13 Markdown, with no compiler warnings. Core
+  completes in 117.702 seconds and native UI/Store in 31.565 seconds. Additional
+  cancellation/archive/model-change review regressions verify exact unused
+  scratch disposal and zero writes. Once acceptance starts, a disappearing review
+  cannot dispose its pending action's scratch. A completed restore whose evidence
+  becomes a FIFO/directory remains uncertain and retains recovery bytes.
+- The repository-owned app packages and launches. Deep/strict app/helper
+  signature checks and native math-resource rendering pass. Storage upgrades from
+  17 to 18 with the complete canonical workspace unchanged against its private
+  SQLite backup: three conversations and 25 messages. No system install or public
+  app release was performed.
+- After the provider shutdown change, the opt-in installed-Codex history smoke
+  passes again in **11.549 seconds**, with two generated-marker turns, exact
+  native fork/rewind and independent readback, unchanged Git state, retained
+  draft/settings/audit, no unexpected tools/approvals and completed test-native
+  archive/local cleanup. This verifies the existing live history flow; it does
+  not exercise combined provider rewind plus file restoration.
+
+Current restoration limits are 100,000 nodes, 4 MiB of path names and 512 MiB of
+regular-file bytes per working inventory, including ignored files. Whole
+repository copying/hashing, special/cross-device files, executable checkout
+filters, unsupported sparse layouts and recovery-storage management remain
+compatibility limits. Preview is bounded to 1 MiB and 128 leaf pairs with explicit
+omission warnings. Inventory limits do not cap transient Git materialization,
+conversion expansion or retained recovery storage. Combined provider rewind plus
+file restoration, broader provider history and the other areas in `PORTING.md`
+remain unfinished. This
+milestone does not establish full T3 parity.
+
 ## 2026-10-22 — durable native conversation forks and rewinds
 
 - Run History now reviews an exact verified Codex boundary before accepting a

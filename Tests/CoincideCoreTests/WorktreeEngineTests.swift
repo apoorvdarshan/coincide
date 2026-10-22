@@ -242,7 +242,17 @@ private func waitWorktree(_ condition: () async throws -> Bool) async throws {
         #expect(second.configuration.model == "second" && second.configuration.permission == .autoAcceptEdits)
         #expect(second.configuration.workspacePath == state.destinationPath && second.input.text == "second turn")
         await provider.finish()
-        try await waitWorktree { try await f.currentThread().state == .idle }
+        // Provider completion precedes the automatic post-run observation. Wait
+        // for both captured turns and all their checkpoint attempts to settle
+        // before comparing the live projection with independently replayed data.
+        try await waitWorktree {
+            let thread = try await f.currentThread(), records = thread.runHistory ?? []
+            return thread.state == .idle && thread.activeRun == nil && thread.queuedTurns.isEmpty && records.count == 2 && records.allSatisfy { record in
+                guard record.status == .completed, let checkpoints = record.checkpoints,
+                      checkpoints.providerReleased, checkpoints.pendingStart == nil, let post = checkpoints.postRun else { return false }
+                return !checkpoints.baseline.phase.isRunning && !post.phase.isRunning
+            }
+        }
         let ready = await f.engine.current().snapshot
         #expect(ready.threads[0].messages.filter { $0.role == .user }.map(\.text) == ["first turn", "second turn"])
         #expect(ready.threads[0].messages.first?.attachments == [attachment] && ready.threads[0].draft == "Keep the unsent draft")

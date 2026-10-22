@@ -1,4 +1,4 @@
-"""Offline Codex 0.163 peer for one disposable native GUI workflow.
+"""Offline Codex 0.163 peer for disposable native GUI workflows.
 
 All state and wire receipts are confined to the runner's private test root.
 Fresh metadata and fork processes coordinate with flock and atomic replacement.
@@ -25,6 +25,31 @@ def emit(value):
 def turn(identifier):
     return {"id": identifier, "status": "completed", "items": [], "itemsView": "summary",
             "rootTurnId": None, "error": None, "startedAt": 1, "completedAt": 2, "durationMs": 1}
+
+
+def checkout(state):
+    requested = Path(state["cwd"])
+    if not requested.is_absolute() or requested.is_symlink():
+        raise SystemExit("The offline fixture checkout must be an owned real directory.")
+    value = requested.resolve(strict=True)
+    managed = root / "Worktrees"
+    allowed_managed = (state.get("restoreFixture") is True and not managed.is_symlink()
+                       and value.parent == managed)
+    if not value.is_dir() or (value.parent != root and not allowed_managed):
+        raise SystemExit("The offline fixture checkout must belong to this test root.")
+    return value
+
+
+def restore_fixture_edit(state):
+    if state.get("restoreFixture") is not True:
+        return
+    directory = checkout(state)
+    if directory.parent != root / "Worktrees":
+        raise ValueError("The restoration fixture only edits its explicitly prepared worktree.")
+    document = directory / "README.md"
+    if document.is_symlink() or not document.is_file():
+        raise ValueError("The restoration fixture requires its own regular README.")
+    document.write_text("After synthetic provider run\n", encoding="utf-8")
 
 
 def thread(identifier, state):
@@ -62,6 +87,7 @@ def request(frame, state):
     elif method == "thread/goal/get":
         result = {"goal": None}
     elif method == "turn/start":
+        restore_fixture_edit(state)
         identifier = params["threadId"]
         state["nextTurn"] += 1
         native = "ui-turn-" + str(state["nextTurn"])
@@ -103,8 +129,7 @@ for line in sys.stdin:
         if state_path.stat().st_size > 4_194_304:
             raise SystemExit("The offline fixture state exceeds its limit.")
         state = json.loads(state_path.read_text())
-        if Path(state["cwd"]).resolve(strict=True).parent != root:
-            raise SystemExit("The offline fixture checkout must belong to this test root.")
+        checkout(state)
         with wire_path.open("a", encoding="utf-8") as wire:
             wire.write(json.dumps(frame) + "\n")
             wire.flush()

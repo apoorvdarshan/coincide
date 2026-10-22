@@ -34,7 +34,7 @@ struct RunCheckpointBanner: View {
                         }
                     }
                     .controlSize(.small)
-                    .disabled(store.isRespondingToPostRunCheckpoint(presentation.attempt.id))
+                    .disabled(store.isRespondingToPostRunCheckpoint(presentation.attempt.id) || store.isCheckpointRestoreLocked(threadID: threadID))
                 }
                 if let actionError {
                     Text(actionError).font(.caption).foregroundStyle(.red)

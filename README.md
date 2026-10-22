@@ -103,7 +103,7 @@ conversation selection remain available. An unconfirmed rewind stays paused for
 **Inspect Provider State**, which reads the outcome without repeating the action.
 Lost acknowledgments and restart never automatically replay a history mutation.
 Claude, ACP and older histories without verified boundaries do not offer these
-actions. Restoring checkout files is not implemented.
+conversation actions.
 
 **Save Run Checkpoints** in the workspace menu is enabled for future messages by
 default. Each accepted message keeps its captured setting. Coincide attempts a
@@ -122,8 +122,26 @@ match their saved ownership proof; snapshot refs, plans and receipts are retaine
 Restart inspects saved completion evidence without replaying captures or provider
 work, and keeps queues paused. Unused Git filter settings, including global Git
 LFS setup, do not block snapshots. Files requiring executable clean/process filters
-and non-cone sparse layouts are currently unsupported. Restoring files from these
-observations is not implemented; conversation history actions do not restore them.
+and non-cone sparse layouts are currently unsupported.
+
+Ready observations offer **Restore Files…** in an isolated conversation worktree,
+including a retained earlier after-run observation. Review the affected paths and
+changes before confirming. Restoration replaces the workspace with that exact
+observation, removes new nonignored files, and clears staging against the current
+HEAD. Ignored files and nested repositories are preserved according to Git's
+restore/clean rules; HEAD and branches do not move. Your current draft, settings
+and conversation history remain. This file action is available independently of
+the provider; combined provider rewind and file restoration is still pending.
+
+Other conversations sharing the checkout, active work, unsaved editors and open
+workspace terminals prevent restoration. Coincide drains its owned provider
+connections before writing and refreshes clean editors afterward. Restart never
+repeats a restore: uncertain outcomes hold workspace writes for read-only
+**Inspect Restore State** or explicit **Keep Current Files…**. Original displaced
+bytes remain in private recovery storage after a started restore. Canceling an
+unused review removes only its verified temporary data. Current review limits
+are 100,000 filesystem entries and 512 MiB of regular-file bytes, including
+ignored files; executable checkout filters and unsupported layouts are rejected.
 
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a

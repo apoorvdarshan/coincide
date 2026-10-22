@@ -52,6 +52,16 @@ private struct ConversationHistoryRead {
     let task: Task<ConversationHistoryReview, any Error>
 }
 
+private struct CheckpointRestoreRead {
+    let threadID: UUID
+    let task: Task<RunCheckpointRestoreReview, any Error>
+}
+
+private struct CheckpointRestoreInspection {
+    let threadID: UUID
+    let task: Task<WorkspaceCommandReceipt, any Error>
+}
+
 private struct ConversationHistoryInspection {
     let threadID: UUID
     let task: Task<WorkspaceCommandReceipt, any Error>
@@ -118,6 +128,11 @@ final class WorkspaceStore {
     private(set) var availableExternalEditors: [ExternalEditorDescriptor] = []
     private var retryingProjectClones: Set<UUID> = []
     private var respondingToPostRunCheckpoints: Set<UUID> = []
+    private var checkpointRestoreReads: [UUID: CheckpointRestoreRead] = [:]
+    private var checkpointRestoreInspections: [UUID: CheckpointRestoreInspection] = [:]
+    private var checkpointRestoreLocks: [UUID: String] = [:]
+    private var acceptingCheckpointRestores: Set<UUID> = []
+    private var checkpointRefreshTasks: [UUID: Task<Void, Never>] = [:]
     private var historyReviewReads: [UUID: ConversationHistoryRead] = [:]
     private var acceptingHistoryThreads: Set<UUID> = []
     private var historyNavigationRequests: [UUID: UUID] = [:]
@@ -176,7 +191,7 @@ final class WorkspaceStore {
     func gitInspector(path: String) -> GitInspectorStore {
         let path = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
         if let existing = gitInspectors[path] { return existing }
-        let model = GitInspectorStore(path: path)
+        let model = GitInspectorStore(path: path, canMutate: { [weak self] in self?.canEditWorkspace(path) == true })
         if terminating { model.prepareForShutdown() }
         gitInspectors[path] = model; return model
     }
@@ -337,10 +352,16 @@ final class WorkspaceStore {
         if dirty { dirtyEditors[id] = Self.canonicalPath(workspacePath) } else { dirtyEditors.removeValue(forKey: id) }
     }
     var hasUnsavedFileEdits: Bool { !dirtyEditors.isEmpty }
+    private static func pathsOverlap(_ first: String, _ second: String) -> Bool {
+        let a = canonicalPath(first), b = canonicalPath(second)
+        return a == b || a == "/" || b == "/" || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
+    }
     func canEditWorkspace(_ path: String) -> Bool {
         let path = Self.canonicalPath(path)
         guard !terminating, !removalEditorLocks.values.contains(where: { $0.contains(path) }),
-              !workspaceTransitionLocks.values.contains(where: { $0.contains(path) }) else { return false }
+              !workspaceTransitionLocks.values.contains(where: { $0.contains(path) }),
+              !snapshot.isCheckpointRestoreLocked(path: path),
+              !checkpointRestoreLocks.values.contains(where: { Self.pathsOverlap(path, $0) }) else { return false }
         return !snapshot.threads.contains { removalEditorLocks[$0.projectID] != nil && Self.canonicalPath($0.workspacePath) == path }
     }
     func projectRemovalRequest(_ id: UUID) -> ProjectRemovalRequest? {
@@ -479,6 +500,7 @@ final class WorkspaceStore {
         closeUnreferencedFileServices(previous: previous)
         if !removedThreads.isEmpty || !removedProjects.isEmpty { reconcileRemovedResources(threadIDs: removedThreads, projectIDs: removedProjects) }
         if let error = update.error, !terminating { errorMessage = error }
+        reconcileCheckpointRestoreLocks()
         openAppliedHistoryForks()
     }
     private func reconcileRemovedResources(threadIDs: Set<UUID>, projectIDs: Set<UUID>) {
@@ -490,11 +512,14 @@ final class WorkspaceStore {
         let worktreeReads = worktreeOptionsReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let historyReads = historyReviewReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let historyChecks = historyInspections.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
+        let restoreReads = checkpointRestoreReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
+        let restoreChecks = checkpointRestoreInspections.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let scriptReads = projectScriptService?.invalidate(threadIDs: threadIDs) ?? []
         let retries = projectCloneRetryTasks.filter { projectIDs.contains($0.key) }.map(\.value)
         for task in imports { task.cancel() }; for task in worktrees { task.cancel() }; for task in retries { task.cancel() }
         for task in worktreeReads { task.cancel() }
         for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }
+        for task in restoreReads { task.cancel() }; for task in restoreChecks { task.cancel() }
         let terminals = terminalStores.values.compactMap(\.value)
         terminalStores = terminalStores.filter { $0.value.value != nil }
         let closingTerminals = terminals.flatMap { $0.remove(threadIDs: threadIDs) }
@@ -519,6 +544,7 @@ final class WorkspaceStore {
             for task in worktrees { _ = await task.result }
             for task in worktreeReads { _ = await task.result }
             for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
+            for task in restoreReads { _ = await task.result }; for task in restoreChecks { _ = await task.result }
             for task in scriptReads { await task.value }
             for task in retries { await task.value }
             for terminal in closingTerminals { await terminal.waitForClose() }
@@ -567,7 +593,7 @@ final class WorkspaceStore {
         }
     }
     func workspaceReady(for thread: CodingThread) -> Bool {
-        snapshot.workspaceReady(for: thread) && !workspaceTransitionLocks.values.contains { $0.contains(Self.canonicalPath(thread.workspacePath)) }
+        snapshot.workspaceReady(for: thread) && !isCheckpointRestoreLocked(threadID: thread.id) && !workspaceTransitionLocks.values.contains { $0.contains(Self.canonicalPath(thread.workspacePath)) }
     }
     func canOpenTerminal(for captured: CodingThread) -> Bool {
         guard let current = thread(captured.id), current.projectID == captured.projectID,
@@ -788,7 +814,7 @@ final class WorkspaceStore {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
-              !snapshot.isConversationHistoryLocked(threadID: id) else { return Task { false } }
+              !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id) else { return Task { false } }
         let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.provider.executable
         guard !executable.isEmpty, ProcessChannel.findExecutable(executable) != nil else {
             errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
@@ -967,6 +993,127 @@ final class WorkspaceStore {
               latest.baseline.receipt == checkpoints.baseline.receipt,
               latest.postRun?.receipt == checkpoints.postRun?.receipt else { throw CancellationError() }
         return result
+    }
+    func checkpointRestoreOperations(threadID: UUID) -> [RunCheckpointRestoreOperation] {
+        Array((snapshot.checkpointRestoreOperations ?? []).filter { $0.review.threadID == threadID }.reversed())
+    }
+    func isCheckpointRestoreLocked(threadID: UUID) -> Bool {
+        snapshot.isCheckpointRestoreLocked(threadID: threadID) || thread(threadID).map { thread in
+            checkpointRestoreLocks.values.contains { Self.pathsOverlap(thread.workspacePath, $0) }
+        } == true
+    }
+    func checkpointRestoreUnavailableReason(threadID: UUID, runID: UUID, stage: RunCheckpointStage, expectedAttemptID: UUID) -> String? {
+        if let reason = snapshot.checkpointRestoreUnavailableReason(threadID: threadID, runID: runID, stage: stage, expectedAttemptID: expectedAttemptID) { return reason }
+        guard let thread = thread(threadID), let attempt = thread.runCheckpoint(runID: runID, stage: stage, expectedAttemptID: expectedAttemptID),
+              let path = attempt.receipt?.plan.repositoryPath, canEditWorkspace(path) else {
+            return String(localized: "Finish the current workspace transition before restoring files.")
+        }
+        return checkpointRestoreActivityReason(path: path)
+    }
+    private func checkpointRestoreActivityReason(path: String) -> String? {
+        if dirtyEditors.values.contains(where: { Self.pathsOverlap(path, $0) }) ||
+            fileBrowsers.contains(where: { Self.pathsOverlap(path, $0.key) && $0.value.isDirty }) {
+            return String(localized: "Save or discard unsaved editor changes in every window before restoring files.")
+        }
+        if fileBrowsers.contains(where: { Self.pathsOverlap(path, $0.key) && $0.value.isSaving }) {
+            return String(localized: "Wait for file saves to finish before restoring files.")
+        }
+        if gitInspectors.contains(where: { Self.pathsOverlap(path, $0.key) && $0.value.operationName != nil }) {
+            return String(localized: "Wait for source control operations to finish before restoring files.")
+        }
+        if terminalStores.values.compactMap(\.value).flatMap({ $0.sessions.values.flatMap { $0 } }).contains(where: { session in
+            guard Self.pathsOverlap(path, session.directory) else { return false }
+            switch session.lifecycle { case .running, .closing: return true; case .exited, .failed: return false }
+        }) {
+            return String(localized: "Close terminals and running project scripts using these files in every window before restoring files.")
+        }
+        return nil
+    }
+    func reviewCheckpointRestore(threadID: UUID, runID: UUID, stage: RunCheckpointStage, expectedAttemptID: UUID) async throws -> RunCheckpointRestoreReview {
+        guard !terminating, let engine,
+              checkpointRestoreUnavailableReason(threadID: threadID, runID: runID, stage: stage, expectedAttemptID: expectedAttemptID) == nil else { throw CancellationError() }
+        let requestID = UUID()
+        let task = Task { try await engine.reviewCheckpointRestore(threadID: threadID, runID: runID, stage: stage, expectedAttemptID: expectedAttemptID) }
+        checkpointRestoreReads[requestID] = .init(threadID: threadID, task: task)
+        defer { checkpointRestoreReads.removeValue(forKey: requestID) }
+        let review = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !Task.isCancelled, !terminating,
+              checkpointRestoreUnavailableReason(threadID: threadID, runID: runID, stage: stage, expectedAttemptID: expectedAttemptID) == nil,
+              checkpointRestoreActivityReason(path: review.gitReview.currentPlan.repositoryPath) == nil else {
+            await engine.discardCheckpointRestoreReview(reviewID: review.id)
+            throw CancellationError()
+        }
+        return review
+    }
+    func discardCheckpointRestoreReview(_ id: UUID) {
+        guard let engine else { return }
+        Task { await engine.discardCheckpointRestoreReview(reviewID: id) }
+    }
+    func beginCheckpointRestore(_ review: RunCheckpointRestoreReview) async throws {
+        guard !terminating, let engine,
+              checkpointRestoreUnavailableReason(threadID: review.threadID, runID: review.runID, stage: review.stage, expectedAttemptID: review.attemptID) == nil,
+              acceptingCheckpointRestores.insert(review.id).inserted else { throw CancellationError() }
+        let path = Self.canonicalPath(review.gitReview.currentPlan.repositoryPath)
+        checkpointRestoreLocks[review.id] = path
+        suspendCheckpointCaches(path: path)
+        flushDrafts()
+        let previous = commandTail
+        let task = Task {
+            await previous?.value
+            guard !self.terminating, self.snapshot.canReviewCheckpointRestore(threadID: review.threadID),
+                  self.checkpointRestoreActivityReason(path: path) == nil,
+                  !self.checkpointRestoreLocks.contains(where: { $0.key != review.id && Self.pathsOverlap(path, $0.value) }),
+                  !self.removalEditorLocks.values.contains(where: { $0.contains(where: { Self.pathsOverlap(path, $0) }) }),
+                  !self.workspaceTransitionLocks.values.contains(where: { $0.contains(where: { Self.pathsOverlap(path, $0) }) }) else { throw CancellationError() }
+            let receipt = try await engine.beginCheckpointRestore(review)
+            self.apply(await engine.current())
+            if let rejection = receipt.rejection { throw CoincideError(rejection) }
+        }
+        commandTail = Task { _ = await task.result }
+        defer { acceptingCheckpointRestores.remove(review.id); reconcileCheckpointRestoreLocks() }
+        do { try await task.value }
+        catch { apply(await engine.current()); throw error }
+    }
+    func isInspectingCheckpointRestore(_ id: UUID) -> Bool { checkpointRestoreInspections[id] != nil }
+    func inspectCheckpointRestore(_ id: UUID) async throws {
+        guard !terminating, let engine, let operation = snapshot.checkpointRestoreOperation(id),
+              operation.phase == .unconfirmed, operation.acknowledgedAt == nil, checkpointRestoreInspections[id] == nil else { throw CancellationError() }
+        let task = Task { try await engine.inspectCheckpointRestore(operationID: id) }
+        checkpointRestoreInspections[id] = .init(threadID: operation.review.threadID, task: task)
+        defer { checkpointRestoreInspections.removeValue(forKey: id) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
+    func acknowledgeCheckpointRestore(_ id: UUID) async throws {
+        guard !terminating, let operation = snapshot.checkpointRestoreOperation(id), operation.phase == .unconfirmed,
+              operation.acknowledgedAt == nil, checkpointRestoreInspections[id] == nil else { throw CancellationError() }
+        let receipt = try await enqueue(.acknowledgeCheckpointRestore(operationID: id)).value
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
+    private func suspendCheckpointCaches(path: String) {
+        for (root, browser) in fileBrowsers where Self.pathsOverlap(root, path) { browser.suspendForWorkspaceMutation() }
+        for (root, inspector) in gitInspectors where Self.pathsOverlap(root, path) { inspector.suspendForWorkspaceMutation() }
+    }
+    private func reconcileCheckpointRestoreLocks() {
+        for operation in snapshot.checkpointRestoreOperations ?? [] where operation.locksSource {
+            if checkpointRestoreLocks[operation.id] == nil {
+                let path = Self.canonicalPath(operation.review.gitReview.currentPlan.repositoryPath)
+                checkpointRestoreLocks[operation.id] = path; suspendCheckpointCaches(path: path)
+            }
+        }
+        for (id, path) in Array(checkpointRestoreLocks) where !acceptingCheckpointRestores.contains(id) && snapshot.checkpointRestoreOperation(id)?.locksSource != true {
+            checkpointRestoreLocks.removeValue(forKey: id)
+            guard !terminating else { continue }
+            let browsers = fileBrowsers.filter { Self.pathsOverlap($0.key, path) }.map(\.value)
+            let inspectors = gitInspectors.filter { Self.pathsOverlap($0.key, path) }.map(\.value)
+            checkpointRefreshTasks[id] = Task { [weak self] in
+                for browser in browsers { await browser.refreshAfterWorkspaceMutation() }
+                for inspector in inspectors { await inspector.refreshAfterWorkspaceMutation() }
+                self?.checkpointRefreshTasks.removeValue(forKey: id)
+            }
+        }
     }
     func conversationHistoryOperation(_ id: UUID) -> ConversationHistoryOperation? {
         snapshot.conversationHistoryOperations?.first { $0.id == id }
@@ -1205,6 +1352,12 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        let restoreReads = checkpointRestoreReads.values.map(\.task)
+        let restoreChecks = checkpointRestoreInspections.values.map(\.task)
+        for task in restoreReads { task.cancel() }; for task in restoreChecks { task.cancel() }
+        for task in restoreReads { _ = await task.result }; for task in restoreChecks { _ = await task.result }
+        let refreshes = Array(checkpointRefreshTasks.values)
+        for task in refreshes { task.cancel() }; for task in refreshes { await task.value }
         let historyReads = historyReviewReads.values.map(\.task)
         let historyChecks = historyInspections.values.map(\.task)
         for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }

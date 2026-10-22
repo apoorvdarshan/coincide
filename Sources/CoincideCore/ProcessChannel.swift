@@ -9,6 +9,7 @@ public final class ProcessChannel: @unchecked Sendable {
     public let events: AsyncStream<ProcessEvent>
     private let process: Process
     private let input: Pipe
+    private let exitState = ProcessExitState()
     private let lock = NSLock()
     private let writer = DispatchQueue(label: "Coincide.provider-input", qos: .userInitiated)
     private var closed = false
@@ -42,7 +43,11 @@ public final class ProcessChannel: @unchecked Sendable {
               fcntl(descriptor, F_SETNOSIGPIPE, 1) == 0 else { throw CoincideError("Could not configure provider input.") }
         let readers = DispatchGroup()
         readers.enter(); readers.enter()
+        let exitState = self.exitState
         process.terminationHandler = { child in
+            // Native process termination is independent of pipe drainage: a
+            // descendant may still hold an inherited stdout descriptor open.
+            exitState.finish(child.terminationStatus)
             readers.notify(queue: .global(qos: .utility)) {
                 continuation.yield(.exited(child.terminationStatus)); continuation.finish()
             }
@@ -124,6 +129,12 @@ public final class ProcessChannel: @unchecked Sendable {
             if child.isRunning { kill(child.processIdentifier, SIGKILL) }
         }
     }
+    /// Stops and awaits this exact owned process. Cancellation does not abandon
+    /// its cleanup. This does not claim termination of every provider descendant.
+    @discardableResult public func stopAndWait() async -> Int32 {
+        stop()
+        return await exitState.wait()
+    }
     deinit { stop() }
 
     /// Coordinate an app-owned fork with the short interval between Darwin pipe
@@ -164,6 +175,28 @@ public final class ProcessChannel: @unchecked Sendable {
             if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
         }
         return nil
+    }
+}
+
+private final class ProcessExitState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var status: Int32?
+    private var waiters: [CheckedContinuation<Int32, Never>] = []
+
+    func finish(_ status: Int32) {
+        lock.lock()
+        guard self.status == nil else { lock.unlock(); return }
+        self.status = status
+        let pending = waiters; waiters = []
+        lock.unlock()
+        for waiter in pending { waiter.resume(returning: status) }
+    }
+    func wait() async -> Int32 {
+        await withCheckedContinuation { waiter in
+            lock.lock()
+            if let status { lock.unlock(); waiter.resume(returning: status) }
+            else { waiters.append(waiter); lock.unlock() }
+        }
     }
 }
 

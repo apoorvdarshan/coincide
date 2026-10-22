@@ -149,8 +149,9 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var acpAgents: [ACPAgentConfiguration] = []
     public var sidebarPreferences: SidebarPreferences?
     public var conversationHistoryOperations: [ConversationHistoryOperation]?
+    public var checkpointRestoreOperations: [RunCheckpointRestoreOperation]?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -159,9 +160,16 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         acpAgents = try values.decodeIfPresent([ACPAgentConfiguration].self, forKey: .acpAgents) ?? []
         sidebarPreferences = try values.decodeIfPresent(SidebarPreferences.self, forKey: .sidebarPreferences)
         conversationHistoryOperations = try values.decodeIfPresent([ConversationHistoryOperation].self, forKey: .conversationHistoryOperations)
+        checkpointRestoreOperations = try values.decodeIfPresent([RunCheckpointRestoreOperation].self, forKey: .checkpointRestoreOperations)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        for i in (checkpointRestoreOperations ?? []).indices {
+            guard let phase = checkpointRestoreOperations?[i].phase, phase == .accepted || phase == .dispatching else { continue }
+            checkpointRestoreOperations?[i].phase = phase == .accepted ? .failed : .unconfirmed
+            checkpointRestoreOperations?[i].error = phase == .accepted ? RunCheckpointRestoreOperation.failureMessage : RunCheckpointRestoreOperation.unconfirmedMessage
+            checkpointRestoreOperations?[i].updatedAt = Date()
+        }
         for i in (conversationHistoryOperations ?? []).indices {
             guard let phase = conversationHistoryOperations?[i].phase, phase == .accepted || phase == .dispatching else { continue }
             conversationHistoryOperations?[i].phase = phase == .accepted ? .failed : .unconfirmed

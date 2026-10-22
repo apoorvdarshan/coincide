@@ -1,12 +1,13 @@
 import Darwin
 import Foundation
 
-/// Local snapshots of working bytes. The real index, HEAD, branches and checkout are never written.
-/// Each attempt owns one alternate index and one exclusive private ref; interrupted attempts are preserved.
+/// Local Git checkpoints. Capture/inspection/diff preserve the real index, HEAD, branches and checkout.
+/// Capture owns an alternate index and private ref. Explicit reviewed restoration has a separate
+/// sealed manifest and receipt; interrupted captures and restoration recovery bytes are preserved.
 public struct GitCheckpointService: Sendable {
     public let root: URL
-    private let command: GitWorktreeCommand
-    private let timeout: Duration
+    let command: GitWorktreeCommand
+    let timeout: Duration
     public init(root: URL, timeout: Duration = .seconds(60)) {
         self.root = root; self.timeout = timeout; command = .init(environment: Self.environment(ProcessChannel.environment()), executable: nil)
     }
@@ -83,22 +84,22 @@ public struct GitCheckpointService: Sendable {
         }
     }
 
-    private struct Context: Sendable {
+    struct Context: Sendable {
         let workspace: GitWorktreeDirectory
         let repository: GitWorktreeDirectory
         let admin: GitWorktreeDirectory
         let common: GitWorktreeDirectory
         let objects: GitWorktreeDirectory
     }
-    private struct Configuration: Sendable {
+    struct Configuration: Sendable {
         let digest: String
         let sparse: Bool
         let values: [String: String]
         let files: [String: Data]
         let executableFilters: Set<String>
     }
-    private struct Staging: Sendable { let admin: GitWorktreeDirectory }
-    private static let safeOptions = ["--no-lazy-fetch", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.splitIndex=false",
+    struct Staging: Sendable { let admin: GitWorktreeDirectory }
+    static let safeOptions = ["--no-lazy-fetch", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.splitIndex=false",
         "-c", "splitIndex.sharedIndexExpire=never", "-c", "sparse.expectFilesOutsideOfPatterns=false", "-c", "commit.gpgSign=false",
         "-c", "core.fsync=objects,reference", "-c", "core.fsyncMethod=fsync"]
     private func translated<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
@@ -121,18 +122,18 @@ public struct GitCheckpointService: Sendable {
         guard root.isFileURL, let c = URLComponents(url: root, resolvingAgainstBaseURL: false), c.user == nil, c.password == nil,
               c.query == nil, c.fragment == nil, c.host == nil || c.host == "" || c.host?.lowercased() == "localhost" else { throw GitCheckpointError(.invalidPlan) }
     }
-    private func validateSession(_ plan: GitCheckpointPlan) throws {
+    func validateSession(_ plan: GitCheckpointPlan) throws {
         try validateURL(); try plan.validate(); try Task.checkCancellation()
         guard CheckpointFiles.canonical(root.path) == plan.workspacePath else { throw GitCheckpointError(.ownershipLost) }
     }
-    private func validate(_ plan: GitCheckpointPlan, _ c: Context) throws {
+    func validate(_ plan: GitCheckpointPlan, _ c: Context) throws {
         guard c.workspace.path == plan.workspacePath, c.repository.path == plan.repositoryPath,
               c.admin.path == plan.gitDirectoryPath, c.common.path == plan.commonDirectoryPath else { throw GitCheckpointError(.ownershipLost) }
         try c.workspace.validate(expected: plan.workspaceIdentity); try c.repository.validate(expected: plan.repositoryIdentity)
         try c.admin.validate(expected: plan.gitDirectoryIdentity); try c.common.validate(expected: plan.commonDirectoryIdentity)
         try c.objects.validate(expected: plan.objectDirectoryIdentity)
     }
-    private func discover(deadline: ContinuousClock.Instant) async throws -> Context {
+    func discover(deadline: ContinuousClock.Instant) async throws -> Context {
         try validateURL(); try Task.checkCancellation()
         let workspace = try GitWorktreeDirectory(path: CheckpointFiles.canonical(root.path))
         func discoverPath(_ flag: String) async throws -> String {
@@ -150,7 +151,7 @@ public struct GitCheckpointService: Sendable {
         guard try CheckpointFiles.line(await output(["rev-parse", "--is-inside-work-tree"], c, deadline: deadline)) == "true" else { throw GitCheckpointError(.notRepository) }
         try await validateMapping(c, deadline: deadline); return c
     }
-    private func validateMapping(_ c: Context, deadline: ContinuousClock.Instant) async throws {
+    func validateMapping(_ c: Context, deadline: ContinuousClock.Instant) async throws {
         for (flag, expected) in [("--show-toplevel", c.repository), ("--git-common-dir", c.common), ("--absolute-git-dir", c.admin)] {
             let result = try await command.run(Self.safeOptions + ["rev-parse", "--path-format=absolute", flag], cwdFD: c.workspace.fd, timeout: remaining(deadline), maximumOutput: 16_385)
             guard result.status == 0, CheckpointFiles.canonical(try CheckpointFiles.line(result.output)) == expected.path else { throw GitCheckpointError(.ownershipLost) }
@@ -164,7 +165,7 @@ public struct GitCheckpointService: Sendable {
         }
         try c.workspace.validate(); try c.repository.validate(); try c.common.validate(); try c.admin.validate(); try c.objects.validate()
     }
-    private func remaining(_ deadline: ContinuousClock.Instant) throws -> Duration {
+    func remaining(_ deadline: ContinuousClock.Instant) throws -> Duration {
         let remaining = ContinuousClock.now.duration(to: deadline)
         guard remaining > .zero else { throw GitCheckpointError(.timedOut) }; return min(remaining, .seconds(30))
     }
@@ -183,7 +184,7 @@ public struct GitCheckpointService: Sendable {
         let result = try await run(args, c, deadline: deadline, maximum: maximum, index: index, staging: staging)
         guard result.status == 0 else { throw GitCheckpointError(.commandFailed) }; return result.output
     }
-    private func configuration(_ c: Context, deadline: ContinuousClock.Instant) async throws -> Configuration {
+    func configuration(_ c: Context, deadline: ContinuousClock.Instant) async throws -> Configuration {
         let data = try await output(["config", "--null", "--list"], c, deadline: deadline)
         guard data.isEmpty || data.last == 0 else { throw GitCheckpointError(.commandFailed) }
         var values = [String: String]()
@@ -281,7 +282,7 @@ public struct GitCheckpointService: Sendable {
         let parent = try GitWorktreeDirectory(path: file.deletingLastPathComponent().path)
         return try parent.read(file.lastPathComponent, maximum: 131_072, allowEmpty: true)
     }
-    private func head(_ c: Context, deadline: ContinuousClock.Instant) async throws -> String? {
+    func head(_ c: Context, deadline: ContinuousClock.Instant) async throws -> String? {
         let result = try await run(["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"], c, deadline: deadline, maximum: 128)
         if result.status == 0 { return try CheckpointFiles.line(result.output) }
         let symbolic = try await run(["symbolic-ref", "--quiet", "HEAD"], c, deadline: deadline, maximum: 16_384)
@@ -298,7 +299,7 @@ public struct GitCheckpointService: Sendable {
         let value = try CheckpointFiles.line(result.output)
         guard CheckpointValidation.object(value, format: plan.objectFormat) else { throw GitCheckpointError(.refCollision) }; return value
     }
-    private func validateCurrent(_ plan: GitCheckpointPlan, _ c: Context, deadline: ContinuousClock.Instant) async throws {
+    func validateCurrent(_ plan: GitCheckpointPlan, _ c: Context, deadline: ContinuousClock.Instant) async throws {
         try validate(plan, c); try await validateMapping(c, deadline: deadline)
         let current: Configuration
         do { current = try await configuration(c, deadline: deadline) }
@@ -313,7 +314,7 @@ public struct GitCheckpointService: Sendable {
         a.commonDirectoryPath == b.commonDirectoryPath && a.workspaceIdentity == b.workspaceIdentity && a.repositoryIdentity == b.repositoryIdentity &&
         a.gitDirectoryIdentity == b.gitDirectoryIdentity && a.commonDirectoryIdentity == b.commonDirectoryIdentity && a.objectDirectoryIdentity == b.objectDirectoryIdentity && a.objectFormat == b.objectFormat
     }
-    private func makeStaging(_ plan: GitCheckpointPlan, configuration: Configuration, metadata: GitWorktreeDirectory) throws -> Staging {
+    func makeStaging(_ plan: GitCheckpointPlan, configuration: Configuration, metadata: GitWorktreeDirectory) throws -> Staging {
         let admin = try metadata.claimDirectory("git"), info = try admin.claimDirectory("info")
         _ = try admin.claimDirectory("objects"); _ = try admin.claimDirectory("refs")
         try admin.writeExclusive(Data((plan.headCommit.map { $0 + "\n" } ?? "ref: refs/heads/coincide-unborn\n").utf8), name: "HEAD")
@@ -490,7 +491,7 @@ public struct GitCheckpointService: Sendable {
             if !clear.isEmpty { _ = try await output(["update-index", "--no-skip-worktree", "--"] + clear, c, deadline: deadline, index: index, staging: staging) }
         }
     }
-    private func inspect(_ plan: GitCheckpointPlan, _ c: Context, deadline: ContinuousClock.Instant) async throws -> GitCheckpointInspection {
+    func inspect(_ plan: GitCheckpointPlan, _ c: Context, deadline: ContinuousClock.Instant) async throws -> GitCheckpointInspection {
         try validate(plan, c); try await validateMapping(c, deadline: deadline)
         let ref = try await reference(plan, c, deadline: deadline)
         guard try c.common.exists(CheckpointFiles.metadataName(plan.id)) else { return ref == nil ? .missing : .incomplete }

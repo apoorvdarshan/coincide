@@ -53,14 +53,14 @@ struct GitWorktreeCommand: Sendable {
     var inheritedProtocolAllowlist: String? { (environment ?? ProcessChannel.environment())["GIT_ALLOW_PROTOCOL"] }
 }
 
-struct GitWorktreeCommandResult: Sendable { let status: Int32; let output: Data; let overflow: Bool; let stdoutOverflow: Bool; let stderrOverflow: Bool }
+struct GitWorktreeCommandResult: Sendable { let status: Int32; let output: Data; let overflow: Bool; let stdoutOverflow: Bool; let stderrOverflow: Bool; let errorOutput: Data }
 
 /// Captures output directly into a bounded accumulator; no unbounded raw-byte event queue.
 private final class GitWorktreeProcess: @unchecked Sendable {
     private let pid: pid_t, maxBytes: Int
     private let lock = NSLock()
     private var stopped = false, signalAllowed = true, readerShutdown = false, overflow = false, stdoutOverflow = false, stderrOverflow = false
-    private var output = Data(), errorBytes = 0
+    private var output = Data(), errorOutput = Data(), errorBytes = 0
     private var finished: GitWorktreeCommandResult?
     private var waiters: [CheckedContinuation<GitWorktreeCommandResult, Never>] = []
     init(executable: URL, arguments: [String], cwdFD: Int32, environment: [String: String], maxBytes: Int, trustedInputFD: Int32? = nil) throws {
@@ -134,7 +134,7 @@ private final class GitWorktreeProcess: @unchecked Sendable {
             var raw: Int32 = 0, result: pid_t = -1
             if observed == 0 { repeat { result = waitpid(pid, &raw, 0) } while result == -1 && errno == EINTR }
             let status: Int32 = result == -1 ? 255 : ((raw & 0x7f) == 0 ? (raw >> 8) & 0xff : 128 + (raw & 0x7f))
-            let value = GitWorktreeCommandResult(status: status, output: output, overflow: overflow, stdoutOverflow: stdoutOverflow, stderrOverflow: stderrOverflow)
+            let value = GitWorktreeCommandResult(status: status, output: output, overflow: overflow, stdoutOverflow: stdoutOverflow, stderrOverflow: stderrOverflow, errorOutput: errorOutput)
             finished = value; let pending = waiters; waiters = []; lock.unlock()
             for waiter in pending { waiter.resume(returning: value) }
         }
@@ -174,7 +174,11 @@ private final class GitWorktreeProcess: @unchecked Sendable {
                             overflow = true; stdoutOverflow = true; return true
                         }
                         output.append(contentsOf: bytes.prefix(count))
-                    } else { errorBytes += count; if errorBytes > 65_536 { overflow = true; stderrOverflow = true; return true } }
+                    } else {
+                        errorOutput.append(contentsOf: bytes.prefix(max(0, 65_536 - errorOutput.count)))
+                        errorBytes += count
+                        if errorBytes > 65_536 { overflow = true; stderrOverflow = true; return true }
+                    }
                     return false
                 }
                 if exceeded { stop() }

@@ -19,7 +19,7 @@ struct ChatView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     ProviderMenu(store: store, thread: thread)
-                        .disabled(store.snapshot.isConversationHistoryLocked(threadID: threadID))
+                        .disabled((store.snapshot.isConversationHistoryLocked(threadID: threadID) || store.isCheckpointRestoreLocked(threadID: threadID)))
                     Spacer()
                     Menu {
                         Text(thread.workspacePath)
@@ -32,18 +32,18 @@ struct ChatView: View {
                             get: { thread.effectiveCheckpointPolicy == .automatic },
                             set: { store.setCheckpointPolicy($0 ? .automatic : .disabled, id: threadID) }))
                             .accessibilityIdentifier("conversation-run-checkpoints")
-                            .disabled(store.snapshot.isConversationHistoryLocked(threadID: threadID))
+                            .disabled((store.snapshot.isConversationHistoryLocked(threadID: threadID) || store.isCheckpointRestoreLocked(threadID: threadID)))
                             .help("Save workspace observations before and after future messages. Already accepted messages keep their captured setting.")
                         if let settlement = thread.settlement {
                             Button("Resume Conversation") { store.requestResume(threadID, generationID: settlement.id) }
-                                .disabled(settlement.phase == .resuming || store.snapshot.isConversationHistoryLocked(threadID: threadID))
+                                .disabled(settlement.phase == .resuming || (store.snapshot.isConversationHistoryLocked(threadID: threadID) || store.isCheckpointRestoreLocked(threadID: threadID)))
                         } else if let onSettle {
                             Button("Settle Conversation…") { onSettle(thread) }.disabled(!store.canSettle(thread))
                         }
                         if thread.messages.isEmpty {
                             Button("Choose Worktree…") { worktreeSheet = true }
                                 .disabled(thread.isSettled || thread.isBusy || !thread.queuedTurns.isEmpty || thread.workspacePreparation?.isRunning == true ||
-                                          store.snapshot.isConversationHistoryLocked(threadID: threadID) ||
+                                          (store.snapshot.isConversationHistoryLocked(threadID: threadID) || store.isCheckpointRestoreLocked(threadID: threadID)) ||
                                           (store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false))
                         }
                     } label: { Label(store.selectedProject?.name ?? "Workspace", systemImage: "folder").font(.caption).foregroundStyle(.secondary) }
@@ -114,6 +114,7 @@ struct ChatView: View {
                     if let settlement = thread.settlement {
                         ThreadSettlementBanner(store: store, threadID: threadID, settlement: settlement)
                     }
+                    RunCheckpointRestoreBanner(store: store, threadID: threadID)
                     RunCheckpointBanner(store: store, threadID: threadID)
                     ConversationHistoryBanner(store: store, threadID: threadID)
                     ForEach(store.approvals[threadID, default: []]) { request in
@@ -127,7 +128,7 @@ struct ChatView: View {
                     ComposerView(text: draft, provider: thread.provider, providerName: thread.providerName, permission: thread.permission,
                                  busy: store.isBusy(threadID), submitting: sending || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
                                  hasAttachments: !thread.draftAttachments.isEmpty,
-                                 historyLocked: store.snapshot.isConversationHistoryLocked(threadID: threadID),
+                                 historyLocked: (store.snapshot.isConversationHistoryLocked(threadID: threadID) || store.isCheckpointRestoreLocked(threadID: threadID)),
                                  attach: { store.chooseAttachments(threadID: threadID) },
                                  referenceFile: store.canAccessWorkspaceFiles(thread.workspacePath) ? { referenceFileSheet = true } : nil,
                                  importProviders: { store.importAttachments(providers: $0, threadID: threadID) },

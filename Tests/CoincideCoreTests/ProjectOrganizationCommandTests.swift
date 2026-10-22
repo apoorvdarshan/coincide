@@ -424,7 +424,7 @@ private func expectOrganizationRejection(_ command: WorkspaceCommand, fixture f:
     let oldDatabase = try WorkspaceDatabase(url: url); try await oldDatabase.save(snapshot, event: "legacy")
     try organizationSQL(url, "PRAGMA user_version=7")
     let database = try WorkspaceDatabase(url: url)
-    #expect(try organizationStorageVersion(url) == 17)
+    #expect(try organizationStorageVersion(url) == 18)
     #expect(try await database.load() == snapshot)
     #expect(try await database.rebuildProjection().snapshot == snapshot)
     let harness = OrganizationHarness(), engine = try WorkspaceEngine(url: url, providerFactory: { harness.make($0) })

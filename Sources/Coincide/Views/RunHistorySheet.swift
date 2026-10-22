@@ -10,11 +10,17 @@ struct RunHistorySheet: View {
         RunHistoryContent(thread: store.thread(threadID), showWorkspaceChanges: { sheet = .diff($0) },
                           historyAction: { sheet = .history($0, $1) },
                           historyUnavailableReason: { store.conversationHistoryUnavailableReason(threadID: threadID, runID: $0, kind: $1) },
+                          restoreAction: { sheet = .restore($0, $1, $2) },
+                          restoreUnavailableReason: { store.checkpointRestoreUnavailableReason(threadID: threadID, runID: $0, stage: $1, expectedAttemptID: $2) },
+                          restoreOperations: store.checkpointRestoreOperations(threadID: threadID),
+                          restoreOperationView: { AnyView(RunCheckpointRestoreOperationView(store: store, operation: $0)) },
                           operations: store.conversationHistoryOperations(threadID: threadID),
                           operationView: { AnyView(ConversationHistoryOperationView(store: store, operation: $0)) })
             .sheet(item: $sheet) { request in
                 switch request {
-                case .diff(let id): RunCheckpointDiffSheet(store: store, threadID: threadID, runID: id)
+                case .diff(let id): RunCheckpointDiffSheet(store: store, threadID: threadID, runID: id, restoreAction: { sheet = .restore(id, $0, $1) })
+                case .restore(let run, let stage, let attempt):
+                    RunCheckpointRestoreSheet(store: store, threadID: threadID, runID: run, stage: stage, attemptID: attempt, close: { sheet = nil })
                 case .history(let id, let kind):
                     ConversationHistoryReviewSheet(store: store, threadID: threadID, runID: id, kind: kind, close: { sheet = nil })
                 }
@@ -23,10 +29,11 @@ struct RunHistorySheet: View {
 }
 
 private enum RunHistorySheetRequest: Identifiable {
-    case diff(UUID), history(UUID, ConversationHistoryKind)
+    case diff(UUID), history(UUID, ConversationHistoryKind), restore(UUID, RunCheckpointStage, UUID)
     var id: String {
         switch self {
         case .diff(let id): "diff-" + id.uuidString
+        case .restore(_, _, let id): "restore-" + id.uuidString
         case .history(let id, let kind): (kind == .forkAfterRun ? "fork-" : "rewind-") + id.uuidString
         }
     }
@@ -37,6 +44,10 @@ struct RunHistoryContent: View {
     var showWorkspaceChanges: ((UUID) -> Void)? = nil
     var historyAction: ((UUID, ConversationHistoryKind) -> Void)? = nil
     var historyUnavailableReason: ((UUID, ConversationHistoryKind) -> String?)? = nil
+    var restoreAction: ((UUID, RunCheckpointStage, UUID) -> Void)? = nil
+    var restoreUnavailableReason: ((UUID, RunCheckpointStage, UUID) -> String?)? = nil
+    var restoreOperations: [RunCheckpointRestoreOperation] = []
+    var restoreOperationView: ((RunCheckpointRestoreOperation) -> AnyView)? = nil
     var operations: [ConversationHistoryOperation] = []
     var operationView: ((ConversationHistoryOperation) -> AnyView)? = nil
     @Environment(\.dismiss) private var dismiss
@@ -80,6 +91,18 @@ struct RunHistoryContent: View {
                 .padding(20)
         } else {
             LazyVStack(alignment: .leading, spacing: 0) {
+                if let restoreOperationView, !restoreOperations.isEmpty {
+                    DisclosureGroup("File restorations") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(restoreOperations) { operation in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(operation.updatedAt, format: .dateTime.month(.abbreviated).day().hour().minute()).font(.caption).foregroundStyle(.secondary)
+                                    restoreOperationView(operation)
+                                }
+                            }
+                        }.padding(.top, 8)
+                    }.font(.caption).padding(.top, 14)
+                }
                 if let operationView, !operations.isEmpty {
                     DisclosureGroup("Conversation changes") {
                         VStack(alignment: .leading, spacing: 12) {
@@ -101,7 +124,7 @@ struct RunHistoryContent: View {
                 }
                 ForEach(records) { record in
                     RunHistoryRow(record: record, thread: thread, showWorkspaceChanges: showWorkspaceChanges,
-                                  historyAction: historyAction,
+                                  historyAction: historyAction, restoreAction: restoreAction, restoreUnavailableReason: restoreUnavailableReason,
                                   forkUnavailableReason: historyUnavailableReason?(record.id, .forkAfterRun),
                                   rewindUnavailableReason: historyUnavailableReason?(record.id, .rewindBeforeRun)).padding(.vertical, 14)
                     Divider()
@@ -116,6 +139,8 @@ private struct RunHistoryRow: View {
     let thread: CodingThread
     let showWorkspaceChanges: ((UUID) -> Void)?
     let historyAction: ((UUID, ConversationHistoryKind) -> Void)?
+    let restoreAction: ((UUID, RunCheckpointStage, UUID) -> Void)?
+    let restoreUnavailableReason: ((UUID, RunCheckpointStage, UUID) -> String?)?
     let forkUnavailableReason: String?
     let rewindUnavailableReason: String?
 
@@ -233,6 +258,9 @@ private struct RunHistoryRow: View {
                                 if attempt.isLaterObservation {
                                     Text("Later workspace observation").foregroundStyle(.secondary)
                                 }
+                                if attempt.phase == .ready, attempt.receipt != nil, let restoreAction {
+                                    restoreButton(attempt, stage: .postRun, action: restoreAction)
+                                }
                                 if attempt.cleanupWarning != nil {
                                     Text("Some temporary checkpoint data was preserved.")
                                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -246,12 +274,24 @@ private struct RunHistoryRow: View {
                 Text("Some temporary checkpoint data was preserved.")
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            if let restoreAction {
+                ForEach(RunCheckpointRestorePresentation.targets(record)) { target in
+                    restoreButton(target.attempt, stage: target.stage, action: restoreAction)
+                }
+            }
             if RunCheckpointPresentation.canShowDiff(checkpoints), let showWorkspaceChanges {
                 Button("Workspace Changes…") { showWorkspaceChanges(record.id) }
                     .accessibilityIdentifier("run-history-changes-\(record.id)")
             }
         }.font(.caption)
             .accessibilityIdentifier("run-history-checkpoints-\(record.id)")
+    }
+
+    private func restoreButton(_ attempt: ThreadRunCheckpointAttempt, stage: RunCheckpointStage, action: @escaping (UUID, RunCheckpointStage, UUID) -> Void) -> some View {
+        let reason = restoreUnavailableReason?(record.id, stage, attempt.id)
+        return Button(RunCheckpointRestorePresentation.target(stage: stage, later: attempt.isLaterObservation)) { action(record.id, stage, attempt.id) }
+            .disabled(reason != nil).help(reason ?? String(localized: "Review replacement of the current workspace files and staging."))
+            .accessibilityIdentifier("run-history-restore-\(attempt.id)")
     }
 
     private var references: some View {

@@ -67,12 +67,20 @@ public struct HeldPostRunCheckpoint: Sendable, Equatable {
 
 public protocol RunCheckpointSession: Sendable {
     func prepare(id: UUID) async throws -> GitCheckpointPlan
+    func reviewRestore(target: GitCheckpointReceipt, id: UUID) async throws -> GitCheckpointRestoreReview
+    func discardRestoreReview(_ review: GitCheckpointRestoreReview) async throws -> GitCheckpointScratchResult
+    func restore(review: GitCheckpointRestoreReview) async throws -> GitCheckpointRestoreReceipt
+    func inspectRestore(review: GitCheckpointRestoreReview) async throws -> GitCheckpointRestoreInspection
     func capture(_ plan: GitCheckpointPlan) async throws -> GitCheckpointReceipt
     func inspect(_ plan: GitCheckpointPlan) async throws -> GitCheckpointInspection
     func finalizeScratch(_ receipt: GitCheckpointReceipt) async throws -> GitCheckpointScratchResult
     func diff(from: GitCheckpointReceipt, to: GitCheckpointReceipt, paths: [String]?, ignoreWhitespace: Bool, maxBytes: Int) async throws -> GitCheckpointDiff
 }
 extension RunCheckpointSession {
+    public func reviewRestore(target: GitCheckpointReceipt, id: UUID = UUID()) async throws -> GitCheckpointRestoreReview { throw GitCheckpointRestoreError(.unsupportedConfiguration) }
+    public func discardRestoreReview(_ review: GitCheckpointRestoreReview) async throws -> GitCheckpointScratchResult { .preserved }
+    public func restore(review: GitCheckpointRestoreReview) async throws -> GitCheckpointRestoreReceipt { throw GitCheckpointRestoreError(.unsupportedConfiguration) }
+    public func inspectRestore(review: GitCheckpointRestoreReview) async throws -> GitCheckpointRestoreInspection { throw GitCheckpointRestoreError(.incomplete) }
     public func diff(from: GitCheckpointReceipt, to: GitCheckpointReceipt, paths: [String]?, ignoreWhitespace: Bool, maxBytes: Int) async throws -> GitCheckpointDiff { throw GitCheckpointError(.incomplete) }
 }
 extension GitCheckpointService: RunCheckpointSession { }

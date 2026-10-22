@@ -18,7 +18,7 @@ struct GitInspectorView: View {
             return path == root || path.hasPrefix(root + "/")
         }
     }
-    private var mutationsDisabled: Bool { model.isBusy || workspaceBusy }
+    private var mutationsDisabled: Bool { model.isBusy || workspaceBusy || !workspace.canEditWorkspace(model.git.root.path) }
 
     var body: some View {
         VStack(spacing: 8) {

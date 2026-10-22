@@ -904,6 +904,214 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "history-preserved-final-head"), originalHead)
     }
 
+    @MainActor func testNativeCheckpointRestoreReviewsRealGitLossAndPreservesConversationAndSource() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "restore")
+        let app = fixture.app, root = fixture.root
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
+        let project = root.appendingPathComponent("Native Restore", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let before = "Before synthetic provider run\n", after = "After synthetic provider run\n"
+        let sourceReadme = project.appendingPathComponent("README.md")
+        try before.write(to: sourceReadme, atomically: true, encoding: .utf8)
+        try "keep-ignored.txt\n".write(to: project.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md", ".gitignore"], ["commit", "--message", "Real checkpoint restoration fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-fixture-\(arguments[0])")
+        }
+        let originalHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "restore-source-head")
+        let sourceHeadFile = project.appendingPathComponent(".git/HEAD"), sourceHeadBytes = try Data(contentsOf: sourceHeadFile)
+        let state = root.appendingPathComponent("history-peer.json"), wire = root.appendingPathComponent("history-peer-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "threads": [:], "nextTurn": 0, "restoreFixture": true]).write(to: state)
+        let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_history_ui", withExtension: "py"))
+        let peer = root.appendingPathComponent("codex_history_ui.py")
+        try Data(contentsOf: bundledPeer).write(to: peer)
+        let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
+        for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        let executable = bin.appendingPathComponent("codex")
+        let command = [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ")
+        try ("#!/bin/sh\nexec " + command + "\n").write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["CODEX_HOME"] = home.path
+        addTeardownBlock { @MainActor [weak self] in
+            if let data = try? Data(contentsOf: wire), let text = String(data: data, encoding: .utf8) {
+                let receipt = XCTAttachment(string: text); receipt.name = "restore-offline-provider-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
+            }
+        }
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app)
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let preparingDraft = "Keep this draft while selecting an isolated restore worktree"
+        composer.click(); composer.typeText(preparingDraft)
+        let identifier = try selectedThreadIdentifier(in: app)
+        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
+        workspace.click(); app.menuItems["Choose Worktree…"].click()
+        let preparation = app.sheets.containing(.textField, identifier: "worktree-new-branch").element
+        XCTAssertTrue(preparation.waitForExistence(timeout: 5))
+        let branch = preparation.textFields["worktree-new-branch"], base = preparation.textFields["worktree-base-ref"]
+        branch.click(); branch.typeText("ui-checkpoint-restore")
+        base.click(); base.typeKey("a", modifierFlags: .command); base.typeText("main")
+        let submodules = preparation.descendants(matching: .any).matching(identifier: "worktree-submodules").element
+        XCTAssertEqual(submodules.value as? String, "None")
+        let prepare = preparation.buttons["Prepare Worktree"]
+        let preparingReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: prepare)
+        XCTAssertEqual(XCTWaiter.wait(for: [preparingReady], timeout: 10), .completed); prepare.click()
+        XCTAssertTrue(waitForAbsence(preparation, timeout: 5))
+        let managedRoot = root.appendingPathComponent("Worktrees", isDirectory: true)
+        let prepared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value BEGINSWITH %@", managedRoot.path + "/"), object: workspace)
+        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 20), .completed)
+        let checkout = URL(fileURLWithPath: try XCTUnwrap(workspace.value as? String))
+        XCTAssertEqual(checkout.deletingLastPathComponent().path, managedRoot.path)
+        assertWorkspaceReady(in: app)
+        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
+        XCTAssertEqual(composer.value as? String, preparingDraft)
+        // Stop all metadata peers before updating their private fixture cwd.
+        // Relaunch must use the persisted actual worktree before the first turn.
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        var stateValue = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: state)) as? [String: Any])
+        XCTAssertEqual(stateValue["nextTurn"] as? Int, 0)
+        stateValue["cwd"] = checkout.path
+        try JSONSerialization.data(withJSONObject: stateValue).write(to: state, options: .atomic)
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: preparingDraft, timeout: 10))
+        assertConversationWorkspace(app, path: checkout.path); assertWorkspaceReady(in: app)
+        let prompt = "Make the synthetic local checkpoint change"
+        composer.click(); composer.typeKey("a", modifierFlags: .command); composer.typeText(prompt)
+        app.typeKey(.return, modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["Offline history reply 1"].waitForExistence(timeout: 20))
+        let readme = checkout.appendingPathComponent("README.md")
+        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), after)
+        try openNativeRunHistory(in: app)
+        let runID = try revealNativeHistoryRun(prompt: prompt, in: app)
+        XCTAssertTrue(app.buttons["run-history-changes-\(runID)"].waitForExistence(timeout: 20), "Production Git must save both real checkpoint receipts before restoration.")
+        try nativeHistoryDone(in: app).click()
+        let staged = "User staged edits after the run\n", working = "User working edits after staging\n"
+        try staged.write(to: readme, atomically: true, encoding: .utf8)
+        _ = try runGit(["-C", checkout.path, "add", "README.md"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-user-staging")
+        try working.write(to: readme, atomically: true, encoding: .utf8)
+        let newFile = checkout.appendingPathComponent("new-untracked.txt"), newBytes = Data("User file created after checkpoint\n".utf8)
+        let ignored = checkout.appendingPathComponent("keep-ignored.txt"), ignoredBytes = Data("Keep this ignored user file\n".utf8)
+        try newBytes.write(to: newFile); try ignoredBytes.write(to: ignored)
+        let stagedBefore = try runGit(["-C", checkout.path, "diff", "--cached", "--binary", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-before-staged-diff")
+        let workingBefore = try runGit(["-C", checkout.path, "diff", "--binary", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-before-working-diff")
+        XCTAssertTrue(stagedBefore.contains(staged.trimmingCharacters(in: .newlines)))
+        XCTAssertTrue(workingBefore.contains(working.trimmingCharacters(in: .newlines)))
+        let currentDraft = "Keep this latest unsent draft while replacing files"
+        composer.click(); composer.typeText(currentDraft)
+        try openNativeRunHistory(in: app)
+        var restoreTarget = try revealBaselineRestoreTarget(in: app)
+        let targetID = restoreTarget.identifier
+        XCTAssertTrue(targetID.hasPrefix("run-history-restore-"))
+        XCTAssertNotNil(UUID(uuidString: String(targetID.dropFirst("run-history-restore-".count))))
+        restoreTarget.click()
+        var review = try nativeRestoreReview(in: app)
+        let warning = review.staticTexts["checkpoint-restore-loss-warning"]
+        XCTAssertTrue(warning.label.contains("Working edits and staging will be lost"))
+        XCTAssertTrue(warning.label.contains("New files that are not ignored may be deleted"))
+        XCTAssertEqual(review.staticTexts["checkpoint-restore-workspace"].label, checkout.path)
+        let display = CGDisplayBounds(CGMainDisplayID())
+        XCTAssertTrue(display.contains(review.frame), "The native destructive review must fit the hosted screen.")
+        for control in [review.buttons["checkpoint-restore-confirm"], review.buttons["checkpoint-restore-close"]] {
+            XCTAssertTrue(control.isHittable && review.frame.contains(control.frame) && display.contains(control.frame))
+        }
+        capture(app, name: "restore-reviewed-real-files-and-staging-loss")
+        review.buttons["checkpoint-restore-close"].click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), working)
+        XCTAssertEqual(try Data(contentsOf: newFile), newBytes); XCTAssertEqual(try Data(contentsOf: ignored), ignoredBytes)
+        XCTAssertEqual(try runGit(["-C", checkout.path, "diff", "--cached", "--binary", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-cancel-staged-diff"), stagedBefore)
+        XCTAssertEqual(try runGit(["-C", checkout.path, "diff", "--binary", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-cancel-working-diff"), workingBefore)
+        try nativeHistoryDone(in: app).click()
+        XCTAssertTrue(waitForValue(composer, value: currentDraft, timeout: 5))
+        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
+        try openNativeRunHistory(in: app)
+        restoreTarget = try revealBaselineRestoreTarget(in: app)
+        XCTAssertEqual(restoreTarget.identifier, targetID); restoreTarget.click()
+        review = try nativeRestoreReview(in: app)
+        review.buttons["checkpoint-restore-confirm"].click()
+        let status = review.staticTexts["checkpoint-restore-status"]
+        let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", "Workspace files restored"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 30), .completed)
+        capture(app, name: "restore-real-git-applied-with-preserved-conversation")
+        review.buttons["checkpoint-restore-close"].click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        try nativeHistoryDone(in: app).click()
+        XCTAssertTrue(waitForValue(composer, value: currentDraft, timeout: 10))
+        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
+        assertRestoreConversation(prompt: prompt, in: app)
+        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: newFile.path))
+        XCTAssertEqual(try Data(contentsOf: ignored), ignoredBytes)
+        XCTAssertEqual(try runGit(["-C", checkout.path, "diff", "--cached", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-cleared-staging"), "")
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: checkout, configuration: fixture.configuration, name: "restore-unchanged-checkout-head"), originalHead)
+        XCTAssertEqual(try runGit(["-C", checkout.path, "symbolic-ref", "--short", "HEAD"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-unchanged-branch").trimmingCharacters(in: .whitespacesAndNewlines), "ui-checkpoint-restore")
+        XCTAssertEqual(try String(contentsOf: sourceReadme, encoding: .utf8), before)
+        XCTAssertEqual(try Data(contentsOf: sourceHeadFile), sourceHeadBytes)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "restore-unchanged-source-head"), originalHead)
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: currentDraft, timeout: 10))
+        assertConversationWorkspace(app, path: checkout.path); assertWorkspaceReady(in: app)
+        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
+        assertRestoreConversation(prompt: prompt, in: app)
+        try openNativeRunHistory(in: app)
+        let historyOwner = try nativeHistorySheet(owning: "run-history-done", in: app)
+        let audit = historyOwner.descendants(matching: .any).matching(NSPredicate(
+            format: "(elementType == %d OR elementType == %d) AND label == %@",
+            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue, "File restorations")).firstMatch
+        XCTAssertTrue(audit.waitForExistence(timeout: 10)); expandScriptOutputDisclosure(audit)
+        XCTAssertTrue(historyOwner.staticTexts["Workspace files restored"].waitForExistence(timeout: 5))
+        capture(app, name: "restore-reopened-draft-conversation-and-file-audit")
+        try nativeHistoryDone(in: app).click()
+        let frames = try historyWire(wire)
+        XCTAssertEqual(frames.filter { $0["method"] as? String == "turn/start" }.count, 1)
+        XCTAssertEqual(frames.filter { ["thread/fork", "thread/revert"].contains($0["method"] as? String ?? "") }.count, 0)
+        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), before)
+        XCTAssertEqual(try Data(contentsOf: ignored), ignoredBytes)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: newFile.path))
+        XCTAssertEqual(try Data(contentsOf: sourceHeadFile), sourceHeadBytes)
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
+    @MainActor private func revealBaselineRestoreTarget(in app: XCUIApplication) throws -> XCUIElement {
+        let scroll = app.scrollViews["run-history-records"]
+        XCTAssertTrue(scroll.exists); scroll.scroll(byDeltaX: 0, deltaY: 10_000)
+        let targets = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "run-history-restore-", "Restore Files to Before Run…"))
+        for _ in 0..<8 {
+            if let target = targets.allElementsBoundByIndex.first(where: { $0.frame.width > 0 && scroll.frame.contains($0.frame) && $0.isHittable }) {
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: target)
+                XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed)
+                return target
+            }
+            scroll.scroll(byDeltaX: 0, deltaY: -120)
+        }
+        XCTFail("The exact ready baseline must expose native file restoration in Run History.")
+        throw NSError(domain: "CoincideDesktopUITests", code: 2)
+    }
+
+    @MainActor private func nativeRestoreReview(in app: XCUIApplication) throws -> XCUIElement {
+        XCTAssertTrue(app.sheets.containing(.button, identifier: "checkpoint-restore-close").firstMatch.waitForExistence(timeout: 10))
+        let review = try nativeHistorySheet(owning: "checkpoint-restore-close", in: app)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: review.buttons["checkpoint-restore-confirm"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed)
+        return review
+    }
+
+    @MainActor private func assertRestoreConversation(prompt: String, in app: XCUIApplication) {
+        // The accepted prompt can also become the sidebar conversation title.
+        // Only the transcript scroll view containing its unique reply proves
+        // both original messages survived this Files-only operation.
+        let transcript = app.scrollViews.containing(.staticText, identifier: "Offline history reply 1").firstMatch
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        XCTAssertTrue(transcript.staticTexts.matching(NSPredicate(format: "label == %@", prompt)).firstMatch.exists)
+        XCTAssertTrue(transcript.staticTexts["Offline history reply 1"].exists)
+    }
+
     @MainActor private func openNativeRunHistory(in app: XCUIApplication) throws {
         app.descendants(matching: .any).matching(identifier: "conversation-workspace").element.click()
         let history = app.menuItems["Run History…"]

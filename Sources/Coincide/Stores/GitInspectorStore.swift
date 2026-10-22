@@ -33,17 +33,22 @@ final class GitInspectorStore {
     private var readTask: Task<GitInspectorRead, any Error>?
     private var diffTask: Task<String, any Error>?
     private var closed = false
-    var isBusy: Bool { closed || isRefreshing || operationName != nil }
+    private let canMutate: @MainActor () -> Bool
+    private var mutationGeneration = UUID()
+    private var mutationSuspended = false
+    var isBusy: Bool { closed || mutationSuspended || isRefreshing || operationName != nil || !canMutate() }
     var files: [ChangedFile] { snapshot?.changes ?? [] }
 
-    init(path: String, networkTimeout: Duration = .seconds(120)) { git = .init(root: URL(fileURLWithPath: path), networkTimeout: networkTimeout) }
+    init(path: String, networkTimeout: Duration = .seconds(120), canMutate: @escaping @MainActor () -> Bool = { true }) {
+        git = .init(root: URL(fileURLWithPath: path), networkTimeout: networkTimeout); self.canMutate = canMutate
+    }
 
     func refresh() async {
-        guard !closed, operationName == nil else { return }
+        guard !closed, !mutationSuspended, operationName == nil, canMutate() else { return }
         await reload()
     }
     private func reload() async {
-        guard !closed else { return }
+        guard !closed, canMutate() else { return }
         let id = UUID(); refreshID = id; isRefreshing = true
         defer { if refreshID == id { isRefreshing = false; readTask = nil } }
         readTask?.cancel()
@@ -69,7 +74,7 @@ final class GitInspectorStore {
         }
     }
     func loadDiff() async {
-        guard !closed else { return }
+        guard !closed, canMutate() else { return }
         let id = UUID(); diffID = id; isLoadingDiff = true
         defer { if diffID == id { isLoadingDiff = false; diffTask = nil } }
         diffTask?.cancel()
@@ -106,6 +111,18 @@ final class GitInspectorStore {
     }
     func cancel() { operationTask?.cancel() }
     func waitForOperation() async { await operationTask?.value }
+    func suspendForWorkspaceMutation() {
+        mutationGeneration = UUID(); mutationSuspended = true
+        refreshID = UUID(); diffID = UUID(); readTask?.cancel(); diffTask?.cancel()
+        readTask = nil; diffTask = nil; isRefreshing = false; isLoadingDiff = false
+    }
+    func refreshAfterWorkspaceMutation() async {
+        guard !closed, canMutate() else { return }
+        let generation = mutationGeneration
+        mutationSuspended = true
+        defer { if mutationGeneration == generation { mutationSuspended = false } }
+        await reload()
+    }
     func prepareForShutdown() { closed = true; operationTask?.cancel(); readTask?.cancel(); diffTask?.cancel() }
     func shutdown() async {
         prepareForShutdown()

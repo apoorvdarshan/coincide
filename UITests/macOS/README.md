@@ -117,12 +117,29 @@ The peer runs only from a private PATH entry with a private CODEX_HOME. Its
 bounded state and wire log live under the test-owned workspace; flock plus
 atomic state replacement preserve boundaries across fresh metadata/fork
 processes. The CI shell resolves Python before entering the sandbox so the test
-does not invoke Apple's developer-tool shim. Five GUI-free configuration and
+does not invoke Apple's developer-tool shim. Seven GUI-free configuration and
 peer tests validate isolation, persistence and the strict result gate.
+
+The tenth workflow uses an actual local Git repository and a natively prepared,
+isolated managed worktree. An explicit fixture-only peer option edits its own
+regular README during one synthetic provider turn; production code captures the
+real baseline and post-run receipts. The workflow adds distinct staged, working,
+new untracked and ignored files. Native restoration Cancel must preserve those
+bytes, staged/working diffs, selection and draft. Explicit Restore Files must
+recover baseline contents, remove new nonignored files, preserve ignored files,
+clear staging and retain branch/HEAD, source checkout, conversation and latest
+draft. Relaunch must preserve the applied restoration audit without replaying a
+turn, fork, rewind or file restore. The peer's edit option is limited to a real
+checkout directly beneath this fixture's Worktrees directory and rejects
+unmanaged or symlink destinations; the original nine workflows do not enable it.
+This is a Files-only operation and does not claim combined conversation rewind
+plus file restoration. Execution and screenshots remain pending until the
+exact-head hosted job runs; compilation and fixture tests alone are not GUI proof.
+
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all nine tests to pass with zero
+gate requires all ten tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 

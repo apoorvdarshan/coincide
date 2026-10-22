@@ -127,8 +127,9 @@ public actor JSONRPCConnection {
                 "subtype": .string("error"), "request_id": id, "error": .string(message)])]))
         } else { try await send(.object(["id": id, "error": .object(["code": .number(-32601), "message": .string(message)])])) }
     }
-    public func close() {
-        disconnect("Connection closed."); channel.stop(); reader?.cancel(); reader = nil
+    public func close() async {
+        disconnect("Connection closed."); reader?.cancel(); reader = nil
+        await channel.stopAndWait()
     }
     /// Completes after the event consumer has processed all notifications already decoded.
     public func flushEvents() async {

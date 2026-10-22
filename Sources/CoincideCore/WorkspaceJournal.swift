@@ -9,6 +9,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case acpAgentsReplaced([ACPAgentConfiguration])
     case sidebarPreferencesChanged(SidebarPreferences?)
     case conversationHistoryOperationsReplaced([ConversationHistoryOperation]?)
+    case checkpointRestoreOperationsReplaced([RunCheckpointRestoreOperation]?)
     case threadMetadataUpserted(CodingThread)
     case threadRemoved(UUID)
     case threadsOrdered([UUID])
@@ -19,6 +20,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
         case .conversationHistoryOperationsReplaced(let operations): snapshot.conversationHistoryOperations = operations
+        case .checkpointRestoreOperationsReplaced(let operations): snapshot.checkpointRestoreOperations = operations
         case .sidebarPreferencesChanged(let preferences): snapshot.sidebarPreferences = preferences
         case .acpAgentsReplaced(let agents): snapshot.acpAgents = agents
         case .imported(let value): try WorkspaceJournal.validate(value); snapshot = value
@@ -90,6 +92,7 @@ public enum WorkspaceJournal {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
         try snapshot.validateConversationHistory()
+        try snapshot.validateCheckpointRestores()
         var cloneIDs: Set<UUID> = []
         for project in snapshot.projects {
             try validateRepositoryIdentity(project.repositoryIdentity, project: project)
@@ -171,6 +174,7 @@ public enum WorkspaceJournal {
         try validate(previous); try validate(next)
         var events: [WorkspaceEvent] = []
         if previous.conversationHistoryOperations != next.conversationHistoryOperations { events.append(.conversationHistoryOperationsReplaced(next.conversationHistoryOperations)) }
+        if previous.checkpointRestoreOperations != next.checkpointRestoreOperations { events.append(.checkpointRestoreOperationsReplaced(next.checkpointRestoreOperations)) }
         if previous.sidebarPreferences != next.sidebarPreferences { events.append(.sidebarPreferencesChanged(next.sidebarPreferences)) }
         if previous.acpAgents != next.acpAgents { events.append(.acpAgentsReplaced(next.acpAgents)) }
         let oldProjects = Dictionary(uniqueKeysWithValues: previous.projects.map { ($0.id, $0) })

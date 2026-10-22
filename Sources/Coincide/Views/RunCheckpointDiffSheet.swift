@@ -5,6 +5,7 @@ struct RunCheckpointDiffSheet: View {
     let store: WorkspaceStore
     let threadID: UUID
     let runID: UUID
+    var restoreAction: ((RunCheckpointStage, UUID) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var diff: GitCheckpointDiff?
     @State private var error: String?
@@ -18,7 +19,10 @@ struct RunCheckpointDiffSheet: View {
 
     var body: some View {
         RunCheckpointDiffContent(workspacePath: record?.configuration.workspacePath, diff: diff, error: error,
-                                 loading: loading, close: { dismiss() })
+                                 loading: loading, close: { dismiss() }, restoreTargets: record.map(RunCheckpointRestorePresentation.targets) ?? [],
+                                 restoreAction: restoreAction, restoreUnavailableReason: { stage, attempt in
+                                     store.checkpointRestoreUnavailableReason(threadID: threadID, runID: runID, stage: stage, expectedAttemptID: attempt)
+                                 })
             .task(id: revision) {
                 loading = true; diff = nil; error = nil
                 do {
@@ -40,6 +44,9 @@ struct RunCheckpointDiffContent: View {
     let error: String?
     let loading: Bool
     let close: () -> Void
+    var restoreTargets: [RunCheckpointRestoreTarget] = []
+    var restoreAction: ((RunCheckpointStage, UUID) -> Void)? = nil
+    var restoreUnavailableReason: ((RunCheckpointStage, UUID) -> String?)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -75,6 +82,15 @@ struct RunCheckpointDiffContent: View {
             }.frame(minHeight: 160, idealHeight: 340, maxHeight: 440)
             Divider()
             HStack {
+                if let restoreAction, !restoreTargets.isEmpty {
+                    Menu("Restore Files") {
+                        ForEach(restoreTargets) { target in
+                            let reason = restoreUnavailableReason?(target.stage, target.id)
+                            Button(target.title) { restoreAction(target.stage, target.id) }
+                                .disabled(reason != nil).help(reason ?? String(localized: "Review this saved workspace observation."))
+                        }
+                    }.fixedSize().accessibilityIdentifier("run-checkpoint-diff-restore")
+                }
                 if diff?.truncated == true {
                     Text("Preview size limit reached. Some changes are not shown.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

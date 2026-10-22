@@ -53,6 +53,47 @@ class NativeHistoryPeerTests(unittest.TestCase):
             self.assertNotEqual(process.returncode, 0)
             self.assertEqual(process.stdout, "")
 
+    def test_restore_fixture_edits_only_an_explicit_private_managed_worktree(self):
+        peer = Path(__file__).with_name("codex_history_ui.py")
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-testing-peer-") as scratch:
+            root = Path(scratch).resolve()
+            directory = root / "Worktrees" / "Synthetic checkout"
+            directory.mkdir(parents=True)
+            document = directory / "README.md"
+            document.write_text("Before synthetic provider run\n")
+            state, wire = root / "history.json", root / "wire.jsonl"
+            state.write_text(json.dumps(dict(cwd=str(directory), threads={}, nextTurn=0, restoreFixture=True)))
+            frames = [dict(id=1, method="thread/start", params=dict(historyMode="paginated")),
+                      dict(id=2, method="turn/start", params=dict(threadId="ui-native-source"))]
+            process = subprocess.run([sys.executable, str(peer), str(state), str(wire)],
+                input="".join(json.dumps(frame) + "\n" for frame in frames), text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
+            self.assertIn("turn/completed", process.stdout)
+            self.assertEqual(document.read_text(), "After synthetic provider run\n")
+            saved = json.loads(state.read_text())
+            self.assertEqual(saved["threads"]["ui-native-source"]["turns"], ["ui-turn-1"])
+            self.assertEqual(saved["nextTurn"], 1)
+
+    def test_restore_fixture_refuses_unmanaged_and_symlink_destinations(self):
+        peer = Path(__file__).with_name("codex_history_ui.py")
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-testing-peer-") as scratch:
+            root = Path(scratch).resolve()
+            source = root / "Source"
+            source.mkdir(); (source / "README.md").write_text("Keep source\n")
+            managed = root / "Worktrees" / "Checkout"
+            managed.mkdir(parents=True)
+            (managed / "README.md").symlink_to(source / "README.md")
+            state, wire = root / "history.json", root / "wire.jsonl"
+            for directory in (source, managed):
+                with self.subTest(directory=directory.name):
+                    state.write_text(json.dumps(dict(cwd=str(directory), threads={"ui-native-source": dict(turns=[])}, nextTurn=0, restoreFixture=True)))
+                    process = subprocess.run([sys.executable, str(peer), str(state), str(wire)],
+                        input=json.dumps(dict(id=1, method="turn/start", params=dict(threadId="ui-native-source"))) + "\n", text=True,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
+                    self.assertIn('"error"', process.stdout)
+                    self.assertEqual((source / "README.md").read_text(), "Keep source\n")
+                    self.assertEqual(json.loads(state.read_text())["nextTurn"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

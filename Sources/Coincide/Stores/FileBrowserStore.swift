@@ -60,8 +60,10 @@ final class FileBrowserStore {
     private var watchTask: Task<Void, Never>?
     private var starting = false
     private var closed = false
+    private var mutationGeneration = UUID()
+    private var mutationSuspended = false
     var isDirty: Bool { contents != original }
-    var canWrite: Bool { !closed && workspace?.canAccessWorkspaceFiles(workspacePath) == true && document?.revision != nil && document?.truncated == false && !isReading && !isSaving }
+    var canWrite: Bool { !closed && !mutationSuspended && workspace?.canAccessWorkspaceFiles(workspacePath) == true && document?.revision != nil && document?.truncated == false && !isReading && !isSaving }
 
     init(workspace: WorkspaceStore, path: String, service: WorkspaceFileService, documentLoader: DocumentLoader? = nil) {
         self.workspace = workspace; workspacePath = path; self.service = service
@@ -116,7 +118,7 @@ final class FileBrowserStore {
         guard canWrite else { return }
         contents = text; updateDirty()
     }
-    @discardableResult func open(_ path: String, navigation: FileNavigation? = nil, discardChanges: Bool = false) async -> Bool {
+    @discardableResult func open(_ path: String, navigation: FileNavigation? = nil, discardChanges: Bool = false, clearOnFailure: Bool = false) async -> Bool {
         guard !closed, !isSaving, workspace?.canAccessWorkspaceFiles(workspacePath) == true, !isDirty || discardChanges else { return false }
         let id = UUID(); readID = id; isReading = true
         let previous = readTask; previous?.cancel()
@@ -132,7 +134,16 @@ final class FileBrowserStore {
             self.navigation = navigation; hasExternalChanges = false; operationError = nil; updateDirty()
             return true
         } catch is CancellationError { return false }
-        catch { if !closed, !Task.isCancelled, readID == id { operationError = error.localizedDescription }; return false }
+        catch {
+            if !closed, !Task.isCancelled, readID == id {
+                operationError = error.localizedDescription
+                if clearOnFailure, document?.relativePath == path, !isDirty, !isSaving {
+                    document = nil; contents = ""; original = ""; self.navigation = nil
+                    hasExternalChanges = false; updateDirty()
+                }
+            }
+            return false
+        }
     }
     func navigate(_ navigation: FileNavigation) {
         guard !closed, document?.relativePath == navigation.path, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return }
@@ -149,7 +160,7 @@ final class FileBrowserStore {
         await write(path: document.relativePath, text: text, condition: .matching(revision))
     }
     func createFile(path: String) async -> Bool {
-        guard !closed, !isSaving, !isReading, !isDirty, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
+        guard !closed, !mutationSuspended, !isSaving, !isReading, !isDirty, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
         return await write(path: path, text: "", condition: .missing)
     }
     @discardableResult private func write(path: String, text: String, condition: WorkspaceFileWriteCondition) async -> Bool {
@@ -173,9 +184,31 @@ final class FileBrowserStore {
         await reloadEntries()
         guard let document, !isSaving, !isReading else { return }
         if isDirty { hasExternalChanges = true; return }
-        _ = await open(document.relativePath, navigation: navigation)
+        _ = await open(document.relativePath, navigation: navigation, clearOnFailure: true)
     }
     func refresh() async { await service.refresh(); await reloadEntries() }
+    /// A durable workspace mutation owns subsequent disk state. Invalidate old
+    /// reads before it starts, including results that finish after the lock lifts.
+    func suspendForWorkspaceMutation() {
+        mutationGeneration = UUID(); mutationSuspended = true
+        listID = UUID(); readID = UUID()
+        listTask?.cancel(); readTask?.cancel()
+        listTask = nil; readTask = nil; isLoading = false; isReading = false
+        publishedSearchRequest = nil
+    }
+    func refreshAfterWorkspaceMutation() async {
+        guard !closed, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return }
+        let generation = mutationGeneration
+        mutationSuspended = true
+        defer { if mutationGeneration == generation { mutationSuspended = false } }
+        await service.refresh(); await reloadEntries()
+        guard !closed, workspace?.canAccessWorkspaceFiles(workspacePath) == true, !isSaving else { return }
+        guard !isDirty else { hasExternalChanges = true; return }
+        guard let document else { return }
+        // Only the current read's actual failure can clear old clean bytes.
+        // A cancelled refresh must not erase a newer selection or successful read.
+        _ = await open(document.relativePath, navigation: navigation, clearOnFailure: true)
+    }
     private func updateDirty() { workspace?.setEditorDirty(editorID, workspacePath: workspacePath, dirty: isDirty) }
     func prepareForShutdown() {
         closed = true; listID = UUID(); readID = UUID()

@@ -323,11 +323,20 @@ private func groupMutationEventually(_ condition: () async throws -> Bool) async
         } catch WorkspaceCommitError.commandIDCollision { }
         for (file, bytes) in savedFiles { #expect(try Data(contentsOf: file) == bytes) }
         #expect(try await engine.attachments.data(for: attachment) == attachmentBytes)
+        let survivorRunID = try #require((await engine.current()).snapshot.threads.first { $0.id == fixture.survivor.id }?.activeRun?.id)
         await survivorProvider.complete()
         try await groupMutationEventually {
             let current = await engine.current().snapshot
             let effects = try await database.effects()
-            return current.threads.first { $0.id == fixture.survivor.id }?.activeRun == nil && effects.allSatisfy { $0.status != .running && $0.status != .pending }
+            guard let survivor = current.threads.first(where: { $0.id == fixture.survivor.id }),
+                  let record = survivor.runHistory?.first(where: { $0.id == survivorRunID }),
+                  record.status == .completed, record.checkpoints?.providerReleased == true,
+                  let post = record.checkpoints?.postRun,
+                  post.phase == .unavailable, post.unavailableReason == .notRepository,
+                  survivor.activeRun == nil, survivor.state == .idle,
+                  survivor.heldPostRunCheckpoint == nil, survivor.queuedTurns.isEmpty,
+                  current.providerReady(for: survivor) else { return false }
+            return effects.allSatisfy { $0.status != .running && $0.status != .pending }
         }
         let final = await engine.current().snapshot
         #expect(final.projects == fixture.snapshot.projects.filter { !group.memberProjectIDs.contains($0.id) })
