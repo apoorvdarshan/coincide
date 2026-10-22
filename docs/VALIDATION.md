@@ -1,5 +1,99 @@
 # Validation record
 
+## 2026-10-22 — inspector constraint boundary and script-output GUI targeting
+
+- Manual strict-seven run [39705334238](https://github.com/apoorvdarshan/coincide/actions/runs/39705334238)
+  at `d14b85a` passed five actual GUI workflows and failed two, with zero skips
+  (665.317 seconds). Dark/light chat, manual scripts, grouping and worktrees pass.
+  The toolbar-overflow script helper and folder-import readiness correction work.
+- Files now imports its fixture successfully, then the app aborts at inspector
+  reveal. The retained crash is a constraint-update exception through
+  `NSWindow._postWindowNeedsUpdateConstraints`, `SplitViewChildController` and
+  `NSHostingView.SizeConstraints.update`. Moving the inspector to the outer
+  navigation host did not resolve it. The next controlled candidate keeps native
+  inspector chrome while bounding asynchronous Git/file content to the allocated
+  geometry, so its intrinsic minimum cannot grow the split host. A new offscreen
+  regression checks unloaded/loaded files and a dirty editor at 280/360 points;
+  this does not establish an actual GUI crash fix.
+- The setup workflow reaches reviewed execution and the real exit status 7.
+  Retained video/AX show the default disclosure click hits label text and leaves
+  the native triangle collapsed. Setup and settle now click the observed triangle
+  relative to its AX frame, require expanded state 1, and keep the exact output,
+  exit, draft, checkout and source-byte assertions. No retry or assertion removal
+  substitutes for expansion.
+- Hosted proof of these two changes remains pending. The strict gate still
+  requires all eight actual workflows with zero skips.
+- The updated strict-eight runner compiles and passes deep/strict signature
+  verification without executing GUI tests locally. Packaging/launch, app/helper
+  signatures and native math-resource loading pass. Storage upgrades from 13 to
+  14 with the complete saved workspace unchanged against its private SQLite
+  backup: three conversations and 25 messages.
+
+## 2026-10-22 — isolated native Git checkpoint primitive
+
+- A read-only prepare step pins workspace/repository/admin/common/object directory
+  identities, HEAD, effective configuration and the real-index revision. Capture
+  uses one exclusive private ref and a separately owned alternate index. An owned,
+  drained successful command path writes the completion receipt; a ref or orphaned
+  process alone never proves completion. Retry cannot overwrite an incomplete
+  attempt, and completed capture is idempotent.
+- Snapshot staging uses frozen private Git configuration, sparse/ignore/attribute
+  sources and the anchored original object store. Global/system/legacy config,
+  hooks, fsmonitor, external diff/text conversion, replacement refs and lazy fetch
+  cannot supply implicit execution. Preexisting executable clean/process filters
+  fail visibly; a gated clean/process configuration change during add cannot run
+  its sentinel. New private refs never change the branch, HEAD or real index.
+- Real Git fixtures cover dirty/staged/untracked/deleted and ignored files, unborn
+  repositories, modes, symlinks, literal/newline names, nested and linked worktree
+  scopes, split indexes, ordinary/manual flags and cone sparse/full indexes.
+  Sparse rules distinguish missing included manually skipped files from excluded
+  entries. Auxiliary global/info ignore and attribute behavior is tested separately.
+  Cancellation, changed ownership/configuration/HEAD/index, collisions, forged
+  receipts, late ref/mapping changes and redacted bounded diffs also have coverage.
+- Compatibility limits remain explicit: non-cone sparse and executable filter
+  drivers are unsupported; modern Git with `--no-lazy-fetch` is needed. Auxiliary
+  files are capped at 128 KiB each, the real index at 64 MiB and Git configuration
+  and ordinary command output at 4 MiB. Operations have a 60-second budget with
+  30-second command limits; diff defaults to 1 MiB and permits up to 8 MiB. Failed
+  attempts and private indexes are preserved. Capture is not a transactional lock
+  against another process changing working files while Git reads them.
+- Automatic run integration, checkpoint UI and restore remain pending. No user
+  checkout was captured, restored or deleted during this milestone's fixtures.
+- Final focused run passes 32 declarations across Core and native UI/Store,
+  including all 20 checkpoint declarations and parameterized race/compatibility
+  cases. Full `swift test --no-parallel` passes **427 tests**: 345 Core, 63 native
+  UI/Store, 6 terminal and 13 Markdown, with no compiler warnings. This includes
+  the inspector size-boundary and completion-only Codex regressions.
+
+## 2026-10-22 — durable per-run history and native inspection
+
+- Newly started user turns retain their exact captured configuration and user
+  message reference. Agent-initiated foreground work has its own origin and never
+  creates a fake user prompt. Observed adapter turn references survive completion;
+  they are not treated as proof of native provider fork or rollback support.
+- Queue advancement closes the previous record before opening the next. Approval,
+  Stop, forced runtime closure, start failure, provider failure, connection loss,
+  unknown stop reasons and application restart retain distinct outcomes. Stale
+  scoped events and repeated completed activity cannot reopen or rewrite a run.
+  Legacy transcripts remain unchanged without guessed historical boundaries.
+- Codex completion-only notifications retain the actual completed turn reference
+  even when both its start notification and start response arrive later or not at
+  all. The late-acknowledgment protocol fixture also covers this ordering.
+- Seven focused Core test declarations cover these transitions, legacy recovery,
+  journal reconstruction and invalid boundaries, including parameterized failure
+  and ACP activity cases. The existing real-engine FIFO test also verifies the
+  completed run settings, user references and rebuilt projection.
+- The workspace menu opens a read-only native Run History sheet. Three native
+  cases check captured settings, mixed/unknown history, agent-managed model
+  options and small-sheet geometry. Light/dark offscreen renders at 320 and 560
+  points were captured; recorded, mixed and legacy states were visually inspected.
+  This is separate from actual hosted GUI execution.
+- The serial run-history suite passes **406 tests** (325 Core, 62 native UI/Store,
+  6 terminal and 13 Markdown). The separate checkpoint primitive was excluded
+  while it was still under development. No compiler warnings were reported.
+- Fork, rewind, filesystem restore and automatic per-turn checkpoints remain
+  separate work; the history sheet performs none of those actions.
+
 ## 2026-10-22 — explicit settlement generations and reviewed cleanup scripts
 
 - Native workspace/context/Thread menus offer Settle Conversation with a

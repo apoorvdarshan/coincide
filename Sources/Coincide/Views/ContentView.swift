@@ -52,9 +52,8 @@ struct ContentView: View {
             ToolbarItem { Button { store.inspectorVisible.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") } }
         }
         // Keep the inspector host stable while selection and the detail's native split view change.
-        // Nesting it inside that conditional split view can re-enter AppKit's toolbar/constraint pass.
         .inspector(isPresented: $store.inspectorVisible) {
-            Group {
+            InspectorContentBounds {
                 if let thread = store.selectedThread {
                     if store.workspaceReady(for: thread) {
                         WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath)

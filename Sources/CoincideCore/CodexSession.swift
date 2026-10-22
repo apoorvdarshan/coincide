@@ -133,6 +133,9 @@ public actor CodexSession: ProviderSession {
             case "turn/completed":
                 guard working, let completedID = params["turn"]["id"].string, !completedTurnIDs.contains(completedID) else { return }
                 if let turnID, turnID != completedID { return }
+                // Completion can precede both turn/started and the start response.
+                // Preserve its real boundary before retiring the local active run.
+                if turnID == nil { emit(.turn(completedID)) }
                 working = false
                 completedTurnIDs.append(completedID)
                 if completedTurnIDs.count > 128 { completedTurnIDs.removeFirst() }

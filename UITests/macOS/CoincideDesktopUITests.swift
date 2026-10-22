@@ -486,7 +486,7 @@ final class CoincideDesktopUITests: XCTestCase {
             XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue,
             "workspace-setup-output-disclosure", "Setup Output", "Setup Output"
         )).element
-        XCTAssertTrue(outputDisclosure.waitForExistence(timeout: 10)); XCTAssertTrue(outputDisclosure.isHittable); outputDisclosure.click()
+        XCTAssertTrue(outputDisclosure.waitForExistence(timeout: 10)); expandScriptOutputDisclosure(outputDisclosure)
         let output = app.staticTexts["workspace-setup-output"]
         let receivedOutput = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label CONTAINS %@ OR value CONTAINS %@)", "native-blocking-setup-output", "native-blocking-setup-output"), object: output)
         XCTAssertEqual(XCTWaiter.wait(for: [receivedOutput], timeout: 10), .completed)
@@ -614,7 +614,7 @@ final class CoincideDesktopUITests: XCTestCase {
             XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue,
             "workspace-settle-script-output-disclosure", "Settle Script Output", "Settle Script Output"
         )).element
-        XCTAssertTrue(outputDisclosure.waitForExistence(timeout: 10)); XCTAssertTrue(outputDisclosure.isHittable); outputDisclosure.click()
+        XCTAssertTrue(outputDisclosure.waitForExistence(timeout: 10)); expandScriptOutputDisclosure(outputDisclosure)
         let output = app.staticTexts["workspace-settle-script-output"]
         let received = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label CONTAINS %@ OR value CONTAINS %@)", "native-settle-output", "native-settle-output"), object: output)
         XCTAssertEqual(XCTWaiter.wait(for: [received], timeout: 10), .completed)
@@ -985,6 +985,23 @@ final class CoincideDesktopUITests: XCTestCase {
         let reveal = app.menuItems["Reveal Workspace"]
         XCTAssertTrue(reveal.waitForExistence(timeout: 5)); XCTAssertTrue(reveal.isEnabled)
         app.typeKey(.escape, modifierFlags: [])
+    }
+
+    @MainActor private func expandScriptOutputDisclosure(_ disclosure: XCUIElement) {
+        XCTAssertTrue(disclosure.isHittable)
+        // The native AX frame includes a 24pt leading gutter; its center is label text.
+        // Retained CI video shows that clicking the label does not open this control.
+        let triangle = disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            .withOffset(CGVector(dx: 26, dy: 0))
+        XCTAssertTrue(disclosure.frame.contains(triangle.screenPoint))
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(triangle.screenPoint))
+        triangle.click()
+        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let value = disclosure.value
+            return (value as? NSNumber)?.intValue == 1 || (value as? String) == "1"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 5), .completed,
+                       "The native output disclosure must expand before its output can be inspected.")
     }
 
     @MainActor private func selectSegment(_ title: String, in app: XCUIApplication) {

@@ -36,6 +36,10 @@ then assert the Add Project button is enabled and hittable. This keeps navigatio
 readiness separate from expensive hit-testing of the panel's column hierarchy.
 Script launch uses the visible toolbar button or the native overflow's Run Script…
 menu item when the display cannot fit every toolbar control.
+For script output, retained native CI video showed that XCTest's default
+disclosure click hits the label without expanding it. The harness clicks the
+visible triangle relative to that control's AX frame and requires expanded
+state before checking the exact command output.
 After an observed OutlineRow hit-testing failure, conversation selection targets
 the row's identified native title, requires it to be hittable, and verifies
 the containing row becomes selected.

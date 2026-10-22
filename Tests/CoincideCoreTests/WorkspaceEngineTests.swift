@@ -183,6 +183,12 @@ private func waitRuntime(_ condition: () async throws -> Bool) async throws {
         await provider.finish()
         try await waitRuntime { await f.engine.current().snapshot.threads[0].state == .idle }
         #expect(await f.engine.current().snapshot.threads[0].messages.filter { $0.role == .user }.map(\.text) == ["first", "second", "third"])
+        let saved = await f.engine.current().snapshot, records = try #require(saved.threads[0].runHistory)
+        #expect(records.map(\.configuration.model) == ["", "captured", "captured"])
+        #expect(records.allSatisfy { $0.status == .completed && $0.endReason == .providerCompleted && $0.endedAt != nil && $0.turnIDs.count == 1 })
+        #expect(records.compactMap(\.userMessageID) == saved.threads[0].messages.filter { $0.role == .user }.map(\.id))
+        let database = try WorkspaceDatabase(url: f.root.appendingPathComponent("workspace.sqlite"))
+        #expect(try await database.rebuildProjection().snapshot == saved)
     }
 }
 

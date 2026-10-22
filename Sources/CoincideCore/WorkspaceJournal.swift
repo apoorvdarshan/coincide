@@ -101,6 +101,7 @@ public enum WorkspaceJournal {
         let settlementIDs = Set(snapshot.threads.compactMap { $0.settlement?.id })
         guard settlementIDs.count == snapshot.threads.filter({ $0.settlement != nil }).count, settlementIDs.isDisjoint(with: cloneIDs) else { throw CoincideError("Settlement generations must have unique identities.") }
         for thread in snapshot.threads {
+            try thread.validateRunHistory()
             if let preparation = thread.workspacePreparation {
                 try preparation.validate(thread: thread)
                 for id in preparation.previousAttempts.map({ $0.request.id }) + [preparation.id] {

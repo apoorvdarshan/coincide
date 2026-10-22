@@ -8,6 +8,7 @@ struct ChatView: View {
     @State private var sending = false
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
+    @State private var runHistorySheet = false
     @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode, reviewSetup: Bool)?
     private var thread: CodingThread? { store.thread(threadID) }
     private var draft: Binding<String> {
@@ -24,6 +25,8 @@ struct ChatView: View {
                         Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
                             .disabled(!store.workspaceReady(for: thread))
                         ExternalEditorMenu(store: store, workspacePath: thread.workspacePath, title: "Open Workspace in…")
+                        Button("Run History…") { runHistorySheet = true }
+                            .accessibilityIdentifier("conversation-run-history")
                         if let settlement = thread.settlement {
                             Button("Resume Conversation") { store.requestResume(threadID, generationID: settlement.id) }
                                 .disabled(settlement.phase == .resuming)
@@ -126,6 +129,7 @@ struct ChatView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity)
             .navigationTitle("Coincide")
+            .sheet(isPresented: $runHistorySheet) { RunHistorySheet(store: store, threadID: threadID) }
             .sheet(isPresented: $referenceFileSheet) {
                 WorkspaceFilePicker(workspace: store, path: thread.workspacePath) { path in
                     referenceFileSheet = false

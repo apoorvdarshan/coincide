@@ -52,8 +52,27 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 13 protects these fields
+  hold it for explicit resumption. Database storage version 14 protects these fields
   from older binaries. No exactly-once provider execution is claimed.
+- Each newly started run retains its captured settings, user-message reference
+  or explicit agent/legacy origin, observed adapter turn references, stop intent,
+  and terminal outcome in the journal. Queue advancement closes one record before
+  opening the next; stale scoped events cannot rewrite completed history. Restart
+  marks an unfinished run interrupted without replay. Earlier transcript rows are
+  not backfilled with guessed turn boundaries. A read-only native Run History
+  sheet exposes these records. Adapter references may be locally generated and
+  do not by themselves establish native provider fork or rollback support.
+- A standalone native checkpoint service prepares immutable local plans, captures
+  Git working bytes into private refs, inspects owned completion receipts and
+  returns bounded snapshot diffs. Captures use a separate index and a frozen
+  private Git configuration; HEAD, branches, the real index and checkout files
+  remain unchanged. Ordinary and cone sparse/full indexes, staged-but-edited
+  files, ignored tracked additions, symlinks and executable modes have regression
+  coverage. Configuration and filesystem ownership are rechecked, failed attempts
+  are preserved, and missing local objects never trigger a lazy fetch. This
+  primitive is not yet wired to automatic run capture or filesystem restore.
+  Executable clean/process filters and non-cone sparse checkouts are currently
+  unsupported; modern Git with `--no-lazy-fetch` is required.
 - Background clones are project-owned outbox actions. The project and conversation
   appear as soon as their intent is saved; submitted messages retain their captured
   configuration and attachments while waiting for a checkout. A completed clone
@@ -197,7 +216,7 @@ must each be mapped and verified before declaring parity.
 | Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |
-| Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, legacy migration | Complete provider recovery, checkpoints/finalization and run history, incremental projection storage/performance, full upstream command coverage |
+| Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes with read-only native history, legacy migration | Complete provider recovery, checkpoints/finalization, provider fork/rewind, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
 | Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates, reviewed settle roles with drain-before-resume | PRs/stacks/host integrations, checkpoints/revert, worktree removal, automatic pull policies, broader credential and network failure coverage |

@@ -80,6 +80,13 @@ continue. Captured messages wait for cleanup, and unsent drafts stay available.
 Each new settlement requires a fresh review; interrupted scripts never replay
 after restart. Resume before changing the conversation's checkout.
 
+Choose **Run History…** from the conversation's workspace menu to inspect
+recorded turns, their captured provider/model/permissions and workspace, and
+their observed outcomes. History survives restart and retains adapter session
+and turn references. Agent-initiated work is labeled separately. Older messages
+remain available without invented turn boundaries. This view does not yet fork,
+rewind, or restore a checkout.
+
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a
 UTF-8 file, edit it, and save. Files over 1 MiB open as read-only previews. Binary

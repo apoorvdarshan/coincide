@@ -407,7 +407,7 @@ struct WorkspaceDecision: Sendable {
             decision.snapshot.projects.append(project)
         case .client(.createThread(let thread)):
             guard decision.snapshot.projects.contains(where: { $0.id == thread.projectID }), !decision.snapshot.threads.contains(where: { $0.id == thread.id }),
-                  thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, thread.workspacePreparation == nil else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
+                  thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, (thread.runHistory ?? []).isEmpty, thread.workspacePreparation == nil else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
             guard decision.snapshot.workspaceReady(for: thread) || decision.snapshot.projects.first(where: { $0.id == thread.projectID })?.path == thread.workspacePath else { throw WorkspaceCommandError("Wait for the clone before choosing another workspace.") }
             if thread.provider == .acp {
                 guard let agent = thread.acpAgent, decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
@@ -499,6 +499,7 @@ struct WorkspaceDecision: Sendable {
                 thread.queuePaused = true
                 if var run = thread.activeRun, !run.stopRequested {
                     run.stopRequested = true; thread.activeRun = run
+                    thread.updateRunRecord()
                     decision.effects.append(.init(id: id, request: .providerInterrupt(threadID: thread.id, runID: run.id)))
                 }
             case .respond(_, let requestID, let response):
@@ -600,6 +601,7 @@ struct WorkspaceDecision: Sendable {
         if thread.messages.isEmpty { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
         var message = ChatMessage(id: "user-\(queued.id.uuidString)", role: .user, text: queued.text, attachments: queued.attachments); message.createdAt = queued.createdAt
         thread.messages.append(message); thread.state = .running; thread.runtimeRequests.removeAll { $0.sessionScoped != true }
+        if let run = thread.activeRun { thread.beginRunRecord(run, origin: .user, userMessageID: message.id) }
         effects.append(.init(id: queued.id, request: .providerStart(threadID: thread.id, runID: queued.id, configuration: configuration, prompt: queued.text, attachments: queued.attachments)))
     }
     private mutating func startNext(in thread: inout CodingThread, now: Date) {
@@ -617,20 +619,28 @@ struct WorkspaceDecision: Sendable {
         case .submissionFailed(let id, let reason):
             if let i = thread.messages.firstIndex(where: { $0.id == id && $0.role == .user }) { thread.messages[i].submissionError = reason; thread.queuePaused = true }
         case .activity(let activity):
+            if activity.state != .idle, thread.activeRun == nil,
+               thread.runHistory?.contains(where: { $0.status.isTerminal && ($0.id == activity.id || $0.turnIDs.contains(activity.id.uuidString)) }) == true { return }
             thread.providerActivity = activity
             if activity.state != .idle {
-                if thread.activeRun == nil { thread.activeRun = .init(id: activity.id, configuration: .init(thread: thread), startedAt: now) }
+                if thread.activeRun == nil {
+                    let run = ActiveRun(id: activity.id, configuration: .init(thread: thread), startedAt: now)
+                    thread.activeRun = run; thread.beginRunRecord(run, origin: .agent)
+                }
                 thread.activeRun?.nativeTurnID = activity.id.uuidString
                 thread.state = activity.state == .requiresAction ? .awaitingApproval : .running
+                thread.updateRunRecord(status: activity.state == .requiresAction ? .awaitingApproval : .running)
             } else if activity.finishesRun, let run = thread.activeRun, run.nativeTurnID == activity.id.uuidString {
                 let reason = activity.stopReason?.string
+                let normalCompletion = ["end_turn", "max_tokens", "max_turn_requests", "refusal"].contains(reason ?? "")
+                let status: ThreadRunStatus = run.stopRequested || reason == "cancelled" ? .interrupted : reason == "error" ? .failed : normalCompletion ? .completed : .unknown
+                thread.finishRunRecord(status: status, reason: .providerActivity, now: now, providerStopReason: reason)
                 thread.activeRun = nil; thread.runtimeRequests.removeAll { $0.sessionScoped != true }
                 if run.stopRequested || reason == "cancelled" { thread.state = .interrupted }
                 else if reason == "error" {
                     thread.state = .failed
                     thread.messages.append(.init(role: .system, text: activity.error?["message"].string ?? "The agent stopped because of an error."))
                 } else { thread.state = .idle }
-                let normalCompletion = ["end_turn", "max_tokens", "max_turn_requests", "refusal"].contains(reason ?? "")
                 if thread.state == .idle, normalCompletion, reason != "end_turn" {
                     thread.messages.append(.init(role: .system, text: "The agent stopped: \((reason ?? "").replacingOccurrences(of: "_", with: " "))."))
                 }
@@ -658,8 +668,10 @@ struct WorkspaceDecision: Sendable {
             thread.messages[target].providerEntity = entity
             if let echoed, echoed != target { thread.messages.remove(at: echoed) }
         case .configuration(let metadata): thread.providerMetadata = metadata
-        case .thread(let native): thread.providerThreadID = native
-        case .turn(let native): thread.activeRun?.nativeTurnID = native // A late acknowledgement never changes idle to running.
+        case .thread(let native): thread.providerThreadID = native; thread.updateRunRecord()
+        case .turn(let native):
+            thread.activeRun?.nativeTurnID = native // A late acknowledgement never changes idle to running.
+            thread.updateRunRecord()
         case .delta(let itemID, let role, let text):
             guard thread.activeRun != nil else { return }
             if let i = thread.messages.firstIndex(where: { $0.id == itemID }) { thread.messages[i].text += text }
@@ -672,12 +684,16 @@ struct WorkspaceDecision: Sendable {
             guard thread.activeRun != nil, thread.activeRun?.stopRequested == false else { return }
             if !thread.runtimeRequests.contains(where: { $0.id == request.id }) { thread.runtimeRequests.append(.init(request: request)) }
             thread.state = .awaitingApproval
+            thread.updateRunRecord(status: .awaitingApproval)
         case .approvalDismissed(let id):
             thread.runtimeRequests.removeAll { $0.id == id }
             if thread.activeRun != nil { thread.state = thread.runtimeRequests.isEmpty ? .running : .awaitingApproval }
+            thread.updateRunRecord(status: thread.state == .awaitingApproval ? .awaitingApproval : .running)
         case .completed(let state):
             guard thread.activeRun != nil else { return }
             let stopped = thread.activeRun?.stopRequested == true
+            let status: ThreadRunStatus = stopped || state == .interrupted ? .interrupted : state == .idle ? .completed : state == .failed ? .failed : .unknown
+            thread.finishRunRecord(status: status, reason: .providerCompleted, now: now)
             thread.activeRun = nil; thread.runtimeRequests = []; thread.state = stopped ? .interrupted : state
             if stopped || state != .idle { thread.queuePaused = true }
             else { startNext(in: &thread, now: now) }
@@ -686,6 +702,9 @@ struct WorkspaceDecision: Sendable {
             thread.providerActivity = nil
             if thread.activeRun != nil {
                 thread.state = thread.activeRun?.stopRequested == true ? .interrupted : .failed
+                let reason: ThreadRunEndReason
+                if case .connectionClosed = event { reason = .connectionLost } else { reason = .providerFailure }
+                thread.finishRunRecord(status: thread.state == .interrupted ? .interrupted : .failed, reason: reason, now: now)
                 thread.messages.append(.init(role: .system, text: message))
             }
             thread.activeRun = nil; thread.runtimeRequests = []; thread.queuePaused = true
@@ -777,12 +796,14 @@ struct WorkspaceDecision: Sendable {
             guard thread.activeRun?.id == runID else { return }
             if case .failed(let message) = result {
                 thread.state = thread.activeRun?.stopRequested == true ? .interrupted : .failed
+                thread.finishRunRecord(status: thread.state == .interrupted ? .interrupted : .failed, reason: .startFailed, now: now)
                 thread.activeRun = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.queuePaused = true
                 thread.messages.append(.init(role: .system, text: message)); closeRuntimes.insert(thread.id); thread.runtimeID = nil
             }
         case .providerInterrupt(_, let runID):
             guard thread.activeRun?.id == runID else { return }
             guard case .stopped = result else { return }
+            thread.finishRunRecord(status: .interrupted, reason: .forcedStop, now: now)
             thread.activeRun = nil; thread.runtimeRequests = []; thread.state = .interrupted; thread.queuePaused = true
             thread.runtimeID = nil; closeRuntimes.insert(thread.id)
             thread.providerActivity = nil
@@ -794,6 +815,7 @@ struct WorkspaceDecision: Sendable {
                 if case .failed(let message) = result { thread.messages.append(.init(role: .system, text: message)) }
             }
             thread.state = thread.runtimeRequests.isEmpty ? .running : .awaitingApproval
+            thread.updateRunRecord(status: thread.state == .awaitingApproval ? .awaitingApproval : .running)
         }
         if thread != snapshot.threads[index] { thread.updatedAt = now }
         snapshot.threads[index] = thread

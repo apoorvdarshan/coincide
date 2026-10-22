@@ -79,6 +79,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var queuedTurns: [QueuedTurn]
     public var queuePaused: Bool
     public var activeRun: ActiveRun?
+    public var runHistory: [ThreadRunRecord]?
     public var runtimeID: UUID?
     public var runtimeRequests: [RuntimeRequest]
     public var isPinned: Bool
@@ -93,7 +94,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runtimeID, runtimeRequests, workspacePreparation, settlement
+        case queuedTurns, queuePaused, activeRun, runHistory, runtimeID, runtimeRequests, workspacePreparation, settlement
         case draftAttachments
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
@@ -123,6 +124,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         queuedTurns = try values.decodeIfPresent([QueuedTurn].self, forKey: .queuedTurns) ?? []
         queuePaused = try values.decodeIfPresent(Bool.self, forKey: .queuePaused) ?? false
         activeRun = try values.decodeIfPresent(ActiveRun.self, forKey: .activeRun)
+        runHistory = try values.decodeIfPresent([ThreadRunRecord].self, forKey: .runHistory)
         runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
         runtimeRequests = try values.decodeIfPresent([RuntimeRequest].self, forKey: .runtimeRequests) ?? []
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
@@ -182,6 +184,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
                 threads[i].workspacePreparation = preparation; threads[i].queuePaused = true
             }
             if threads[i].isBusy {
+                threads[i].finishRunRecord(status: .interrupted, reason: .applicationClosed, now: Date())
                 threads[i].state = .interrupted
                 threads[i].messages.append(.init(role: .system, text: "The app closed during this turn. Resume by sending another message."))
             }

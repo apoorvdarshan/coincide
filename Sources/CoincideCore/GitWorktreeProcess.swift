@@ -7,7 +7,8 @@ struct GitWorktreeCommand: Sendable {
     let executable: URL?
     func run(_ arguments: [String], cwdFD: Int32, timeout: Duration = .seconds(30), maximumOutput: Int = 1_048_576,
              gitDirectory: String? = nil, commonDirectory: String? = nil, workTree: String? = nil,
-             allowedProtocols: String = "") async throws -> GitWorktreeCommandResult {
+             allowedProtocols: String = "", checkpointIndexPath: String? = nil, allowTruncatedOutput: Bool = false,
+             trustedInputFD: Int32? = nil, checkpointObjectDirectory: String? = nil) async throws -> GitWorktreeCommandResult {
         try Task.checkCancellation()
         guard let git = executable ?? ProcessChannel.findExecutable("git") else { throw GitWorktreeError(.commandFailed, "Git is not installed.") }
         var env = environment ?? ProcessChannel.environment()
@@ -16,10 +17,21 @@ struct GitWorktreeCommand: Sendable {
         env["SSH_ASKPASS"] = "/usr/bin/false"; env["SSH_ASKPASS_REQUIRE"] = "never"
         env["GIT_ALLOW_PROTOCOL"] = allowedProtocols; env["GIT_PROTOCOL_FROM_USER"] = "0"; env["LC_ALL"] = "C"; env["GIT_MERGE_AUTOEDIT"] = "no"
         if let commonDirectory { env["GIT_COMMON_DIR"] = commonDirectory }
+        if let checkpointIndexPath {
+            env["GIT_INDEX_FILE"] = checkpointIndexPath
+            env["GIT_AUTHOR_NAME"] = "Coincide"; env["GIT_COMMITTER_NAME"] = "Coincide"
+            env["GIT_AUTHOR_EMAIL"] = "coincide@localhost"; env["GIT_COMMITTER_EMAIL"] = "coincide@localhost"
+            env.removeValue(forKey: "GIT_AUTHOR_DATE"); env.removeValue(forKey: "GIT_COMMITTER_DATE")
+        }
+        if let checkpointObjectDirectory {
+            env["GIT_OBJECT_DIRECTORY"] = checkpointObjectDirectory
+            env["GIT_CONFIG_NOSYSTEM"] = "1"; env["GIT_CONFIG_SYSTEM"] = "/dev/null"; env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+            env["GIT_ATTR_NOSYSTEM"] = "1"; env.removeValue(forKey: "GIT_CONFIG"); env.removeValue(forKey: "GIT_ATTR_SOURCE")
+        }
         let binding = (gitDirectory.map { ["--git-dir=" + $0] } ?? []) + (workTree.map { ["--work-tree=" + $0] } ?? [])
         let process = try GitWorktreeProcess(executable: git,
             arguments: ["--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "core.fsmonitor=false", "-c", "color.ui=false", "-c", "submodule.recurse=false"] + binding + arguments,
-            cwdFD: cwdFD, environment: env, maxBytes: maximumOutput)
+            cwdFD: cwdFD, environment: env, maxBytes: maximumOutput, trustedInputFD: trustedInputFD)
         let reader = Task.detached { await process.result() }
         return try await withTaskCancellationHandler {
             do {
@@ -33,7 +45,7 @@ struct GitWorktreeCommand: Sendable {
                     return try await group.next()!
                 }
                 try Task.checkCancellation()
-                guard !result.overflow else { throw GitWorktreeError(.outputLimit, "Worktree Git output exceeded the size limit. Existing branches and files were preserved.") }
+                guard !result.overflow || (allowTruncatedOutput && result.stdoutOverflow && !result.stderrOverflow) else { throw GitWorktreeError(.outputLimit, "Worktree Git output exceeded the size limit. Existing branches and files were preserved.") }
                 return result
             } catch { process.stop(); _ = await reader.value; try Task.checkCancellation(); throw error }
         } onCancel: { process.stop() }
@@ -41,17 +53,17 @@ struct GitWorktreeCommand: Sendable {
     var inheritedProtocolAllowlist: String? { (environment ?? ProcessChannel.environment())["GIT_ALLOW_PROTOCOL"] }
 }
 
-struct GitWorktreeCommandResult: Sendable { let status: Int32; let output: Data; let overflow: Bool }
+struct GitWorktreeCommandResult: Sendable { let status: Int32; let output: Data; let overflow: Bool; let stdoutOverflow: Bool; let stderrOverflow: Bool }
 
 /// Captures output directly into a bounded accumulator; no unbounded raw-byte event queue.
 private final class GitWorktreeProcess: @unchecked Sendable {
     private let pid: pid_t, maxBytes: Int
     private let lock = NSLock()
-    private var stopped = false, signalAllowed = true, readerShutdown = false, overflow = false
+    private var stopped = false, signalAllowed = true, readerShutdown = false, overflow = false, stdoutOverflow = false, stderrOverflow = false
     private var output = Data(), errorBytes = 0
     private var finished: GitWorktreeCommandResult?
     private var waiters: [CheckedContinuation<GitWorktreeCommandResult, Never>] = []
-    init(executable: URL, arguments: [String], cwdFD: Int32, environment: [String: String], maxBytes: Int) throws {
+    init(executable: URL, arguments: [String], cwdFD: Int32, environment: [String: String], maxBytes: Int, trustedInputFD: Int32? = nil) throws {
         self.maxBytes = maxBytes
         var outputPipe = [Int32](repeating: -1, count: 2), errors = [Int32](repeating: -1, count: 2)
         guard pipe(&outputPipe) == 0, pipe(&errors) == 0 else {
@@ -69,7 +81,13 @@ private final class GitWorktreeProcess: @unchecked Sendable {
             _ = fcntl(descriptors[index], F_SETFD, FD_CLOEXEC)
         }
         outputPipe = Array(descriptors[0..<2]); errors = Array(descriptors[2..<4])
-        inputFD = Darwin.open("/dev/null", O_RDONLY | O_CLOEXEC)
+        if let trustedInputFD {
+            inputFD = fcntl(trustedInputFD, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
+            var information = stat()
+            guard inputFD >= 0, fstat(inputFD, &information) == 0, information.st_mode & S_IFMT == S_IFREG else {
+                throw GitWorktreeError(.commandFailed, "Could not configure bounded Git input.")
+            }
+        } else { inputFD = Darwin.open("/dev/null", O_RDONLY | O_CLOEXEC) }
         guard inputFD >= 0 else { throw GitWorktreeError(.commandFailed, "Could not configure worktree Git input.") }
         if inputFD <= STDERR_FILENO {
             let copy = fcntl(inputFD, F_DUPFD_CLOEXEC, 3); close(inputFD); inputFD = copy
@@ -116,7 +134,7 @@ private final class GitWorktreeProcess: @unchecked Sendable {
             var raw: Int32 = 0, result: pid_t = -1
             if observed == 0 { repeat { result = waitpid(pid, &raw, 0) } while result == -1 && errno == EINTR }
             let status: Int32 = result == -1 ? 255 : ((raw & 0x7f) == 0 ? (raw >> 8) & 0xff : 128 + (raw & 0x7f))
-            let value = GitWorktreeCommandResult(status: status, output: output, overflow: overflow)
+            let value = GitWorktreeCommandResult(status: status, output: output, overflow: overflow, stdoutOverflow: stdoutOverflow, stderrOverflow: stderrOverflow)
             finished = value; let pending = waiters; waiters = []; lock.unlock()
             for waiter in pending { waiter.resume(returning: value) }
         }
@@ -151,9 +169,12 @@ private final class GitWorktreeProcess: @unchecked Sendable {
             if count > 0 {
                 let exceeded = lock.withLock { () -> Bool in
                     if stdout {
-                        if output.count + count > maxBytes { overflow = true; return true }
+                        if output.count + count > maxBytes {
+                            output.append(contentsOf: bytes.prefix(max(0, maxBytes - output.count)))
+                            overflow = true; stdoutOverflow = true; return true
+                        }
                         output.append(contentsOf: bytes.prefix(count))
-                    } else { errorBytes += count; if errorBytes > 65_536 { overflow = true; return true } }
+                    } else { errorBytes += count; if errorBytes > 65_536 { overflow = true; stderrOverflow = true; return true } }
                     return false
                 }
                 if exceeded { stop() }

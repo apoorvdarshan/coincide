@@ -5,6 +5,7 @@ import time
 
 pending = []
 turn = 0
+completion_only = len(sys.argv) > 1 and sys.argv[1] == 'completion-only'
 
 def emit(frame):
     print(json.dumps(frame), flush=True)
@@ -23,7 +24,8 @@ for line in sys.stdin:
     elif method == 'turn/start':
         turn += 1
         native = 'turn-' + str(turn)
-        notify('turn/started', {'turn': {'id': native}})
+        if not completion_only or turn >= 3:
+            notify('turn/started', {'turn': {'id': native}})
         if turn < 3:
             pending.append((ident, native))
             notify('turn/completed', {'turn': {'id': native, 'status': 'completed'}})
