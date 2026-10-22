@@ -25,8 +25,8 @@ def test_targets(configuration):
     return [value for key, value in configuration.items() if not key.startswith("__") and isinstance(value, dict)]
 
 
-def prepare_configuration(configuration, app, bootstrap, git):
-    app, bootstrap, git = map(Path, (app, bootstrap, git))
+def prepare_configuration(configuration, app, bootstrap, git, python):
+    app, bootstrap, git, python = map(Path, (app, bootstrap, git, python))
     for path in (app, bootstrap):
         if not path.is_absolute() or not path.is_dir() or path.is_symlink():
             raise ValueError("UI artifact locations must be existing absolute directories without a final symlink.")
@@ -34,6 +34,8 @@ def prepare_configuration(configuration, app, bootstrap, git):
         raise ValueError("The bootstrap workspace must use the app's dedicated UI-testing prefix.")
     if not git.is_absolute() or not git.is_file() or not os.access(git, os.X_OK) or git == Path("/usr/bin/git"):
         raise ValueError("UI Git verification requires an absolute executable developer Git path, not the system shim.")
+    if not python.is_absolute() or not python.is_file() or not os.access(python, os.X_OK) or python == Path("/usr/bin/python3"):
+        raise ValueError("The offline UI provider requires an absolute executable Python path, not the system shim.")
     with (app / "Contents/Info.plist").open("rb") as handle:
         info = plistlib.load(handle)
     if info.get("CFBundleIdentifier") != TEST_BUNDLE_ID:
@@ -52,6 +54,7 @@ def prepare_configuration(configuration, app, bootstrap, git):
     target.setdefault("EnvironmentVariables", {}).update({
         "COINCIDE_UI_APP_PATH": str(app),
         "COINCIDE_UI_GIT_PATH": str(git),
+        "COINCIDE_UI_PYTHON_PATH": str(python),
     })
     # Keep even an automatic target-app launch away from the normal workspace.
     target.setdefault("UITargetAppEnvironmentVariables", {}).update({
@@ -60,7 +63,7 @@ def prepare_configuration(configuration, app, bootstrap, git):
     return configuration
 
 
-def verify_results(summary, expected=8):
+def verify_results(summary, expected=9):
     counts = [summary.get(key) for key in ("totalTestCount", "passedTests", "failedTests", "skippedTests")]
     if not all(type(value) is int for value in counts):
         raise ValueError("The xcresult summary is missing native test counts.")
@@ -91,7 +94,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("changes")
     prepare = commands.add_parser("prepare")
-    for name in ("xctestrun", "app", "bootstrap", "git"):
+    for name in ("xctestrun", "app", "bootstrap", "git", "python"):
         prepare.add_argument("--" + name, required=True)
     results = commands.add_parser("verify-results"); results.add_argument("summary")
     arguments = parser.parse_args()
@@ -104,7 +107,7 @@ def main():
     elif arguments.command == "prepare":
         path = Path(arguments.xctestrun)
         with path.open("rb") as handle:
-            configuration = prepare_configuration(plistlib.load(handle), arguments.app, arguments.bootstrap, arguments.git)
+            configuration = prepare_configuration(plistlib.load(handle), arguments.app, arguments.bootstrap, arguments.git, arguments.python)
         with path.open("wb") as handle:
             plistlib.dump(configuration, handle)
     else:

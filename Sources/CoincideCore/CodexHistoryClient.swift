@@ -48,6 +48,15 @@ struct CodexHistoryClient: Sendable {
         guard meta.mode == .paginated else { throw ProviderHistoryError(.unsupported) }
         return try await page(threadID: threadID, cursor: cursor, limit: limit, deadline: deadline)
     }
+    func snapshot(threadID: String) async throws -> ProviderConversationSnapshot {
+        try requireProfile(); try ProviderHistoryValidation.id(threadID)
+        let deadline = ContinuousClock.now + .seconds(30)
+        let initial = try await metadata(threadID: threadID, deadline: deadline)
+        guard initial.mode == .paginated else { throw ProviderHistoryError(.unsupported) }
+        let observedHead = try await head(threadID: threadID, deadline: deadline)
+        guard try await metadata(threadID: threadID, deadline: deadline) == initial else { throw ProviderHistoryError(.historyChanged) }
+        return try .init(reference: initial.reference, workspacePath: initial.workspacePath, historyMode: initial.mode, headTurnID: observedHead?.id)
+    }
     func fork(source: ProviderConversationReference, boundary: ProviderHistoryBoundary,
               configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot {
         try requireProfile(); try source.validate(); try boundary.validate()
@@ -133,7 +142,11 @@ struct CodexHistoryClient: Sendable {
               ["idle", "active", "notLoaded", "systemError"].contains(status) else { throw ProviderHistoryError(.invalidResponse) }
         let reference = try ProviderConversationReference(provider: .codex, nativeThreadID: id)
         try ProviderHistoryValidation.path(cwd)
-        return .init(reference: reference, workspacePath: cwd,
+        // Match the app's captured path spelling at the native ingress boundary.
+        // Persisted snapshots remain pure values; reopening them does not resolve
+        // filesystem paths again. Codex getcwd may report /private/var aliases.
+        let workspacePath = URL(fileURLWithPath: cwd).standardizedFileURL.resolvingSymlinksInPath().path
+        return .init(reference: reference, workspacePath: workspacePath,
             mode: ProviderHistoryMode(rawValue: thread["historyMode"].string ?? "") ?? .unknown, status: status)
     }
     private func page(threadID: String, cursor: String?, limit: Int, deadline: ContinuousClock.Instant) async throws -> ProviderHistoryPage {

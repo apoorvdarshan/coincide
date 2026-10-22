@@ -161,6 +161,7 @@ private func expectOrganizationRejection(_ command: WorkspaceCommand, fixture f:
         try await waitOrganization { await provider.prompts == ["First running turn", "Second queued turn"] }
         try await waitOrganization { await f.engine.current().snapshot.threads[0].activeRun?.nativeTurnID != nil }
         let second = await f.engine.current().snapshot.threads[0]
+        let secondRunID = try #require(second.activeRun?.id)
         #expect(second.queuedTurns.isEmpty && second.draft == "Draft for a future third turn" && !second.queuePaused)
         #expect(!((await f.engine.current().snapshot).isProjectExpanded(project.id)))
         try await f.engine.dispatch(.setProjectExpanded(projectID: project.id, expanded: true))
@@ -169,7 +170,15 @@ private func expectOrganizationRejection(_ command: WorkspaceCommand, fixture f:
         #expect(await provider.interrupts == 0)
         #expect(f.harness.providers(thread.id).count == 1)
         await provider.finish()
-        try await waitOrganization { await f.engine.current().snapshot.threads[0].state == .idle }
+        try await waitOrganization {
+            let snapshot = await f.engine.current().snapshot, current = snapshot.threads[0]
+            guard current.state == .idle, current.activeRun == nil, current.queuedTurns.isEmpty,
+                  let record = current.runHistory?.first(where: { $0.id == secondRunID }), record.status == .completed,
+                  record.checkpoints?.providerReleased == true,
+                  record.checkpoints?.postRun?.phase == .unavailable,
+                  record.checkpoints?.postRun?.unavailableReason == .notRepository else { return false }
+            return snapshot.providerReady(for: current)
+        }
         let final = await f.engine.current().snapshot
         #expect(final.threads[0].messages.filter { $0.role == .user }.map(\.text) == ["First running turn", "Second queued turn"])
         #expect(final.threads[0].draft == "Draft for a future third turn" && final.isProjectExpanded(project.id))
@@ -415,7 +424,7 @@ private func expectOrganizationRejection(_ command: WorkspaceCommand, fixture f:
     let oldDatabase = try WorkspaceDatabase(url: url); try await oldDatabase.save(snapshot, event: "legacy")
     try organizationSQL(url, "PRAGMA user_version=7")
     let database = try WorkspaceDatabase(url: url)
-    #expect(try organizationStorageVersion(url) == 16)
+    #expect(try organizationStorageVersion(url) == 17)
     #expect(try await database.load() == snapshot)
     #expect(try await database.rebuildProjection().snapshot == snapshot)
     let harness = OrganizationHarness(), engine = try WorkspaceEngine(url: url, providerFactory: { harness.make($0) })

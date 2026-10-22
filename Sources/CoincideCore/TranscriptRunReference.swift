@@ -20,7 +20,8 @@ extension CodingThread {
     /// A transcript slice requires actual attribution. Neither timestamps, provider
     /// UUIDs nor message ordering alone establish an old run's complete boundary.
     public func transcriptPrefix(runID: UUID, boundary: TranscriptRunBoundary) throws -> [ChatMessage] {
-        let records = runHistory ?? []
+        let records = activeHistoryRuns
+        let messages = visibleMessages
         guard let target = records.firstIndex(where: { $0.id == runID }),
               records[target].messageAttributionVersion == 1, records[target].status.isTerminal else {
             throw CoincideError("This run does not have a verified local transcript boundary.")

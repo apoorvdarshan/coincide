@@ -19,6 +19,7 @@ struct ChatView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     ProviderMenu(store: store, thread: thread)
+                        .disabled(store.snapshot.isConversationHistoryLocked(threadID: threadID))
                     Spacer()
                     Menu {
                         Text(thread.workspacePath)
@@ -31,16 +32,18 @@ struct ChatView: View {
                             get: { thread.effectiveCheckpointPolicy == .automatic },
                             set: { store.setCheckpointPolicy($0 ? .automatic : .disabled, id: threadID) }))
                             .accessibilityIdentifier("conversation-run-checkpoints")
+                            .disabled(store.snapshot.isConversationHistoryLocked(threadID: threadID))
                             .help("Save workspace observations before and after future messages. Already accepted messages keep their captured setting.")
                         if let settlement = thread.settlement {
                             Button("Resume Conversation") { store.requestResume(threadID, generationID: settlement.id) }
-                                .disabled(settlement.phase == .resuming)
+                                .disabled(settlement.phase == .resuming || store.snapshot.isConversationHistoryLocked(threadID: threadID))
                         } else if let onSettle {
                             Button("Settle Conversation…") { onSettle(thread) }.disabled(!store.canSettle(thread))
                         }
                         if thread.messages.isEmpty {
                             Button("Choose Worktree…") { worktreeSheet = true }
                                 .disabled(thread.isSettled || thread.isBusy || !thread.queuedTurns.isEmpty || thread.workspacePreparation?.isRunning == true ||
+                                          store.snapshot.isConversationHistoryLocked(threadID: threadID) ||
                                           (store.snapshot.projects.first { $0.id == thread.projectID }?.clone.map { !$0.isReady } ?? false))
                         }
                     } label: { Label(store.selectedProject?.name ?? "Workspace", systemImage: "folder").font(.caption).foregroundStyle(.secondary) }
@@ -52,14 +55,14 @@ struct ChatView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 28) {
-                            if thread.messages.isEmpty {
+                            if thread.visibleMessages.isEmpty {
                                 VStack(spacing: 12) {
                                     Text("What are we building?").font(.system(size: 29, weight: .medium))
                                     Text("Start a conversation in \(store.selectedProject?.name ?? "your project").")
                                         .font(.subheadline).foregroundStyle(.secondary)
                                 }.frame(maxWidth: .infinity).padding(.top, 100).padding(.bottom, 60)
                             }
-                            ForEach(thread.messages) { message in
+                            ForEach(thread.visibleMessages) { message in
                                 MessageView(store: store, message: message, providerName: thread.providerName, workspacePath: thread.workspacePath,
                                             openFile: { url, line in store.openFile(url, line: line, workspacePath: thread.workspacePath) })
                             }
@@ -80,7 +83,7 @@ struct ChatView: View {
                         .frame(minWidth: 0, maxWidth: .infinity)
                     }
                     .defaultScrollAnchor(.bottom)
-                    .onChange(of: thread.messages.count) { proxy.scrollTo("latest", anchor: .bottom) }
+                    .onChange(of: thread.visibleMessages.count) { proxy.scrollTo("latest", anchor: .bottom) }
                 }
                 VStack(spacing: 10) {
                     if let group = store.projectGroup(containing: thread.projectID), group.members.count > 1 {
@@ -112,6 +115,7 @@ struct ChatView: View {
                         ThreadSettlementBanner(store: store, threadID: threadID, settlement: settlement)
                     }
                     RunCheckpointBanner(store: store, threadID: threadID)
+                    ConversationHistoryBanner(store: store, threadID: threadID)
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
                                      onAnswer: { answers in Task { await store.answer(request, threadID: threadID, answers: answers) } },
@@ -122,7 +126,9 @@ struct ChatView: View {
                     if store.isImportingAttachments(threadID) { HStack { ProgressView().controlSize(.small); Text("Adding attachments…").font(.caption).foregroundStyle(.secondary); Spacer() } }
                     ComposerView(text: draft, provider: thread.provider, providerName: thread.providerName, permission: thread.permission,
                                  busy: store.isBusy(threadID), submitting: sending || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
-                                 hasAttachments: !thread.draftAttachments.isEmpty, attach: { store.chooseAttachments(threadID: threadID) },
+                                 hasAttachments: !thread.draftAttachments.isEmpty,
+                                 historyLocked: store.snapshot.isConversationHistoryLocked(threadID: threadID),
+                                 attach: { store.chooseAttachments(threadID: threadID) },
                                  referenceFile: store.canAccessWorkspaceFiles(thread.workspacePath) ? { referenceFileSheet = true } : nil,
                                  importProviders: { store.importAttachments(providers: $0, threadID: threadID) },
                                  setPermission: { store.setPermission($0, id: threadID) },

@@ -11,6 +11,7 @@ import time
 config_path, log_path = sys.argv[1:3]
 threads = {}
 turn_number = 0
+pending_start_ack = None
 
 
 def configuration():
@@ -81,6 +82,9 @@ def page(identifier, params, config):
 
 for line in sys.stdin:
     frame = json.loads(line)
+    if pending_start_ack and os.path.exists(pending_start_ack['release']):
+        emit(pending_start_ack['frame'])
+        pending_start_ack = None
     with open(log_path, 'a', encoding='utf-8') as log:
         log.write(json.dumps(frame) + '\n')
         log.flush()
@@ -148,9 +152,23 @@ for line in sys.stdin:
         turn_number += 1
         native_id = 'explicit-turn-' + str(turn_number)
         result = {'turn': native_turn(native_id)}
-        emit({'id': identifier, 'result': result})
-        emit({'method': 'turn/completed', 'params': {
-            'threadId': params['threadId'], 'turn': native_turn(native_id)}})
+        completion = {'method': 'turn/completed', 'params': {
+            'threadId': params['threadId'], 'turn': native_turn(native_id)}}
+        delayed = config.get('delayedFirstStartAcknowledgement') if turn_number == 1 else None
+        if delayed:
+            # Keep reading history RPCs while this already-completed start awaits
+            # acknowledgement. A later request flushes it after explicit release.
+            pending_start_ack = {'frame': {'id': identifier, 'result': result},
+                                 'release': delayed['release']}
+            emit(completion)
+            with open(delayed['entered'], 'w', encoding='utf-8') as marker:
+                marker.write('completed-before-start-ack')
+        elif config.get('completionBeforeStartAcknowledgement'):
+            emit(completion)
+            emit({'id': identifier, 'result': result})
+        else:
+            emit({'id': identifier, 'result': result})
+            emit(completion)
         continue
     elif method == 'model/list':
         result = {'data': []}

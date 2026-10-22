@@ -52,16 +52,16 @@ must each be mapped and verified before declaring parity.
   events are scoped to a connection and run so stale replies cannot reopen a turn.
 - Queued turns capture their model, permission, and workspace configuration. Normal
   completion advances the queue; Stop, provider failure, and application restart
-  hold it for explicit resumption. Database storage version 16 protects these fields
-  from older binaries. No exactly-once provider execution is claimed.
+  hold it for explicit resumption. Database storage version 17 protects these fields
+  and durable history gates from older binaries. No exactly-once provider execution is claimed.
 - Each newly started run retains its captured settings, user-message reference
   or explicit agent/legacy origin, observed adapter turn references, stop intent,
   and terminal outcome in the journal. Queue advancement closes one record before
   opening the next; stale scoped events cannot rewrite completed history. Restart
   marks an unfinished run interrupted without replay. Earlier transcript rows are
-  not backfilled with guessed turn boundaries. A read-only native Run History
-  sheet exposes these records. Adapter references may be locally generated and
-  do not by themselves establish native provider fork or rollback support.
+  not backfilled with guessed turn boundaries. A native Run History sheet exposes
+  these records and offers eligible reviewed history actions. Adapter references
+  may be locally generated and do not by themselves establish a native boundary.
 - Newly produced transcript messages retain their originating app conversation
   and run. Replacements keep that local attribution rather than accepting a
   provider-supplied reference. Journal replay preserves attribution changes;
@@ -78,9 +78,44 @@ must each be mapped and verified before declaring parity.
   unverified boundaries fail explicitly; uncertain mutations are not retried and
   prevent further writes on that connection. New threads explicitly select the
   paginated contract on the reviewed profile; existing legacy threads are not
-  migrated. These are Core adapter primitives, not usable app fork/rewind actions:
-  durable history intents, recovery, transcript adoption and native review controls
-  still need integration. No live provider history mutation has been verified.
+  migrated. The reviewed 0.163.x profile is a temporary compatibility boundary,
+  not a claim of support for unknown Codex versions or other providers. The
+  provider protocol has no compare-and-swap parameter: another client can still
+  change native history between the final read and mutating RPC.
+- Native Run History now integrates explicit reviewed Fork After Run and Rewind
+  Before Run actions. Eligibility requires verified native IDs, local message
+  attribution, a matching current checkout, and an idle source without queued
+  work, pending questions or unresolved workspace/setup/settlement/checkpoint
+  gates. Completed runs can fork; rewind also requires a verified opening user
+  message. Legacy or ambiguous boundaries stay unavailable rather than being
+  inferred from IDs or timestamps. The exact review and operation are persisted
+  before a fenced outbox dispatch; the source is locked against conflicting
+  submissions, configuration, archive and removal while the action is pending.
+  Drafting, pinning and selection remain available.
+- An applied fork creates a separate conversation with the selected run's captured
+  provider settings, verified new native identity and reviewed visible transcript
+  prefix. It clears runtime, queues, drafts and run/checkpoint/setup/settlement
+  state and retains validated lineage. It does not select the new conversation,
+  send a prompt, or alter the source. Rewind keeps the source's current provider
+  settings, unsent draft and attachments, and marks the removed suffix in the full
+  retained message/run audit. Only active messages appear in the transcript and
+  count toward last-user activity. Late provider updates cannot rewrite removed
+  audit rows. Recall Prompt explicitly appends the original prompt to the latest
+  draft, merges attachments within limits, and records one-time application; it
+  never submits the prompt.
+- History actions never restore files, reset Git or delete conversations. A known
+  pre-mutation rejection is a visible failure. An uncertain dispatched rewind,
+  including a lost acknowledgment, holds provider work until read-only inspection finds
+  the original or expected resulting head; an unrelated head remains unresolved.
+  Restart fails an accepted undispatched intent and marks a dispatched one
+  unconfirmed without replaying either RPC or provider work. Resolved audit and
+  fork lineage survive source removal. Deterministic adapter, reducer, journal,
+  engine and native-store coverage is distinct from real-provider and hosted GUI
+  verification. The opt-in installed-Codex engine smoke has verified two generated
+  turns, exact native fork/rewind heads, retained audit/draft and unchanged working
+  bytes/index/HEAD, with no unexpected tools or approvals. Both generated native
+  conversations were archived and local cleanup passed. Hosted GUI verification
+  of this milestone remains pending.
 - A standalone native checkpoint service prepares immutable local plans, captures
   Git working bytes into private refs, inspects owned completion receipts and
   returns bounded snapshot diffs. Captures use a separate index and a frozen
@@ -246,10 +281,10 @@ must each be mapped and verified before declaring parity.
 | Area | Implemented now | Remaining work for parity |
 | --- | --- | --- |
 | Native workspace | Open/clone folders, managed New Project and starter repository, atomic project/first-conversation registration, logical repository/folder/physical grouping and overrides, explicit checkout choice for new conversations, restored conversation selection, physical/group renaming and collapse, persistent manual ordering and aggregated activity/thread-creation sorting, confirmed atomic physical/group removal with archived conversations and targeted runtime cleanup, thread search/rename/pin/archive, explicit settlement generations and Resume, settings | Snooze/automatic settlement, undo, scratch projects, import/migration |
-| Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, rollback/fork, all tool events |
+| Codex | Handshake, model discovery, start/resume, streaming, command/file approvals, user questions, interrupt, reviewed same-workspace native fork and history-only rewind on the 0.163.x profile | Full protocol coverage, auth/setup UI, multi-account/usage, reasoning settings, broader history contracts and cross-workspace transfer, all tool events |
 | Claude | Native bidirectional stream-json connection, model discovery, streaming, session resume, tool approvals, user questions, interrupt | Full control protocol, multi-select question UI, auth/setup, usage, hooks/configuration, rollback/fork, complete tool metadata |
 | Other providers | Custom installed ACP v1 agents, opt-in current ACP v2 draft with same-connection v1 fallback, OpenCode preset, native model/config discovery and select/boolean controls, session load/resume, streaming/thoughts, structured tool/plan output, tool input/output/files/details, after-idle tool updates and permissions, agent-initiated foreground work, exact permission choices, interrupt, queued/resumed conversation integration, visible rejected/unconfirmed submissions | Registry/managed installation, native authentication/elicitation, delegated filesystem/terminal methods, richer media and display-terminal UI, live notices, session listing/import/fork, older v2 draft variants, provider-specific OpenCode/Cursor/Grok/Antigravity/Pi/Muse behavior |
-| Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, legacy migration | Complete provider recovery, checkpoint restore, provider fork/rewind, incremental projection storage/performance, full upstream command coverage |
+| Durable orchestration | Serial native command engine and effect worker, replayable SQLite journal, atomic projections/receipts/audit/outbox, durable accepted/rejected command deduplication, revision checks, effect leases/fencing, exclusive runtime ownership, scoped provider events, held queues after process loss, durable run settings/references/outcomes, automatic run checkpoints with cancellation/drain/restart inspection, native history and bounded workspace diffs, durable reviewed fork/rewind intents with retained audit and inspect-only uncertain-outcome recovery, legacy migration | Complete provider recovery, checkpoint restore, broader provider history/portable transfer, incremental projection storage/performance, full upstream command coverage |
 | Composer/transcript | ChatGPT-style native conversation, persistent per-thread drafts, queued turns with edit/remove/resume, separate Stop, Markdown headings/lists/tasks/quotes/tables/code, lexical syntax coloring and code copy, closed display/math-fence formulas, contained file links with line navigation, native workspace path-reference picker, tool/reasoning disclosure, focused Enter/Shift-Enter input | Inline and broader math parsing, transcript media, citations, diagrams/details/alerts, complete language highlighting, slash/skill and inline-trigger pickers, plans, steering |
 | Attachments | Native picker, file/image paste/drop import, persistent drafts/queues/history, thumbnail and image previews, copy/save/open controls, HEIC/TIFF conversion and image resizing, count/size/integrity checks, native Codex/Claude image input and file context | Remote uploads, question attachments, long-paste conversion, prompt stash, failed-import retry UI, reference-aware cleanup, source images over 50 MiB, broader media previews |
 | Git/workspaces | Native status including unborn/detached/tracking/conflicts, literal staged/unstaged diffs and paths, stage/unstage/commit, initialize, local branch creation/checkout and remote tracking, fetch, clean fast-forward pull, explicit single-branch push, background clone with progress/stall/cancel/retry, cancellable operations and app-shutdown cleanup, durable local worktree preparation with explicit base/new/existing branch choices, verified registered reuse, queued-message readiness, cancellation/retry and conservative restart recovery, explicit None/top-level/recursive initialization in new worktrees with durable nonfatal warnings, discovered checkout setup with explicit reviewed execution and provider readiness gates, reviewed settle roles with drain-before-resume, automatic workspace observations in private refs with isolated staging and verified scratch cleanup | PRs/stacks/host integrations, checkpoint restore/revert, worktree removal, automatic pull policies, broader credential and network failure coverage |
@@ -267,6 +302,7 @@ swift test --no-parallel
 ./script/build_and_run.sh --build-only
 ./script/build_and_run.sh --verify
 COINCIDE_LIVE_CODEX=1 swift test --filter installedCodexHandshakeAndModelDiscovery
+COINCIDE_LIVE_CODEX_HISTORY=1 swift test --no-parallel --filter installedCodexNativeHistoryForkAndRewindThroughEngine
 COINCIDE_LIVE_CLAUDE=1 swift test --filter installedClaudeHandshakeAndModelDiscovery
 COINCIDE_LIVE_ATTACHMENTS=1 swift test --filter installedProvidersReadAnImageAndFileThroughTheNativeEngine
 COINCIDE_LIVE_ACP=1 swift test --filter installedOpenCodeACPHandshakeAndModelDiscovery
@@ -278,6 +314,24 @@ The live discovery test performs a handshake and model listing only. It does not
 run a model turn. The separate attachment test incurs real provider usage, sends
 only generated image/file markers, and checks both installed providers through
 the native engine. It permits only the generated file's Claude Read approval.
+The separate Codex history smoke is off by default. Opting in uses existing
+installed-CLI authentication, exactly two generated-marker prompts in a temporary
+Git project/database, supervised permissions, and refusal of unexpected tool
+approvals. It exercises the native engine's automatic checkpoint policy, reviewed
+fork/rewind, independent paginated native readback, retained local audit/draft and
+unchanged working bytes/index/HEAD. It archives only returned test-native IDs and
+never lists or deletes provider conversations. Private evidence records IDs,
+booleans and fixed failure categories without response text or credentials. Local
+files are removed only after exact-ID archive cleanup and a bounded `lsof` check
+finds no other process using the task directory; uncertain cleanup preserves it.
+This proves local directory non-use, not that every provider descendant was reaped.
+The installed-Codex history smoke has passed with both exact generated markers,
+matching native heads, preserved local state, no unexpected tools/approvals, and
+completed archive/local cleanup. A separate held-descriptor regression checks
+that cleanup excludes the test's own handles but preserves a directory while a
+foreign process holds it. These results do not establish hosted GUI verification,
+other provider versions, or full provider parity.
+
 The deterministic provider fixture contacts no external service
 and does not exercise real provider authentication or prove full provider parity.
 Tests create temporary isolated Git repositories and remove them after use. Git

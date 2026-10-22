@@ -51,6 +51,7 @@ public struct ChatMessage: Codable, Identifiable, Sendable, Equatable {
     public var providerEntity: ProviderEntity?
     public var submissionError: String?
     public var runReference: TranscriptRunReference?
+    public var removedByHistoryOperationID: UUID?
     public init(id: String = UUID().uuidString, role: MessageRole, text: String, attachments: [ChatAttachment]? = nil) {
         self.id = id; self.role = role; self.text = text; self.createdAt = Date(); self.attachments = attachments
     }
@@ -82,6 +83,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var activeRun: ActiveRun?
     public var runHistory: [ThreadRunRecord]?
     public var checkpointPolicy: RunCheckpointPolicy?
+    public var forkedFromHistoryOperationID: UUID?
     public var runtimeID: UUID?
     public var runtimeRequests: [RuntimeRequest]
     public var isPinned: Bool
@@ -96,7 +98,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, runtimeID, runtimeRequests, workspacePreparation, settlement
+        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, runtimeID, runtimeRequests, workspacePreparation, settlement
         case draftAttachments
         case acpAgent, agentModeID, agentConfigValues, providerMetadata
         case providerActivity, agentConfiguration
@@ -128,6 +130,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         activeRun = try values.decodeIfPresent(ActiveRun.self, forKey: .activeRun)
         runHistory = try values.decodeIfPresent([ThreadRunRecord].self, forKey: .runHistory)
         checkpointPolicy = try values.decodeIfPresent(RunCheckpointPolicy.self, forKey: .checkpointPolicy)
+        forkedFromHistoryOperationID = try values.decodeIfPresent(UUID.self, forKey: .forkedFromHistoryOperationID)
         runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
         runtimeRequests = try values.decodeIfPresent([RuntimeRequest].self, forKey: .runtimeRequests) ?? []
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
@@ -145,8 +148,9 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var threads: [CodingThread] = []
     public var acpAgents: [ACPAgentConfiguration] = []
     public var sidebarPreferences: SidebarPreferences?
+    public var conversationHistoryOperations: [ConversationHistoryOperation]?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -154,9 +158,16 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         threads = try values.decodeIfPresent([CodingThread].self, forKey: .threads) ?? []
         acpAgents = try values.decodeIfPresent([ACPAgentConfiguration].self, forKey: .acpAgents) ?? []
         sidebarPreferences = try values.decodeIfPresent(SidebarPreferences.self, forKey: .sidebarPreferences)
+        conversationHistoryOperations = try values.decodeIfPresent([ConversationHistoryOperation].self, forKey: .conversationHistoryOperations)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        for i in (conversationHistoryOperations ?? []).indices {
+            guard let phase = conversationHistoryOperations?[i].phase, phase == .accepted || phase == .dispatching else { continue }
+            conversationHistoryOperations?[i].phase = phase == .accepted ? .failed : .unconfirmed
+            conversationHistoryOperations?[i].error = phase == .accepted ? ConversationHistoryOperation.failureMessage : ConversationHistoryOperation.unconfirmedMessage
+            conversationHistoryOperations?[i].updatedAt = Date()
+        }
         for i in projects.indices {
             guard var clone = projects[i].clone, clone.isRunning else { continue }
             clone.phase = .interrupted; clone.cancelRequested = false; clone.progress.stalled = false

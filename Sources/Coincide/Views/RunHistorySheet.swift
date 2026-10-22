@@ -4,21 +4,41 @@ import SwiftUI
 struct RunHistorySheet: View {
     let store: WorkspaceStore
     let threadID: UUID
-    @State private var diffRequest: RunCheckpointDiffRequest?
+    @State private var sheet: RunHistorySheetRequest?
 
     var body: some View {
-        RunHistoryContent(thread: store.thread(threadID), showWorkspaceChanges: { diffRequest = .init(id: $0) })
-            .sheet(item: $diffRequest) { request in
-                RunCheckpointDiffSheet(store: store, threadID: threadID, runID: request.id)
+        RunHistoryContent(thread: store.thread(threadID), showWorkspaceChanges: { sheet = .diff($0) },
+                          historyAction: { sheet = .history($0, $1) },
+                          historyUnavailableReason: { store.conversationHistoryUnavailableReason(threadID: threadID, runID: $0, kind: $1) },
+                          operations: store.conversationHistoryOperations(threadID: threadID),
+                          operationView: { AnyView(ConversationHistoryOperationView(store: store, operation: $0)) })
+            .sheet(item: $sheet) { request in
+                switch request {
+                case .diff(let id): RunCheckpointDiffSheet(store: store, threadID: threadID, runID: id)
+                case .history(let id, let kind):
+                    ConversationHistoryReviewSheet(store: store, threadID: threadID, runID: id, kind: kind, close: { sheet = nil })
+                }
             }
     }
 }
 
-private struct RunCheckpointDiffRequest: Identifiable { let id: UUID }
+private enum RunHistorySheetRequest: Identifiable {
+    case diff(UUID), history(UUID, ConversationHistoryKind)
+    var id: String {
+        switch self {
+        case .diff(let id): "diff-" + id.uuidString
+        case .history(let id, let kind): (kind == .forkAfterRun ? "fork-" : "rewind-") + id.uuidString
+        }
+    }
+}
 
 struct RunHistoryContent: View {
     let thread: CodingThread?
     var showWorkspaceChanges: ((UUID) -> Void)? = nil
+    var historyAction: ((UUID, ConversationHistoryKind) -> Void)? = nil
+    var historyUnavailableReason: ((UUID, ConversationHistoryKind) -> String?)? = nil
+    var operations: [ConversationHistoryOperation] = []
+    var operationView: ((ConversationHistoryOperation) -> AnyView)? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -60,6 +80,19 @@ struct RunHistoryContent: View {
                 .padding(20)
         } else {
             LazyVStack(alignment: .leading, spacing: 0) {
+                if let operationView, !operations.isEmpty {
+                    DisclosureGroup("Conversation changes") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(operations) { operation in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(operation.updatedAt, format: .dateTime.month(.abbreviated).day().hour().minute())
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    operationView(operation)
+                                }
+                            }
+                        }.padding(.top, 8)
+                    }.font(.caption).padding(.top, 14)
+                }
                 if RunHistoryPresentation.hasUnrecordedMessages(in: thread) {
                     Text("Some messages do not include recorded run details.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -67,7 +100,10 @@ struct RunHistoryContent: View {
                         .accessibilityIdentifier("run-history-incomplete")
                 }
                 ForEach(records) { record in
-                    RunHistoryRow(record: record, thread: thread, showWorkspaceChanges: showWorkspaceChanges).padding(.vertical, 14)
+                    RunHistoryRow(record: record, thread: thread, showWorkspaceChanges: showWorkspaceChanges,
+                                  historyAction: historyAction,
+                                  forkUnavailableReason: historyUnavailableReason?(record.id, .forkAfterRun),
+                                  rewindUnavailableReason: historyUnavailableReason?(record.id, .rewindBeforeRun)).padding(.vertical, 14)
                     Divider()
                 }
             }.padding(.horizontal, 20)
@@ -79,6 +115,9 @@ private struct RunHistoryRow: View {
     let record: ThreadRunRecord
     let thread: CodingThread
     let showWorkspaceChanges: ((UUID) -> Void)?
+    let historyAction: ((UUID, ConversationHistoryKind) -> Void)?
+    let forkUnavailableReason: String?
+    let rewindUnavailableReason: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -102,6 +141,27 @@ private struct RunHistoryRow: View {
                 .accessibilityIdentifier("run-history-workspace-\(record.id)")
             if record.stopRequested {
                 Text("Stop requested").font(.caption).foregroundStyle(.secondary)
+            }
+            if record.removedByHistoryOperationID != nil {
+                Text("Removed from the current conversation by a rewind").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("run-history-removed-\(record.id)")
+            }
+            if let historyAction {
+                Menu("Conversation") {
+                    Button("Fork After This Run…") { historyAction(record.id, .forkAfterRun) }
+                        .disabled(forkUnavailableReason != nil)
+                        .help(forkUnavailableReason ?? String(localized: "Create a separate conversation through this completed run."))
+                        .accessibilityIdentifier("run-history-fork-\(record.id)")
+                    Button("Rewind Before This Run…") { historyAction(record.id, .rewindBeforeRun) }
+                        .disabled(rewindUnavailableReason != nil)
+                        .help(rewindUnavailableReason ?? String(localized: "Rewind conversation context before this run. Workspace files stay unchanged."))
+                        .accessibilityIdentifier("run-history-rewind-\(record.id)")
+                }.menuStyle(.borderlessButton).fixedSize().font(.caption)
+                    .accessibilityIdentifier("run-history-actions-\(record.id)")
+                    .disabled(forkUnavailableReason != nil && rewindUnavailableReason != nil)
+                if let unavailableReason = rewindUnavailableReason ?? forkUnavailableReason {
+                    Text(unavailableReason).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             if let checkpoints = record.checkpoints {
                 checkpointSummary(checkpoints)

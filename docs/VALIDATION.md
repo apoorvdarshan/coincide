@@ -1,5 +1,84 @@
 # Validation record
 
+## 2026-10-22 — durable native conversation forks and rewinds
+
+- Run History now reviews an exact verified Codex boundary before accepting a
+  native Fork After Run or history-only Rewind Before Run. The engine binds the
+  complete review to its current incarnation and source fingerprint, journals the
+  accepted action and outbox together, and saves dispatching before the sole
+  mutating RPC. Repeated acceptance observes the original action. Conflicting
+  provider/configuration/archive/removal commands wait; drafts and selection stay
+  available.
+- Fork uses a fresh target actor and creates a separate conversation with the
+  selected run's settings and visible prefix, without changing the source or
+  sending a prompt. Rewind retains all messages/run audit with removal markers,
+  keeps current settings/draft/attachments, and retires the old event stream.
+  Explicit one-time Recall Prompt appends to the latest draft. An older Recall
+  cannot run during a newer pending history action.
+- Restart never repeats history mutations. Accepted undispatched actions fail;
+  dispatched actions become unconfirmed. Read-only inspection resolves an
+  uncertain rewind only when the unchanged or expected head is observed twice;
+  an unrelated head stays unresolved. Drafting remains available while provider
+  work is held. Deterministic engine tests cover lost acknowledgments before and
+  after native mutation, reopen, no replay, source preservation, journal rebuild,
+  stale reviews and external native changes.
+- A held old turn-start acknowledgment exposed an adapter generation boundary:
+  successful fork/revert now fences that suspended send before it can restore an
+  old active turn ID. The protocol regression releases the old acknowledgment
+  after rewind, then verifies the next explicit turn completes normally.
+- The installed-Codex smoke uses two synthetic replies in its own Git project,
+  production automatic checkpoints, exact native fork/rewind and independent
+  paginated readback. Its first live review caught native `/private/var` versus
+  app `/var` spelling for the same folder. Metadata ingress now applies the
+  app's existing path convention; protocol tests cover snapshot/fork/revert on
+  that actual directory alias while preserving wrong-workspace rejection.
+- The final opt-in installed-Codex engine smoke passes in **12.008 seconds**:
+  both expected replies, distinct native fork identity, exact fork/rewind head,
+  independent native readback, preserved source/draft/settings/audit and unchanged
+  tracked/untracked bytes, index, HEAD and status. No unexpected tools or approvals
+  occurred. Only its two generated native conversations were archived and its
+  local fixture was removed after a no-foreign-process proof. Earlier failed
+  fixtures were preserved until separate archive and non-use checks permitted
+  cleanup; their original failure evidence remains private.
+- The cleanup proof excludes only the current test process's own open database
+  handles and waits within its existing five-second budget for owned providers
+  to drain. Darwin `lsof` can return status 1 with numeric matching PIDs, so such
+  foreign matches remain a hold, not a successful deletion proof. Errors,
+  nonnumeric output or stderr preserve the folder. A separate real-descriptor
+  regression passes in **5.181 seconds**, proving own-handle exclusion, foreign
+  holder preservation and clearance after that child exits. This proves directory
+  non-use, not independent reaping of every provider descendant.
+- Exact `fc869947` [run 39712233248](https://github.com/apoorvdarshan/coincide/actions/runs/39712233248)
+  executed 491 production tests and failed two timing fixtures; its GUI job was
+  skipped. ACP recovery now waits for the exact completed run's provider release
+  and final checkpoint before shutdown, and checks the provider-start effect
+  rather than the earlier checkpoint effect. Organization replay waits for its
+  exact final checkpoint before comparing projections. Automatic checkpoints,
+  assertions and timeout budgets remain enabled.
+- The hosted gate now requires all nine real GUI workflows with zero failures
+  and skips. The new isolated offline Codex peer persists across fresh processes
+  and exercises native Fork/Rewind cancel/confirm, draft recall, reopen, exact
+  mutation counts and unchanged Git bytes. The original eight workflows remain.
+  The runner compiles and passes deep/strict signature verification; five Python
+  fixture/configuration checks, shell syntax and project-plist validation pass.
+  No actual GUI tests ran locally. The native inspector replacement still needs
+  an actual hosted verdict after the earlier seven-of-eight GUI result.
+- Final `swift test --no-parallel` passes **530 tests**: 438 Core, 73 native
+  UI/Store, six terminal and 13 Markdown, with no compiler warnings. The Core
+  summary completes in 83.612 seconds; native UI/Store completes in 30.266 seconds.
+  Default execution does not opt into installed-provider prompts. The separate
+  live result above and hosted interactive GUI evidence remain distinct.
+- The repository-owned app packages and launches; deep/strict app/helper
+  signatures and native math-resource rendering pass. Storage upgrades from 16
+  to 17 with the complete canonical saved workspace unchanged against its private
+  SQLite backup: three conversations and 25 messages. No system install or public
+  app release was performed.
+
+Support remains limited to verified new paginated histories on the reviewed
+Codex 0.163.x profile. Filesystem restoration, other-provider/legacy history,
+portable transfer and full T3 parity remain open. The provider protocol has no
+compare-and-swap history RPC, so another client can still race the final read.
+
 ## 2026-10-22 — provider history contracts and durable transcript attribution
 
 - Newly accepted and agent-initiated runs attribute their messages to their local

@@ -84,8 +84,26 @@ Choose **Run History…** from the conversation's workspace menu to inspect
 recorded turns, their captured provider/model/permissions and workspace, and
 their observed outcomes. History survives restart and retains adapter session
 and turn references. Agent-initiated work is labeled separately. Older messages
-remain available without invented turn boundaries. This view does not yet fork,
-rewind, or restore a checkout.
+remain available without invented turn boundaries.
+
+For verified runs in new paginated Codex conversations using the reviewed
+0.163.x app-server profile, the run's **Conversation** menu offers **Fork After
+This Run…** and **Rewind Before This Run…**. Review the selected input, exact
+boundary, settings and checkout before confirming. Fork creates a separate
+conversation through the selected completed run, using that run's captured
+settings; the source conversation and draft stay unchanged. Rewind removes the
+selected run and later messages from the current conversation while retaining
+their run audit. Its current draft, provider, model, permissions and agent options
+stay unchanged. **Recall Prompt** explicitly appends the original input and
+attachments to the latest draft once, rather than replacing existing edits.
+
+Both actions leave workspace files and staging unchanged. While a history change
+is pending, provider work and configuration changes wait; drafting, pinning and
+conversation selection remain available. An unconfirmed rewind stays paused for
+**Inspect Provider State**, which reads the outcome without repeating the action.
+Lost acknowledgments and restart never automatically replay a history mutation.
+Claude, ACP and older histories without verified boundaries do not offer these
+actions. Restoring checkout files is not implemented.
 
 **Save Run Checkpoints** in the workspace menu is enabled for future messages by
 default. Each accepted message keeps its captured setting. Coincide attempts a
@@ -104,8 +122,8 @@ match their saved ownership proof; snapshot refs, plans and receipts are retaine
 Restart inspects saved completion evidence without replaying captures or provider
 work, and keeps queues paused. Unused Git filter settings, including global Git
 LFS setup, do not block snapshots. Files requiring executable clean/process filters
-and non-cone sparse layouts are currently unsupported. Restoring files and
-rewinding provider history remain separate work.
+and non-cone sparse layouts are currently unsupported. Restoring files from these
+observations is not implemented; conversation history actions do not restore them.
 
 The inspector's **Files** tab lists hidden files and empty folders, labels ignored
 entries, and searches workspace paths using Git ignore rules. Open or create a

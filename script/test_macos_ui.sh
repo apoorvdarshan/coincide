@@ -52,6 +52,7 @@ codesign --verify --deep --strict "$STAGED_APP"
 mkdir -m 700 "$SCRATCH/coincide-ui-testing-bootstrap"
 # Resolve Apple's developer-tool shim before entering the sandboxed UI runner.
 GIT_EXECUTABLE="$(xcrun --find git)"
+PYTHON_EXECUTABLE="$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))')"
 XCTESTRUN="$(python3 - "$DERIVED_DATA/Build/Products" <<'PY'
 from pathlib import Path
 import sys
@@ -62,7 +63,7 @@ print(files[0])
 PY
 )"
 python3 "$ROOT_DIR/script/macos_ui_ci.py" prepare --xctestrun "$XCTESTRUN" --app "$STAGED_APP" \
-  --bootstrap "$SCRATCH/coincide-ui-testing-bootstrap" --git "$GIT_EXECUTABLE"
+  --bootstrap "$SCRATCH/coincide-ui-testing-bootstrap" --git "$GIT_EXECUTABLE" --python "$PYTHON_EXECUTABLE"
 set +e
 xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination 'platform=macOS' \
   -parallel-testing-enabled NO -collect-test-diagnostics never -resultBundlePath "$ARTIFACTS/Results.xcresult" \

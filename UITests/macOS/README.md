@@ -21,7 +21,9 @@ DEBUG launch configuration requires that prefix, the dedicated bundle ID, and
 explicit environment opt-in; invalid configuration must never fall back to
 normal app data. Git identity and hooks are configured through a private
 test-only Git config, without changing the runner's global settings. Composer
-text remains unsent; no coding agent or network provider is invoked.
+text remains unsent in the first eight workflows. The ninth sends three synthetic
+prompts only to a bundled offline Codex protocol peer; no real coding agent or
+network provider is invoked.
 The shell resolves the selected Xcode's real Git executable before entering the
 sandbox; commit verification avoids `/usr/bin/git`'s developer-tool shim and
 retains both output streams in the test result for diagnosis.
@@ -103,10 +105,24 @@ settled. Only an explicit Resume clears that state; the selected conversation,
 unsent draft, worktree path and original checkout bytes remain unchanged. A
 second settle role must never run. Automatic resume on a submitted message and
 provider queue ownership remain engine/store test evidence.
+The ninth test creates three completed conversation turns through an isolated
+offline Codex 0.163 protocol peer. It reviews and cancels Fork and Rewind without
+mutating provider history, then confirms each exact second-run boundary. The
+fork must open a new conversation with the reviewed prefix and leave the source
+draft unchanged. Rewind must keep all audit rows while removing the suffix from
+the current transcript. Explicit Recall Prompt appends to the latest draft only
+once, and graceful relaunch must retain both conversations and the removed-run
+audit. Source README, HEAD bytes and Git commit stay unchanged.
+The peer runs only from a private PATH entry with a private CODEX_HOME. Its
+bounded state and wire log live under the test-owned workspace; flock plus
+atomic state replacement preserve boundaries across fresh metadata/fork
+processes. The CI shell resolves Python before entering the sandbox so the test
+does not invoke Apple's developer-tool shim. Five GUI-free configuration and
+peer tests validate isolation, persistence and the strict result gate.
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all eight tests to pass with zero
+gate requires all nine tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 

@@ -72,6 +72,11 @@ private actor HistorySignal {
     func mark() { reached = true }
 }
 
+private actor HistoryObservedEvents {
+    private(set) var values: [ProviderEvent] = []
+    func append(_ event: ProviderEvent) { values.append(event) }
+}
+
 private func historyError(_ expected: ProviderHistoryError.Kind, _ body: () async throws -> Void) async throws {
     do { try await body(); Issue.record("Expected provider history error \(expected.rawValue).") }
     catch let error as ProviderHistoryError { #expect(error.kind == expected) }
@@ -132,9 +137,26 @@ func providerHistoryDefaultAdaptersExplicitlyRejectAllHistoryOperations() async 
     let project = WorkspaceProject(path: "/tmp")
     let reference = try ProviderConversationReference(provider: .claude, nativeThreadID: "native-source")
     try await historyError(.unsupported) { _ = try await adapter.historyCapabilities(threadID: reference.nativeThreadID) }
+    try await historyError(.unsupported) { _ = try await adapter.conversationSnapshot(threadID: reference.nativeThreadID) }
     try await historyError(.unsupported) { _ = try await adapter.historyPage(threadID: reference.nativeThreadID) }
     try await historyError(.unsupported) { _ = try await adapter.forkConversation(source: reference, boundary: .beforeTurn("native-2"), configuration: .init(thread: CodingThread(project: project))) }
     try await historyError(.unsupported) { _ = try await adapter.revertConversation(thread: reference, beforeTurnID: "native-2", expectedHeadTurnID: "native-3") }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func codexHistoryReadOnlySnapshotReportsActualNativeHeadWithoutResuming() async throws {
+    try await withHistoryPeer { peer in
+        let snapshot = try await peer.session.conversationSnapshot(threadID: "native-source")
+        let source = try peer.source
+        #expect(snapshot.reference == source)
+        #expect(snapshot.workspacePath == peer.workspace.path)
+        #expect(snapshot.historyMode == .paginated && snapshot.headTurnID == "native-3")
+        let requests = try peer.requests("thread/turns/list")
+        #expect(requests.count == 1 && requests.first?["params"]["limit"] == .number(1))
+        #expect(try peer.requests("thread/fork").isEmpty)
+        #expect(try peer.requests("thread/revert").isEmpty)
+        try peer.assertNoImplicitWork()
+    }
 }
 
 @Test(.timeLimit(.minutes(1)))
@@ -497,5 +519,95 @@ func codexHistoryFreshTargetAdoptsOnlyVerifiedForkForLaterExplicitSubmit() async
         #expect(try peer.requests("thread/resume").isEmpty)
         #expect(try peer.requests("thread/start").isEmpty)
         #expect(try peer.requests("turn/start").first?["params"]["threadId"] == .string("native-fork"))
+    }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func codexHistoryRewindFencesAnOlderDelayedStartAcknowledgementBeforeTheNextCompletion() async throws {
+    try await withHistoryPeer { peer in
+        let gate = peer.gate("old-start-ack")
+        try peer.writeOptions([
+            "delayedFirstStartAcknowledgement": gate.value,
+            "completionBeforeStartAcknowledgement": .bool(true),
+            "turns": .array([historyTurn("explicit-turn-1"), historyTurn("native-2"), historyTurn("native-1")])])
+        let observed = HistoryObservedEvents()
+        let observer = Task { for await event in peer.session.events { await observed.append(event) } }
+        defer { observer.cancel() }
+        let firstRunID = UUID()
+        let first: CodingThread = {
+            var thread = peer.thread
+            thread.activeRun = .init(id: firstRunID, configuration: peer.configuration, startedAt: Date())
+            return thread
+        }()
+        let oldSend = Task { try await peer.session.send(text: "Old explicit turn", thread: first) }
+        try await historyEventually {
+            guard FileManager.default.fileExists(atPath: gate.entered.path) else { return false }
+            return await observed.values.contains { event in
+                if case .context(let runID, .completed(.idle)) = event { return runID == firstRunID }
+                return false
+            }
+        }
+        #expect(FileManager.default.fileExists(atPath: gate.entered.path))
+        #expect(!FileManager.default.fileExists(atPath: gate.release.path))
+        let rewound = try await peer.session.revertConversation(thread: peer.source, beforeTurnID: "native-2", expectedHeadTurnID: "explicit-turn-1")
+        #expect(rewound.headTurnID == "native-1")
+        #expect(try peer.requests("thread/revert").count == 1)
+        try Data().write(to: gate.release)
+        // The read-only request flushes the released response in the peer; awaiting
+        // oldSend then proves its suspended send frame has processed that old ACK.
+        _ = try await peer.session.models()
+        try await oldSend.value
+        var next = peer.thread
+        let nextRunID = UUID()
+        next.activeRun = .init(id: nextRunID, configuration: peer.configuration, startedAt: Date())
+        try await peer.session.send(text: "Next explicit turn", thread: next)
+        try await historyEventually {
+            await observed.values.contains { event in
+                if case .context(let runID, .completed(.idle)) = event { return runID == nextRunID }
+                return false
+            }
+        }
+        let events = await observed.values
+        let completions = events.compactMap { event -> UUID? in
+            if case .context(let runID, .completed(.idle)) = event { return runID }; return nil
+        }
+        let turns = events.compactMap { event -> String? in
+            if case .turn(let id) = historyUnscoped(event) { return id }; return nil
+        }
+        #expect(completions == [firstRunID, nextRunID])
+        #expect(turns == ["explicit-turn-1", "explicit-turn-2"])
+        #expect(try peer.requests("turn/start").count == 2)
+        #expect(try peer.requests("thread/resume").count == 1)
+        #expect(try peer.requests("thread/start").isEmpty)
+    }
+}
+
+
+@Test(.timeLimit(.minutes(1)), arguments: ["snapshot", "fork", "revert"])
+func codexHistoryNormalizesNativePrivateVarAliasAtMetadataIngress(operation: String) async throws {
+    try await withHistoryPeer { peer in
+        // Resolve the existing task-owned directory just as Models does. Darwin
+        // Foundation need not normalize a nonexistent leaf's /private/var alias.
+        let canonical = WorkspaceProject(path: peer.workspace.path).path
+        let alias = canonical.hasPrefix("/var/") ? "/private" + canonical : canonical
+        try peer.writeOptions(["readOverrides": .object(["cwd": .string(alias)]),
+                               "mutationOverrides": .object(["cwd": .string(alias)])])
+        let source = try peer.source
+        let result: ProviderConversationSnapshot
+        switch operation {
+        case "fork":
+            var configuration = peer.configuration; configuration.workspacePath = canonical
+            result = try await peer.session.forkConversation(source: source, boundary: .throughTurn("native-2"), configuration: configuration)
+            #expect(result.reference.nativeThreadID == "native-fork" && result.headTurnID == "native-2")
+            #expect(try peer.requests("thread/fork").first?["params"]["cwd"] == .string(canonical))
+        case "revert":
+            result = try await peer.session.revertConversation(thread: source, beforeTurnID: "native-2", expectedHeadTurnID: "native-3")
+            #expect(result.reference == source && result.headTurnID == "native-1")
+        default:
+            result = try await peer.session.conversationSnapshot(threadID: "native-source")
+            #expect(result.reference == source && result.headTurnID == "native-3")
+        }
+        #expect(result.workspacePath == canonical)
+        try peer.assertNoImplicitWork()
     }
 }

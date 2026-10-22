@@ -200,7 +200,7 @@ public extension WorkspaceSnapshot {
     private static func threadSortTimestamp(_ thread: CodingThread, mode: ProjectSortMode) -> Double? {
         switch mode {
         case .updatedAt:
-            let user = thread.messages.lazy.filter { $0.role == .user }.compactMap { sortTimestamp($0.createdAt) }.max()
+            let user = thread.visibleMessages.lazy.filter { $0.role == .user }.compactMap { sortTimestamp($0.createdAt) }.max()
             let queued = thread.queuedTurns.lazy.compactMap { sortTimestamp($0.createdAt) }.max()
             return [user, queued].compactMap { $0 }.max() ?? sortTimestamp(thread.updatedAt) ?? sortTimestamp(thread.createdAt)
         case .createdAt: return sortTimestamp(thread.createdAt)

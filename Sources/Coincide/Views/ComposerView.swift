@@ -10,6 +10,7 @@ struct ComposerView: View {
     let busy: Bool
     let submitting: Bool
     let hasAttachments: Bool
+    var historyLocked = false
     let attach: () -> Void
     var referenceFile: (() -> Void)? = nil
     let importProviders: ([NSItemProvider]) -> Void
@@ -18,7 +19,7 @@ struct ComposerView: View {
     let stop: () -> Void
     @FocusState private var editorFocused: Bool
     @State private var dropTargeted = false
-    private var canSend: Bool { !submitting && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+    private var canSend: Bool { !historyLocked && !submitting && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
     private var height: CGFloat { min(150, max(40, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -55,6 +56,7 @@ struct ComposerView: View {
                     }
                 } label: { Label(permission.title, systemImage: "slider.horizontal.3").font(.caption) }
                 .menuStyle(.borderlessButton).fixedSize()
+                .disabled(historyLocked)
                 }
                 Spacer()
                 Text("⇧ Return for a new line").font(.caption2).foregroundStyle(.tertiary)

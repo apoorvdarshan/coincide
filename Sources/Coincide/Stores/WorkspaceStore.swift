@@ -47,6 +47,16 @@ private struct WorktreeOptionsRead {
     let task: Task<WorktreeSetupOptions, any Error>
 }
 
+private struct ConversationHistoryRead {
+    let threadID: UUID
+    let task: Task<ConversationHistoryReview, any Error>
+}
+
+private struct ConversationHistoryInspection {
+    let threadID: UUID
+    let task: Task<WorkspaceCommandReceipt, any Error>
+}
+
 @MainActor private final class WeakTerminalStore {
     weak var value: TerminalWorkspaceStore?
     init(_ value: TerminalWorkspaceStore) { self.value = value }
@@ -62,6 +72,9 @@ final class WorkspaceStore {
     var snapshot = WorkspaceSnapshot()
     var selectedThreadID: UUID? {
         didSet {
+            if selectedThreadID != oldValue {
+                historyNavigationRequests = historyNavigationRequests.filter { $0.value == selectedThreadID }
+            }
             guard !isLoading, !terminating, selectedThreadID != oldValue,
                   selectedThreadID.map({ id in snapshot.threads.contains { $0.id == id } }) ?? true else { return }
             sendCommand(.selectConversation(threadID: selectedThreadID))
@@ -105,6 +118,11 @@ final class WorkspaceStore {
     private(set) var availableExternalEditors: [ExternalEditorDescriptor] = []
     private var retryingProjectClones: Set<UUID> = []
     private var respondingToPostRunCheckpoints: Set<UUID> = []
+    private var historyReviewReads: [UUID: ConversationHistoryRead] = [:]
+    private var acceptingHistoryThreads: Set<UUID> = []
+    private var historyNavigationRequests: [UUID: UUID] = [:]
+    private var historyInspections: [UUID: ConversationHistoryInspection] = [:]
+    private var recallingHistoryPrompts: Set<UUID> = []
     private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
     private var lastSequence: Int64 = -1
     private var terminating = false
@@ -236,7 +254,7 @@ final class WorkspaceStore {
     }
     var visibleThreads: [CodingThread] {
         snapshot.threads.filter {
-            $0.isArchived == showArchived && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.messages.contains { $0.text.localizedCaseInsensitiveContains(search) })
+            $0.isArchived == showArchived && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.visibleMessages.contains { $0.text.localizedCaseInsensitiveContains(search) })
         }.sorted { $0.isPinned != $1.isPinned ? $0.isPinned : $0.updatedAt > $1.updatedAt }
     }
     var orderedProjects: [WorkspaceProject] { snapshot.orderedProjects }
@@ -461,6 +479,7 @@ final class WorkspaceStore {
         closeUnreferencedFileServices(previous: previous)
         if !removedThreads.isEmpty || !removedProjects.isEmpty { reconcileRemovedResources(threadIDs: removedThreads, projectIDs: removedProjects) }
         if let error = update.error, !terminating { errorMessage = error }
+        openAppliedHistoryForks()
     }
     private func reconcileRemovedResources(threadIDs: Set<UUID>, projectIDs: Set<UUID>) {
         for id in threadIDs {
@@ -469,10 +488,13 @@ final class WorkspaceStore {
         let imports = attachmentImportTasks.compactMap { key, task in attachmentImportOwners[key].map { threadIDs.contains($0) } == true ? task : nil }
         let worktrees = worktreeTasks.filter { threadIDs.contains($0.key) }.map(\.value)
         let worktreeReads = worktreeOptionsReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
+        let historyReads = historyReviewReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
+        let historyChecks = historyInspections.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let scriptReads = projectScriptService?.invalidate(threadIDs: threadIDs) ?? []
         let retries = projectCloneRetryTasks.filter { projectIDs.contains($0.key) }.map(\.value)
         for task in imports { task.cancel() }; for task in worktrees { task.cancel() }; for task in retries { task.cancel() }
         for task in worktreeReads { task.cancel() }
+        for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }
         let terminals = terminalStores.values.compactMap(\.value)
         terminalStores = terminalStores.filter { $0.value.value != nil }
         let closingTerminals = terminals.flatMap { $0.remove(threadIDs: threadIDs) }
@@ -496,6 +518,7 @@ final class WorkspaceStore {
             for task in imports { await task.value }
             for task in worktrees { _ = await task.result }
             for task in worktreeReads { _ = await task.result }
+            for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
             for task in scriptReads { await task.value }
             for task in retries { await task.value }
             for terminal in closingTerminals { await terminal.waitForClose() }
@@ -764,7 +787,8 @@ final class WorkspaceStore {
     func submit(_ text: String, threadID id: UUID) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
-              !preparingWorkspaces.contains(id), !isImportingAttachments(id) else { return Task { false } }
+              !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
+              !snapshot.isConversationHistoryLocked(threadID: id) else { return Task { false } }
         let executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.provider.executable
         guard !executable.isEmpty, ProcessChannel.findExecutable(executable) != nil else {
             errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
@@ -944,6 +968,127 @@ final class WorkspaceStore {
               latest.postRun?.receipt == checkpoints.postRun?.receipt else { throw CancellationError() }
         return result
     }
+    func conversationHistoryOperation(_ id: UUID) -> ConversationHistoryOperation? {
+        snapshot.conversationHistoryOperations?.first { $0.id == id }
+    }
+    func conversationHistoryOperations(threadID: UUID) -> [ConversationHistoryOperation] {
+        Array((snapshot.conversationHistoryOperations ?? []).filter { $0.review.sourceThreadID == threadID }.reversed())
+    }
+    func conversationHistoryUnavailableReason(threadID: UUID, runID: UUID, kind: ConversationHistoryKind) -> String? {
+        guard let thread = thread(threadID), let run = thread.runHistory?.first(where: { $0.id == runID }) else {
+            return String(localized: "This recorded run is no longer available.")
+        }
+        if run.removedByHistoryOperationID != nil { return String(localized: "This run was removed from the current conversation by a rewind.") }
+        if run.messageAttributionVersion != 1 || !run.status.isTerminal {
+            return String(localized: "This run does not have a verified completed transcript boundary.")
+        }
+        if snapshot.isConversationHistoryLocked(threadID: threadID) || acceptingHistoryThreads.contains(threadID) {
+            return String(localized: "Finish or inspect the pending conversation history action first.")
+        }
+        if thread.isArchived { return String(localized: "Unarchive this conversation before changing its history.") }
+        if !snapshot.canReviewConversationHistory(threadID: threadID) || !canEditWorkspace(thread.workspacePath) {
+            return String(localized: "Finish the current turn, queued messages, questions and workspace setup before changing conversation history.")
+        }
+        return snapshot.conversationHistoryUnavailableReason(threadID: threadID, runID: runID, kind: kind)
+    }
+    func reviewConversationHistory(threadID: UUID, runID: UUID, kind: ConversationHistoryKind) async throws -> ConversationHistoryReview {
+        guard !terminating, let engine, let captured = thread(threadID),
+              conversationHistoryUnavailableReason(threadID: threadID, runID: runID, kind: kind) == nil else { throw CancellationError() }
+        let requestID = UUID()
+        let task = Task { try await engine.reviewConversationHistory(threadID: threadID, runID: runID, kind: kind) }
+        historyReviewReads[requestID] = .init(threadID: threadID, task: task)
+        defer { historyReviewReads.removeValue(forKey: requestID) }
+        let review = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !Task.isCancelled, !terminating, let current = thread(threadID), current.projectID == captured.projectID,
+              current.workspacePath == captured.workspacePath, canEditWorkspace(current.workspacePath),
+              !snapshot.isConversationHistoryLocked(threadID: threadID) else {
+            await engine.discardConversationHistoryReview(reviewID: review.id)
+            throw CancellationError()
+        }
+        return review
+    }
+    func discardConversationHistoryReview(_ id: UUID) {
+        guard let engine else { return }
+        Task { await engine.discardConversationHistoryReview(reviewID: id) }
+    }
+    func beginConversationHistory(_ review: ConversationHistoryReview, title: String? = nil) async throws {
+        let id = review.sourceThreadID
+        guard !terminating, let engine, let captured = thread(id),
+              conversationHistoryUnavailableReason(threadID: id, runID: review.runID, kind: review.kind) == nil,
+              acceptingHistoryThreads.insert(id).inserted else { throw CancellationError() }
+        defer { acceptingHistoryThreads.remove(id) }
+        flushDrafts()
+        if review.kind == .forkAfterRun, selectedThreadID == id { historyNavigationRequests[review.id] = id }
+        let previous = commandTail
+        let task = Task {
+            await previous?.value
+            guard !self.terminating, let current = self.thread(id), current.projectID == captured.projectID,
+                  current.workspacePath == captured.workspacePath, self.canEditWorkspace(current.workspacePath),
+                  !self.snapshot.isConversationHistoryLocked(threadID: id) else { throw CancellationError() }
+            let receipt = try await engine.beginConversationHistory(review, title: title)
+            self.apply(await engine.current())
+            if let rejection = receipt.rejection { throw CoincideError(rejection) }
+        }
+        commandTail = Task { _ = await task.result }
+        do { try await task.value }
+        catch { historyNavigationRequests.removeValue(forKey: review.id); throw error }
+    }
+    private func openAppliedHistoryForks() {
+        for (id, source) in Array(historyNavigationRequests) {
+            guard let operation = conversationHistoryOperation(id) else { continue }
+            if operation.phase == .failed || operation.phase == .unconfirmed { historyNavigationRequests.removeValue(forKey: id); continue }
+            guard operation.phase == .applied, let targetID = operation.review.targetThreadID, let target = thread(targetID) else { continue }
+            historyNavigationRequests.removeValue(forKey: id)
+            guard selectedThreadID == source else { continue }
+            selectedProjectID = target.projectID; showArchived = target.isArchived; selectedThreadID = targetID
+        }
+    }
+    func isInspectingConversationHistory(_ id: UUID) -> Bool { historyInspections[id] != nil }
+    func reconcileConversationHistory(_ id: UUID) async throws {
+        guard !terminating, let engine, let operation = conversationHistoryOperation(id), operation.phase == .unconfirmed,
+              operation.review.kind == .rewindBeforeRun, historyInspections[id] == nil,
+              let source = thread(operation.review.sourceThreadID), canEditWorkspace(source.workspacePath) else { throw CancellationError() }
+        let task = Task { try await engine.reconcileConversationHistory(operationID: id) }
+        historyInspections[id] = .init(threadID: source.id, task: task)
+        defer { historyInspections.removeValue(forKey: id) }
+        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !terminating else { throw CancellationError() }
+        apply(await engine.current())
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+    }
+    func canRecallConversationHistoryPrompt(_ operation: ConversationHistoryOperation) -> Bool {
+        guard operation.phase == .applied, operation.review.kind == .rewindBeforeRun, operation.recalledAt == nil,
+              !snapshot.isConversationHistoryLocked(threadID: operation.review.sourceThreadID),
+              let thread = thread(operation.review.sourceThreadID),
+              let run = thread.runHistory?.first(where: { $0.id == operation.review.runID }), run.origin == .user,
+              let message = thread.messages.first(where: {
+                  $0.id == run.userMessageID && $0.role == .user &&
+                  $0.runReference == .init(threadID: operation.review.sourceThreadID, runID: run.id)
+              }) else { return false }
+        return !message.text.isEmpty || message.attachments?.isEmpty == false
+    }
+    func isRecallingConversationHistoryPrompt(_ id: UUID) -> Bool { recallingHistoryPrompts.contains(id) }
+    func recallConversationHistoryPrompt(_ id: UUID) async throws {
+        guard !terminating, let operation = conversationHistoryOperation(id), canRecallConversationHistoryPrompt(operation),
+              recallingHistoryPrompts.insert(id).inserted else { throw CancellationError() }
+        defer { recallingHistoryPrompts.remove(id) }
+        let threadID = operation.review.sourceThreadID
+        guard let current = thread(threadID), let run = current.runHistory?.first(where: { $0.id == operation.review.runID }),
+              let message = current.messages.first(where: { $0.id == run.userMessageID }) else { throw CancellationError() }
+        flushDrafts()
+        let task = enqueue(.recallConversationHistoryPrompt(operationID: id)) { [weak self] in
+            guard let self, !self.terminating, let latest = self.conversationHistoryOperation(id),
+                  self.canRecallConversationHistoryPrompt(latest), let thread = self.thread(threadID),
+                  self.canEditWorkspace(thread.workspacePath) else { throw CancellationError() }
+        }
+        let receipt = try await task.value
+        if let rejection = receipt.rejection { throw CoincideError(rejection) }
+        // A newer local edit can arrive while the atomic Core command is awaiting
+        // acknowledgment. Append to that live edit rather than restoring an old draft.
+        if let latest = draftOverrides[threadID], !message.text.isEmpty {
+            setDraft(latest.isEmpty ? message.text : latest + "\n\n" + message.text, id: threadID)
+        }
+    }
     func canSettle(_ thread: CodingThread) -> Bool {
         !terminating && snapshot.canSettle(threadID: thread.id) && canEditWorkspace(thread.workspacePath)
     }
@@ -1060,6 +1205,10 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        let historyReads = historyReviewReads.values.map(\.task)
+        let historyChecks = historyInspections.values.map(\.task)
+        for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }
+        for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
         await projectScriptService?.shutdown()
         await externalEditorService?.shutdown()
         let creations = Array(projectCreationTasks.values)

@@ -27,6 +27,7 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
     public var checkpoints: ThreadRunCheckpoints?
     /// Nil on older records: their transcript boundaries must not be guessed.
     public var messageAttributionVersion: Int?
+    public var removedByHistoryOperationID: UUID?
 
     public init(run: ActiveRun, origin: ThreadRunOrigin, userMessageID: String? = nil) {
         id = run.id; self.origin = origin; configuration = run.configuration

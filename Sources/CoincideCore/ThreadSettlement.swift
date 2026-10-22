@@ -71,7 +71,7 @@ extension CodingThread {
 
 extension WorkspaceSnapshot {
     public func canSettle(threadID: UUID) -> Bool {
-        guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, thread.settlement == nil,
+        guard !isConversationHistoryLocked(threadID: threadID), let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, thread.settlement == nil,
               !thread.isBusy, thread.heldPostRunCheckpoint == nil, thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty, workspaceReady(for: thread) else { return false }
         return thread.workspacePreparation?.setup.map { [.succeeded, .skipped].contains($0.phase) } ?? true
     }

@@ -156,7 +156,8 @@ struct SidebarView: View {
             } else if let onSettle {
                 Button("Settle Conversation…") { onSettle(thread) }.disabled(!store.canSettle(thread))
             }
-            Button(thread.isArchived ? "Unarchive" : "Archive") { store.toggleArchive(thread.id) }.disabled(store.isBusy(thread.id))
+            Button(thread.isArchived ? "Unarchive" : "Archive") { store.toggleArchive(thread.id) }
+                .disabled(store.isBusy(thread.id) || store.snapshot.isConversationHistoryLocked(threadID: thread.id))
             Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
                 .disabled(project?.clone.map { !$0.isReady } ?? false)
         }

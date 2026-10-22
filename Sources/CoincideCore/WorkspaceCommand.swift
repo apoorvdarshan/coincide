@@ -73,6 +73,7 @@ public enum WorkspaceCommand: Codable, Sendable, Equatable {
     case resumeThread(threadID: UUID, generationID: UUID)
     case retryPostRunCheckpoint(threadID: UUID, runID: UUID, expectedAttemptID: UUID)
     case continueAfterPostRunCheckpoint(threadID: UUID, runID: UUID, expectedAttemptID: UUID)
+    case recallConversationHistoryPrompt(operationID: UUID)
 }
 
 enum EngineCommand: Codable, Sendable {
@@ -97,10 +98,15 @@ enum EngineCommand: Codable, Sendable {
     case threadResumed(threadID: UUID, generationID: UUID, incarnation: UUID)
     case runCheckpointEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case runCheckpointRecovered(threadID: UUID, runID: UUID, stage: RunCheckpointStage, attemptID: UUID, path: String, incarnation: UUID, receipt: GitCheckpointReceipt)
+    case conversationHistoryAccepted(review: ConversationHistoryReview, title: String?)
+    case conversationHistoryDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
+    case conversationHistoryEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
+    case conversationHistoryReconciled(operationID: UUID, incarnation: UUID, result: ConversationHistoryReconciliation)
 }
 enum EffectResult: Codable, Sendable {
     case succeeded, failed(String), cancelled, stopped, worktreeResolved(GitWorktreePlan), worktreePrepared(GitWorktreeResult), projectScriptResolved(ProjectScriptExecutionPlan?)
     case checkpointResolved(GitCheckpointPlan), checkpointCaptured(GitCheckpointReceipt, cleanupWarning: Bool), checkpointUnavailable
+    case conversationHistoryConfirmed(ProviderConversationSnapshot), conversationHistoryUnconfirmed
 }
 
 struct WorkspaceDecision: Sendable {
@@ -114,7 +120,18 @@ struct WorkspaceDecision: Sendable {
 
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
+        if case .client(let action) = command { try decision.validateConversationHistoryLocks(action) }
         switch command {
+        case .conversationHistoryAccepted(let review, let title):
+            try decision.acceptConversationHistory(review, title: title, now: now)
+        case .conversationHistoryDispatching(let threadID, let operationID, let incarnation):
+            try decision.dispatchConversationHistory(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
+        case .conversationHistoryEffectResult(let request, let result, let incarnation):
+            decision.finishConversationHistory(request, result: result, incarnation: incarnation, now: now)
+        case .conversationHistoryReconciled(let operationID, _, let result):
+            try decision.reconcileConversationHistory(operationID: operationID, result: result, now: now)
+        case .client(.recallConversationHistoryPrompt(let operationID)):
+            try decision.recallConversationHistoryPrompt(operationID: operationID, now: now)
         case .client(.retryPostRunCheckpoint(let threadID, let runID, let expected)):
             try decision.changePostRunCheckpoint(threadID: threadID, runID: runID, expectedAttemptID: expected, retry: true, now: now)
         case .client(.continueAfterPostRunCheckpoint(let threadID, let runID, let expected)):
@@ -128,6 +145,7 @@ struct WorkspaceDecision: Sendable {
                 // newer explicit submit/resume intent, and never starts work itself.
             }
         case .beginWorktreePreparation(let threadID, let request, let expectedSourcePath, let previousAttemptID, _, let reviewSetup):
+            guard !decision.snapshot.isConversationHistoryLocked(threadID: threadID) else { throw WorkspaceCommandError("Finish or inspect this conversation's history action before changing its workspace.") }
             do { try request.validate() } catch { throw WorkspaceCommandError("Choose a valid local worktree destination and branch.") }
             guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
             var thread = decision.snapshot.threads[i]
@@ -571,7 +589,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
+            case .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -652,6 +670,7 @@ struct WorkspaceDecision: Sendable {
         let queued = thread.queuedTurns.removeFirst(); start(queued, in: &thread, now: now)
     }
     private mutating func receive(_ event: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
+        guard !snapshot.isConversationHistoryLocked(threadID: threadID) else { return }
         guard let index = snapshot.threads.firstIndex(where: { $0.id == threadID }), snapshot.threads[index].runtimeID == runtimeID else { return }
         var thread = snapshot.threads[index]
         if case .context(let runID, let inner) = event {
@@ -703,6 +722,7 @@ struct WorkspaceDecision: Sendable {
         case .sessionApprovalDismissed(let id): thread.runtimeRequests.removeAll { $0.id == id && $0.sessionScoped == true }
         case .entity(let update):
             if let i = thread.messages.firstIndex(where: { $0.providerEntity?.key == update.key }) {
+                guard thread.messages[i].removedByHistoryOperationID == nil else { return }
                 let entity = try update.apply(to: thread.messages[i].providerEntity)
                 thread.messages[i].providerEntity = entity
                 if thread.messages[i].role != .user || !thread.messages[i].id.hasPrefix("user-") { thread.messages[i].text = entity.text }
@@ -714,7 +734,9 @@ struct WorkspaceDecision: Sendable {
                 thread.messages.append(message)
             }
         case .associateEntity(let key, let clientID):
-            guard key.type == "user_message", let target = thread.messages.firstIndex(where: { $0.id == clientID && $0.role == .user }) else { return }
+            guard key.type == "user_message", let target = thread.messages.firstIndex(where: { $0.id == clientID && $0.role == .user }),
+                  thread.messages[target].removedByHistoryOperationID == nil,
+                  !thread.messages.contains(where: { $0.providerEntity?.key == key && $0.removedByHistoryOperationID != nil }) else { return }
             guard thread.messages[target].providerEntity == nil || thread.messages[target].providerEntity?.key == key else { throw CoincideError("The agent changed an accepted message identity.") }
             let echoed = thread.messages.firstIndex(where: { $0.providerEntity?.key == key })
             let entity = echoed.flatMap { thread.messages[$0].providerEntity } ?? ProviderEntity(key: key)
@@ -727,12 +749,19 @@ struct WorkspaceDecision: Sendable {
             thread.updateRunRecord()
         case .delta(let itemID, let role, let text):
             guard thread.activeRun != nil else { return }
-            if let i = thread.messages.firstIndex(where: { $0.id == itemID }) { thread.messages[i].text += text }
+            if let i = thread.messages.firstIndex(where: { $0.id == itemID }) {
+                guard thread.messages[i].removedByHistoryOperationID == nil else { return }
+                thread.messages[i].text += text
+            }
             else { thread.appendRunMessage(id: itemID, role: role, text: text) }
         case .message(var message):
             guard thread.activeRun != nil else { return }
+            // Removal markers and run attribution are app-owned audit metadata.
+            message.removedByHistoryOperationID = nil
             if let i = thread.messages.firstIndex(where: { $0.id == message.id }) {
+                guard thread.messages[i].removedByHistoryOperationID == nil else { return }
                 message.runReference = thread.messages[i].runReference
+                message.removedByHistoryOperationID = thread.messages[i].removedByHistoryOperationID
                 thread.messages[i] = message
             } else {
                 message.runReference = thread.activeRun.map { .init(threadID: thread.id, runID: $0.id) }
@@ -776,6 +805,7 @@ struct WorkspaceDecision: Sendable {
         snapshot.threads[index] = thread
     }
     private mutating func finished(_ request: WorkspaceEffectRequest, result: EffectResult, now: Date) {
+        if request.conversationHistoryOperationID != nil { return }
         if request.checkpointOwner != nil { finishCheckpoint(request, result: result, now: now); return }
         if case .projectClone(let projectID, let plan) = request {
             guard let i = snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = snapshot.projects[i].clone,
@@ -784,7 +814,7 @@ struct WorkspaceDecision: Sendable {
             case .succeeded:
                 clone.phase = .completed; clone.error = nil; clone.progress = .init(stage: .checkout, percent: 100, detail: nil, stalled: false)
             case .failed(let message): clone.phase = .failed; clone.error = String(GitService.redactURLs(message).prefix(4_000))
-            case .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: return
+            case .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: return
             case .cancelled, .stopped:
                 clone.phase = clone.cancelRequested ? .cancelled : .interrupted; clone.error = nil
             }
@@ -847,7 +877,7 @@ struct WorkspaceDecision: Sendable {
             snapshot.threads[index] = thread; return
         }
         switch request {
-        case .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
+        case .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
             if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
@@ -889,7 +919,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
-        case .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
+        case .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
         case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

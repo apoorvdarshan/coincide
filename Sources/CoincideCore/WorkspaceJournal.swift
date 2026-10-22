@@ -8,6 +8,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case projectsOrdered([UUID])
     case acpAgentsReplaced([ACPAgentConfiguration])
     case sidebarPreferencesChanged(SidebarPreferences?)
+    case conversationHistoryOperationsReplaced([ConversationHistoryOperation]?)
     case threadMetadataUpserted(CodingThread)
     case threadRemoved(UUID)
     case threadsOrdered([UUID])
@@ -17,6 +18,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
 
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
+        case .conversationHistoryOperationsReplaced(let operations): snapshot.conversationHistoryOperations = operations
         case .sidebarPreferencesChanged(let preferences): snapshot.sidebarPreferences = preferences
         case .acpAgentsReplaced(let agents): snapshot.acpAgents = agents
         case .imported(let value): try WorkspaceJournal.validate(value); snapshot = value
@@ -87,6 +89,7 @@ public enum WorkspaceJournal {
               }) else {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
+        try snapshot.validateConversationHistory()
         var cloneIDs: Set<UUID> = []
         for project in snapshot.projects {
             try validateRepositoryIdentity(project.repositoryIdentity, project: project)
@@ -167,6 +170,7 @@ public enum WorkspaceJournal {
     public static func changes(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) throws -> [WorkspaceEvent] {
         try validate(previous); try validate(next)
         var events: [WorkspaceEvent] = []
+        if previous.conversationHistoryOperations != next.conversationHistoryOperations { events.append(.conversationHistoryOperationsReplaced(next.conversationHistoryOperations)) }
         if previous.sidebarPreferences != next.sidebarPreferences { events.append(.sidebarPreferencesChanged(next.sidebarPreferences)) }
         if previous.acpAgents != next.acpAgents { events.append(.acpAgentsReplaced(next.acpAgents)) }
         let oldProjects = Dictionary(uniqueKeysWithValues: previous.projects.map { ($0.id, $0) })
@@ -187,7 +191,7 @@ public enum WorkspaceJournal {
                 if index < oldMessages.count {
                     let old = oldMessages[index]
                     if old == message { continue }
-                    if old.id == message.id, old.role == message.role, old.createdAt == message.createdAt, old.attachments == message.attachments, old.providerEntity == message.providerEntity, old.submissionError == message.submissionError, old.runReference == message.runReference, message.text.utf8.starts(with: old.text.utf8) {
+                    if old.id == message.id, old.role == message.role, old.createdAt == message.createdAt, old.attachments == message.attachments, old.providerEntity == message.providerEntity, old.submissionError == message.submissionError, old.runReference == message.runReference, old.removedByHistoryOperationID == message.removedByHistoryOperationID, message.text.utf8.starts(with: old.text.utf8) {
                         let tail = String(decoding: message.text.utf8.dropFirst(old.text.utf8.count), as: UTF8.self)
                         events.append(.messageTextAppended(threadID: thread.id, index: index, messageID: message.id, text: tail))
                         continue

@@ -749,6 +749,222 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
+    @MainActor func testNativeRunHistoryForkRewindAndRecallPreserveSourceDraftAndFiles() throws {
+        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "history")
+        let app = fixture.app, root = fixture.root
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
+        let project = root.appendingPathComponent("Native History", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let readme = project.appendingPathComponent("README.md"), bytes = Data("Synthetic native conversation history fixture\n".utf8)
+        try bytes.write(to: readme)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Native history fixture"]] {
+            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "history-git-\(arguments[0])")
+        }
+        let originalHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "history-original-head")
+        let headURL = project.appendingPathComponent(".git/HEAD"), headBytes = try Data(contentsOf: headURL)
+        let state = root.appendingPathComponent("history-peer.json"), wire = root.appendingPathComponent("history-peer-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "threads": [:], "nextTurn": 0]).write(to: state)
+        let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_history_ui", withExtension: "py"))
+        let peer = root.appendingPathComponent("codex_history_ui.py")
+        try Data(contentsOf: bundledPeer).write(to: peer)
+        let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
+        for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        let executable = bin.appendingPathComponent("codex")
+        let command = [python, peer.path, state.path, wire.path].map(shellQuoted).joined(separator: " ")
+        try ("#!/bin/sh\nexec " + command + "\n").write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["CODEX_HOME"] = home.path
+        addTeardownBlock { @MainActor [weak self] in
+            if let data = try? Data(contentsOf: wire), let text = String(data: data, encoding: .utf8) {
+                let receipt = XCTAttachment(string: text); receipt.name = "history-offline-provider-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
+            }
+        }
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        try openProject(project, in: app)
+        app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let sourceIdentifier = try selectedThreadIdentifier(in: app)
+        let prompts = (1...3).map { "Offline history prompt \($0)" }
+        for (index, prompt) in prompts.enumerated() {
+            XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
+            composer.click(); composer.typeText(prompt)
+            app.typeKey(.return, modifierFlags: .command)
+            XCTAssertTrue(app.staticTexts["Offline history reply \(index + 1)"].waitForExistence(timeout: 20))
+        }
+        let originalDraft = "Keep this source draft during a native fork"
+        composer.click(); composer.typeText(originalDraft)
+        try openNativeRunHistory(in: app)
+        let thirdRun = try revealNativeHistoryRun(prompt: prompts[2], in: app)
+        let secondRun = try revealNativeHistoryRun(prompt: prompts[1], in: app)
+        let firstRun = try revealNativeHistoryRun(prompt: prompts[0], in: app)
+        XCTAssertEqual(Set([firstRun, secondRun, thirdRun]).count, 3)
+        capture(app, name: "history-three-completed-owned-runs")
+        try nativeHistoryDone(in: app).click()
+        try openNativeRunHistory(in: app)
+        _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
+        var reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "fork", in: app)
+        var confirm = reviewOwner.buttons["conversation-history-confirm"], close = reviewOwner.buttons["conversation-history-close"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Workspace files and staging stay as they are."].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", prompts[1])).firstMatch.exists)
+        XCTAssertTrue(close.isEnabled && close.isHittable)
+        close.click() // Cancel performs only reads.
+        XCTAssertEqual(try historyWire(wire).filter { $0["method"] as? String == "thread/fork" }.count, 0)
+        reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "fork", in: app)
+        confirm = reviewOwner.buttons["conversation-history-confirm"]; close = reviewOwner.buttons["conversation-history-close"]
+        let title = reviewOwner.textFields["conversation-history-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10)); title.click(); title.typeKey("a", modifierFlags: .command); title.typeText("GUI reviewed fork")
+        XCTAssertTrue(confirm.isEnabled && confirm.isHittable)
+        let forkReview = XCTAttachment(screenshot: app.windows.firstMatch.screenshot()); forkReview.name = "history-native-fork-review"; forkReview.lifetime = .keepAlways; add(forkReview)
+        let sourceHistoryDone = try nativeHistoryDone(in: app)
+        confirm.click()
+        XCTAssertTrue(waitForAbsence(sourceHistoryDone, timeout: 20), "An applied fork navigates to its new target and closes the source history.")
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
+        let targetIdentifier = try selectedThreadIdentifier(in: app)
+        XCTAssertNotEqual(sourceIdentifier, targetIdentifier)
+        XCTAssertTrue(app.staticTexts["Offline history reply 2"].exists)
+        XCTAssertFalse(app.staticTexts["Offline history reply 3"].exists)
+        assertConversationWorkspace(app, path: project.path)
+        capture(app, name: "history-fork-target-keeps-reviewed-prefix")
+        selectThread(sourceIdentifier, in: app)
+        XCTAssertTrue(waitForValue(composer, value: originalDraft, timeout: 10))
+        XCTAssertTrue(app.staticTexts["Offline history reply 3"].waitForExistence(timeout: 5))
+        try openNativeRunHistory(in: app)
+        _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
+        reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "rewind", in: app)
+        confirm = reviewOwner.buttons["conversation-history-confirm"]; close = reviewOwner.buttons["conversation-history-close"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10)); XCTAssertTrue(close.isEnabled); close.click()
+        XCTAssertEqual(try historyWire(wire).filter { $0["method"] as? String == "thread/revert" }.count, 0)
+        try nativeHistoryDone(in: app).click()
+        let newerDraft = "Newer source draft before explicit rewind"
+        composer.click(); composer.typeKey("a", modifierFlags: .command); composer.typeText(newerDraft)
+        try openNativeRunHistory(in: app)
+        _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
+        reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "rewind", in: app)
+        confirm = reviewOwner.buttons["conversation-history-confirm"]; close = reviewOwner.buttons["conversation-history-close"]
+        let reviewed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: confirm)
+        XCTAssertEqual(XCTWaiter.wait(for: [reviewed], timeout: 10), .completed)
+        XCTAssertTrue(confirm.isHittable)
+        capture(app, name: "history-native-rewind-review-keeps-files-and-draft")
+        confirm.click()
+        let rewound = app.staticTexts.matching(identifier: "conversation-history-operation-status")
+            .matching(NSPredicate(format: "label == %@", "Conversation rewound")).firstMatch
+        XCTAssertTrue(rewound.waitForExistence(timeout: 20))
+        XCTAssertTrue(close.isEnabled && close.isHittable); close.click()
+        for (run, prompt) in [(thirdRun, prompts[2]), (secondRun, prompts[1]), (firstRun, prompts[0])] {
+            _ = try revealNativeHistoryRun(prompt: prompt, in: app)
+            let removed = app.staticTexts["run-history-removed-\(run)"]
+            XCTAssertEqual(removed.exists, run != firstRun)
+            if run != firstRun { XCTAssertFalse(app.menuButtons["run-history-actions-\(run)"].isEnabled) }
+        }
+        capture(app, name: "history-rewind-retains-removed-run-audit")
+        try nativeHistoryDone(in: app).click()
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), sourceIdentifier)
+        XCTAssertTrue(waitForValue(composer, value: newerDraft, timeout: 5))
+        XCTAssertTrue(app.staticTexts["Offline history reply 1"].exists)
+        XCTAssertFalse(app.staticTexts["Offline history reply 2"].exists)
+        XCTAssertFalse(app.staticTexts["Offline history reply 3"].exists)
+        let recall = app.buttons["conversation-history-recall"]
+        XCTAssertTrue(recall.waitForExistence(timeout: 5)); XCTAssertTrue(recall.isEnabled && recall.isHittable); recall.click()
+        let recalledDraft = newerDraft + "\n\n" + prompts[1]
+        XCTAssertTrue(waitForValue(composer, value: recalledDraft, timeout: 10))
+        XCTAssertTrue(waitForAbsence(recall, timeout: 5))
+        capture(app, name: "history-explicit-recall-appends-to-latest-composer")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15)); app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(waitForValue(composer, value: recalledDraft, timeout: 10))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), sourceIdentifier)
+        XCTAssertTrue(app.staticTexts["Offline history reply 1"].exists)
+        XCTAssertFalse(app.staticTexts["Offline history reply 2"].exists)
+        selectThread(targetIdentifier, in: app)
+        XCTAssertTrue(waitForValue(composer, value: "", timeout: 5))
+        XCTAssertTrue(app.staticTexts["Offline history reply 2"].exists)
+        XCTAssertFalse(app.staticTexts["Offline history reply 3"].exists)
+        selectThread(sourceIdentifier, in: app)
+        try openNativeRunHistory(in: app)
+        _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
+        XCTAssertTrue(app.staticTexts["run-history-removed-\(secondRun)"].exists)
+        try nativeHistoryDone(in: app).click()
+        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Collapse Native History"], selectedConversation: threadRow(sourceIdentifier, in: app))
+        capture(app, name: "history-reopen-preserves-fork-source-audit-and-draft")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        let frames = try historyWire(wire)
+        XCTAssertEqual(frames.filter { $0["method"] as? String == "turn/start" }.count, 3)
+        let forks = frames.filter { $0["method"] as? String == "thread/fork" }, rewinds = frames.filter { $0["method"] as? String == "thread/revert" }
+        XCTAssertEqual(forks.count, 1); XCTAssertEqual(rewinds.count, 1)
+        XCTAssertEqual((forks.first?["params"] as? [String: Any])?["lastTurnId"] as? String, "ui-turn-2")
+        XCTAssertEqual((rewinds.first?["params"] as? [String: Any])?["beforeTurnId"] as? String, "ui-turn-2")
+        XCTAssertEqual(try Data(contentsOf: readme), bytes)
+        XCTAssertEqual(try Data(contentsOf: headURL), headBytes)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "history-preserved-final-head"), originalHead)
+    }
+
+    @MainActor private func openNativeRunHistory(in app: XCUIApplication) throws {
+        app.descendants(matching: .any).matching(identifier: "conversation-workspace").element.click()
+        let history = app.menuItems["Run History…"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5)); XCTAssertTrue(history.isEnabled); history.click()
+        XCTAssertTrue(app.sheets.containing(.button, identifier: "run-history-done").firstMatch.waitForExistence(timeout: 10))
+        _ = try nativeHistoryDone(in: app)
+    }
+
+    @MainActor private func revealNativeHistoryRun(prompt: String, in app: XCUIApplication) throws -> String {
+        let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "run-history-record-"))
+        let scroll = app.scrollViews["run-history-records"]
+        XCTAssertTrue(scroll.exists); scroll.scroll(byDeltaX: 0, deltaY: 10_000)
+        for _ in 0..<5 {
+            if let row = rows.allElementsBoundByIndex.first(where: { $0.staticTexts.matching(NSPredicate(format: "label == %@", prompt)).firstMatch.exists }) {
+                let id = String(row.identifier.dropFirst("run-history-record-".count))
+                let actions = app.menuButtons["run-history-actions-\(id)"]
+                let frame = actions.frame
+                // The prompt can be visible while this row's lower action menu
+                // is still clipped. Removed-run menus remain visible but disabled.
+                if frame.width > 0 && frame.height > 0 && scroll.frame.contains(frame) { return id }
+            }
+            XCTAssertTrue(scroll.exists); scroll.scroll(byDeltaX: 0, deltaY: -150)
+        }
+        let tree = XCTAttachment(string: app.debugDescription); tree.name = "history-missing-run-accessibility-tree"; tree.lifetime = .keepAlways; add(tree)
+        XCTFail("The native Run History must expose the owned run for \(prompt).")
+        throw NSError(domain: "CoincideDesktopUITests", code: 1)
+    }
+
+    @MainActor private func openNativeHistoryAction(runID: String, kind: String, in app: XCUIApplication) throws -> XCUIElement {
+        let actions = app.menuButtons["run-history-actions-\(runID)"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: actions)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed)
+        XCTAssertTrue(actions.isHittable); actions.click()
+        let item = app.menuItems["run-history-\(kind)-\(runID)"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5)); XCTAssertTrue(item.isEnabled && item.isHittable); item.click()
+        XCTAssertTrue(app.sheets.containing(.button, identifier: "conversation-history-close").firstMatch.waitForExistence(timeout: 10))
+        return try nativeHistorySheet(owning: "conversation-history-close", in: app)
+    }
+
+    @MainActor private func nativeHistoryDone(in app: XCUIApplication) throws -> XCUIElement {
+        try nativeHistorySheet(owning: "run-history-done", in: app).buttons["run-history-done"]
+    }
+
+    @MainActor private func nativeHistorySheet(owning identifier: String, in app: XCUIApplication) throws -> XCUIElement {
+        // Native default buttons can also appear in the Touch Bar. A nested
+        // review can match both its own sheet and the outer history ancestor.
+        let candidates = app.sheets.containing(.button, identifier: identifier).allElementsBoundByIndex
+        let owners = candidates.filter { $0.sheets.containing(.button, identifier: identifier).count == 0 }
+        XCTAssertEqual(owners.count, 1, "The control must belong to one innermost native sheet: \(identifier).")
+        return try XCTUnwrap(owners.first)
+    }
+
+    private func historyWire(_ path: URL) throws -> [[String: Any]] {
+        guard FileManager.default.fileExists(atPath: path.path) else { return [] }
+        return try Data(contentsOf: path).split(separator: 10).map { line in
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+        }
+    }
+
+    private func shellQuoted(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
     @MainActor private func prepareApplication(appearance: String, diagnosticPrefix: String? = nil) throws -> (app: XCUIApplication, root: URL, gitPath: String, configuration: URL) {
         let environment = ProcessInfo.processInfo.environment
         let appPath = try XCTUnwrap(environment["COINCIDE_UI_APP_PATH"], "The CI harness must supply the staged app.")

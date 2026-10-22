@@ -17,11 +17,12 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_eight_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=8, passedTests=8, failedTests=0, skippedTests=0)), 8)
+    def test_results_require_nine_real_tests_without_silent_skips(self):
+        self.assertEqual(ci.verify_results(dict(totalTestCount=9, passedTests=9, failedTests=0, skippedTests=0)), 9)
         for summary in [dict(totalTestCount=0, passedTests=0, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=8, passedTests=7, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=8, passedTests=7, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=9, passedTests=8, failedTests=0, skippedTests=1),
+                        dict(totalTestCount=9, passedTests=8, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=8, passedTests=8, failedTests=0, skippedTests=0),
                         dict(totalTestCount=7, passedTests=7, failedTests=0, skippedTests=0),
                         dict(totalTestCount=6, passedTests=6, failedTests=0, skippedTests=0),
                         dict(totalTestCount=5, passedTests=5, failedTests=0, skippedTests=0),
@@ -47,7 +48,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
                 "TestHostPath": "__TESTROOT__/Debug/Runner.app", "TestBundlePath": "__TESTHOST__/PlugIns/Tests.xctest",
                 "DependentProductPaths": ["__TESTROOT__/Debug/Placeholder.app", "__TESTROOT__/Debug/Runner.app"],
                 "EnvironmentVariables": {"EXISTING": "kept"}}]}]}
-            value = ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, git)
+            value = ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, git, git)
             target = value["TestConfigurations"][0]["TestTargets"][0]
             self.assertEqual(target["UITargetAppPath"], str(app))
             self.assertEqual(target["DependentProductPaths"], [str(app), "__TESTROOT__/Debug/Runner.app"])
@@ -55,32 +56,36 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertEqual(target["EnvironmentVariables"]["EXISTING"], "kept")
             self.assertEqual(target["EnvironmentVariables"]["COINCIDE_UI_APP_PATH"], str(app))
             self.assertEqual(target["EnvironmentVariables"]["COINCIDE_UI_GIT_PATH"], str(git))
+            self.assertEqual(target["EnvironmentVariables"]["COINCIDE_UI_PYTHON_PATH"], str(git))
             self.assertNotIn("COINCIDE_UI_TEST_ROOT_BASE", target["EnvironmentVariables"])
             self.assertNotIn("COINCIDE_UI_ARTIFACTS", target["EnvironmentVariables"])
             self.assertEqual(target["UITargetAppEnvironmentVariables"]["COINCIDE_UI_TEST_ROOT"], str(bootstrap))
             legacy = {ci.TEST_TARGET: copy.deepcopy(original["TestConfigurations"][0]["TestTargets"][0]), "__xctestrun_metadata__": {"FormatVersion": 1}}
-            legacy_value = ci.prepare_configuration(legacy, app, bootstrap, git)
+            legacy_value = ci.prepare_configuration(legacy, app, bootstrap, git, git)
             self.assertEqual(legacy_value[ci.TEST_TARGET]["UITargetAppPath"], str(app))
             info.write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.apoorvdarshan.coincide"}))
             with self.assertRaises(ValueError):
-                ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, git)
+                ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, git, git)
             info.write_bytes(plistlib.dumps({"CFBundleIdentifier": ci.TEST_BUNDLE_ID}))
             duplicate = copy.deepcopy(original)
             duplicate["TestConfigurations"][0]["TestTargets"] *= 2
             with self.assertRaises(ValueError):
-                ci.prepare_configuration(duplicate, app, bootstrap, git)
+                ci.prepare_configuration(duplicate, app, bootstrap, git, git)
             other_target = copy.deepcopy(original)
             other_target["TestConfigurations"][0]["TestTargets"].append({"BlueprintName": "UnexpectedUITests"})
             with self.assertRaises(ValueError):
-                ci.prepare_configuration(other_target, app, bootstrap, git)
+                ci.prepare_configuration(other_target, app, bootstrap, git, git)
             with self.assertRaises(ValueError):
-                ci.prepare_configuration(copy.deepcopy(original), app, root, git)
+                ci.prepare_configuration(copy.deepcopy(original), app, root, git, git)
             for invalid_git in ("relative/git", root / "missing-git", root, "/usr/bin/git"):
                 with self.assertRaises(ValueError):
-                    ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, invalid_git)
+                    ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, invalid_git, git)
+            for invalid_python in ("relative/python", root / "missing-python", root, "/usr/bin/python3"):
+                with self.assertRaises(ValueError):
+                    ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, git, invalid_python)
             git.chmod(0o600)
             with self.assertRaises(ValueError):
-                ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, git)
+                ci.prepare_configuration(copy.deepcopy(original), app, bootstrap, git, git)
 
 
 if __name__ == "__main__":

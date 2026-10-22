@@ -127,12 +127,22 @@ func installedOpenCodeACPHandshakeAndModelDiscovery() async throws {
     } catch { await session.close(); throw error }
 }
 
-private func waitACP(_ predicate: () async throws -> Bool) async throws {
+private func waitACP(file: String = #fileID, line: Int = #line, _ predicate: () async throws -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(10)
     while try await !predicate() {
-        guard ContinuousClock.now < deadline else { throw CoincideError("ACP runtime fixture timed out") }
+        guard ContinuousClock.now < deadline else { throw CoincideError("ACP runtime fixture timed out at \(file):\(line)") }
         try await Task.sleep(for: .milliseconds(10))
     }
+}
+
+private func completedACPRunReleased(_ snapshot: WorkspaceSnapshot, threadID: UUID, runID: UUID) -> Bool {
+    guard let thread = snapshot.threads.first(where: { $0.id == threadID }), thread.state == .idle,
+          thread.activeRun == nil, thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty,
+          let record = thread.runHistory?.first(where: { $0.id == runID }), record.status == .completed,
+          record.checkpoints?.providerReleased == true,
+          record.checkpoints?.postRun?.phase == .unavailable,
+          record.checkpoints?.postRun?.unavailableReason == .notRepository else { return false }
+    return snapshot.providerReady(for: thread)
 }
 
 @Test(.timeLimit(.minutes(1))) func nativeACPEngineSettlesStartsWhilePermissionsWaitAndResumesItsSavedSession() async throws {
@@ -148,26 +158,35 @@ private func waitACP(_ predicate: () async throws -> Bool) async throws {
         try await engine.dispatch(.submit(threadID: thread.id, text: "first"), id: first)
         try await waitACP { await engine.current().snapshot.threads[0].runtimeRequests.count == 1 }
         let database = try WorkspaceDatabase(url: url)
-        try await waitACP { try await database.effects(commandID: first).first?.status == .succeeded }
+        try await waitACP {
+            try await database.effects().contains { effect in
+                guard case .providerStart(let threadID, let runID, _, _, _) = effect.request else { return false }
+                return threadID == thread.id && runID == first && effect.status == .succeeded
+            }
+        }
         #expect(await engine.current().snapshot.threads[0].state == .awaitingApproval)
-        try await engine.dispatch(.submit(threadID: thread.id, text: "second"))
+        let second = UUID()
+        try await engine.dispatch(.submit(threadID: thread.id, text: "second"), id: second)
         try await engine.dispatch(.respond(threadID: thread.id, requestID: .string("opaque-17"), response: .option("opaque-once")))
         try await waitACP {
             let current = await engine.current().snapshot.threads[0]
             return current.messages.filter({ $0.role == .user }).count == 2 && current.runtimeRequests.count == 1
         }
         try await engine.dispatch(.respond(threadID: thread.id, requestID: .string("opaque-17"), response: .decision(false)))
-        try await waitACP { await engine.current().snapshot.threads[0].state == .idle }
+        // Provider idle precedes the post-run checkpoint acknowledgement. Closing
+        // here too early interrupts that checkpoint and holds the restored FIFO.
+        try await waitACP { completedACPRunReleased(await engine.current().snapshot, threadID: thread.id, runID: second) }
         #expect(await engine.current().snapshot.threads[0].messages.filter({ $0.role == .assistant }).count == 4)
         await engine.shutdown()
         let reopened = try WorkspaceEngine(url: url)
         do {
             let restored = try await reopened.load()
             #expect(restored.acpAgents == [agent] && restored.threads[0].providerThreadID == "fixture-session")
-            try await reopened.dispatch(.submit(threadID: thread.id, text: "third"))
+            let third = UUID()
+            try await reopened.dispatch(.submit(threadID: thread.id, text: "third"), id: third)
             try await waitACP { await reopened.current().snapshot.threads[0].runtimeRequests.count == 1 }
             try await reopened.dispatch(.respond(threadID: thread.id, requestID: .string("opaque-17"), response: .option("opaque-once")))
-            try await waitACP { await reopened.current().snapshot.threads[0].state == .idle }
+            try await waitACP { completedACPRunReleased(await reopened.current().snapshot, threadID: thread.id, runID: third) }
             let completed = await reopened.current().snapshot.threads[0]
             #expect(completed.messages.filter({ $0.role == .user }).count == 3)
             #expect(completed.messages.filter({ $0.role == .assistant }).count == 6)

@@ -75,6 +75,10 @@ public actor CodexSession: ProviderSession {
         try ProviderHistoryValidation.id(threadID); try await connectForHistory()
         return try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).capabilities(threadID: threadID)
     }
+    public func conversationSnapshot(threadID: String) async throws -> ProviderConversationSnapshot {
+        try ProviderHistoryValidation.id(threadID); try await connectForHistory()
+        return try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).snapshot(threadID: threadID)
+    }
     public func historyPage(threadID: String, cursor: String? = nil, limit: Int = 100) async throws -> ProviderHistoryPage {
         try ProviderHistoryValidation.id(threadID); try await connectForHistory()
         return try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).page(threadID: threadID, cursor: cursor, limit: limit)
@@ -88,6 +92,7 @@ public actor CodexSession: ProviderSession {
         do {
             let result = try await CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).fork(source: source, boundary: boundary, configuration: configuration)
             try Task.checkCancellation(); guard !shuttingDown else { throw CancellationError() }
+            sendGeneration += 1
             threadID = result.reference.nativeThreadID; turnID = nil; completedTurnIDs = []
             return result
         } catch {
@@ -105,6 +110,7 @@ public actor CodexSession: ProviderSession {
             try Task.checkCancellation(); guard !shuttingDown else { throw CancellationError() }
             // Old delayed notifications retain their old run scope until an explicit
             // next send installs a new one; rewind never turns them into idle events.
+            sendGeneration += 1
             threadID = result.reference.nativeThreadID; turnID = nil; completedTurnIDs = []
             return result
         } catch {

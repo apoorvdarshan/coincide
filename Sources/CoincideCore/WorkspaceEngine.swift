@@ -1,9 +1,266 @@
 import Foundation
+import CryptoKit
 
 public struct WorkspaceUpdate: Sendable {
     public var snapshot: WorkspaceSnapshot
     public var sequence: Int64
     public var error: String?
+}
+
+extension WorkspaceEngine {
+    private struct ReviewedNativeHistory: Sendable {
+        let snapshot: ProviderConversationSnapshot
+        let boundary: ProviderHistoryBoundary
+        let resultingHead: String?
+    }
+
+    /// A review performs only reads. Its ephemeral token is bound to this engine
+    /// incarnation and to the complete returned value, not just a caller's UUID.
+    public func reviewConversationHistory(threadID: UUID, runID: UUID, kind: ConversationHistoryKind) async throws -> ConversationHistoryReview {
+        _ = try await load()
+        if await waitForRemovalCommit(threadID: threadID) { throw CancellationError() }
+        if let reason = revision.snapshot.conversationHistoryUnavailableReason(threadID: threadID, runID: runID, kind: kind) {
+            throw WorkspaceCommandError(reason)
+        }
+        guard !closing, !stoppingEffects, fatalError == nil,
+              revision.snapshot.canReviewConversationHistory(threadID: threadID),
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              let incarnation = threadIncarnations[threadID],
+              let record = thread.runHistory?.first(where: { $0.id == runID && $0.removedByHistoryOperationID == nil }),
+              record.status.isTerminal, record.providerThreadID == thread.providerThreadID,
+              record.configuration.provider == thread.provider,
+              record.configuration.workspacePath == thread.workspacePath else {
+            throw WorkspaceCommandError("Finish this conversation's work and select a run with verified provider history before continuing.")
+        }
+        let fingerprint = try revision.snapshot.historySourceFingerprint(threadID: threadID)
+        let prefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
+        let native = try await readHistory(thread: thread) { session in
+            try await Self.readReviewedNativeHistory(session: session, thread: thread, runID: runID, kind: kind)
+        }
+        guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: fingerprint),
+              revision.snapshot.canReviewConversationHistory(threadID: threadID) else { throw ProviderHistoryError(.historyChanged) }
+        let activeRecords = (thread.runHistory ?? []).filter { $0.removedByHistoryOperationID == nil }
+        guard let index = activeRecords.firstIndex(where: { $0.id == runID }), let head = native.snapshot.headTurnID else { throw ProviderHistoryError(.boundaryUnavailable) }
+        let review = try ConversationHistoryReview(kind: kind, sourceThreadID: threadID, projectID: thread.projectID,
+            runID: runID, sourceIncarnation: incarnation, sourceConfiguration: .init(thread: thread),
+            targetConfiguration: record.configuration, sourceReference: native.snapshot.reference,
+            reviewedHeadTurnID: head, boundary: native.boundary, expectedResultHeadTurnID: native.resultingHead,
+            prefix: prefix, removedRunIDs: kind == .rewindBeforeRun ? activeRecords[index...].map(\.id) : [],
+            removedMessageIDs: kind == .rewindBeforeRun ? thread.visibleMessages.dropFirst(prefix.count).map(\.id) : [],
+            sourceFingerprint: fingerprint, targetThreadID: kind == .forkAfterRun ? UUID() : nil,
+            suggestedTitle: String((thread.title + " — Fork").prefix(200)))
+        historyReviews[review.id] = try historyReviewDigest(review)
+        return review
+    }
+
+    public func discardConversationHistoryReview(reviewID: UUID) { historyReviews.removeValue(forKey: reviewID) }
+
+    @discardableResult public func beginConversationHistory(_ review: ConversationHistoryReview, title: String? = nil) async throws -> WorkspaceCommandReceipt {
+        _ = try await load(); try Task.checkCancellation(); try review.validate()
+        guard !closing, !stoppingEffects, fatalError == nil else { throw CancellationError() }
+        if let existing = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == review.id }) {
+            guard existing.review == review, let receipt = try await database.receipt(review.id) else { throw ProviderHistoryError(.historyChanged) }
+            return receipt // A repeated acceptance observes the one durable action.
+        }
+        guard historyReviews[review.id] == (try historyReviewDigest(review)),
+              ownsHistorySource(threadID: review.sourceThreadID, incarnation: review.sourceIncarnation, fingerprint: review.sourceFingerprint),
+              revision.snapshot.canReviewConversationHistory(threadID: review.sourceThreadID) else { throw ProviderHistoryError(.historyChanged) }
+        defer { historyReviews.removeValue(forKey: review.id) }
+        let receipt = try await enqueue(.conversationHistoryAccepted(review: review, title: title), id: review.id)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+
+    /// Inspect an uncertain rewind without repeating it. A third head remains
+    /// unresolved; neither local history nor provider work advances by guessing.
+    @discardableResult public func reconcileConversationHistory(operationID: UUID) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let operation = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == operationID }),
+              operation.phase == .unconfirmed, operation.review.kind == .rewindBeforeRun,
+              let thread = revision.snapshot.threads.first(where: { $0.id == operation.review.sourceThreadID }),
+              let incarnation = threadIncarnations[thread.id], !thread.isBusy, thread.queuedTurns.isEmpty,
+              thread.runtimeRequests.isEmpty,
+              try revision.snapshot.historySourceFingerprint(threadID: thread.id) == operation.review.sourceFingerprint else { throw ProviderHistoryError(.historyChanged) }
+        let expected = operation.review
+        let snapshot = try await readHistory(thread: thread) { session in
+            let capabilities = try await session.historyCapabilities(threadID: expected.sourceReference.nativeThreadID)
+            guard capabilities.reference == expected.sourceReference, capabilities.canRead, capabilities.canForkHead else { throw ProviderHistoryError(.notIdle) }
+            let first = try await session.conversationSnapshot(threadID: expected.sourceReference.nativeThreadID)
+            let last = try await session.conversationSnapshot(threadID: expected.sourceReference.nativeThreadID)
+            guard first == last, first.reference == expected.sourceReference, first.historyMode == .paginated,
+                  first.workspacePath == expected.sourceConfiguration.workspacePath else { throw ProviderHistoryError(.historyChanged) }
+            return first
+        }
+        guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: expected.sourceFingerprint),
+              revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == operationID }) == operation else { throw ProviderHistoryError(.historyChanged) }
+        let result: ConversationHistoryReconciliation
+        if snapshot.headTurnID == expected.reviewedHeadTurnID { result = .unchanged }
+        else if snapshot.headTurnID == expected.expectedResultHeadTurnID { result = .applied(snapshot) }
+        else { throw ProviderHistoryError(.historyChanged) }
+        let receipt = try await enqueue(.conversationHistoryReconciled(operationID: operationID, incarnation: incarnation, result: result))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+
+    private func historyReviewDigest(_ review: ConversationHistoryReview) throws -> String {
+        SHA256.hash(data: try encoder.encode(review)).map { String(format: "%02x", $0) }.joined()
+    }
+    private func ownsHistorySource(threadID: UUID, incarnation: UUID, fingerprint: String) -> Bool {
+        !closing && !stoppingEffects && fatalError == nil && threadIncarnations[threadID] == incarnation &&
+            (try? revision.snapshot.historySourceFingerprint(threadID: threadID)) == fingerprint
+    }
+    private func ownsHistoryEvent(_ command: EngineCommand) -> Bool {
+        switch command {
+        case .conversationHistoryAccepted(let review, _):
+            return threadIncarnations[review.sourceThreadID] == review.sourceIncarnation
+        case .conversationHistoryDispatching(let thread, _, let incarnation): return threadIncarnations[thread] == incarnation
+        case .conversationHistoryEffectResult(let request, _, let incarnation): return request.threadID.map { threadIncarnations[$0] == incarnation } ?? false
+        case .conversationHistoryReconciled(let id, let incarnation, _):
+            guard let operation = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == id }) else { return false }
+            return threadIncarnations[operation.review.sourceThreadID] == incarnation
+        default: return true
+        }
+    }
+
+    private func readHistory<Value: Sendable>(thread: CodingThread, operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
+        try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
+        let token = UUID(), metadataID: UUID?, session: any ProviderSession
+        if let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
+           runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent {
+            metadataID = nil; session = runtime.session
+        } else {
+            let id = UUID(); metadataID = id; session = try factory(thread)
+            metadataSessions[id] = .init(session: session, threadID: thread.id, projectID: thread.projectID, configuration: .init(thread: thread))
+        }
+        let task = Task { try await operation(session) }
+        historyReads[token] = .init(threadID: thread.id, projectID: thread.projectID,
+            drain: Task { _ = try? await task.value }, cancel: { task.cancel() })
+        defer { historyReads.removeValue(forKey: token) }
+        do {
+            let value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard !task.isCancelled, !closing, !stoppingEffects, fatalError == nil, threadIncarnations[thread.id] == incarnation else { throw CancellationError() }
+            if let metadataID {
+                if let close = beginMetadataClose(metadataID) { await close.value }
+                guard metadataSessions[metadataID] != nil else { throw CancellationError() }
+                metadataSessions.removeValue(forKey: metadataID)
+            }
+            try Task.checkCancellation()
+            guard !closing, !stoppingEffects, threadIncarnations[thread.id] == incarnation else { throw CancellationError() }
+            return value
+        } catch {
+            task.cancel()
+            if let metadataID {
+                if let close = beginMetadataClose(metadataID) { await close.value }
+                metadataSessions.removeValue(forKey: metadataID)
+            }
+            throw error
+        }
+    }
+
+    private static func readReviewedNativeHistory(session: any ProviderSession, thread: CodingThread, runID: UUID, kind: ConversationHistoryKind) async throws -> ReviewedNativeHistory {
+        guard let nativeID = thread.providerThreadID, thread.provider == .codex else { throw ProviderHistoryError(.unsupported) }
+        let records = (thread.runHistory ?? []).filter { $0.removedByHistoryOperationID == nil }
+        guard let selected = records.firstIndex(where: { $0.id == runID }),
+              records.allSatisfy({ $0.status.isTerminal && $0.providerThreadID == nativeID && !$0.turnIDs.isEmpty }),
+              thread.visibleMessages.allSatisfy({ $0.role == .system || $0.runReference != nil }) else { throw ProviderHistoryError(.boundaryUnavailable) }
+        let suffix = Array(records[selected...].flatMap(\.turnIDs).reversed())
+        guard !suffix.isEmpty, Set(suffix).count == suffix.count else { throw ProviderHistoryError(.boundaryUnavailable) }
+        let deadline = ContinuousClock.now + .seconds(30)
+        let capabilities = try await session.historyCapabilities(threadID: nativeID)
+        guard capabilities.canRead, kind == .forkAfterRun ? capabilities.canForkFromTurn : capabilities.canRevertBeforeTurn else { throw ProviderHistoryError(.unsupported) }
+        let before = try await session.conversationSnapshot(threadID: nativeID)
+        guard before.reference == capabilities.reference, before.historyMode == .paginated,
+              before.workspacePath == thread.workspacePath, before.headTurnID == suffix.first else { throw ProviderHistoryError(.historyChanged) }
+        var turns: [ProviderHistoryTurn] = [], ids = Set<String>(), cursors = Set<String>(), cursor: String?
+        for pageIndex in 0..<100 {
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else { throw ProviderHistoryError(.limitExceeded) }
+            let page = try await session.historyPage(threadID: nativeID, cursor: cursor, limit: 100)
+            guard page.reference == before.reference, !page.turns.isEmpty || page.nextCursor == nil else { throw ProviderHistoryError(.invalidResponse) }
+            for turn in page.turns {
+                guard ids.insert(turn.id).inserted else { throw ProviderHistoryError(.invalidResponse) }
+                turns.append(turn)
+            }
+            if turns.count > suffix.count || page.nextCursor == nil { break }
+            guard let next = page.nextCursor, cursors.insert(next).inserted else { throw ProviderHistoryError(.invalidResponse) }
+            guard pageIndex < 99 else { throw ProviderHistoryError(.limitExceeded) }; cursor = next
+        }
+        guard turns.count >= suffix.count, Array(turns.prefix(suffix.count).map(\.id)) == suffix,
+              turns.prefix(suffix.count).allSatisfy({ $0.status.isTerminal }) else { throw ProviderHistoryError(.historyChanged) }
+        let after = try await session.conversationSnapshot(threadID: nativeID)
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline, after == before else { throw ProviderHistoryError(.historyChanged) }
+        if kind == .forkAfterRun {
+            let target = records[selected].turnIDs.last!
+            return .init(snapshot: after, boundary: .throughTurn(target), resultingHead: target)
+        }
+        let previous = turns.count > suffix.count ? turns[suffix.count] : nil
+        guard previous == nil || previous?.status.isTerminal == true else { throw ProviderHistoryError(.boundaryUnavailable) }
+        return .init(snapshot: after, boundary: .beforeTurn(records[selected].turnIDs.first!), resultingHead: previous?.id)
+    }
+
+    private func performConversationHistory(_ request: WorkspaceEffectRequest) async throws -> EffectResult {
+        guard case .conversationHistory(let threadID, let operationID) = request,
+              let operation = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == operationID }),
+              operation.phase == .accepted, let incarnation = threadIncarnations[threadID],
+              let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint) else { return .cancelled }
+        let review = operation.review
+        let metadataID: UUID?, session: any ProviderSession
+        if review.kind == .rewindBeforeRun, let runtime = runtimes[threadID], runtime.id == thread.runtimeID,
+           runtime.provider == thread.provider, runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent {
+            metadataID = nil; session = runtime.session
+        } else {
+            var configured = thread
+            if review.kind == .forkAfterRun {
+                guard let project = revision.snapshot.projects.first(where: { $0.id == thread.projectID }) else { return .cancelled }
+                configured = CodingThread(project: project, model: review.targetConfiguration.model)
+                configured.id = review.targetThreadID!; configured.workspacePath = review.targetConfiguration.workspacePath
+                configured.provider = review.targetConfiguration.provider; configured.permission = review.targetConfiguration.permission
+                configured.acpAgent = review.targetConfiguration.acpAgent; configured.agentModeID = review.targetConfiguration.agentModeID
+                configured.agentConfigValues = review.targetConfiguration.agentConfigValues; configured.agentConfiguration = review.targetConfiguration.agentConfiguration
+            }
+            let id = UUID(); metadataID = id; session = try factory(configured)
+            metadataSessions[id] = .init(session: session, threadID: threadID, projectID: thread.projectID, configuration: .init(thread: thread))
+        }
+        var dispatched = false
+        let result: EffectResult
+        do {
+            try Task.checkCancellation()
+            let receipt = try await enqueue(.conversationHistoryDispatching(threadID: threadID, operationID: operationID, incarnation: incarnation))
+            guard receipt.rejection == nil,
+                  revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == operationID })?.phase == .dispatching,
+                  ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint) else { throw ProviderHistoryError(.historyChanged) }
+            try Task.checkCancellation(); dispatched = true
+            let snapshot: ProviderConversationSnapshot
+            if review.kind == .forkAfterRun { snapshot = try await session.forkConversation(source: review.sourceReference, boundary: review.boundary, configuration: review.targetConfiguration) }
+            else {
+                guard case .beforeTurn(let turnID) = review.boundary else { throw ProviderHistoryError(.invalidRequest) }
+                snapshot = try await session.revertConversation(thread: review.sourceReference, beforeTurnID: turnID, expectedHeadTurnID: review.reviewedHeadTurnID)
+            }
+            try Task.checkCancellation()
+            guard ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint) else { throw CancellationError() }
+            var confirmed = operation; confirmed.phase = .applied; confirmed.result = snapshot; try confirmed.validate()
+            result = .conversationHistoryConfirmed(snapshot)
+        } catch {
+            if dispatched, error is CancellationError || (error as? ProviderHistoryError)?.kind == .outcomeUncertain {
+                result = .conversationHistoryUnconfirmed
+            } else if dispatched, !(error is ProviderHistoryError) { result = .conversationHistoryUnconfirmed }
+            else { result = .failed(ConversationHistoryOperation.failureMessage) }
+        }
+        if let metadataID {
+            if let close = beginMetadataClose(metadataID) { await close.value }
+            metadataSessions.removeValue(forKey: metadataID)
+        } else if review.kind == .rewindBeforeRun {
+            // Retire the old event stream after every attempted native rewind.
+            // Delayed notifications cannot become messages on its new history.
+            await closeRuntime(threadID)
+        }
+        return result
+    }
 }
 
 extension WorkspaceEngine {
@@ -407,6 +664,14 @@ private extension WorkspaceEngine {
 
 /// Serial command decisions and durable commits are independent of provider I/O.
 public actor WorkspaceEngine {
+    private struct HistoryRead: Sendable {
+        let threadID: UUID
+        let projectID: UUID
+        let drain: Task<Void, Never>
+        let cancel: @Sendable () -> Void
+    }
+    private var historyReads: [UUID: HistoryRead] = [:]
+    private var historyReviews: [UUID: String] = [:]
     public typealias ProviderFactory = @Sendable (CodingThread) throws -> any ProviderSession
     public typealias WorktreeFactory = @Sendable (GitWorktreeRequest) throws -> any WorkspaceWorktreeSession
     public typealias CloneFactory = @Sendable (GitClonePlan) throws -> any ProjectCloneSession
@@ -691,11 +956,15 @@ public actor WorkspaceEngine {
                 if let fatalError { throw CoincideError(fatalError) }
                 let decision: WorkspaceDecision
                 do {
+                    if case .conversationHistoryAccepted(let review, _) = envelope.command,
+                       threadIncarnations[review.sourceThreadID] != review.sourceIncarnation {
+                        throw WorkspaceCommandError("This conversation changed. Review its current history before continuing.")
+                    }
                     if case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation, _) = envelope.command,
                        (threadIncarnations[threadID] != incarnation || request.destinationRoot != worktreesRoot.path) {
                         throw WorkspaceCommandError("This conversation changed. Choose the worktree again in its current workspace.")
                     }
-                    if !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
+                    if !ownsHistoryEvent(envelope.command) || !ownsScriptEvent(envelope.command) || !ownsCheckpointEvent(envelope.command) {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else if case .worktreeRecovered(let threadID, let attemptID, let incarnation, _) = envelope.command,
                        !ownsWorktree(threadID: threadID, attemptID: attemptID, incarnation: incarnation) {
@@ -800,6 +1069,10 @@ public actor WorkspaceEngine {
             threadIncarnations[thread.id] = UUID()
         }
         for id in removedThreads { threadIncarnations.removeValue(forKey: id) }
+        for (id, read) in historyReads where removedThreads.contains(read.threadID) || removedProjects.contains(read.projectID) || threads.contains(read.threadID) {
+            historyReads.removeValue(forKey: id); read.cancel()
+            jobs.append(read.drain); projectIDs.insert(read.projectID); cleanupThreadIDs.insert(read.threadID)
+        }
         beginCheckpointCleanup(previous: previous, next: decision.snapshot, projectIDs: &projectIDs, threadIDs: &cleanupThreadIDs, jobs: &jobs)
         for (id, inspection) in worktreeInspections where removedThreads.contains(inspection.threadID) || removedProjects.contains(inspection.projectID) {
             worktreeInspections.removeValue(forKey: id); inspection.task.cancel(); projectIDs.insert(inspection.projectID)
@@ -982,6 +1255,9 @@ public actor WorkspaceEngine {
     private func execute(_ effect: WorkspaceEffect) async {
         let scriptIncarnation = effect.request.projectScriptRunID == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
         let checkpointIncarnation = effect.request.checkpointOwner == nil ? nil : effect.request.threadID.flatMap { threadIncarnations[$0] }
+        let historyIncarnation: UUID?
+        if case .conversationHistory = effect.request { historyIncarnation = effect.request.threadID.flatMap { threadIncarnations[$0] } }
+        else { historyIncarnation = nil }
         defer {
             effects.removeValue(forKey: effect.id); effectRequests.removeValue(forKey: effect.id)
             completedDuringCommit?.insert(effect.id)
@@ -1003,7 +1279,7 @@ public actor WorkspaceEngine {
         }
         catch is CancellationError { result = .cancelled }
         catch {
-            let message = effect.request.checkpointOwner != nil ? ThreadRunCheckpointAttempt.failureMessage : effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError(for: effect.request.projectScriptOwner?.role ?? .setup) : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
+            let message = historyIncarnation != nil ? ConversationHistoryOperation.failureMessage : effect.request.checkpointOwner != nil ? ThreadRunCheckpointAttempt.failureMessage : effect.request.projectScriptRunID != nil ? ThreadProjectScriptRun.executionError(for: effect.request.projectScriptOwner?.role ?? .setup) : effect.request.projectID == nil && effect.request.worktreeAttemptID == nil ? error.localizedDescription : String(GitService.redactURLs(error.localizedDescription).prefix(4_000))
             result = .failed(message)
         }
         heartbeat.cancel()
@@ -1011,12 +1287,14 @@ public actor WorkspaceEngine {
             do {
                 let owned: Bool
                 switch result {
-                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: owned = try await database.settleEffect(effect.id, workerID: workerID)
+                case .succeeded, .stopped, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed: owned = try await database.settleEffect(effect.id, workerID: workerID)
                 case .failed(let message): owned = try await database.settleEffect(effect.id, workerID: workerID, error: message)
                 case .cancelled: owned = try await database.cancelEffect(effect.id, workerID: workerID, reason: "The targeted run or request is no longer active.")
                 }
                 guard owned else { await infrastructureFailed("Provider execution lost its workspace lease."); return }
-                if effect.request.checkpointOwner != nil {
+                if let historyIncarnation {
+                    if !retiringEffects.contains(effect.id) { _ = try await enqueue(.conversationHistoryEffectResult(effect.request, result, incarnation: historyIncarnation)) }
+                } else if effect.request.checkpointOwner != nil {
                     if !retiringEffects.contains(effect.id), let checkpointIncarnation { _ = try await enqueue(.runCheckpointEffectResult(effect.request, result, incarnation: checkpointIncarnation)) }
                 } else if effect.request.projectScriptRunID != nil {
                     if !retiringEffects.contains(effect.id), let scriptIncarnation {
@@ -1039,6 +1317,7 @@ public actor WorkspaceEngine {
         guard !stoppingEffects, fatalError == nil else { throw CancellationError() }
         if await waitForRemovalCommit(threadID: request.threadID, projectID: request.projectID) { return .cancelled }
         try Task.checkCancellation()
+        if case .conversationHistory = request { return try await performConversationHistory(request) }
         if request.checkpointOwner != nil { return try await performRunCheckpoint(request) }
         if request.projectScriptRunID != nil { return try await performProjectScript(request) }
         if request.worktreeAttemptID != nil { return try await performWorktree(request) }
@@ -1063,7 +1342,7 @@ public actor WorkspaceEngine {
         }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
-        case .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
+        case .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let configuration, let prompt, let references):
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false else { return .cancelled }
             await awaitCheckpointDrains(threadID: thread.id)
@@ -1274,6 +1553,8 @@ public actor WorkspaceEngine {
         for task in effects.values { task.cancel() }
         cancelIdentityRefreshes()
         cancelCheckpointReads()
+        for read in historyReads.values { read.cancel() }
+        historyReviews = [:]
         let inspections = worktreeInspections; worktreeInspections = [:]
         for inspection in inspections.values {
             inspection.task.cancel()
@@ -1362,6 +1643,9 @@ public actor WorkspaceEngine {
         stoppingEffects = true
         if loaded, fatalError == nil { _ = try? await enqueue(.pauseQueues) }
         closing = true
+        let history = Array(historyReads.values); historyReads = [:]
+        for read in history { read.cancel() }
+        historyReviews = [:]
         let inspections = Array(worktreeInspections.values); worktreeInspections = [:]
         for inspection in inspections { inspection.task.cancel() }
         cancelIdentityRefreshes()
@@ -1374,6 +1658,7 @@ public actor WorkspaceEngine {
             _ = startCleanup(projectIDs: Set(runtime.projectID.map { [$0] } ?? []), threadIDs: Set(runtime.threadID.map { [$0] } ?? []), sessions: [runtime.session])
         }
         for job in jobs { await job.value }
+        for read in history { await read.drain.value }
         for inspection in inspections { _ = try? await inspection.task.value }
         while !cleanupTasks.isEmpty {
             let tasks = cleanupTasks.values.map(\.task)
