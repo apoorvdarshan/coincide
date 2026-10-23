@@ -441,17 +441,20 @@ final class WorkspaceStore {
         return .init(threadID: id, projectID: thread.projectID, workspacePath: thread.workspacePath,
             text: thread.draft, attachments: thread.draftAttachments)
     }
-    private func replaceComposerDraft(id: UUID, replacement: ComposerDraftReplacement) async -> ComposerDraftToolsOutcome {
-        guard !terminating, let engine, historyRecallDraftOwners[replacement.expected.threadID] == nil else { return .rejected }
+    func replaceComposerDraft(id: UUID, replacement: ComposerDraftReplacement) async -> ComposerDraftToolsOutcome {
+        guard !Task.isCancelled, !terminating, let engine, let expectedBirth = thread(replacement.expected.threadID)?.createdAt,
+              historyRecallDraftOwners[replacement.expected.threadID] == nil else { return .rejected }
         flushDrafts()
         let previous = commandTail
         let task = Task<ComposerDraftToolsOutcome, Never> { [weak self] in
             await previous?.value
-            guard let self, !self.terminating, self.historyRecallDraftOwners[replacement.expected.threadID] == nil,
-                  let current = self.composerDraftSnapshot(replacement.expected.threadID), current.matches(replacement.expected) else { return .rejected }
+            guard !Task.isCancelled, let self, !self.terminating, self.historyRecallDraftOwners[replacement.expected.threadID] == nil,
+                  let current = self.composerDraftSnapshot(replacement.expected.threadID), current.matches(replacement.expected),
+                  self.thread(replacement.expected.threadID)?.createdAt == expectedBirth else { return .rejected }
             do {
-                _ = try await engine.dispatch(.replaceComposerDraft(replacement), id: id)
+                let receipt = try await engine.dispatch(.replaceComposerDraft(replacement), id: id)
                 self.apply(await engine.current())
+                guard receipt.rejection == nil else { return .rejected }
                 let target = replacement.expected.threadID
                 if self.draftOverrides[target].map({ $0.utf8.elementsEqual(replacement.expected.text.utf8) }) == true {
                     self.draftOverrides.removeValue(forKey: target)
@@ -464,7 +467,7 @@ final class WorkspaceStore {
             catch { return .unknown }
         }
         commandTail = Task { _ = await task.value }
-        return await task.value
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
     private func bindCodexRuntime() {
         let initial = codexRuntime.configuration
@@ -1582,6 +1585,167 @@ final class WorkspaceStore {
                 selectedProjectID = project.id; showArchived = false
             } catch { errorMessage = error.localizedDescription }
         }
+    }
+    /// Deep links and the `coincide` command open a new conversation with an unsent draft.
+    /// The text is never queued, steered or submitted. A folder is added as a project first.
+    func openDraftThread(projectID: UUID?, folder: URL?, draft: String,
+                         requestedProvider: ProviderKind? = nil, requestedModel: String? = nil) async throws -> UUID {
+        try Task.checkCancellation()
+        guard !terminating, engine != nil else { throw CancellationError() }
+        var project: WorkspaceProject, addsProject = false
+        if let folder {
+            var directory: ObjCBool = false
+            guard folder.isFileURL, FileManager.default.fileExists(atPath: folder.path, isDirectory: &directory), directory.boolValue else {
+                throw CoincideError("Choose an existing project folder.")
+            }
+            project = WorkspaceProject(path: folder.path)
+            if let existing = snapshot.projects.first(where: { $0.path.utf8.elementsEqual(project.path.utf8) }) { project = existing } else { addsProject = true }
+        } else if let projectID, let existing = snapshot.projects.first(where: { $0.id == projectID }) { project = existing }
+        else { throw CoincideError("Add a project before opening this link.") }
+        let selectedProject = selectedProjectID, selectedThread = selectedThreadID
+        var thread = newCodingThread(project: project); thread.draft = draft
+        if let requestedProvider {
+            guard requestedProvider == .codex || requestedProvider == .claude else { throw CoincideError("Choose Codex or Claude in this prompt link.") }
+            thread.provider = requestedProvider; thread.model = ""
+            if requestedProvider == .claude {
+                thread.codexRuntimeConfiguration = nil
+                thread.claudeRuntimeConfiguration = try claudeRuntimeCapture(project.path)
+            }
+        }
+        if let requestedModel, !requestedModel.isEmpty {
+            let rows = promptLinkModels(for: thread)
+            if let row = rows.first(where: { $0.id.utf8.elementsEqual(requestedModel.utf8) || $0.name.utf8.elementsEqual(requestedModel.utf8) || $0.catalogID?.utf8.elementsEqual(requestedModel.utf8) == true }) {
+                if thread.provider == .codex { try thread.selectCodexModel(row) }
+                else if thread.provider == .claude { try thread.selectClaudeModel(row) }
+            }
+        }
+        let captured = thread, capturedProject = project
+        try Task.checkCancellation()
+        let creation = enqueue(addsProject ? .addProjectWithThread(project: project, thread: thread) : .createThread(thread), preflight: { [weak self] in
+            try Task.checkCancellation()
+            guard let self, !self.terminating,
+                  addsProject || self.snapshot.projects.contains(where: { $0.id == capturedProject.id && $0.path.utf8.elementsEqual(capturedProject.path.utf8) }) else { throw CancellationError() }
+        })
+        let receipt = try await withTaskCancellationHandler { try await creation.value } onCancel: { creation.cancel() }
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        guard let current = self.thread(thread.id), !terminating, current.createdAt == captured.createdAt,
+              current.projectID == captured.projectID, current.workspacePath.utf8.elementsEqual(captured.workspacePath.utf8) else {
+            throw CoincideError("The new conversation could not be opened.")
+        }
+        if !Task.isCancelled, selectedProjectID == selectedProject && selectedThreadID == selectedThread {
+            selectedProjectID = project.id; showArchived = false; selectedThreadID = thread.id
+        }
+        return thread.id
+    }
+    private struct FirstRunReadinessRevisionCapture: Encodable {
+        let codex: CodexRuntimeConfiguration
+        let claude: ClaudeRuntimeProfile
+        let directory: String
+        let environment: [String: String]
+        let ownedState: String
+    }
+    /// A cheap observation key for welcome presentation. It contains settings and
+    /// credential-free account readiness only; no process, vault or filesystem read.
+    var firstRunReadinessRevision: Data {
+        let configuration = codexRuntime.configuration
+        let owned: String
+        if configuration.authenticationMode == .ownedChatGPT {
+            switch firstRunOwnedCodexReadiness(configuration) {
+            case .ready: owned = "ready"
+            case .signIn: owned = "signIn"
+            default: owned = "attention"
+            }
+        } else { owned = "cli" }
+        let environment = ProcessChannel.environment().filter { ["PATH", "HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PROJECT_DIR_NAME"].contains($0.key) }
+        let capture = FirstRunReadinessRevisionCapture(codex: configuration, claude: claudeRuntime.profile,
+            directory: firstRunReadinessDirectory, environment: environment, ownedState: owned)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(capture)) ?? Data("unavailable".utf8)
+    }
+    private var firstRunReadinessDirectory: String {
+        if let thread = selectedThread, snapshot.projects.contains(where: { $0.id == thread.projectID }) { return thread.workspacePath }
+        if let id = selectedProjectID, let project = snapshot.projects.first(where: { $0.id == id }) { return project.path }
+        return FileManager.default.homeDirectoryForCurrentUser.path
+    }
+    private func firstRunOwnedCodexReadiness(_ configuration: CodexRuntimeConfiguration) -> ProviderReadiness {
+        guard configuration.authenticationMode == .ownedChatGPT else { return .attention("Review the selected Codex account in Settings.") }
+        guard !codexAuthentication.isWorking, !codexAuthentication.isRefreshing,
+              codexAuthentication.configuration == configuration, codexAuthentication.errorMessage == nil else {
+            return .attention("Review the selected Codex account in Settings.")
+        }
+        guard let binding = configuration.accountBinding, let overview = codexAuthentication.overview,
+              overview.binding == binding,
+              let profile = overview.profiles.first(where: { $0.id == binding.profileID && $0.isActive }),
+              profile.hasCredential, profile.sharingEnabled, !profile.requiresReconnect else { return .signIn(nil) }
+        return .ready(nil)
+    }
+    func captureFirstRunReadiness(_ agent: ProviderReadiness.Agent) throws -> ProviderReadiness.Capture {
+        guard !terminating else { throw CancellationError() }
+        let path = firstRunReadinessDirectory
+        var environment = ProcessChannel.environment()
+        switch agent {
+        case .codex:
+            let configuration = codexRuntime.configuration
+            try configuration.validate()
+            guard !codexRuntime.isApplying else { throw CodexAccountError.busy }
+            if let home = configuration.homeDirectory { environment["CODEX_HOME"] = home }
+            do {
+                let lease = try codexRuntimeInstallation.acquire(configuration: configuration)
+                return .init(scope: .codex(configuration), executable: lease.resolved.executable, environment: environment,
+                    directory: path, installationLease: lease,
+                    resultOverride: configuration.authenticationMode == .ownedChatGPT ? firstRunOwnedCodexReadiness(configuration) : nil)
+            } catch let error as CodexInstallationError where error.kind == .unavailable {
+                return .init(scope: .codex(configuration), executable: nil, environment: environment, directory: path, resultOverride: .install)
+            }
+        case .claude:
+            let profile = claudeRuntime.profile
+            try profile.validate()
+            if claudeRuntime.isLoaded, claudeRuntimeCaptureOverride == nil, ProcessChannel.findExecutable(profile.executable) == nil {
+                if let directory = profile.configurationDirectory { environment["CLAUDE_CONFIG_DIR"] = directory }
+                return .init(scope: .unavailableClaude(profile), executable: nil, environment: environment, directory: path, resultOverride: .install)
+            }
+            let configuration = try claudeRuntimeCapture(path)
+            switch configuration.configurationDirectorySelection {
+            case .defaultHome(let home): environment["HOME"] = home; environment.removeValue(forKey: "CLAUDE_CONFIG_DIR")
+            case .explicitDirectory(let directory): environment["CLAUDE_CONFIG_DIR"] = directory
+            }
+            environment["CLAUDE_CODE_PROJECT_DIR_NAME"] = configuration.projectDirectoryName
+            environment.removeValue(forKey: "CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP")
+            return .init(scope: .claude(configuration), executable: URL(fileURLWithPath: configuration.executable),
+                         environment: environment, directory: path)
+        }
+    }
+    func isCurrentFirstRunReadiness(_ capture: ProviderReadiness.Capture) -> Bool {
+        guard !terminating, capture.directory.utf8.elementsEqual(firstRunReadinessDirectory.utf8),
+              let current = try? captureFirstRunReadiness(capture.agent), current.scope == capture.scope,
+              current.executable?.path.utf8.elementsEqual(capture.executable?.path.utf8 ?? "".utf8) ?? (capture.executable == nil),
+              current.resultOverride == capture.resultOverride else { return false }
+        for key in ["PATH", "HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PROJECT_DIR_NAME"] {
+            let actual = current.environment[key], expected = capture.environment[key]
+            guard (actual == nil) == (expected == nil), actual?.utf8.elementsEqual(expected?.utf8 ?? "".utf8) ?? true else { return false }
+        }
+        return true
+    }
+    func promptLinkProviderAvailable(_ provider: ProviderKind, workspacePath: String) -> Bool {
+        guard !terminating else { return false }
+        switch provider {
+        case .codex: return (try? codexRuntimeInstallation.resolve(configuration: codexRuntime.configuration)) != nil
+        case .claude: return (try? claudeRuntimeCapture(workspacePath)) != nil
+        default: return false
+        }
+    }
+    private func promptLinkModels(for fresh: CodingThread) -> [ProviderModel] {
+        if let selected = selectedThread, selected.provider == fresh.provider,
+           ProviderConfiguration(thread: selected).codexRuntimeBinding == ProviderConfiguration(thread: fresh).codexRuntimeBinding,
+           selected.claudeRuntimeConfiguration?.runtimeIdentity == fresh.claudeRuntimeConfiguration?.runtimeIdentity {
+            return models(for: selected)
+        }
+        if fresh.provider == .codex { return (fresh.codexRuntimeConfiguration ?? .init()) == .init() ? providerModels[.codex] ?? [] : [] }
+        if fresh.provider == .claude, claudeRuntime.isLoaded,
+           neutralClaudeModelProfile == claudeRuntime.profile || (neutralClaudeModelProfile == nil && claudeRuntime.profile == .init()) {
+            return providerModels[.claude] ?? []
+        }
+        return []
     }
     func setClaudeModelOptions(_ options: ClaudeModelOptions, model: ProviderModel, threadID: UUID, expected: ProviderConfiguration? = nil) {
         let captured = expected ?? thread(threadID).map { ProviderConfiguration(thread: $0) }

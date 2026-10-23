@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleDisplayName</key><string>@APP_NAME@</string>
+<key>CFBundleExecutable</key><string>@APP_NAME@</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
+<key>CFBundleIdentifier</key><string>@BUNDLE_ID@</string>
+<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+<key>CFBundleName</key><string>@APP_NAME@</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>@VERSION@</string>
+<key>CFBundleVersion</key><string>@BUILD@</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSHumanReadableCopyright</key><string>© 2026 Coincide contributors. Portions derived from T3 Code, © 2026 T3 Tools Inc., MIT license.</string>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSSupportsAutomaticTermination</key><false/>
+<key>NSSupportsSuddenTermination</key><false/>
+<key>NSDocumentsFolderUsageDescription</key><string>Coincide and its coding agents access project files and the instructions you configure in Documents.</string>
+<key>NSDesktopFolderUsageDescription</key><string>Coincide and its coding agents access projects and files you keep on the Desktop.</string>
+<key>NSDownloadsFolderUsageDescription</key><string>Coincide and its coding agents access projects and files you keep in Downloads.</string>
+<key>NSRemovableVolumesUsageDescription</key><string>Coincide and its coding agents access projects stored on removable drives.</string>
+<key>NSNetworkVolumesUsageDescription</key><string>Coincide and its coding agents access projects stored on network volumes.</string>
+<key>NSLocalNetworkUsageDescription</key><string>Coincide connects to remote environments and to development servers that commands run by terminals and coding agents start on your network.</string>
+<key>NSCameraUsageDescription</key><string>Commands run by terminals and coding agents in Coincide can use the camera when a tool you run asks for it.</string>
+<key>NSMicrophoneUsageDescription</key><string>Commands run by terminals and coding agents in Coincide can use the microphone when a tool you run asks for it.</string>
+<key>NSAppleEventsUsageDescription</key><string>Commands run by terminals and coding agents in Coincide can control other apps when a tool you run asks to.</string>
+<key>CFBundleURLTypes</key><array><dict>
+<key>CFBundleURLName</key><string>@BUNDLE_ID@.links</string>
+<key>CFBundleTypeRole</key><string>Viewer</string>
+<key>CFBundleURLSchemes</key><array><string>coincide</string></array>
+</dict></array>
+<key>CFBundleDocumentTypes</key><array><dict>
+<key>CFBundleTypeName</key><string>Project Folder</string>
+<key>CFBundleTypeRole</key><string>Viewer</string>
+<key>LSHandlerRank</key><string>Alternate</string>
+<key>LSItemContentTypes</key><array><string>public.folder</string></array>
+</dict></array>
+</dict></plist>

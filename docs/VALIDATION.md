@@ -5314,3 +5314,71 @@ app was replaced/opened, live GitHub mutation or model request sent, authenticat
 migrated, live SSH host changed or shell configuration edited. Complete T3 parity,
 remaining desktop/script/transcript work and installed/provider/remote acceptance
 remain unfinished. See [source-control behavior and limits](SOURCE_CONTROL.md).
+
+
+## 2026-10-24: Desktop lifecycle, setup and links
+
+Integrated immutable desktop-shell commit `e4ca12c` while preserving current
+window-owned keybindings, terminal workspaces, provider profiles, math settings
+and the guarded native remote-test transport. Desktop features include bounded
+login-shell capture, protected quit, running-work confirmation, activity control,
+local foreground banners, draft-only prompt/folder links and a command-line shim,
+profile-scoped first-run readiness, searchable notices and bundle version/icon data.
+Idle sleep prevention defaults to Never; App Nap protection follows active work.
+
+Important integration checks:
+
+- A startup wait returns at its budget without joining the still-running shell
+  capture. Disable/quit cancels and joins owned work and fences late publication.
+  Bounded status/environment probes reserve their independently spawned group
+  until leader reaping; existing ProcessChannel exact-child ownership is unchanged.
+- Deep-link confirmation uses exact composer CAS, including attachment references,
+  original conversation birth and workspace. Cancellation before queued admission
+  refuses the write. Provider/model configuration is initialized before registration,
+  with no late edits or automatic send. Encoded path validation rejects trailing
+  separators that Foundation's decoded URL.path silently drops.
+- Setup captures configured Codex binary/home or Claude namespace. Managed checks
+  hold an installation lease. Owned accounts use already verified in-memory vault
+  overview; checks start no authentication or ambient CLI fallback. Profile revisions
+  invalidate both readiness and retained Copy/Settings actions. Custom/managed runtime
+  problems route to Settings rather than an unrelated vendor install command.
+- Quit routing shares exact-event decisions with the current dispatcher and blocks
+  native Command-Q fallthrough in modal, IME and stale-window scopes. Banner actions
+  recheck original thread ownership; display/announcements require a registered key
+  local workspace window. Injected tests create no real monitor, HUD or power assertion.
+- CLI-shim tests preserve dangling symlinks, hardlinks and foreign files. No actual
+  command installation or shell configuration change was performed.
+
+Verification on Apple Swift 6.4:
+
+- Final `swift build --build-tests` passes in **22.93 seconds**. The ABI guard reports
+  **1418 Mach-O objects**, module coverage counters of 1018 Core and 459 App,
+  **zero weak async-default records** and six local records.
+- The final focused selection passes **64 UI/store declarations in 15.419 seconds**,
+  **65 Core declarations in 2.096 seconds** and **1 Terminal declaration in 0.065 seconds**.
+  It includes desktop/setup/link/quit/banner/power cases and affected keyboard/composer
+  regressions. The earlier expanded **453 UI declarations** run had one new private-vault
+  fixture failure; the other 452 passed. The final focused run covers that corrected
+  fixture. No exact-current-tree full UI-suite success is claimed.
+- Fixture fixes resolve the existing macOS temporary parent before appending private
+  paths, retain O_NOFOLLOW vault checks and compare readiness to the original registered
+  project path. A Swift Testing mutable-call macro was evaluated before its assertion.
+  All existing declarations and deadlines remain.
+- **75 native CI configuration/offline-harness tests pass in 2.532 seconds**. Version,
+  icon and bundled-notice changes now select CI; unrelated narrative docs still skip
+  native UI work. Synthetic bundles fail validation if URL handlers remain.
+- Build-only packaging, strict deep signatures and native math-resource rendering pass.
+  Actual bundle version/icon/URL scheme and every shipped notice are verified. Font
+  license copies match their resolved SwiftMath sources. The generated icon was inspected;
+  no app was installed/opened. Compiled/package UUIDs match: Coincide
+  `8AB5C8ED-47D9-3201-A8F1-063F2A74D0CC`, CoincideEnvironment
+  `B3C729AE-7946-3C92-80AB-F84F8D292A6E`, CoincideScriptHelper
+  `F91AA44E-501A-3A7D-B9E4-CBB2D5ED9AF9`.
+
+Logs use `/tmp/coincide-desktop-shell-*-20261024.log`. Staged secret scanning passes.
+The preceding Git-actions hosted build passed and its tests were still running at the
+last check. This desktop merge has no exact-commit hosted/native GUI or live provider,
+URL-handler, install, shell-startup or power-assertion acceptance claim. No user account,
+credential, real SSH host, installed app or shell configuration was changed. Complete
+T3 parity, remaining transcript/project-script features and live/hosted acceptance remain
+unfinished. See [desktop behavior and limits](DESKTOP_SHELL.md).

@@ -252,7 +252,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertNotIn(value, peer)
 
     def test_change_filter_keeps_product_and_harness_paths_and_skips_unrelated_unit_docs(self):
-        for path in ["Sources/Coincide/Views/ChatView.swift", "Sources/CoincideCore/WorkspaceEngine.swift", "UITests/macOS/Example.swift", "script/test_macos_ui.sh", "script/prepare_macos_signing.py", "Package.resolved"]:
+        for path in ["Sources/Coincide/Views/ChatView.swift", "Sources/CoincideCore/WorkspaceEngine.swift", "UITests/macOS/Example.swift", "script/test_macos_ui.sh", "script/prepare_macos_signing.py", "Package.resolved", "script/Info.plist.template", "script/generate_app_icon.swift", "VERSION", "docs/third-party-notices.json", "docs/SwiftMathFonts-OFL-LICENSE.txt", "docs/SwiftMarkdown-NOTICE.txt"]:
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 

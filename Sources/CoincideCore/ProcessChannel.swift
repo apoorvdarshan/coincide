@@ -206,21 +206,25 @@ public final class ProcessChannel: @unchecked Sendable {
             continuation.finish(); overflow()
         }
     }
-    public static func environment() -> [String: String] {
+    public static func environment() -> [String: String] { environment(loginShell: LoginShellEnvironment.current) }
+    public static func environment(loginShell: LoginShellEnvironment.Snapshot?) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let extras = ["/opt/homebrew/bin", "\(home)/.local/bin", "\(home)/.cargo/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
-        env["PATH"] = ([env["PATH"] ?? ""] + extras).joined(separator: ":")
+        // A published login-shell capture adds the user's shell PATH and selected variables.
+        if let loginShell { env = loginShell.applied(to: env, extraPaths: extras) }
+        else { env["PATH"] = ([env["PATH"] ?? ""] + extras).joined(separator: ":") }
         // A child provider owns its own session identity.
         env.removeValue(forKey: "CODEX_THREAD_ID")
         return env
     }
-    public static func findExecutable(_ name: String) -> URL? {
+    public static func findExecutable(_ name: String) -> URL? { findExecutable(name, searchPath: environment()["PATH"] ?? "") }
+    static func findExecutable(_ name: String, searchPath: String) -> URL? {
         if name.contains("/") {
             let path = NSString(string: name).expandingTildeInPath
             return FileManager.default.isExecutableFile(atPath: path) ? URL(fileURLWithPath: path) : nil
         }
-        for directory in (environment()["PATH"] ?? "").split(separator: ":") {
+        for directory in searchPath.split(separator: ":") {
             let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(name)
             if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
         }

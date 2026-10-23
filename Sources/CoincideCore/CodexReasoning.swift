@@ -52,7 +52,7 @@ extension CodingThread {
     public func codexReasoningPreference(for model: ProviderModel) -> String? {
         codexReasoningPreferences?[model.id].flatMap { value in model.reasoningEfforts.contains(where: { $0.id == value }) ? value : nil }
     }
-    mutating func selectCodexModel(_ model: ProviderModel) throws {
+    public mutating func selectCodexModel(_ model: ProviderModel) throws {
         guard provider == .codex else { throw WorkspaceCommandError("Choose a Codex conversation before selecting its model.") }
         try model.validateCodexReasoning()
         let resolved = codexReasoningPreference(for: model) ?? model.codexDefaultReasoningEffort

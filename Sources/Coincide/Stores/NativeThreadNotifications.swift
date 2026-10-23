@@ -21,6 +21,8 @@ final class NativeThreadNotifications {
     @ObservationIgnored private var pending: [UUID: ThreadAttentionNotification] = [:]
     @ObservationIgnored private var lastSound: [String: ContinuousClock.Instant] = [:]
     @ObservationIgnored private var focusObservation: ThreadNotificationFocusObservation?
+    /// In-app banners for other conversations while Coincide is active.
+    @ObservationIgnored var banners: ThreadBannerCoordinator?
 
     init(defaults: UserDefaults = .standard, onOpen: @escaping @MainActor (UUID) -> Void) {
         self.defaults = defaults
@@ -82,6 +84,8 @@ final class NativeThreadNotifications {
     func observe(_ snapshot: WorkspaceSnapshot, baseline: Bool, appIsActive: Bool) {
         let events = tracker.observe(snapshot, baseline: baseline)
         prunePending()
+        let current = tracker
+        banners?.observe(events, appIsActive: appIsActive, snapshot: snapshot) { current.eventIsCurrent($0) }
         guard mode != .off, center != nil, !events.isEmpty else { return }
         let previous = delivery, owner = generation, deliveryOwner = deliveryGeneration
         delivery = Task { [weak self] in
