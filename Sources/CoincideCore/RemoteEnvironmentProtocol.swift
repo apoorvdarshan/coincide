@@ -67,7 +67,8 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsBoundedProjections: Bool
     public let supportsRemoteHistory: Bool
     public let supportsContextTransfers: Bool
-    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false) {
+    public let supportsWorkspaceLifecycleControls: Bool
+    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false, supportsWorkspaceLifecycleControls: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
@@ -80,10 +81,11 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         self.supportsBoundedProjections = supportsBoundedProjections
         self.supportsRemoteHistory = supportsRemoteHistory
         self.supportsContextTransfers = supportsContextTransfers
+        self.supportsWorkspaceLifecycleControls = supportsWorkspaceLifecycleControls
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers, supportsWorkspaceLifecycleControls
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -104,6 +106,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsBoundedProjections = try values.decodeIfPresent(Bool.self, forKey: .supportsBoundedProjections) ?? false
         supportsRemoteHistory = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteHistory) ?? false
         supportsContextTransfers = try values.decodeIfPresent(Bool.self, forKey: .supportsContextTransfers) ?? false
+        supportsWorkspaceLifecycleControls = try values.decodeIfPresent(Bool.self, forKey: .supportsWorkspaceLifecycleControls) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
@@ -120,7 +123,10 @@ public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
 public struct RemoteEnvironmentSnapshotRequest: Codable, Sendable, Equatable {
     public let environmentID: UUID
     public let afterSequence: Int64?
-    public init(environmentID: UUID, afterSequence: Int64? = nil) { self.environmentID = environmentID; self.afterSequence = afterSequence }
+    public let clientSupportsLifecycleControls: Bool?
+    public init(environmentID: UUID, afterSequence: Int64? = nil, clientSupportsLifecycleControls: Bool? = nil) {
+        self.environmentID = environmentID; self.afterSequence = afterSequence; self.clientSupportsLifecycleControls = clientSupportsLifecycleControls
+    }
 }
 public struct RemoteEnvironmentSnapshot: Codable, Sendable, Equatable {
     public let environmentID: UUID
@@ -146,6 +152,8 @@ public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
     case checkpoint(target: RemoteWorkspaceTarget, action: RemoteCheckpointAction)
     case history(target: RemoteWorkspaceTarget, action: RemoteHistoryAction)
     case contextTransfer(target: RemoteWorkspaceTarget, action: RemoteContextAction)
+    case lifecycle(capture: RemoteLifecycleCapture, action: RemoteLifecycleAction)
+    case lifecyclePolicy(policy: WorkspaceLifecyclePolicy, expected: WorkspaceLifecyclePolicy)
     case stop(threadID: UUID, runID: UUID, runtimeID: UUID)
     case respond(threadID: UUID, runID: UUID?, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case resumeQueue(threadID: UUID, expectedConfiguration: ProviderConfiguration)

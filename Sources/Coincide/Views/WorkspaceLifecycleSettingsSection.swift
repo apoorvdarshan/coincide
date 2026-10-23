@@ -14,9 +14,9 @@ struct WorkspaceLifecycleSettingsSection: View {
                     Text("After \(days, format: .number.precision(.fractionLength(0...2))) days without activity")
                 }.accessibilityIdentifier("settings-auto-settle-days")
             }
-            Toggle("Settle Merged Pull Request Conversations", isOn: Binding(get: { policy.onMerge }, set: store.setAutoSettlementOnMerge))
+            Toggle("Settle Merged Pull Request Conversations", isOn: Binding(get: { policy.onMerge }, set: { store.setAutoSettlementOnMerge($0) }))
                 .accessibilityIdentifier("settings-auto-settle-merged")
-            Toggle("Keep Pull Request Conversations During Inactivity Settlement", isOn: Binding(get: { policy.keepPullRequests }, set: store.setAutoSettlementKeepsPullRequests))
+            Toggle("Keep Pull Request Conversations During Inactivity Settlement", isOn: Binding(get: { policy.keepPullRequests }, set: { store.setAutoSettlementKeepsPullRequests($0) }))
                 .accessibilityIdentifier("settings-auto-settle-keep-pr")
             Text("Pinned, snoozed and working conversations stay active. Closed pull requests can also settle when automatic settlement is enabled. Settled conversations retain their history and can be resumed.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

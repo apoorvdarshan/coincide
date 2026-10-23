@@ -7,7 +7,50 @@ public struct WorkspaceUpdate: Sendable {
     public var error: String?
 }
 
+struct WorkspaceLifecycleCommit: Sendable {
+    let perform: @Sendable () async throws -> Void
+}
+
 extension WorkspaceEngine {
+    typealias WorkspaceLifecycleAdmission = @Sendable (ThreadAutoSettlementProposal, WorkspaceLifecycleCommit) async throws -> Void
+    func enableRemoteWorkspaceLifecycle(admission: @escaping WorkspaceLifecycleAdmission) async throws {
+        try Task.checkCancellation()
+        guard loaded, !closing, !stoppingEffects, !workspaceLifecycleClosing, fatalError == nil else { throw CancellationError() }
+        workspaceLifecycleAdmission = admission; workspaceLifecycleRemoteEnabled = true
+        await ownedWorkspaceLifecycleService().start()
+    }
+    func readRemoteLifecycle(_ target: RemoteWorkspaceTarget?) async throws -> RemoteLifecycleNativeRead {
+        _ = try await load()
+        guard !closing, !stoppingEffects, fatalError == nil else { throw RemoteLifecycleFailure(.unavailable) }
+        let snapshot = revision.snapshot, policy = snapshot.workspaceLifecyclePolicy ?? .init()
+        guard let target else { return .init(sequence: revision.sequence, policy: policy) }
+        guard let thread = snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              snapshot.projects.contains(where: { $0.id == target.projectID }), !thread.isArchived,
+              thread.workspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+              RemoteLifecycleProtocol.same(ProviderConfiguration(thread: thread), target.configuration),
+              let project = projectIncarnations[target.projectID], let incarnation = threadIncarnations[target.threadID],
+              let facts = try snapshot.workspaceLifecycleFacts(threadID: thread.id) else { throw RemoteLifecycleFailure(.invalidTarget) }
+        func available(_ allowed: Bool, _ reason: String) -> RemoteProjectionAvailability { .init(allowed: allowed, reason: allowed ? nil : reason) }
+        let state = RemoteLifecycleNativeState(target: target, projectIncarnation: project, threadIncarnation: incarnation,
+            lifecycle: thread.workspaceLifecycle, settlementID: thread.settlement?.id, settlementPhase: thread.settlement?.phase,
+            settle: available(snapshot.canSettle(threadID: thread.id), "Finish current work before settling this conversation."),
+            resume: available(thread.settlement?.phase == .settled && snapshot.workspaceReady(for: thread), "This conversation has no settled generation to resume."),
+            snooze: available(WorkspaceLifecyclePolicyDecision.canSnooze(facts, now: Date()), "Answer pending questions and finish queued input before snoozing."),
+            wake: available(thread.workspaceLifecycle?.snoozedUntil != nil, "This conversation is already awake."))
+        return .init(sequence: revision.sequence, policy: policy, state: state)
+    }
+    private func validateRemoteLifecyclePreparation(_ prepared: RemoteLifecyclePreparation, snapshot: WorkspaceSnapshot) throws {
+        guard !closing, !stoppingEffects, fatalError == nil else { throw RemoteLifecycleFailure(.unavailable) }
+        if case .thread(let native, _, _) = prepared.action {
+            guard projectIncarnations[native.target.projectID] == native.projectIncarnation,
+                  threadIncarnations[native.target.threadID] == native.threadIncarnation,
+                  let thread = snapshot.threads.first(where: { $0.id == native.target.threadID && $0.projectID == native.target.projectID }),
+                  thread.workspacePath.utf8.elementsEqual(native.target.workspacePath.utf8),
+                  RemoteLifecycleProtocol.same(ProviderConfiguration(thread: thread), native.target.configuration),
+                  RemoteLifecycleProtocol.same(thread.workspaceLifecycle, native.lifecycle),
+                  thread.settlement?.id == native.settlementID, thread.settlement?.phase == native.settlementPhase else { throw RemoteLifecycleFailure(.staleCapture) }
+        }
+    }
     private func ownedWorkspaceLifecycleService() -> WorkspaceLifecycleService {
         if let workspaceLifecycleService { return workspaceLifecycleService }
         let service = WorkspaceLifecycleService(read: { [weak self] in
@@ -48,6 +91,14 @@ extension WorkspaceEngine {
         guard !closing, !stoppingEffects, !workspaceLifecycleClosing, fatalError == nil else { throw CancellationError() }
         workspaceLifecycleProposals[proposal.id] = proposal
         defer { workspaceLifecycleProposals.removeValue(forKey: proposal.id) }
+        let commit = WorkspaceLifecycleCommit { [weak self] in
+            guard let self else { throw CancellationError() }
+            try await self.commitWorkspaceLifecycleProposal(proposal)
+        }
+        if let workspaceLifecycleAdmission { try await workspaceLifecycleAdmission(proposal, commit) }
+        else { try await commit.perform() }
+    }
+    private func commitWorkspaceLifecycleProposal(_ proposal: ThreadAutoSettlementProposal) async throws {
         let receipt = try await enqueue(.client(.workspaceLifecycle(.automaticallySettle(proposal))), id: proposal.id)
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
     }
@@ -2489,6 +2540,8 @@ public actor WorkspaceEngine {
     private let appMCPEnabled: Bool
     private let contextMCPEnabled: Bool
     private let workspaceLifecycleEnabled: Bool
+    private var workspaceLifecycleRemoteEnabled = false
+    private var workspaceLifecycleAdmission: WorkspaceLifecycleAdmission?
     private var workspaceLifecycleService: WorkspaceLifecycleService?
     private var workspaceLifecycleProposals: [UUID: ThreadAutoSettlementProposal] = [:]
     private var workspaceLifecycleDrain: Task<Void, Never>?
@@ -2646,7 +2699,7 @@ public actor WorkspaceEngine {
     private func publish(error: String? = nil) {
         let update = WorkspaceUpdate(snapshot: revision.snapshot, sequence: revision.sequence, error: error ?? fatalError)
         for listener in listeners.values { listener.yield(update) }
-        if workspaceLifecycleEnabled, !closing, !stoppingEffects, fatalError == nil, let service = workspaceLifecycleService {
+        if workspaceLifecycleEnabled || workspaceLifecycleRemoteEnabled, !closing, !stoppingEffects, fatalError == nil, let service = workspaceLifecycleService {
             Task { await service.requestSweep() }
         }
     }
@@ -2812,6 +2865,7 @@ public actor WorkspaceEngine {
                         if case .checkpoint(let captured) = preparation {
                             try validateRemoteCheckpointPreparation(captured, snapshot: base.snapshot)
                         }
+                        if case .lifecycle(let captured) = preparation { try validateRemoteLifecyclePreparation(captured, snapshot: base.snapshot) }
                         if case .history(let captured) = preparation {
                             try validateRemoteHistoryPreparation(captured, snapshot: base.snapshot)
                         }
@@ -2877,7 +2931,7 @@ public actor WorkspaceEngine {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
                 }
-                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError {
+                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError || error is RemoteLifecycleFailure {
                     do {
                         let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? (error as? WorkspaceLifecycleError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)

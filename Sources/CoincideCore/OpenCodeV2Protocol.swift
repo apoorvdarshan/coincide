@@ -264,6 +264,8 @@ public struct OpenCodeV2Event: Sendable, Equatable {
     public var session: OpenCodeV2SessionInfo?
     public var agentID: String?
     public var model: OpenCodeModelSelection?
+    public var tokens: OpenCodeStepTokens?
+    public var usageInvalid = false
     public var requiresReconciliation = false
     public var failureMessage: String? { kind == .executionFailed ? "The native OpenCode execution failed." : nil }
 }
@@ -376,6 +378,10 @@ public enum OpenCodeV2Protocol {
             break // New terminal error/reason fields never become raw user-visible payloads.
         case .stepStarted, .stepStreamed, .stepEnded, .stepFailed:
             result.assistantMessageID = try OpenCodeV2Bounds.messageID(data["assistantMessageID"])
+            if kind == .stepEnded || kind == .stepFailed {
+                do { result.tokens = try OpenCodeStepTokens.decode(data["tokens"]) }
+                catch { result.usageInvalid = true }
+            }
             if kind == .stepStarted {
                 result.agentID = try OpenCodeV2Bounds.text(data["agent"])
                 result.model = try model(data["model"])

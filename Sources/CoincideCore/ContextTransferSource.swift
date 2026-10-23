@@ -26,7 +26,7 @@ extension WorkspaceSnapshot {
     func contextTransferFingerprint(_ thread: CodingThread, point: ContextTransferResolvedPoint) throws -> String {
         struct State: Encodable { let configuration: ProviderConfiguration; let runs: [ThreadRunRecord]; let messages: [ChatMessage]; let lineage: ContextTransferLineage? }
         guard let end = thread.activeHistoryRuns.firstIndex(where: { $0.id == point.runID }) else { throw ContextTransferError.invalidSource }
-        let runs = Array(thread.activeHistoryRuns.prefix(end + 1)), ids = Set(runs.map(\.id))
+        let runs = thread.activeHistoryRuns.prefix(end + 1).map { var record = $0; record.providerUsage = nil; return record }, ids = Set(runs.map(\.id))
         return try ContextTransferProtocol.digest(State(configuration: .init(thread: thread), runs: runs,
             messages: thread.messages.filter { $0.removedByHistoryOperationID == nil && $0.runReference.map { $0.threadID == thread.id && ids.contains($0.runID) } == true }, lineage: thread.contextTransferLineage))
     }
@@ -273,6 +273,9 @@ extension CodingThread {
         agentModeID = configuration.agentModeID; agentConfigValues = configuration.agentConfigValues; agentConfiguration = configuration.agentConfiguration
         claudeResumeSelection = nil; claudeResumeConsumerRunID = nil; claudeInheritedHead = nil
         piFreshSessionIntent = nil; piFreshConsumerRunID = nil
-        runtimeID = nil; runtimeRequests = []; providerActivity = nil
+        // Passive metadata belongs to the retired native session/profile. Keep
+        // immutable run accounting in runHistory, but never relabel its live
+        // context, rate limits or model controls as the destination's state.
+        runtimeID = nil; runtimeRequests = []; providerActivity = nil; providerMetadata = nil
     }
 }

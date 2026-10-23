@@ -406,6 +406,12 @@ private actor V1Record {
     var contextOwners: Set<UUID> { Set(events.compactMap { if case .context(let id, _) = $0 { id } else { nil } }) }
     var turns: [String] { events.compactMap { if case .turn(let value) = Self.inner($0) { value } else { nil } } }
     var completions: [ThreadState] { events.compactMap { if case .completed(let value) = Self.inner($0) { value } else { nil } } }
+    var usages: [(UUID, OpenCodeTurnUsage)] { events.compactMap { if case .context(let id, .usage(.openCode(let value))) = $0 { (id, value) } else { nil } } }
+    var usagePrecedesTerminal: Bool {
+        guard let usage = events.firstIndex(where: { if case .usage = Self.inner($0) { true } else { false } }),
+              let terminal = events.firstIndex(where: { switch Self.inner($0) { case .completed, .connectionClosed: true; default: false } }) else { return false }
+        return usage < terminal
+    }
     var failures: Int { events.filter { if case .connectionClosed = Self.inner($0) { true } else { false } }.count }
     var approvals: [ApprovalRequest] { events.compactMap { if case .sessionApproval(let value) = Self.inner($0) { value } else { nil } } }
     var dismissals: Int { events.filter { if case .sessionApprovalDismissed = Self.inner($0) { true } else { false } }.count }
@@ -413,6 +419,62 @@ private actor V1Record {
     var childText: String { entities.values.filter { $0.role == .assistant && $0.key.sessionID.contains("ses_child") }.map(\.text).sorted().joined() }
     var backgroundOwners: Set<UUID> { Set(events.compactMap { if case .runEntity(let id, _) = $0 { id } else { nil } }) }
     private static func inner(_ event: ProviderEvent) -> ProviderEvent { if case .context(_, let value) = event { value } else { event } }
+}
+
+@Test(arguments: ["completed", "failed", "interrupted", "unavailable", "unresolved", "disconnect", "malformed"])
+func openCodeV1UsageResolvesLateAssistantOwnershipAndPublishesExactRunBeforeTerminal(ending: String) async throws {
+    try await withV1Session { f in
+        let thread = f.thread(), runID = try #require(thread.activeRun?.id)
+        try await f.session.send(text: "Owned token accounting", thread: thread)
+        func step(_ id: String, assistant: String = "msg_assistant") async throws {
+            try await f.peer.emit("message.part.updated", fields: ["part": .object(["id": .string(id), "sessionID": .string("ses_root"),
+                "messageID": .string(assistant), "type": .string("step-finish"), "tokens": openCodeUsageFixtureTokens()])])
+        }
+        if ending != "unavailable" { try await step("part_usage_one") }
+        try await f.peer.begin()
+        if ending != "unavailable" {
+            try await step("part_usage_one"); try await step("part_usage_two")
+            try await step("part_foreign", assistant: "msg_old_assistant")
+            try await f.peer.assistant(id: "msg_old_assistant", parent: "msg_old_prompt")
+            try await f.peer.emit("message.part.removed", fields: ["messageID": .string("msg_assistant"), "partID": .string("part_usage_one")])
+        }
+        if ending == "unresolved" { try await step("part_unresolved", assistant: "msg_unknown_owner") }
+        if ending == "malformed" {
+            try await f.peer.emit("message.part.updated", fields: ["part": .object(["id": .string("part_bad_usage"), "sessionID": .string("ses_root"),
+                "messageID": .string("msg_assistant"), "type": .string("step-finish"), "tokens": openCodeUsageFixtureTokens(-1)])])
+        }
+        if ending == "failed" || ending == "interrupted" {
+            try await f.peer.emit("session.error", fields: ["error": .object(["name": .string(ending == "failed" ? "UnknownError" : "MessageAbortedError")])])
+        } else if ending == "disconnect" { await f.peer.disconnect() }
+        else { try await f.peer.idle() }
+        try await v1Eventually { await f.record.usagePrecedesTerminal }
+        let values = await f.record.usages, usage = try #require(values.first?.1)
+        #expect(values.count == 1 && values.first?.0 == runID)
+        #expect(usage.usageStatus == (ending == "unavailable" ? .unavailable : ending == "completed" ? .complete : .partial))
+        #expect(usage.inputTokens == (ending == "unavailable" ? nil : 34))
+        #expect(usage.outputTokens == (ending == "unavailable" ? nil : 14))
+        #expect(!usage.hasSubagents)
+        if ending == "malformed" { #expect(await f.record.completions == [.idle]); #expect(await f.record.failures == 0) }
+    }
+}
+
+@Test func openCodeV1UsageMarksSubagentsWithoutAddingTheirTokensToMainAgentTotals() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Owned parent and child accounting", thread: f.thread())
+        try await f.peer.begin()
+        try await f.peer.emit("message.part.updated", fields: ["part": .object(["id": .string("part_parent_usage"), "sessionID": .string("ses_root"),
+            "messageID": .string("msg_assistant"), "type": .string("step-finish"), "tokens": openCodeUsageFixtureTokens()])])
+        try await f.peer.childCreated(); try await f.peer.taskChild()
+        try await f.peer.user(id: "msg_child_user", session: "ses_child")
+        try await f.peer.assistant(id: "msg_child_assistant", parent: "msg_child_user", session: "ses_child")
+        try await f.peer.emit("message.part.updated", session: "ses_child", fields: ["part": .object(["id": .string("part_child_usage"),
+            "sessionID": .string("ses_child"), "messageID": .string("msg_child_assistant"), "type": .string("step-finish"),
+            "tokens": openCodeUsageFixtureTokens(100_000)])])
+        try await f.peer.idle(session: "ses_child"); try await f.peer.idle()
+        try await v1Eventually { await f.record.usagePrecedesTerminal }
+        let usages = await f.record.usages, usage = try #require(usages.first?.1)
+        #expect(usages.count == 1 && usage.hasSubagents && usage.inputTokens == 17 && usage.outputTokens == 7)
+    }
 }
 @Test func openCodeV1AdvertisedCommandUsesNativeEndpointLiteralArgumentsAndCapturedControls() async throws {
     try await withV1Session { f in

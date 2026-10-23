@@ -1109,6 +1109,15 @@ public actor OpenCodeV2Session: ProviderSession {
            let original = assistantOwners[.init(sessionID: event.sessionID, type: "assistant", id: assistant)], original != owner {
             return
         }
+        if event.sessionID == run.sessionID, !run.finished {
+            if event.usageInvalid { runs[owner]?.usage.complete = false }
+            if let tokens = event.tokens {
+                guard let id = event.id else { throw OpenCodeV2SessionError.invalidResponse }
+                do { try runs[owner]?.usage.record(id: id, tokens: tokens) }
+                catch { runs[owner]?.usage.complete = false }
+            }
+            if event.tool?.name == "subagent" { runs[owner]?.usage.hasSubagents = true }
+        }
         if let tool = event.tool, let assistant = event.assistantMessageID, tool.name == "subagent" {
             guard knownSubagentCalls.count < 4_096 else { throw OpenCodeV2SessionError.invalidResponse }
             knownSubagentCalls.insert(Self.callKey(sessionID: event.sessionID, assistant: assistant, tool: tool.id))
@@ -1161,6 +1170,8 @@ public actor OpenCodeV2Session: ProviderSession {
         if terminal == .executionSucceeded, !run.stopped,
            (!run.pendingSteers.isEmpty || run.awaitingSteerStart) { return }
         strandedSteers.formUnion(run.pendingSteers)
+        publishUsage(id, completed: terminal == .executionSucceeded && !run.stopped)
+        run = runs[id] ?? run
         run.finished = true; runs[id] = run
         if activeRunID == id { activeRunID = nil }
         if run.autonomous {
@@ -1353,14 +1364,26 @@ public actor OpenCodeV2Session: ProviderSession {
 
     private func failConnection(_ error: OpenCodeV2SessionError) {
         guard !closing, !uncertain else { return }
+        if let id = activeRunID { publishUsage(id, completed: false) }
         uncertain = true
         finishCommandScans(ready: false)
         finishCommandInputs(error: error)
         continuation.yield(.connectionClosed(error.localizedDescription))
     }
 
+    private func publishUsage(_ id: UUID, completed: Bool) {
+        guard var run = runs[id], !run.usagePublished, !run.finished else { return }
+        let unresolved = !run.buffer.isEmpty || assistantBuffer.contains { key, events in
+            key.sessionID == run.sessionID && events.contains { $0.tokens != nil || $0.usageInvalid }
+        }
+        let value = run.usage.snapshot(completed: completed, unresolved: unresolved)
+        run.usagePublished = true; run.usage = .init(); runs[id] = run
+        continuation.yield(.context(runID: id, event: .usage(.openCode(value))))
+    }
+
     public func close() async {
         if let closingTask { await closingTask.value; return }
+        if let id = activeRunID { publishUsage(id, completed: false) }
         closing = true
         finishCommandScans(ready: false)
         finishCommandInputs(error: CancellationError())
@@ -1537,6 +1560,8 @@ private struct OpenCodeNativeRun {
     var terminal: OpenCodeV2Event.Kind?
     var buffer: [OpenCodeV2Event] = []
     var bufferBytes = 0
+    var usage = OpenCodeUsageAccumulator()
+    var usagePublished = false
 }
 
 private struct OpenCodeNativeSteer {

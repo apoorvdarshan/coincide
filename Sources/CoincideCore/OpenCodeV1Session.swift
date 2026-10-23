@@ -75,6 +75,7 @@ public actor OpenCodeV1Session: ProviderSession {
     private var messageOwners: [ProviderEntityKey: UUID] = [:]
     private var userMessages: Set<ProviderEntityKey> = []
     private var historicalMessages: Set<ProviderEntityKey> = []
+    private var usageExcludedMessages: Set<ProviderEntityKey> = []
     private var projectors: [OpenCodeV1ProjectionOwner: OpenCodeV1Projection] = [:]
     private var earlyParts: [ProviderEntityKey: [OpenCodeV1Event]] = [:]
     private var earlyPartBytes = 0
@@ -862,6 +863,10 @@ public actor OpenCodeV1Session: ProviderSession {
             owner = messageOwners[Self.messageKey(message.sessionID, parent)]
             if let owner { messageOwners[key] = owner }
         }
+        if message.role == "assistant", owner == nil {
+            guard usageExcludedMessages.count < 8_192 || usageExcludedMessages.contains(key) else { throw OpenCodeV1SessionError.invalidResponse }
+            usageExcludedMessages.insert(key)
+        }
         if message.role == "user", owner == nil, let existing = nativeOwners[message.sessionID], message.sessionID != sessionID {
             owner = existing; messageOwners[key] = existing
         }
@@ -906,6 +911,16 @@ public actor OpenCodeV1Session: ProviderSession {
 
     private func project(_ event: OpenCodeV1Event, owner: UUID) async throws {
         guard let nativeID = event.sessionID else { return }
+        if var run = runs[owner], nativeID == run.sessionID, !run.finished {
+            if event.part?.usageInvalid == true { run.usage.complete = false }
+            if let part = event.part, part.type == "step-finish" {
+                if part.tokens == nil { run.usage.complete = false }
+                do { try run.usage.record(id: part.id, tokens: part.tokens) }
+                catch { run.usage.complete = false }
+            }
+            if event.part?.tool?.name == "task" { run.usage.hasSubagents = true }
+            runs[owner] = run
+        }
         let key = OpenCodeV1ProjectionOwner(sessionID: nativeID, runID: owner)
         var projector = projectors[key] ?? .init(instanceID: configuration.instanceID, sessionID: nativeID)
         let updates = try projector.apply(event)
@@ -1023,6 +1038,8 @@ public actor OpenCodeV1Session: ProviderSession {
 
     private func finish(_ id: UUID, state: ThreadState) {
         guard var run = runs[id], !run.finished else { return }
+        publishUsage(id, completed: state == .idle && !run.stopped)
+        run = runs[id] ?? run
         run.finished = true; runs[id] = run
         if activeRunID == id { activeRunID = nil }
         if run.autonomous {
@@ -1194,11 +1211,23 @@ public actor OpenCodeV1Session: ProviderSession {
 
     private func failConnection(_ error: OpenCodeV1SessionError) {
         guard !closing, !uncertain else { return }
+        if let id = activeRunID { publishUsage(id, completed: false) }
         uncertain = true; continuation.yield(.connectionClosed(error.localizedDescription))
+    }
+
+    private func publishUsage(_ id: UUID, completed: Bool) {
+        guard var run = runs[id], !run.usagePublished, !run.finished else { return }
+        let unresolved = earlyParts.contains { key, events in
+            key.sessionID == run.sessionID && !usageExcludedMessages.contains(key) && events.contains { $0.part?.tokens != nil || $0.part?.usageInvalid == true }
+        }
+        let value = run.usage.snapshot(completed: completed, unresolved: unresolved)
+        run.usagePublished = true; run.usage = .init(); runs[id] = run
+        continuation.yield(.context(runID: id, event: .usage(.openCode(value))))
     }
 
     public func close() async {
         if let closeTask { await closeTask.value; return }
+        if let id = activeRunID { publishUsage(id, completed: false) }
         closing = true
         let task = Task { await self.finishClose() }
         closeTask = task; await task.value
@@ -1352,6 +1381,8 @@ private struct OpenCodeV1Run {
     var stopped = false
     var finished = false
     var generation = 0
+    var usage = OpenCodeUsageAccumulator()
+    var usagePublished = false
 }
 
 private struct OpenCodeV1SteeringInput {

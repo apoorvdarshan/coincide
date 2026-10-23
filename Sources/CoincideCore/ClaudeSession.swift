@@ -19,6 +19,8 @@ public actor ClaudeSession: ProviderSession {
     private var activeModelSelection: CompiledClaudeModelSelection?
     private var nativeVersion: String?
     private var modelControlMetadata: [String: JSONValue] = [:]
+    private var usage = ClaudeUsageAccumulator()
+    private var publishedUsageRevision: Int64 = 0
     private var appMCPConnection: AppMCPConnection?
     private var appMCPRedaction: Task<Void, any Error>?
     private var historyEvidence: ClaudeRunHistoryEvidence?
@@ -202,11 +204,7 @@ public actor ClaudeSession: ProviderSession {
             if !initialized {
                 initialization = result; initialized = true
                 observeModelControlMetadata(result)
-                if let requested = runtimeConfiguration?.launchSettings?.autoCompactWindow {
-                    emit(.configuration(.object(["claudeLaunchSettings": .object([
-                        "requestedAutoCompactWindow": .number(Double(requested)),
-                        "effectiveAutoCompactWindow": .number(Double(requested))]) ])))
-                }
+                if runtimeConfiguration?.launchSettings?.autoCompactWindow != nil { publishClaudeMetadata() }
                 if advertisedCommands == nil { advertisedCommands = result.object?["commands"] }
                 logger.info("Claude connection ready")
             }
@@ -281,6 +279,7 @@ public actor ClaudeSession: ProviderSession {
         if nativeThreadID == nil { nativeThreadID = expectedNative }
         eventRunID = submittedRunID
         working = true; requestedInterrupt = false; emittedAssistant = false
+        usage.beginTurn(runID: submittedRunID)
         messageBlocks.beginTurn()
         turnGeneration += 1
         let generation = turnGeneration
@@ -309,7 +308,8 @@ public actor ClaudeSession: ProviderSession {
             try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(promptID),
                 "message": .object(["role": .string("user"), "content": content]), "parent_tool_use_id": .null]))
             emit(.turn(promptID), runID: submittedRunID)
-        } catch { if generation == turnGeneration { working = false; activeTurnID = nil; submittedOpening = false }; throw error }
+            publishUsage()
+        } catch { if generation == turnGeneration { working = false; activeTurnID = nil; submittedOpening = false; usage.detachRun() }; throw error }
     }
     public func steeringCapabilities() async -> ProviderSteeringCapabilities {
         guard initialized, !shuttingDown else { return .init(unavailableReason: ProviderSteeringError(.unsupported).localizedDescription) }
@@ -492,7 +492,56 @@ public actor ClaudeSession: ProviderSession {
             let next = reason.map(JSONValue.string)
             if modelControlMetadata["fastModeDisabledReason"] != next { modelControlMetadata["fastModeDisabledReason"] = next; changed = true }
         }
-        if changed { emit(.configuration(.object(["claudeModelControl": .object(modelControlMetadata)]))) }
+        if changed { publishClaudeMetadata() }
+    }
+    private func publishClaudeMetadata() {
+        var metadata: [String: JSONValue] = [:]
+        if !modelControlMetadata.isEmpty { metadata["claudeModelControl"] = .object(modelControlMetadata) }
+        if initialized, let requested = runtimeConfiguration?.launchSettings?.autoCompactWindow {
+            metadata["claudeLaunchSettings"] = .object(["requestedAutoCompactWindow": .number(Double(requested)),
+                "effectiveAutoCompactWindow": .number(Double(requested))])
+        }
+        if let snapshot = usage.snapshot, let data = try? JSONEncoder().encode(snapshot),
+           let value = try? JSONDecoder().decode(JSONValue.self, from: data) { metadata["claudeUsage"] = value }
+        guard !metadata.isEmpty else { return }
+        let event = ProviderEvent.configuration(.object(metadata))
+        if working { emit(event) }
+        else { continuation.yield(event) } // Passive updates cannot own an ended run.
+    }
+    private func publishUsage() {
+        guard let snapshot = usage.snapshot, snapshot.revision > publishedUsageRevision else { return }
+        publishedUsageRevision = snapshot.revision
+        if working, submittedOpening, let runID = eventRunID, snapshot.runID == runID {
+            continuation.yield(.context(runID: runID, event: .usage(.claude(snapshot))))
+        }
+        publishClaudeMetadata()
+    }
+    private func observeUsageFrame(_ frame: JSONValue, method: String, isRoot: Bool) {
+        guard frame["replayed"] != .bool(true), frame["isReplay"] != .bool(true),
+              let sessionID = frame["session_id"].string, sessionID == nativeThreadID else { return }
+        if method == "rate_limit_event" {
+            // This SDK event has no parent_tool_use_id field. Explicit child
+            // ownership still disqualifies it, and native session must match.
+            guard frame["parent_tool_use_id"] == .null else { return }
+            if usage.rateLimit(frame) { publishUsage() }
+            return
+        }
+        let rootSystem = method == "system" && frame["parent_tool_use_id"] == .null
+        if rootSystem, !working {
+            if usage.system(frame) { publishUsage() }
+            return
+        }
+        guard working, submittedOpening, resultBelongsToCurrentInput(frame) else { return }
+        if frame["parent_tool_use_id"].string != nil { usage.observedSubagent(); return }
+        guard isRoot || rootSystem else { return }
+        let changed: Bool
+        switch method {
+        case "stream_event": changed = usage.stream(frame["event"])
+        case "assistant": changed = usage.assistant(frame)
+        case "system": changed = usage.system(frame)
+        default: changed = false
+        }
+        if changed { publishUsage() }
     }
     private func skillDispatch(_ text: String) async throws -> ClaudeSkillDispatchPlan? {
         guard text.range(of: #"\p{Sc}"#, options: .regularExpression) != nil, let configuration = skillDiscoveryConfiguration else { return nil }
@@ -508,6 +557,8 @@ public actor ClaudeSession: ProviderSession {
         case .callback(let work): await work()
         case .barrier(let complete): complete()
         case .disconnected(let reason):
+            if working, submittedOpening, usage.interrupted() { publishUsage() }
+            usage.detachRun()
             if !shuttingDown { continuation.yield(.connectionClosed(reason)) }
             working = false; pendingApprovals.removeAll(); continuation.finish()
         case .request(let id, let method, let params):
@@ -554,6 +605,7 @@ public actor ClaudeSession: ProviderSession {
                 emit(.thread(id))
             }
             if isRoot { observeHistoryFrame(frame, method: method) }
+            observeUsageFrame(frame, method: method, isRoot: isRoot)
             switch method {
             case "control_cancel_request":
                 let id = frame["request_id"]
@@ -600,9 +652,11 @@ public actor ClaudeSession: ProviderSession {
                 // root query; late segments and child results cannot repeat it.
                 guard isRoot, working, submittedOpening, resultBelongsToCurrentInput(frame) else { return }
                 observeModelControlMetadata(frame)
-                if steeringSubmitted, !requestedInterrupt,
-                   ["aborted_tools", "aborted_streaming"].contains(frame["terminal_reason"].string ?? "") { return }
                 let terminal: ThreadRunStatus = requestedInterrupt ? .interrupted : (frame["is_error"] == .bool(true) ? .failed : .completed)
+                let steeringSegment = steeringSubmitted && !requestedInterrupt &&
+                    ["aborted_tools", "aborted_streaming"].contains(frame["terminal_reason"].string ?? "")
+                if usage.result(frame, terminalStatus: terminal, steeringSegment: steeringSegment) { publishUsage() }
+                if steeringSegment { return }
                 finishHistory(terminal)
                 working = false
                 for (id, pending) in pendingApprovals where pending.request.isClaudeQuestion { resolvedApprovalIDs.insert(id) }
@@ -618,6 +672,9 @@ public actor ClaudeSession: ProviderSession {
                     }
                     emit(.completed(.idle))
                 }
+                // Retain current context/session observations after the run
+                // ends, without attaching a passive meter to that run's totals.
+                if usage.detachRun() { publishUsage() }
             default: break
             }
         }
@@ -727,9 +784,11 @@ public actor ClaudeSession: ProviderSession {
     }
     private func observeRootSubagent(_ block: JSONValue, id: String, isRoot: Bool) {
         guard isRoot, working, ["agent", "task"].contains(block["name"].string?.lowercased() ?? "") else { return }
+        usage.observedSubagent()
         insertRootSubagent(id)
     }
     private func insertRootSubagent(_ id: String) {
+        if working { usage.observedSubagent() }
         if activeRootSubagentTools.insert(id).inserted { emit(.steeringCapabilitiesChanged) }
     }
     private func removeRootSubagent(_ id: String) {

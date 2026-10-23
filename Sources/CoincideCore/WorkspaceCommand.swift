@@ -1512,6 +1512,13 @@ struct WorkspaceDecision: Sendable {
             switch event { case .sessionApproval, .sessionApprovalDismissed, .configuration, .thread, .runEntity: break; default: return }
         }
         switch event {
+        case .usage(let observation):
+            guard hasVerifiedRunContext, let run = thread.activeRun,
+                  let record = thread.runHistory?.firstIndex(where: { $0.id == run.id }),
+                  thread.runHistory?[record].removedByHistoryOperationID == nil,
+                  (try? observation.validate(provider: run.configuration.provider, runID: run.id)) != nil,
+                  observation.canReplace(thread.runHistory?[record].providerUsage) else { return }
+            thread.runHistory?[record].providerUsage = observation
         case .piHistoryBarrier: return
         case .piHistoryEvidence(let evidence):
             guard thread.provider == .pi, thread.activeRun?.id == evidence.runID else { return }

@@ -25,7 +25,7 @@ public enum RemoteProjectionProtocol {
 }
 public enum RemoteProjectionScope: Codable, Sendable, Equatable { case catalog, thread(UUID), control(UUID) }
 public enum RemoteProjectionContentKind: String, Codable, Sendable {
-    case text, configuration, draft, attachmentReferences, runtimeRequests, queuedTurns, checkpointAttempts
+    case text, configuration, draft, attachmentReferences, runtimeRequests, queuedTurns, checkpointAttempts, providerUsage
 }
 public enum RemoteProjectionCatalogQuery: Codable, Sendable, Equatable {
     case projects
@@ -64,10 +64,12 @@ public struct RemoteProjectionOpenRequest: Codable, Sendable, Equatable {
     public let environmentID: UUID
     public let scope: RemoteProjectionScope
     public let minimumSequence: Int64?
-    public init(environmentID: UUID, scope: RemoteProjectionScope = .catalog, minimumSequence: Int64? = nil) {
+    public let clientSupportsLifecycleControls: Bool?
+    public init(environmentID: UUID, scope: RemoteProjectionScope = .catalog, minimumSequence: Int64? = nil, clientSupportsLifecycleControls: Bool? = nil) {
         self.environmentID = environmentID
         self.scope = scope
         self.minimumSequence = minimumSequence
+        self.clientSupportsLifecycleControls = clientSupportsLifecycleControls
     }
 }
 
@@ -159,7 +161,9 @@ public struct RemoteThreadSummary: Codable, Sendable, Equatable, Identifiable {
     public let messageCount: Int
     public let runCount: Int
     public let queueCount: Int
-    public init(id: UUID, projectID: UUID, title: RemoteProjectionText, workspacePath: String, provider: ProviderKind, providerName: String, model: RemoteProjectionText, permission: PermissionMode, state: ThreadState, isPinned: Bool, isArchived: Bool, createdAt: Date, updatedAt: Date, messageCount: Int, runCount: Int, queueCount: Int) {
+    public let workspaceLifecycle: ThreadWorkspaceLifecycle?
+    public let settlementPhase: ThreadSettlementPhase?
+    public init(id: UUID, projectID: UUID, title: RemoteProjectionText, workspacePath: String, provider: ProviderKind, providerName: String, model: RemoteProjectionText, permission: PermissionMode, state: ThreadState, isPinned: Bool, isArchived: Bool, createdAt: Date, updatedAt: Date, messageCount: Int, runCount: Int, queueCount: Int, workspaceLifecycle: ThreadWorkspaceLifecycle? = nil, settlementPhase: ThreadSettlementPhase? = nil) {
         self.id = id
         self.projectID = projectID
         self.title = title
@@ -176,6 +180,8 @@ public struct RemoteThreadSummary: Codable, Sendable, Equatable, Identifiable {
         self.messageCount = messageCount
         self.runCount = runCount
         self.queueCount = queueCount
+        self.workspaceLifecycle = workspaceLifecycle
+        self.settlementPhase = settlementPhase
     }
 }
 
@@ -223,6 +229,8 @@ public struct RemoteWorktreePreparationSummary: Codable, Sendable, Equatable, Id
 
 public struct RemoteThreadDetail: Codable, Sendable, Equatable {
     public let summary: RemoteThreadSummary
+    public var workspaceLifecycle: ThreadWorkspaceLifecycle? { summary.workspaceLifecycle }
+    public var settlementPhase: ThreadSettlementPhase? { summary.settlementPhase }
     public let configuration: RemoteProjectionContentReference
     public let draft: RemoteProjectionText
     public let draftAttachments: RemoteProjectionContentReference
@@ -242,7 +250,9 @@ public struct RemoteThreadDetail: Codable, Sendable, Equatable {
     public let preparation: RemoteWorktreePreparationSummary?
     public let settlementID: UUID?
     public let checkpointBanner: RemoteCheckpointBannerSummary?
-    public init(summary: RemoteThreadSummary, configuration: RemoteProjectionContentReference, draft: RemoteProjectionText, draftAttachments: RemoteProjectionContentReference, runtimeRequests: RemoteProjectionContentReference, requestCount: Int, queuePaused: Bool, checkpointPolicy: RunCheckpointPolicy, activeRun: RemoteActiveRunSummary? = nil, runtimeID: UUID? = nil, workspaceReady: Bool, isBusy: Bool, submit: RemoteProjectionAvailability, resumeQueue: RemoteProjectionAvailability, mutateFiles: RemoteProjectionAvailability, openTerminal: RemoteProjectionAvailability, chooseWorktree: RemoteProjectionAvailability, preparation: RemoteWorktreePreparationSummary? = nil, settlementID: UUID? = nil, checkpointBanner: RemoteCheckpointBannerSummary? = nil) {
+    public let liveProviderUsage: ProviderUsageUpdate?
+    public let liveProviderUsageContent: RemoteProjectionContentReference?
+    public init(summary: RemoteThreadSummary, configuration: RemoteProjectionContentReference, draft: RemoteProjectionText, draftAttachments: RemoteProjectionContentReference, runtimeRequests: RemoteProjectionContentReference, requestCount: Int, queuePaused: Bool, checkpointPolicy: RunCheckpointPolicy, activeRun: RemoteActiveRunSummary? = nil, runtimeID: UUID? = nil, workspaceReady: Bool, isBusy: Bool, submit: RemoteProjectionAvailability, resumeQueue: RemoteProjectionAvailability, mutateFiles: RemoteProjectionAvailability, openTerminal: RemoteProjectionAvailability, chooseWorktree: RemoteProjectionAvailability, preparation: RemoteWorktreePreparationSummary? = nil, settlementID: UUID? = nil, checkpointBanner: RemoteCheckpointBannerSummary? = nil, liveProviderUsage: ProviderUsageUpdate? = nil, liveProviderUsageContent: RemoteProjectionContentReference? = nil) {
         self.summary = summary
         self.configuration = configuration
         self.draft = draft
@@ -263,6 +273,8 @@ public struct RemoteThreadDetail: Codable, Sendable, Equatable {
         self.preparation = preparation
         self.settlementID = settlementID
         self.checkpointBanner = checkpointBanner
+        self.liveProviderUsage = liveProviderUsage
+        self.liveProviderUsageContent = liveProviderUsageContent
     }
 }
 
@@ -347,7 +359,9 @@ public struct RemoteRunSummary: Codable, Sendable, Equatable, Identifiable {
     public let workspacePath: String
     public let checkpointPolicy: RunCheckpointPolicy?
     public let configuration: RemoteProjectionContentReference?
-    public init(id: UUID, origin: ThreadRunOrigin, status: ThreadRunStatus, startedAt: Date, endedAt: Date? = nil, userMessageID: String? = nil, stopRequested: Bool, endReason: ThreadRunEndReason? = nil, turnCount: Int, removedByHistoryOperationID: UUID? = nil, checkpointAttempts: [RemoteCheckpointAttemptSummary], checkpointAttemptCount: Int, checkpointAttemptsComplete: Bool, checkpointAttemptsContent: RemoteProjectionContentReference? = nil, checkpointDiff: RemoteProjectionAvailability, fork: RemoteProjectionAvailability, rewind: RemoteProjectionAvailability, provider: ProviderKind = .codex, providerName: String = "", model: RemoteProjectionText = .init(preview: "", complete: true), permission: PermissionMode = .supervised, workspacePath: String = "", checkpointPolicy: RunCheckpointPolicy? = nil, configuration: RemoteProjectionContentReference? = nil) {
+    public let providerUsage: ProviderUsageUpdate?
+    public let providerUsageContent: RemoteProjectionContentReference?
+    public init(id: UUID, origin: ThreadRunOrigin, status: ThreadRunStatus, startedAt: Date, endedAt: Date? = nil, userMessageID: String? = nil, stopRequested: Bool, endReason: ThreadRunEndReason? = nil, turnCount: Int, removedByHistoryOperationID: UUID? = nil, checkpointAttempts: [RemoteCheckpointAttemptSummary], checkpointAttemptCount: Int, checkpointAttemptsComplete: Bool, checkpointAttemptsContent: RemoteProjectionContentReference? = nil, checkpointDiff: RemoteProjectionAvailability, fork: RemoteProjectionAvailability, rewind: RemoteProjectionAvailability, provider: ProviderKind = .codex, providerName: String = "", model: RemoteProjectionText = .init(preview: "", complete: true), permission: PermissionMode = .supervised, workspacePath: String = "", checkpointPolicy: RunCheckpointPolicy? = nil, configuration: RemoteProjectionContentReference? = nil, providerUsage: ProviderUsageUpdate? = nil, providerUsageContent: RemoteProjectionContentReference? = nil) {
         self.id = id
         self.origin = origin
         self.status = status
@@ -372,6 +386,8 @@ public struct RemoteRunSummary: Codable, Sendable, Equatable, Identifiable {
         self.workspacePath = workspacePath
         self.checkpointPolicy = checkpointPolicy
         self.configuration = configuration
+        self.providerUsage = providerUsage
+        self.providerUsageContent = providerUsageContent
     }
 }
 

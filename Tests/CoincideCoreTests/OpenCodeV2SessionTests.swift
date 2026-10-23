@@ -768,6 +768,12 @@ private actor OpenCodeSessionRecord {
     }
     var turns: [String] { values.compactMap { if case .turn(let id) = Self.inner($0) { id } else { nil } } }
     var completions: [ThreadState] { values.compactMap { if case .completed(let state) = Self.inner($0) { state } else { nil } } }
+    var usages: [(UUID, OpenCodeTurnUsage)] { values.compactMap { if case .context(let id, .usage(.openCode(let value))) = $0 { (id, value) } else { nil } } }
+    var usagePrecedesTerminal: Bool {
+        guard let usage = values.firstIndex(where: { if case .usage = Self.inner($0) { true } else { false } }),
+              let terminal = values.firstIndex(where: { switch Self.inner($0) { case .completed, .connectionClosed: true; default: false } }) else { return false }
+        return usage < terminal
+    }
     var connectionFailures: Int { values.filter { if case .connectionClosed = Self.inner($0) { true } else { false } }.count }
     var approvals: [ApprovalRequest] { values.compactMap { if case .sessionApproval(let request) = Self.inner($0) { request } else { nil } } }
     var assistantText: String { entities.values.filter { $0.role == .assistant && !$0.key.sessionID.hasSuffix(":ses_child") }.map(\.text).sorted().joined() }
@@ -777,6 +783,58 @@ private actor OpenCodeSessionRecord {
     var backgroundOwners: Set<UUID> { Set(values.compactMap { if case .runEntity(let id, _) = $0 { id } else { nil } }) }
     var activities: [ProviderActivity] { values.compactMap { if case .activity(let value) = Self.inner($0) { value } else { nil } } }
     static func inner(_ event: ProviderEvent) -> ProviderEvent { if case .context(_, let inner) = event { inner } else { event } }
+}
+
+@Test(arguments: ["completed", "failed", "interrupted", "unavailable", "unresolved", "disconnect", "malformed"])
+func openCodeV2UsageWaitsForOwnedAssistantAndExecutionTerminalWithExplicitCompleteness(ending: String) async throws {
+    try await withOpenCodeV2Session { f in
+        let thread = f.thread(), runID = try #require(thread.activeRun?.id)
+        try await f.session.send(text: "Owned token accounting", thread: thread)
+        if ending != "unavailable" {
+            try await f.transport.emit(.stepEnded, fields: ["assistantMessageID": .string("msg_assistant_one"), "tokens": openCodeUsageFixtureTokens()])
+        }
+        try await f.transport.beginInput()
+        if ending != "unavailable" {
+            try await f.transport.emit(.stepEnded, fields: ["assistantMessageID": .string("msg_assistant_one"), "tokens": openCodeUsageFixtureTokens()])
+            await f.transport.replayLastEvent()
+        }
+        if ending == "unresolved" {
+            try await f.transport.emit(.stepEnded, fields: ["assistantMessageID": .string("msg_missing_step_start"), "tokens": openCodeUsageFixtureTokens()])
+        }
+        if ending == "malformed" {
+            try await f.transport.emit(.stepEnded, fields: ["assistantMessageID": .string("msg_assistant_one"), "tokens": openCodeUsageFixtureTokens(-1)])
+        }
+        if ending == "disconnect" { await f.transport.disconnect() }
+        else { try await f.transport.emit(ending == "failed" ? .executionFailed : ending == "interrupted" ? .executionInterrupted : .executionSucceeded) }
+        try await openCodeSessionEventually { await f.record.usagePrecedesTerminal }
+        let values = await f.record.usages, usage = try #require(values.first?.1)
+        #expect(values.count == 1 && values.first?.0 == runID)
+        #expect(usage.usageStatus == (ending == "unavailable" ? .unavailable : ending == "completed" ? .complete : .partial))
+        #expect(usage.inputTokens == (ending == "unavailable" ? nil : 34))
+        #expect(usage.outputTokens == (ending == "unavailable" ? nil : 14))
+        if ending == "malformed" { #expect(await f.record.completions == [.idle]); #expect(await f.record.connectionFailures == 0) }
+    }
+}
+
+@Test func openCodeV2UsageMarksSubagentsAndNeverChargesChildOrUnownedNativeSessionsToMainAgent() async throws {
+    try await withOpenCodeV2Session { f in
+        try await f.session.send(text: "Owned parent and child accounting", thread: f.thread())
+        try await f.transport.beginInput()
+        try await f.transport.emit(.stepEnded, fields: ["assistantMessageID": .string("msg_assistant_one"), "tokens": openCodeUsageFixtureTokens()])
+        try await f.transport.emit(.toolInputStarted, fields: ["assistantMessageID": .string("msg_assistant_one"), "id": .string("call_usage_child"), "name": .string("subagent")])
+        try await f.transport.emit(.toolProgress, fields: ["assistantMessageID": .string("msg_assistant_one"), "id": .string("call_usage_child"),
+            "metadata": .object(["sessionID": .string("ses_child"), "status": .string("running")])])
+        try await f.transport.emit(.executionStarted, session: "ses_child")
+        try await f.transport.step(assistant: "msg_child", session: "ses_child")
+        try await f.transport.emit(.stepEnded, session: "ses_child", fields: ["assistantMessageID": .string("msg_child"), "tokens": openCodeUsageFixtureTokens(100_000)])
+        try await f.transport.emit(.stepEnded, session: "ses_foreign", fields: ["assistantMessageID": .string("msg_foreign"), "tokens": openCodeUsageFixtureTokens(100_000)])
+        try await f.transport.emit(.executionSucceeded, session: "ses_child")
+        try await f.transport.emit(.executionSucceeded)
+        try await openCodeSessionEventually { await f.record.usagePrecedesTerminal }
+        let usages = await f.record.usages, usage = try #require(usages.first?.1)
+        #expect(usages.count == 1 && usage.hasSubagents && usage.inputTokens == 17 && usage.outputTokens == 7)
+        #expect(await f.record.connectionFailures == 0)
+    }
 }
 
 @Test func openCodeV2NativeSkillsAttachExactIDsInMentionOrderAndPreserveLiteralText() async throws {
@@ -1050,6 +1108,7 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
     private var mode: OpenCodeSessionFault
     private let eventStream: AsyncThrowingStream<OpenCodeSSEEvent, any Error>
     private let eventContinuation: AsyncThrowingStream<OpenCodeSSEEvent, any Error>.Continuation
+    private var lastEvent: OpenCodeSSEEvent?
     private let promptGate = OpenCodeSessionGate()
     private let configurationGate = OpenCodeSessionGate()
     private let permissionReplyGate = OpenCodeSessionGate()
@@ -1230,8 +1289,10 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
         let value: JSONValue = .object(["id": .string("evt_" + UUID().uuidString), "created": .number(Double(sequence)), "type": .string(kind.rawValue),
             "durable": .object(["aggregateID": .string(session), "seq": .number(Double(sequence)), "version": .number(1)]), "data": .object(data)])
         let bytes = try JSONEncoder().encode(value)
-        eventContinuation.yield(.init(event: "message", data: String(decoding: bytes, as: UTF8.self), id: nil, retryMilliseconds: nil))
+        let frame = OpenCodeSSEEvent(event: "message", data: String(decoding: bytes, as: UTF8.self), id: nil, retryMilliseconds: nil)
+        lastEvent = frame; eventContinuation.yield(frame)
     }
+    func replayLastEvent() { if let lastEvent { eventContinuation.yield(lastEvent) } }
     private func setInfo(_ key: String, _ value: JSONValue) { var object = info?.object ?? [:]; object[key] = value; info = .object(object) }
     private func modelJSON(_ model: OpenCodeModelSelection) -> JSONValue {
         var object: [String: JSONValue] = ["providerID": .string(model.providerID), "id": .string(model.id)]

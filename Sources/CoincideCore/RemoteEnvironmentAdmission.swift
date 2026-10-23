@@ -12,6 +12,7 @@ enum RemoteEnvironmentPreparation: Codable, Sendable {
     case checkpoint(RemoteCheckpointPreparation)
     case history(RemoteHistoryPreparation)
     case contextTransfer(RemoteContextPreparation)
+    case lifecycle(RemoteLifecyclePreparation)
 }
 
 enum RemoteEnvironmentAdmission {
@@ -62,12 +63,16 @@ enum RemoteEnvironmentAdmission {
             guard thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
                   thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw stale() }
             return .respond(threadID: id, requestID: request.id, response: response)
-        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest, .checkpoint, .history, .contextTransfer:
+        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest, .checkpoint, .history, .contextTransfer, .lifecycle, .lifecyclePolicy:
             throw stale()
         }
     }
     static func commands(_ request: RemoteEnvironmentCommandRequest, preparation: RemoteEnvironmentPreparation,
                          snapshot: WorkspaceSnapshot) throws -> [EngineCommand] {
+        if request.command.isLifecycleCommand {
+            guard case .lifecycle(let prepared) = preparation else { throw stale() }
+            return try RemoteLifecycleAdmission.commands(request, prepared: prepared, snapshot: snapshot)
+        }
         if case .contextTransfer = request.command {
             return try RemoteContextAdmission.commands(request, preparation: preparation, snapshot: snapshot)
         }

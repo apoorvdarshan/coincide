@@ -180,6 +180,16 @@ struct RemoteProjectedConversationView: View {
         if let control, control.detail.summary.id == store.selectedThreadID {
             VStack(spacing: 0) {
                 header(control)
+                if store.descriptor?.capabilities.supportsWorkspaceLifecycleControls == true {
+                    RemoteLifecycleControls(store: store.lifecycle).padding(.horizontal, 14).padding(.bottom, 8)
+                }
+                if control.detail.liveProviderUsage != nil || control.detail.liveProviderUsageContent != nil {
+                    DisclosureGroup("Latest Provider Status") {
+                        RemoteProviderUsageView(binding: control.binding, contentAccess: .init(store: store.projection),
+                            provider: control.detail.summary.provider, runID: control.detail.activeRun?.id,
+                            inline: control.detail.liveProviderUsage, reference: control.detail.liveProviderUsageContent, live: true)
+                    }.padding(.horizontal, 14).padding(.bottom, 8)
+                }
                 HStack {
                     Button("Choose Worktree…", systemImage: "arrow.triangle.branch", action: chooseWorktree).disabled(!store.worktrees.canChoose)
                     Spacer()

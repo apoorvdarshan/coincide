@@ -157,6 +157,7 @@ extension WorkspaceSnapshot {
         // Pin/wake/snooze preferences change attention, not workspace ownership.
         // Settlement and the exact checkpoint/runtime remain bound separately.
         thread.workspaceLifecycle = nil
+        if let records = thread.runHistory { thread.runHistory = records.map { var record = $0; record.providerUsage = nil; return record } }
         struct Source: Encodable { let thread: CodingThread; let projectID: UUID; let projectPath: String; let clone: ProjectCloneState? }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return SHA256.hash(data: try encoder.encode(Source(thread: thread, projectID: project.id, projectPath: project.path, clone: project.clone)))

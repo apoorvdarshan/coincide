@@ -252,6 +252,13 @@ struct RemoteProjectedCheckpointHistory: View {
                             HStack { Text(run.startedAt, style: .date); Text(run.status.rawValue).foregroundStyle(.secondary); Spacer() }
                             Text("\(run.providerName) · \(run.model.preview)").font(.caption).foregroundStyle(.secondary)
                             Text(run.workspacePath).font(.caption).textSelection(.enabled)
+                            if let binding = projection.browseBinding, run.providerUsage != nil || run.providerUsageContent != nil {
+                                DisclosureGroup("Observed Provider Usage") {
+                                    RemoteProviderUsageView(binding: binding, contentAccess: .init(store: projection),
+                                        provider: run.provider, runID: run.id, inline: run.providerUsage,
+                                        reference: run.providerUsageContent)
+                                }
+                            }
                             if let history, let historyAction { RemoteHistoryRunActions(model: history, runID: run.id) { historyAction(run.id, $0) } }
                             if let contextAction { Button("Transfer Context From This Run…") { contextAction(run.id) }.disabled(!run.status.isTerminal || run.status == .unknown || run.removedByHistoryOperationID != nil) }
                             if run.removedByHistoryOperationID != nil { Text("Removed from the current conversation by a rewind").font(.caption).foregroundStyle(.secondary) }

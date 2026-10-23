@@ -183,6 +183,18 @@ public actor RemoteEnvironmentClient {
     }
     public func command(_ command: RemoteEnvironmentCommand, id: UUID = UUID()) async throws -> RemoteEnvironmentCommandResult {
         let (connection, owned, environment) = try context()
+        if command.isLifecycleCommand {
+            guard descriptor?.capabilities.supportsWorkspaceLifecycleControls == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            switch command {
+            case .lifecycle(let capture, let action):
+                guard capture.target.environmentID == environment, RemoteLifecycleProtocol.validDigest(capture.digest),
+                      !action.requiresBoundRoot || capture.target.rootID != nil else { throw RemoteLifecycleFailure(.invalidTarget) }
+                if case .snooze(let until) = action, !until.timeIntervalSince1970.isFinite || until <= Date() { throw RemoteLifecycleFailure(.invalidRequest) }
+            case .lifecyclePolicy(let policy, let expected):
+                do { try policy.validate(); try expected.validate() } catch { throw RemoteLifecycleFailure(.invalidRequest) }
+            default: break
+            }
+        }
         if command.isWorktreeCommand, descriptor?.capabilities.supportsRemoteWorktrees != true {
             throw RemoteEnvironmentClientError(.unsupported)
         }
@@ -274,6 +286,55 @@ public actor RemoteEnvironmentClient {
             let safe = error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
             if generation == owned { retire(safe) }
             throw safe
+        }
+    }
+    public func readLifecycle(_ request: RemoteLifecycleReadRequest) async throws -> RemoteLifecycleReadResult {
+        let (connection, owned, environment) = try context(), floor = sequenceFloor
+        guard descriptor?.capabilities.supportsWorkspaceLifecycleControls == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        guard request.environmentID == environment, request.target.map({ $0.environmentID == environment }) ?? true else { throw RemoteLifecycleFailure(.invalidTarget) }
+        let bytes = try RemoteLifecycleProtocol.payload(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumRequestBytes, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(RemoteLifecycleProtocol.readMethod,
+                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(30))
+            guard generation == owned, rpc != nil else { throw CancellationError() }
+            let result: RemoteLifecycleReadResult
+            do { result = try RemoteEnvironmentProtocol.decode(RemoteLifecycleReadResult.self, from: raw) }
+            catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+            try validateWorkspaceResponse(generation: owned) {
+                guard result.environmentID == environment, result.sequence >= floor,
+                      try RemoteLifecycleProtocol.payload(result).count <= RemoteLifecycleProtocol.maximumResultBytes else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try result.policy.validate()
+                if let target = request.target, let state = result.thread {
+                    let captured = state.capture, actual = captured.target
+                    let expected = RemoteWorkspaceTarget(environmentID: target.environmentID, projectID: target.projectID,
+                        threadID: target.threadID, configuration: target.configuration, rootID: actual.rootID)
+                    guard RemoteLifecycleProtocol.validDigest(captured.digest),
+                          RemoteLifecycleProtocol.same(actual, expected),
+                          actual.rootID == nil || target.rootID == nil || actual.rootID == target.rootID,
+                          (state.settlementID == nil) == (state.settlementPhase == nil),
+                          !state.settle.allowed || actual.rootID != nil,
+                          !state.resume.allowed || (actual.rootID != nil && state.settlementID != nil && state.settlementPhase == .settled) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                    try state.lifecycle?.validate()
+                    for availability in [state.settle, state.resume, state.snooze, state.wake] {
+                        guard availability.reason.map({ $0.utf8.count <= 2_048 && !$0.contains("\0") }) ?? true else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                    }
+                } else { guard request.target == nil, result.thread == nil else { throw RemoteEnvironmentClientError(.invalidResponse) } }
+            }
+            sequenceFloor = max(sequenceFloor, result.sequence)
+            return result
+        } catch {
+            if generation == owned {
+                if let failure = error as? JSONRPCRemoteError, failure.code == -32_009,
+                   let raw = failure.data["kind"].string, let kind = RemoteLifecycleFailure.Kind(rawValue: raw) { throw RemoteLifecycleFailure(kind) }
+                if let failure = workspaceRejection(error) { throw failure }
+                if let failure = nativeRejection(error) { throw failure }
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
+            throw error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
         }
     }
     public func bindCheckpointWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
@@ -1094,7 +1155,8 @@ public actor RemoteEnvironmentClient {
         activeRequests += 1; defer { activeRequests -= 1 }
         do {
             let raw = try await connection.request(method, params: RemoteEnvironmentProtocol.encode(
-                RemoteEnvironmentSnapshotRequest(environmentID: environmentID, afterSequence: latest?.sequence)), timeout: .seconds(30))
+                RemoteEnvironmentSnapshotRequest(environmentID: environmentID, afterSequence: latest?.sequence,
+                    clientSupportsLifecycleControls: descriptor?.capabilities.supportsWorkspaceLifecycleControls == true ? true : nil)), timeout: .seconds(30))
             let value = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentSnapshot.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             try acceptSnapshot(value)
@@ -1196,7 +1258,8 @@ extension RemoteEnvironmentClient {
         let owned = generation, floor = sequenceFloor
         projectionMode = true; subscribing = true
         do {
-            let request = RemoteProjectionOpenRequest(environmentID: described.environmentID, scope: .catalog, minimumSequence: floor)
+            let request = RemoteProjectionOpenRequest(environmentID: described.environmentID, scope: .catalog, minimumSequence: floor,
+                clientSupportsLifecycleControls: described.capabilities.supportsWorkspaceLifecycleControls ? true : nil)
             let result: RemoteProjectionBinding = try await projectionRequest(RemoteProjectionProtocol.subscribeMethod, request: request, requireConnected: false)
             guard result.environmentID == described.environmentID else {
                 retire(.init(.wrongEnvironment)); throw RemoteEnvironmentClientError(.wrongEnvironment)
@@ -1265,6 +1328,8 @@ extension RemoteEnvironmentClient {
             try Self.validateProjectionReference(result.thread.draftAttachments, kind: .attachmentReferences)
             try Self.validateProjectionReference(result.thread.runtimeRequests, kind: .runtimeRequests)
             try Self.validateProjectionText(result.thread.draft, kind: .draft)
+            try Self.validateProjectionUsage(result.thread.liveProviderUsage, reference: result.thread.liveProviderUsageContent,
+                provider: result.thread.summary.provider, runID: result.thread.activeRun?.id, live: true)
             guard result.thread.requestCount >= 0,
                   result.thread.activeRun.map({ $0.startedAt.timeIntervalSince1970.isFinite && ($0.runtimeID == nil || $0.runtimeID == result.thread.runtimeID) }) ?? true else { throw RemoteEnvironmentClientError(.invalidResponse) }
             for value in [result.thread.submit, result.thread.resumeQueue, result.thread.mutateFiles, result.thread.openTerminal, result.thread.chooseWorktree] { try Self.validateProjectionAvailability(value) }
@@ -1320,6 +1385,8 @@ extension RemoteEnvironmentClient {
                 try Self.validateProjectionText(item.model)
                 if let reference = item.configuration { try Self.validateProjectionReference(reference, kind: .configuration) }
                 if let reference = item.checkpointAttemptsContent { try Self.validateProjectionReference(reference, kind: .checkpointAttempts) }
+                try Self.validateProjectionUsage(item.providerUsage, reference: item.providerUsageContent,
+                    provider: item.provider, runID: item.id, live: false)
                 for attempt in item.checkpointAttempts { try Self.validateProjectionAttempt(attempt) }
                 for availability in [item.checkpointDiff, item.fork, item.rewind] { try Self.validateProjectionAvailability(availability) }
             }
@@ -1554,6 +1621,18 @@ extension RemoteEnvironmentClient {
         guard value.reason.map({ !$0.isEmpty && $0.utf8.count <= 8_192 && !$0.contains("\0") }) ?? true,
               !value.allowed || value.reason == nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
     }
+    private static func validateProjectionUsage(_ value: ProviderUsageUpdate?, reference: RemoteProjectionContentReference?,
+                                              provider: ProviderKind, runID: UUID?, live: Bool) throws {
+        guard value == nil || reference == nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        if let value {
+            do { try value.validateProjection(provider: provider, runID: runID, live: live) }
+            catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        if let reference {
+            try validateProjectionReference(reference, kind: .providerUsage)
+            guard reference.totalBytes <= 1_048_576 else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        }
+    }
     private static func validateProjectSummary(_ value: RemoteProjectSummary) throws {
         try ProviderHistoryValidation.path(value.workspacePath); try validateProjectionText(value.name)
         if let error = value.cloneError { try validateProjectionText(error) }
@@ -1562,6 +1641,7 @@ extension RemoteEnvironmentClient {
     }
     private static func validateThreadSummary(_ value: RemoteThreadSummary) throws {
         try ProviderHistoryValidation.path(value.workspacePath); try validateProjectionText(value.title); try validateProjectionText(value.model)
+        try value.workspaceLifecycle?.validate()
         guard value.createdAt.timeIntervalSince1970.isFinite, value.updatedAt.timeIntervalSince1970.isFinite,
               value.providerName.utf8.count <= 512, value.messageCount >= 0, value.runCount >= 0, value.queueCount >= 0 else { throw RemoteEnvironmentClientError(.invalidResponse) }
     }

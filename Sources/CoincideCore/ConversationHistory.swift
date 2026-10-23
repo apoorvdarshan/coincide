@@ -528,7 +528,7 @@ extension WorkspaceSnapshot {
             let piFreshConsumer: UUID?
             let piResolutions: [PiFreshContextResolution]?
         }
-        let records = thread.activeHistoryRuns.map { value in var value = value; value.checkpoints = nil; return value }
+        let records = thread.activeHistoryRuns.map { value in var value = value; value.checkpoints = nil; value.providerUsage = nil; return value }
         let steering = (promptSteerings ?? []).filter { $0.threadID == thread.id }.map { SteeringProof(id: $0.id, runID: $0.runID, messageID: $0.messageID, phase: $0.phase, receipt: $0.receipt) }
         let source = Source(id: thread.id, projectID: thread.projectID, configuration: .init(thread: thread), messages: thread.visibleMessages, steering: steering.isEmpty ? nil : steering,
             records: records, checkpointPolicy: thread.checkpointPolicy, activeRun: thread.activeRun,

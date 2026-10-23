@@ -4892,3 +4892,58 @@ installed compaction behavior, the next combined CI result and broader full T3
 parity remain unverified. The final local patch has complete whole-UI, focused
 Core regression, Markdown, Terminal, helper, ABI and package evidence; a new
 single all-green aggregate after the final file-proof fix is not claimed.
+
+### Hosted compiler workaround after dc7b893
+
+[Run 39976411282](https://github.com/apoorvdarshan/coincide/actions/runs/39976411282)
+failed during compilation on Apple Swift **6.3.3**
+(`swiftlang-6.3.3.1.3`, clang `2100.1.1.101`, Xcode 26.6). At
+2026-10-23 15:21:18 UTC, IRGen aborted with signal 6 and a SmallVector capacity
+overflow while generating `WorkspaceLifecycleSettingsSection.swift`. The failing
+SIL symbol `$sSbScA_pSgIeAghyg_SbIeAghn_TR` demangles to an isolated, Sendable Bool
+setter reabstraction thunk. The two direct actor-isolated method references in
+the section's Binding setters are replaced with explicit closures, preserving
+the same settings actions. No toolchain, workflow, test assertion or deadline is
+changed. This narrow workaround requires verification in the next hosted build;
+the failed run never executed tests or native UI shards.
+
+### Provider usage and remote lifecycle controls (2026-10-23)
+
+This batch adds typed Claude/OpenCode usage retention and native/remote displays,
+plus capability-negotiated remote conversation lifecycle controls and automatic
+sweeps. Remote manual settlement currently exposes an explicit **without cleanup
+script** action; normal reviewed remote cleanup execution, stop and output remain
+unfinished. Usage observations do not alter history/checkpoint/context authority.
+Context handoff clears old passive session metadata while preserving recorded
+run accounting. Terminal Claude events publish final run accounting before a
+separate passive snapshot, without another provider request.
+
+Local Apple Swift **6.4** (`swiftlang-6.4.0.34.1`) verification:
+
+- `swift build --build-tests` passes after correcting new fixture compilation
+  issues. No production API, assertion, deadline or test coverage was weakened.
+- One serial `swift test --skip-build --no-parallel` selection passes **423
+  declarations**: the complete **368-test CoincideUITests suite in 80.734 seconds**
+  and **55 Core declarations in 3.193 seconds**, including parameterized cases.
+  The selection covers Claude/OpenCode usage ownership and normalization,
+  cumulative replacement, durable replay and proof invariance, context-profile
+  handoff, large leased usage documents, remote native-helper lifecycle controls,
+  lost-reply receipt recovery and stale roots/claims, negotiated auto-settlement,
+  existing lifecycle policy, file-proof pin edits, file-write locks and PR reuse.
+- `python3 -m unittest discover -s UITests/macOS -p 'test_*.py' -q` passes all
+  **75 tests in 4.715 seconds**.
+- The async-default ABI guard passes **1240 Mach-O objects**, including 884 Core
+  and 364 App objects: **zero weak records**, three local records.
+- `./script/build_and_run.sh --build-only`, strict deep code-signature verification
+  and `--verify-resources` pass. Compiled/package UUIDs match: Coincide
+  `E1EAC92F-F086-3D82-A673-46F78F245F87`, CoincideEnvironment
+  `7EA934C0-BA88-37F1-9FED-FCE4F63C13CE`, CoincideScriptHelper
+  `CCF43E00-11D6-336D-A86C-1165C35C2E62`.
+
+Evidence logs use `/tmp/coincide-usage-remote-lifecycle-*-20261023.log`, with the
+successful test build in `build-verified` and serial checks in `focused`.
+No installed app was replaced/opened, provider/authentication setup changed, real
+model turn sent, or live SSH host mutated. These local checks do not establish
+installed-provider usage acceptance, hosted GUI acceptance, a new complete Core
+suite result or the Swift 6.3.3 compiler-workaround result. The next hosted run
+must verify those applicable checks; full T3 parity remains unfinished.

@@ -39,6 +39,12 @@ enum RemoteProjectionProjector {
         func json<T: Encodable>(_ value: T, kind: RemoteProjectionContentKind) throws -> RemoteProjectionContentReference {
             try document(RemoteProjectionProtocol.payload(value), kind: kind)
         }
+        func usage(_ value: ProviderUsageUpdate?) throws -> (inline: ProviderUsageUpdate?, content: RemoteProjectionContentReference?) {
+            guard let value else { return (nil, nil) }
+            let bytes = try RemoteProjectionProtocol.payload(value)
+            if bytes.count <= 16_384 { return (value, nil) }
+            return (nil, try document(bytes, kind: .providerUsage))
+        }
         func text(_ value: String, kind: RemoteProjectionContentKind = .text) throws -> RemoteProjectionText {
             let bytes = Data(value.utf8)
             if bytes.count <= 1_024 { return .init(preview: value, complete: true) }
@@ -99,7 +105,8 @@ enum RemoteProjectionProjector {
             let result = try RemoteThreadSummary(id: thread.id, projectID: thread.projectID, title: text(thread.title), workspacePath: thread.workspacePath,
                 provider: thread.provider, providerName: thread.providerName, model: text(thread.model), permission: thread.permission,
                 state: thread.state, isPinned: thread.isPinned, isArchived: thread.isArchived, createdAt: thread.createdAt, updatedAt: thread.updatedAt,
-                messageCount: thread.messages.count, runCount: thread.runHistory?.count ?? 0, queueCount: thread.queuedTurns.count)
+                messageCount: thread.messages.count, runCount: thread.runHistory?.count ?? 0, queueCount: thread.queuedTurns.count,
+                workspaceLifecycle: thread.workspaceLifecycle, settlementPhase: thread.settlement?.phase)
             return counted ? try row(result) : result
         }
         func preparation(_ value: ThreadWorkspacePreparation) throws -> RemoteWorktreePreparationSummary {
@@ -121,7 +128,8 @@ enum RemoteProjectionProjector {
             let canSubmit = available && (ready || thread.workspacePreparation?.isRunning == true)
             let canChoose = available && thread.messages.isEmpty && !thread.isBusy && thread.queuedTurns.isEmpty &&
                 (thread.workspacePreparation == nil || thread.workspacePreparation?.isReady == true || thread.workspacePreparation?.canRetry == true)
-            return try row(.init(summary: summary(thread, counted: false), configuration: json(ProviderConfiguration(thread: thread), kind: .configuration),
+            func projected(_ inline: ProviderUsageUpdate?, _ content: RemoteProjectionContentReference?) throws -> RemoteThreadDetail {
+                try .init(summary: summary(thread, counted: false), configuration: json(ProviderConfiguration(thread: thread), kind: .configuration),
                 draft: text(thread.draft, kind: .draft), draftAttachments: json(thread.draftAttachments, kind: .attachmentReferences),
                 runtimeRequests: json(thread.runtimeRequests, kind: .runtimeRequests), requestCount: thread.runtimeRequests.count,
                 queuePaused: thread.queuePaused, checkpointPolicy: thread.effectiveCheckpointPolicy,
@@ -133,7 +141,17 @@ enum RemoteProjectionProjector {
                 openTerminal: availability(available && ready && !preparing, "This workspace is unavailable or held by an operation."),
                 chooseWorktree: availability(canChoose, "Choose a worktree before the first message and with no running or queued work."),
                 preparation: thread.workspacePreparation.map { try preparation($0) }, settlementID: thread.settlement?.id,
-                checkpointBanner: banner(thread)))
+                checkpointBanner: banner(thread), liveProviderUsage: inline, liveProviderUsageContent: content)
+            }
+            var selectedUsage = try usage(thread.liveProviderUsage)
+            var result = try projected(selectedUsage.inline, selectedUsage.content)
+            // Reserve envelope space too: an otherwise large row must not be
+            // pushed over its page budget by even a small optional meter.
+            if let inline = selectedUsage.inline, try RemoteProjectionProtocol.payload(result).count > RemoteProjectionProtocol.maximumResultBytes - 4_096 {
+                selectedUsage = (nil, try json(inline, kind: .providerUsage))
+                result = try projected(selectedUsage.inline, selectedUsage.content)
+            }
+            return try row(result)
         }
         func message(_ value: ChatMessage) throws -> RemoteMessageSummary {
             try row(.init(id: value.id, role: value.role, createdAt: value.createdAt, text: text(value.providerEntity?.text ?? value.text),
@@ -186,7 +204,8 @@ enum RemoteProjectionProjector {
             } ?? false
             let forkReason = snapshot.conversationHistoryUnavailableReason(threadID: thread.id, runID: record.id, kind: .forkAfterRun)
             let rewindReason = snapshot.conversationHistoryUnavailableReason(threadID: thread.id, runID: record.id, kind: .rewindBeforeRun)
-            return try row(.init(id: record.id, origin: record.origin, status: record.status, startedAt: record.startedAt, endedAt: record.endedAt,
+            func projected(_ inline: ProviderUsageUpdate?, _ content: RemoteProjectionContentReference?) throws -> RemoteRunSummary {
+                try .init(id: record.id, origin: record.origin, status: record.status, startedAt: record.startedAt, endedAt: record.endedAt,
                 userMessageID: record.userMessageID, stopRequested: record.stopRequested, endReason: record.endReason, turnCount: record.turnIDs.count,
                 // An incomplete preview retains the exact current comparison
                 // pair. The referenced document preserves every prior attempt.
@@ -197,7 +216,17 @@ enum RemoteProjectionProjector {
                 fork: .init(allowed: forkReason == nil, reason: forkReason), rewind: .init(allowed: rewindReason == nil, reason: rewindReason),
                 provider: record.configuration.provider, providerName: record.configuration.provider.name, model: text(record.configuration.model),
                 permission: record.configuration.permission, workspacePath: record.configuration.workspacePath,
-                checkpointPolicy: record.checkpoints == nil ? nil : .automatic, configuration: json(record.configuration, kind: .configuration)))
+                checkpointPolicy: record.checkpoints == nil ? nil : .automatic, configuration: json(record.configuration, kind: .configuration),
+                providerUsage: inline, providerUsageContent: content)
+            }
+            if let value = record.providerUsage { try value.validate(provider: record.configuration.provider, runID: record.id) }
+            var selectedUsage = try usage(record.providerUsage)
+            var result = try projected(selectedUsage.inline, selectedUsage.content)
+            if let inline = selectedUsage.inline, try RemoteProjectionProtocol.payload(result).count > RemoteProjectionProtocol.maximumResultBytes - 4_096 {
+                selectedUsage = (nil, try json(inline, kind: .providerUsage))
+                result = try projected(selectedUsage.inline, selectedUsage.content)
+            }
+            return try row(result)
         }
         func operation(id: UUID, kind: RemoteOperationKind, projectID: UUID, threadID: UUID? = nil, runID: UUID? = nil,
                        attemptID: UUID? = nil, targetThreadID: UUID? = nil, phase: String, updatedAt: Date, title: String,

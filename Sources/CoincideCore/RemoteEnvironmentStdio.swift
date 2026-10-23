@@ -130,7 +130,7 @@ public enum RemoteEnvironmentStdio {
                             continue requestLoop
                         case RemoteEnvironmentProtocol.commandMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
-                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand {
+                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isLifecycleCommand {
                                 try await workspaceReads.submit(id: id, operation: {
                                     try RemoteEnvironmentProtocol.encode(try await current.command(request))
                                 }, writer: writer, disconnect: { input.stop() })
@@ -149,6 +149,12 @@ public enum RemoteEnvironmentStdio {
                         case RemoteEnvironmentProtocol.workspaceBindMethod:
                             let target = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceTarget.self, from: params)
                             result = try RemoteEnvironmentProtocol.encode(try await current.bindWorkspace(target))
+                        case RemoteLifecycleProtocol.readMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteLifecycleReadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.readLifecycle(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
                         case RemoteEnvironmentProtocol.worktreeCatalogMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteWorktreeCatalogRequest.self, from: params)
                             try await workspaceReads.submit(id: id, operation: {
@@ -410,7 +416,8 @@ public enum RemoteEnvironmentStdio {
     }
     fileprivate static func errorResponse(id: JSONValue, error: any Error) -> JSONValue {
         let code: Int, kind: String, message: String
-        if let safe = error as? RemoteProjectionFailure { code = -32_006; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        if let safe = error as? RemoteLifecycleFailure { code = -32_009; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        else if let safe = error as? RemoteProjectionFailure { code = -32_006; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteContextFailure { code = -32_008; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteHistoryFailure { code = -32_007; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteCheckpointFailure { code = -32_005; kind = safe.kind.rawValue; message = safe.localizedDescription }

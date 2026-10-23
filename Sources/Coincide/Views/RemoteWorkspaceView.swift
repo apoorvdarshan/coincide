@@ -41,6 +41,7 @@ struct RemoteWorkspaceView: View {
     @State private var showingCheckpoints = false
     @State private var contextModel: RemoteContextTransferWorkspace?
     @State private var showingContext = false
+    @State private var lifecycleSettings: RemoteLifecycleSettingsPresentation?
 
     var body: some View {
         NavigationSplitView {
@@ -166,6 +167,18 @@ struct RemoteWorkspaceView: View {
         .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject, inspectorVisible: $store.inspectorVisible))
         .toolbar {
             ToolbarItem {
+                Button("Remote Automatic Settlement…", systemImage: "moon.zzz") {
+                    let environmentID = store.connection?.environmentID
+                    Task {
+                        await store.updateLifecycle()
+                        guard let environmentID, store.connection?.environmentID == environmentID,
+                              let policy = store.lifecycle.policy else { return }
+                        lifecycleSettings = .init(environmentID: environmentID, policy: policy)
+                    }
+                }.disabled(!store.isConnected || store.descriptor?.capabilities.supportsWorkspaceLifecycleControls != true)
+                    .accessibilityIdentifier("remote-lifecycle-settings")
+            }
+            ToolbarItem {
                 Menu("Transfer Context", systemImage: "arrow.triangle.branch") {
                     Button("Fork Context…") { showContext(.fork) }
                     Button("Switch Provider with Context…") { showContext(.providerHandoff) }
@@ -203,6 +216,7 @@ struct RemoteWorkspaceView: View {
         }
         .task { await store.load() }
         .task(id: store.inspectorSelection) { await store.updateInspector() }
+        .task(id: store.lifecycleSelection) { await store.updateLifecycle() }
         .task(id: store.attachmentSelection) { await store.updateAttachments() }
         .task(id: store.checkpointSelection) { await store.updateCheckpoints() }
         .task(id: store.historySelection) { await store.updateHistory() }
@@ -215,6 +229,10 @@ struct RemoteWorkspaceView: View {
         .sheet(isPresented: $addingConnection) { RemoteConnectionSheet(store: store) }
         .sheet(isPresented: $addingProject) { RemoteProjectSheet(store: store) }
         .sheet(isPresented: $addingThread) { RemoteThreadSheet(store: store) }
+        .sheet(item: $lifecycleSettings) { value in
+            RemoteLifecycleSettingsSheet(store: store.lifecycle, environmentID: value.environmentID,
+                policy: value.policy, close: { lifecycleSettings = nil })
+        }
         .sheet(isPresented: $choosingWorktree) {
             RemoteWorktreeSheet(store: store.worktrees, onPrepared: { choosingWorktree = false })
         }
@@ -276,6 +294,14 @@ struct RemoteWorkspaceView: View {
     private func conversation(_ thread: CodingThread) -> some View {
         VStack(spacing: 0) {
             RemoteConversationHeader(store: store, thread: thread)
+            if store.descriptor?.capabilities.supportsWorkspaceLifecycleControls == true {
+                RemoteLifecycleControls(store: store.lifecycle).padding(.horizontal, 14).padding(.bottom, 8)
+            }
+            if let usage = thread.liveProviderUsage {
+                DisclosureGroup("Latest Provider Status") {
+                    ProviderUsageView(usage: usage, showMainAgent: thread.activeRun != nil)
+                }.padding(.horizontal, 14).padding(.bottom, 8)
+            }
             HStack {
                 Button("Choose Worktree…", systemImage: "arrow.triangle.branch") {
                     store.updateWorktrees()

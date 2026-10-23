@@ -87,6 +87,12 @@ struct RunHistoryContent: View {
     }
 
     @ViewBuilder private func history(_ thread: CodingThread) -> some View {
+        if let usage = thread.liveProviderUsage {
+            DisclosureGroup("Latest Provider Status") {
+                ProviderUsageView(usage: usage, showMainAgent: thread.activeRun != nil).padding(.top, 8)
+            }.font(.caption).padding(20)
+                .accessibilityIdentifier("run-history-live-provider-usage")
+        }
         let records = RunHistoryPresentation.records(in: thread)
         if records.isEmpty {
             ContentUnavailableView("No recorded runs", systemImage: "clock",
@@ -198,6 +204,11 @@ private struct RunHistoryRow: View {
             }
             if let checkpoints = record.checkpoints {
                 checkpointSummary(checkpoints)
+            }
+            if let usage = record.providerUsage {
+                DisclosureGroup("Observed usage") {
+                    ProviderUsageView(usage: usage).padding(.top, 8)
+                }.font(.caption).accessibilityIdentifier("run-history-usage-\(record.id)")
             }
             DisclosureGroup("Details") {
                 VStack(alignment: .leading, spacing: 8) {

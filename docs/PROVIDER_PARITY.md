@@ -302,6 +302,28 @@ uses a portable handoff, that applicable behavior remains part of completion.
 
 ## Installation, authentication and usage
 
+Claude and both dedicated OpenCode generations now retain typed, run-owned
+usage observations. OpenCode records main-agent step totals once before the
+terminal event, excludes child totals, and distinguishes complete, partial and
+unavailable accounting. Claude separates main-agent turn counts, the latest
+native context measurement, query-session cumulative model/cost estimates, and
+passive rate/status/compaction reports. Cumulative snapshots replace earlier
+ones; they are never summed into a per-turn bill. Missing values remain unknown.
+The adapters use their existing native event streams, with no added account
+scan, usage polling, model request or authentication change.
+
+Native run history shows recorded observations and a separate latest Claude
+status. Context handoff clears the prior session's live metadata while keeping
+the original run's accounting. Remote projections preserve captured run owners;
+reports larger than the inline budget use complete leased documents with
+explicit loading, byte counts, digests, and provider/run/binding validation.
+Usage is excluded from history/checkpoint/context authority fingerprints so an
+observational update cannot invalidate a reviewed content operation.
+Offline adapter, journal, projection and offscreen-view coverage accompanies
+this implementation. Installed-provider usage acceptance, imported historical
+usage, broader provider telemetry and full provider parity remain unverified or
+unfinished; see VALIDATION.md for the checks actually executed.
+
 T3 supports multiple named instances of a driver, per-instance configuration and
 environment, enablement, workspace-scoped discovery and stable continuation
 identity. See [instance contracts][t3-instances] and

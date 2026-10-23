@@ -62,6 +62,8 @@ public struct OpenCodeV1Part: Sendable, Equatable {
     public let synthetic: Bool
     public let completed: Bool
     public let tool: OpenCodeV1Tool?
+    public var tokens: OpenCodeStepTokens? = nil
+    public var usageInvalid = false
 }
 
 public struct OpenCodeV1MessageSnapshot: Sendable, Equatable {
@@ -366,10 +368,15 @@ public enum OpenCodeV1Protocol {
         }
         let ended = value["time"]["end"] != .null
         if ended, !validTimestamp(value["time"]["end"]) { throw OpenCodeV1ProtocolError.invalidResponse }
-        return .init(id: try identifier(value["id"]), sessionID: try identifier(value["sessionID"]),
+        var result = OpenCodeV1Part(id: try identifier(value["id"]), sessionID: try identifier(value["sessionID"]),
             messageID: try identifier(value["messageID"]), type: type, text: text,
             ignored: try bool(value["ignored"], default: false), synthetic: try bool(value["synthetic"], default: false),
             completed: ended, tool: tool)
+        if type == "step-finish" {
+            do { result.tokens = try OpenCodeStepTokens.decode(value["tokens"]) }
+            catch { result.usageInvalid = true }
+        }
+        return result
     }
     private static func sessionValue(_ value: JSONValue, expectedID: String? = nil, directory: String? = nil) throws -> OpenCodeV1SessionInfo {
         let id = try identifier(value["id"]), path = try identifier(value["directory"], maximum: 16_384)

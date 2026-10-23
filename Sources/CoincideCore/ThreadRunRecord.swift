@@ -38,6 +38,9 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
     public var delegatedTaskOwnershipRecorded: Bool?
     public var contextTransferIDs: [UUID]?
     public var contextDelivery: ContextTransferDelivery?
+    /// Optional for older runs and providers without verified accounting.
+    /// This is telemetry, never evidence for a native history boundary.
+    public var providerUsage: ProviderUsageUpdate?
 
     public init(run: ActiveRun, origin: ThreadRunOrigin, userMessageID: String? = nil) {
         id = run.id; self.origin = origin; configuration = run.configuration
@@ -114,6 +117,7 @@ extension CodingThread {
               Set(records.map(\.id)).isDisjoint(with: Set(queuedTurns.map(\.id))),
               records.filter({ !$0.status.isTerminal }).count <= 1 else { throw CoincideError("The conversation has invalid or duplicate run history.") }
         for record in records {
+            try record.providerUsage?.validate(provider: record.configuration.provider, runID: record.id)
             try CodexReasoningValidation.configuration(record.configuration)
             if let pi = record.pi {
                 try pi.validate()

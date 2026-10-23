@@ -55,6 +55,44 @@ commit drafts survive inspector hiding, conversation changes and disconnects in
 the running app; Quit asks before discarding them. Unsaved editor/commit buffers
 are not crash-persisted.
 
+## Conversation lifecycle and automatic settlement
+
+Updated helpers advertise `supportsWorkspaceLifecycleControls`. The remote
+window exposes Snooze/Wake, per-conversation automatic-settlement opt-out,
+explicit Resume and **Remote Automatic Settlement…** for that environment's
+inactivity/terminal-PR policy. Policy Apply compares the reviewed policy and
+refuses stale changes from another window. Snooze and Wake change attention
+only; they never send input, resume a queue or run a script. Explicit Resume
+releases a settlement generation after its managed jobs drain and can then run
+authored queued messages.
+
+**Settle without Cleanup Script…** is an explicit opt-out from cleanup-script
+review and execution. It retains history, drafts, files and terminal tabs.
+Normal remote cleanup-script review, execution, stop and output remain pending;
+this choice is not a substitute claim for those controls.
+
+The helper initially keeps automatic sweeps disabled. A compatible client first
+negotiates lifecycle controls on its snapshot/subscription or projection-open
+request; only then can that owned helper enable the native sweep service.
+Older clients and omitted negotiation keep sweeps disabled, so an older client
+cannot gain an automatically settled conversation without reachable Resume UI.
+Negotiation is positive-only within one owned helper lifetime: a later omitted
+or false flag does not revoke an earlier successful compatible-client handshake.
+Closing that helper resets activation; a reconnect negotiates again.
+Automatic settlement follows the host's current policy and native busy/ownership
+guards, retains history and never runs setup, cleanup scripts or input. The
+service stops and drains with the owned stdio host; it is not a persistent daemon.
+
+Explicit actions carry opaque host-held capture claims and retain the original
+command UUID and exact payload before transmission. The host rechecks current
+conversation/project incarnations, configuration and lifecycle state; physical
+settle/resume actions also require the bound remote root and current admission.
+Metadata Wake remains available independently of a missing checkout. A lost
+reply uses the existing Check Result receipt workflow and never resends the
+action. Fresh control metadata can update while an older transcript view stays
+pinned. Installed-provider, live SSH and hosted native interaction acceptance for
+these controls remain unverified.
+
 ## Remote run checkpoints
 
 The remote conversation header controls automatic checkpoints for future runs.
@@ -234,6 +272,25 @@ This is bounded display transport and browsing. Provider-history actions use the
 separate reviewed workflows above. Broader history/checkpoint ranges,
 durable paged journal catch-up and persistent-host transport remain
 separate unfinished parity work.
+
+### Typed usage display
+
+Current-control and recorded-run projections can carry typed provider usage.
+Small values remain inline; larger values use the same bounded SHA-256-bound
+content documents and chunks as other display data. The client validates the
+complete type and captured provider/run ownership before displaying it. Older
+helpers that omit these optional fields remain supported.
+
+Main-agent token counts are separate from Claude query-session totals and
+latest context/rate-limit status. Cache reads/writes are included in input and
+reasoning is included in output, so display does not double-count either.
+Missing observations remain unknown; no capacity, cost or historical execution
+is inferred from a model name. Passive old-session meters are cleared on context
+handoff while immutable accounting stays with its original run. Paging telemetry
+does not grant provider-history or file-write authority and never launches a
+provider. Typed OpenCode history accounting does not enable OpenCode conversation
+creation on the current Codex/Claude remote surface. Live-provider and real SSH
+usage acceptance remain unverified.
 
 ## Remote Files and Changes
 
