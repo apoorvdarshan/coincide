@@ -108,6 +108,8 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case addAttachments(threadID: UUID, attachments: [ChatAttachment])
     case removeAttachment(threadID: UUID, attachmentID: UUID)
     case replaceComposerDraft(ComposerDraftReplacement)
+    case workspaceLifecycle(WorkspaceLifecycleAction)
+    case setWorkspaceLifecyclePolicy(WorkspaceLifecyclePolicy)
     case saveACPAgent(ACPAgentConfiguration)
     case removeACPAgent(UUID)
     case startProjectClone(project: WorkspaceProject, thread: CodingThread)
@@ -272,6 +274,14 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date, validatingLedger: Bool = true) throws -> Self {
         let reduced: GeneralReduction
         switch command {
+        case .client(.workspaceLifecycle(let action)):
+            var decision = Self(snapshot: snapshot)
+            try decision.applyWorkspaceLifecycle(action, commandID: id, now: now, policy: snapshot.workspaceLifecyclePolicy ?? .init())
+            reduced = .init(decision: decision, requiresFinalization: true)
+        case .client(.setWorkspaceLifecyclePolicy(let policy)):
+            try policy.validate()
+            var decision = Self(snapshot: snapshot); decision.snapshot.workspaceLifecyclePolicy = policy
+            reduced = .init(decision: decision, requiresFinalization: true)
         case .agentSessionImportAccepted(let admission):
             var decision = Self(snapshot: snapshot)
             try decision.acceptAgentSessionImport(admission, id: id, now: now)
@@ -308,6 +318,9 @@ struct WorkspaceDecision: Sendable {
         case .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
              .checkpointRestoreInspected, .client(.acknowledgeCheckpointRestore):
             reduced = .init(decision: try reduceCheckpointRestore(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .pullRequestCheckoutAccepted, .pullRequestCheckoutDispatching, .pullRequestCheckoutEffectResult,
+             .pullRequestCheckoutInspected, .pullRequestCheckoutCancel, .client(.acknowledgePullRequestCheckout):
+            reduced = .init(decision: try reducePullRequestCheckout(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.addProjectWithThread), .client(.startProjectClone):
             reduced = .init(decision: try reduceProjectRegistration(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi):
@@ -324,6 +337,7 @@ struct WorkspaceDecision: Sendable {
             reduced = try makeGeneral(command, id: id, snapshot: snapshot, now: now)
         }
         var decision = reduced.decision
+        if case .client(let action) = command { decision.reconcileWorkspaceLifecycle(previous: snapshot, command: action, now: now) }
         try decision.snapshot.reconcileAgentSessionImports(previous: snapshot)
         guard reduced.requiresFinalization && validatingLedger else { return decision }
         return try finalized(decision)
@@ -426,6 +440,31 @@ struct WorkspaceDecision: Sendable {
             try decision.inspectCheckpointRestore(operationID: operationID, incarnation: incarnation, result: result, now: now)
         case .client(.acknowledgeCheckpointRestore(let operationID)):
             try decision.acknowledgeCheckpointRestore(operationID: operationID, now: now)
+        default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
+        }
+        return decision
+    }
+
+    /// Checkout validation parses remote URLs. Keep those nested Foundation
+    /// calls outside the broad mutation switch's unrelated value temporaries.
+    @inline(never)
+    private static func reducePullRequestCheckout(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
+        switch command {
+        case .pullRequestCheckoutAccepted(let operation):
+            try decision.acceptPullRequestCheckout(operation)
+        case .pullRequestCheckoutDispatching(let project, let operation, let incarnation):
+            try decision.dispatchPullRequestCheckout(projectID: project, operationID: operation, incarnation: incarnation, now: now)
+        case .pullRequestCheckoutEffectResult(let request, let result, let incarnation):
+            try decision.finishPullRequestCheckout(request, result: result, incarnation: incarnation, now: now)
+        case .pullRequestCheckoutInspected(let operation, _, let result):
+            try decision.inspectPullRequestCheckout(operationID: operation, result: result, now: now)
+        case .pullRequestCheckoutCancel(let operation):
+            try decision.cancelPullRequestCheckout(operationID: operation, now: now)
+            decision.cancelPullRequestCheckoutOperation = operation
+        case .client(.acknowledgePullRequestCheckout(let operation)):
+            try decision.acknowledgePullRequestCheckout(operationID: operation, now: now)
         default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
         }
         return decision
@@ -538,6 +577,8 @@ struct WorkspaceDecision: Sendable {
         var decision = prepared
         switch command {
         case .agentSessionImportAccepted: throw AgentSessionImportError.invalidRequest
+        case .client(.workspaceLifecycle), .client(.setWorkspaceLifecyclePolicy):
+            return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
         case .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskDrained, .delegatedTaskObserved, .delegatedTaskWakePolicy, .delegatedTaskCompletionPrepared, .delegatedTaskCompletionCoalesced:
             throw DelegatedTaskError.invalidRequest
         case .contextTransferAccepted, .contextTransferDispatching, .contextTransferNativeReserved, .contextTransferNativeReady, .contextTransferRuntimeRebound, .contextTransferDeferred, .contextTransferSelectionPrepared, .contextTransferDelivered, .contextTransferUncertain, .client(.abandonContextTransfer):
@@ -551,6 +592,8 @@ struct WorkspaceDecision: Sendable {
              .client(.acknowledgeConversationHistoryFiles), .client(.dismissConversationHistoryRecall),
              .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
              .checkpointRestoreInspected, .client(.acknowledgeCheckpointRestore),
+             .pullRequestCheckoutAccepted, .pullRequestCheckoutDispatching, .pullRequestCheckoutEffectResult,
+             .pullRequestCheckoutInspected, .pullRequestCheckoutCancel, .client(.acknowledgePullRequestCheckout),
              .client(.addProjectWithThread), .client(.startProjectClone),
              .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi), .appMCP, .appMCPTargetGuard, .appMCPRequestGuard, .remoteEnvironment,
              .codexAuthenticationPreparing, .codexAccountConfigured,
@@ -571,14 +614,6 @@ struct WorkspaceDecision: Sendable {
         case .promptSteeringDispatching(let operation, let incarnation): try decision.dispatchPromptSteering(operationID: operation, incarnation: incarnation, now: now)
         case .promptSteeringEffectResult(let request, let result, let incarnation): try decision.finishPromptSteering(request, result: result, incarnation: incarnation, now: now)
         case .client(.acknowledgePromptSteering(let operation)): try decision.acknowledgePromptSteering(operationID: operation, now: now)
-        case .pullRequestCheckoutAccepted(let operation): try decision.acceptPullRequestCheckout(operation)
-        case .pullRequestCheckoutDispatching(let project, let operation, let incarnation): try decision.dispatchPullRequestCheckout(projectID: project, operationID: operation, incarnation: incarnation, now: now)
-        case .pullRequestCheckoutEffectResult(let request, let result, let incarnation): try decision.finishPullRequestCheckout(request, result: result, incarnation: incarnation, now: now)
-        case .pullRequestCheckoutInspected(let operation, _, let result): try decision.inspectPullRequestCheckout(operationID: operation, result: result, now: now)
-        case .pullRequestCheckoutCancel(let operation):
-            try decision.cancelPullRequestCheckout(operationID: operation, now: now)
-            decision.cancelPullRequestCheckoutOperation = operation
-        case .client(.acknowledgePullRequestCheckout(let operation)): try decision.acknowledgePullRequestCheckout(operationID: operation, now: now)
         case .pullRequestCreationAccepted(let operation):
             try decision.acceptPullRequestCreation(operation)
         case .pullRequestCreationDispatching(let projectID, let operationID, let incarnation):
@@ -1291,7 +1326,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .abandonContextTransfer, .replaceComposerDraft: break // Routed through their atomic reducers above.
+            case .abandonContextTransfer, .replaceComposerDraft, .workspaceLifecycle, .setWorkspaceLifecyclePolicy: break // Routed through their atomic reducers above.
             case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
@@ -1764,9 +1799,11 @@ struct WorkspaceDecision: Sendable {
     }
 }
 
-private extension WorkspaceCommand {
+extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
+        case .workspaceLifecycle(let action): action.threadID
+        case .setWorkspaceLifecyclePolicy: nil
         case .replaceComposerDraft(let replacement): replacement.expected.threadID
         case .abandonContextTransfer(let id, _, _): id
         case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil

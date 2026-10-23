@@ -169,7 +169,11 @@ func nativeWorktreeSetupOptionsAndDurableComposerQueueUseThePreparedCheckoutAndR
         #expect(reopened.thread(id)?.workspacePreparation?.request.submodules == .topLevel)
         #expect(reopened.thread(id)?.workspacePath == request.destinationPath && reopened.thread(id)?.draft == "Unsent while preparing")
         await reopened.shutdown()
-    } catch { await fixture.cleanup(); throw error }
+    } catch {
+        let providerCallCount = await fixture.harness.provider.calls.count
+        await reportNativeQueueFailureDiagnostics(store: store, engine: fixture.engine, threadID: id, providerCallCount: providerCallCount)
+        await fixture.cleanup(); throw error
+    }
     await fixture.cleanup()
 }
 

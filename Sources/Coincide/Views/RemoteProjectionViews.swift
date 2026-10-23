@@ -124,6 +124,7 @@ final class RemoteProjectionTextReader {
 }
 
 struct RemoteProjectedMessageView: View {
+    @AppStorage("renderMathInMarkdown") private var renderMathInMarkdown = false
     let message: RemoteMessageSummary
     let binding: RemoteProjectionBinding
     let store: RemoteProjectionStore
@@ -144,7 +145,7 @@ struct RemoteProjectedMessageView: View {
                 DisclosureGroup(message.role == .tool ? "Tool activity" : "Reasoning") { text.font(.system(.caption, design: .monospaced)) }
             } else if message.role == .user {
                 HStack { Spacer(minLength: 60); text.padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 18)) }
-            } else { MarkdownView(reader.offset > 0 ? reader.text : message.text.preview) }
+            } else { MarkdownView(reader.offset > 0 ? reader.text : message.text.preview, mathEnabled: renderMathInMarkdown) }
             if !message.text.complete, let reference = message.text.content {
                 HStack {
                     Button(reader.offset == 0 ? "Load Text" : "Load More Text") { Task { await reader.load(reference: reference, binding: binding, store: store) } }

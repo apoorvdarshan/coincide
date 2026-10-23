@@ -169,3 +169,89 @@ func threadNotificationsRespectStopAndArchiveAndHistoryRemoval(status: ThreadRun
     #expect(tracker.observe(notificationSnapshot(thread)).isEmpty)
     #expect(!tracker.eventIsCurrent(completed) && !tracker.eventIsCurrent(failed))
 }
+
+@Test func threadNotificationsConsumeSnoozedSuccessWithoutReplayingWhenSnoozeExpires() {
+    let start = Date(timeIntervalSince1970: 1_700_000_000), expires = start.addingTimeInterval(600)
+    var tracker = ThreadAttentionNotificationTracker(), thread = notificationThread()
+    thread.workspaceLifecycle = .init(snoozedUntil: expires, snoozedAt: start)
+    thread.runHistory = [notificationRun(thread, status: .running)]
+    #expect(tracker.observe(notificationSnapshot(thread), now: start).isEmpty)
+    thread.runHistory?[0].status = .completed
+    thread.runHistory?[0].endedAt = start.addingTimeInterval(60)
+    #expect(tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(60)).isEmpty)
+    #expect(tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(120)).isEmpty)
+    #expect(tracker.observe(notificationSnapshot(thread), now: expires).isEmpty)
+    thread.workspaceLifecycle?.snoozedUntil = nil; thread.workspaceLifecycle?.snoozedAt = nil
+    #expect(tracker.observe(notificationSnapshot(thread), now: expires.addingTimeInterval(1)).isEmpty)
+
+    // Consumption applies only to the old completion. A later observed run
+    // still produces its own notification after the snooze has expired.
+    let next = notificationRun(thread, status: .running)
+    thread.runHistory?.append(next)
+    #expect(tracker.observe(notificationSnapshot(thread), now: expires.addingTimeInterval(2)).isEmpty)
+    thread.runHistory?[1].status = .completed
+    thread.runHistory?[1].endedAt = expires.addingTimeInterval(3)
+    let events = tracker.observe(notificationSnapshot(thread), now: expires.addingTimeInterval(3))
+    #expect(events.count == 1 && events.first?.kind == .completed && events.first?.runID == next.id)
+}
+
+@Test func threadNotificationsFreshFailureWakesSnoozedThreadAndRestampingConsumesTheOldFailure() throws {
+    let start = Date(timeIntervalSince1970: 1_700_000_000), failedAt = start.addingTimeInterval(60)
+    var tracker = ThreadAttentionNotificationTracker(), thread = notificationThread()
+    thread.workspaceLifecycle = .init(snoozedUntil: start.addingTimeInterval(600), snoozedAt: start)
+    thread.runHistory = [notificationRun(thread, status: .running)]
+    #expect(tracker.observe(notificationSnapshot(thread), now: start).isEmpty)
+    thread.state = .failed; thread.runHistory?[0].status = .failed; thread.runHistory?[0].endedAt = failedAt
+    let failure = try #require(tracker.observe(notificationSnapshot(thread), now: failedAt).first)
+    #expect(failure.kind == .failed && tracker.eventIsCurrent(failure))
+    #expect(!notificationSnapshot(thread).isEffectivelySnoozed(threadID: thread.id, at: failedAt))
+
+    // A subsequent explicit snooze hides the already observed error, and also
+    // invalidates a delivery still queued behind native notification permission.
+    let restampedAt = failedAt.addingTimeInterval(1), expires = restampedAt.addingTimeInterval(600)
+    thread.workspaceLifecycle = .init(snoozedUntil: expires, snoozedAt: restampedAt)
+    #expect(tracker.observe(notificationSnapshot(thread), now: restampedAt).isEmpty)
+    #expect(!tracker.eventIsCurrent(failure))
+    #expect(tracker.observe(notificationSnapshot(thread), now: expires).isEmpty)
+    #expect(!tracker.eventIsCurrent(failure))
+}
+
+@Test(arguments: [false, true])
+func threadNotificationsFreshQuestionOrApprovalWakesSnoozeAndDismissalCancelsQueuedNotice(question: Bool) throws {
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    var tracker = ThreadAttentionNotificationTracker(), thread = notificationThread()
+    thread.workspaceLifecycle = .init(snoozedUntil: start.addingTimeInterval(600), snoozedAt: start)
+    thread.runHistory = [notificationRun(thread, status: .running)]
+    #expect(tracker.observe(notificationSnapshot(thread), now: start).isEmpty)
+    let method = question ? "item/tool/requestUserInput" : "item/commandExecution/requestApproval"
+    thread.runtimeRequests = [.init(request: .init(id: .string("new-snoozed-request"), method: method,
+        params: .object(["private": .string("must-not-enter-alert")])))]
+    let events = tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(30))
+    let event = try #require(events.first)
+    #expect(events.count == 1 && event.kind == (question ? .input : .approval))
+    #expect(!event.threadTitle.contains("must-not-enter-alert") && tracker.eventIsCurrent(event))
+    #expect(!notificationSnapshot(thread).isEffectivelySnoozed(threadID: thread.id, at: start.addingTimeInterval(30)))
+    #expect(tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(31)).isEmpty)
+    thread.runtimeRequests = []
+    #expect(tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(32)).isEmpty)
+    #expect(!tracker.eventIsCurrent(event))
+    #expect(tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(600)).isEmpty)
+}
+
+@Test func threadNotificationsRestampingSnoozeInvalidatesQueuedSuccessWithoutExpiryReplay() throws {
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    var tracker = ThreadAttentionNotificationTracker(), thread = notificationThread()
+    thread.runHistory = [notificationRun(thread, status: .running)]
+    #expect(tracker.observe(notificationSnapshot(thread), now: start).isEmpty)
+    thread.runHistory?[0].status = .completed; thread.runHistory?[0].endedAt = start.addingTimeInterval(1)
+    let queued = try #require(tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(1)).first)
+    #expect(tracker.eventIsCurrent(queued))
+    let expires = start.addingTimeInterval(600)
+    thread.workspaceLifecycle = .init(snoozedUntil: expires, snoozedAt: start.addingTimeInterval(2))
+    #expect(tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(2)).isEmpty)
+    #expect(!tracker.eventIsCurrent(queued))
+    thread.workspaceLifecycle = .init(snoozedUntil: expires.addingTimeInterval(600), snoozedAt: start.addingTimeInterval(3))
+    #expect(tracker.observe(notificationSnapshot(thread), now: start.addingTimeInterval(3)).isEmpty)
+    #expect(tracker.observe(notificationSnapshot(thread), now: expires.addingTimeInterval(600)).isEmpty)
+    #expect(!tracker.eventIsCurrent(queued))
+}

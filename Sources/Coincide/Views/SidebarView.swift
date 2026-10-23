@@ -12,6 +12,7 @@ struct SidebarView: View {
     @State private var removing: ProjectRemovalRequest?
     @State private var removingGroup: ProjectGroupRemovalRequest?
     @State private var pendingGroupRemoval: ProjectGroupRemovalRequest?
+    @State private var snoozing: ThreadSnoozePresentation?
     var body: some View {
         List(selection: $store.selectedThreadID) {
             ForEach(store.orderedProjectGroups) { group in
@@ -105,6 +106,9 @@ struct SidebarView: View {
         } message: { request in
             Text(removalExplanation(request))
         }
+        .sheet(item: $snoozing) { presentation in
+            ThreadSnoozeSheet(presentation: presentation, snooze: { try await store.snoozeThread(presentation.id, until: $0) }, dismiss: { snoozing = nil })
+        }
         .sheet(item: $removingGroup, onDismiss: finishGroupRemoval) { request in
             ProjectGroupRemovalSheet(request: request, cancel: { removingGroup = nil }, remove: {
                 pendingGroupRemoval = request
@@ -135,6 +139,8 @@ struct SidebarView: View {
                 Text(thread.title).lineLimit(1)
                 if let clone = project?.clone, !clone.isReady {
                     Text(ProjectClonePresentation.title(clone)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                } else if store.snapshot.isEffectivelySnoozed(threadID: thread.id, at: Date()), let until = thread.workspaceLifecycle?.snoozedUntil {
+                    Text("Snoozed until \(until, format: .dateTime.month(.abbreviated).day().hour().minute())").font(.caption).foregroundStyle(.secondary)
                 } else if let settlement = thread.settlement {
                     Text(settlement.phase == .resuming ? "Resuming…" : "Settled").font(.caption).foregroundStyle(.secondary)
                 } else if thread.state != .idle {
@@ -152,6 +158,13 @@ struct SidebarView: View {
         .contextMenu {
             Button(thread.isPinned ? "Unpin" : "Pin") { store.togglePin(thread.id) }
             Button("Rename…") { title = thread.title; renaming = .thread(thread.id) }
+            if store.snapshot.isEffectivelySnoozed(threadID: thread.id, at: Date()) {
+                Button("Wake Conversation") { store.wakeThread(thread.id) }
+            }
+            Button("Snooze…") { snoozing = .init(thread) }.disabled(!store.canSnooze(thread))
+            Button(thread.workspaceLifecycle?.autoSettleDisabledAt == nil ? "Disable Automatic Settlement" : "Enable Automatic Settlement") {
+                store.setAutoSettlement(thread.id, enabled: thread.workspaceLifecycle?.autoSettleDisabledAt != nil)
+            }.disabled(thread.isArchived)
             if let settlement = thread.settlement {
                 Button("Resume Conversation") { store.requestResume(thread.id, generationID: settlement.id) }
                     .disabled(settlement.phase == .resuming)

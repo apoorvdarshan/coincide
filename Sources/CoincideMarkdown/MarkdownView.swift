@@ -4,10 +4,11 @@ import SwiftUI
 public struct MarkdownView: View {
     private let source: String
     private let workspace: URL?
+    private let mathEnabled: Bool
     private let openFile: (URL, Int?) -> Void
     @State private var document: MarkdownDocument?
-    public init(_ source: String, workspace: URL? = nil, openFile: @escaping (URL, Int?) -> Void = { _, _ in }) {
-        self.source = source; self.workspace = workspace; self.openFile = openFile
+    public init(_ source: String, workspace: URL? = nil, mathEnabled: Bool = true, openFile: @escaping (URL, Int?) -> Void = { _, _ in }) {
+        self.source = source; self.workspace = workspace; self.mathEnabled = mathEnabled; self.openFile = openFile
     }
     public var body: some View {
         Group {
@@ -15,11 +16,12 @@ public struct MarkdownView: View {
             else { Text(source).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
         }
         .font(.system(size: 15)).lineSpacing(4)
-        .task(id: source) {
-            let parsed = await MarkdownParser.shared.parse(source)
+        .task(id: ParseIdentity(source: source, mathEnabled: mathEnabled)) {
+            let parsed = await MarkdownParser.shared.parse(source, mathEnabled: mathEnabled)
             guard !Task.isCancelled else { return }; document = parsed
         }
     }
+    private struct ParseIdentity: Equatable { let source: String; let mathEnabled: Bool }
 }
 
 struct MarkdownBlocksView: View {
@@ -27,6 +29,7 @@ struct MarkdownBlocksView: View {
     var workspace: URL?
     var openFile: (URL, Int?) -> Void
     @State private var tableWidth: CGFloat = 0
+    @Environment(\.colorScheme) private var scheme
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in blockView(block) }
@@ -48,6 +51,21 @@ struct MarkdownBlocksView: View {
                 RoundedRectangle(cornerRadius: 2).fill(.secondary.opacity(0.35)).frame(width: 3)
                 children(blocks)
             }.fixedSize(horizontal: false, vertical: true).foregroundStyle(.secondary)
+        case .alert(let kind, let blocks):
+            let presentation = MarkdownAlertPresentation(kind)
+            HStack(alignment: .top, spacing: 12) {
+                RoundedRectangle(cornerRadius: 2).fill(presentation.color.opacity(0.7)).frame(width: 3)
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(presentation.title, systemImage: presentation.symbol)
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(presentation.color)
+                        .accessibilityAddTraits(.isHeader)
+                    children(blocks)
+                }
+            }.fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .contain)
+        case .details(let summary, let initiallyOpen, let blocks):
+            NativeMarkdownDetails(initiallyOpen: initiallyOpen, summary: inline(summary), emptySummary: summary.isEmpty,
+                content: children(blocks))
         case .list(let start, let items):
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
@@ -91,7 +109,15 @@ struct MarkdownBlocksView: View {
         return switch values[index] { case .left: .leading; case .center: .center; case .right: .trailing }
     }
     private func inline(_ spans: [MarkdownSpan], alignment: Alignment = .leading) -> some View {
-        Text(attributed(spans)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: alignment)
+        inlineText(spans).textSelection(.enabled).frame(maxWidth: .infinity, alignment: alignment)
+            .contextMenu {
+                let formulas = spans.compactMap(\.formula)
+                ForEach(Array(formulas.enumerated()), id: \.offset) { index, formula in
+                    Button(formulas.count == 1 ? "Copy Formula" : "Copy Formula \(index + 1)") {
+                        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(formula.copySource, forType: .string)
+                    }
+                }
+            }
             .environment(\.openURL, OpenURLAction { url in
                 guard let target = MarkdownLinkTarget.resolve(url.absoluteString, workspace: workspace) else { return .discarded }
                 switch target {
@@ -99,6 +125,16 @@ struct MarkdownBlocksView: View {
                 case .file(let url, let line): openFile(url, line); return .handled
                 }
             })
+    }
+    private func inlineText(_ spans: [MarkdownSpan]) -> Text {
+        spans.reduce(Text("")) { result, span in
+            if let formula = span.formula, span.destination == nil,
+               let rendered = NativeMath.render(formula.latex, dark: scheme == .dark, display: formula.display) {
+                return result + Text(Image(nsImage: rendered.image)).baselineOffset(-rendered.descent)
+                    .accessibilityLabel("Inline equation: \(formula.latex)")
+            }
+            return result + Text(attributed([span]))
+        }
     }
     private func attributed(_ spans: [MarkdownSpan]) -> AttributedString {
         var result = AttributedString()
@@ -123,6 +159,44 @@ struct MarkdownBlocksView: View {
             result += part
         }
         return result
+    }
+}
+
+private struct NativeMarkdownDetails<Summary: View>: View {
+    let summary: Summary
+    let emptySummary: Bool
+    let content: AnyView
+    @State private var expanded: Bool
+    init(initiallyOpen: Bool, summary: Summary, emptySummary: Bool, content: AnyView) {
+        self.summary = summary; self.emptySummary = emptySummary; self.content = content
+        _expanded = State(initialValue: initiallyOpen)
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+            DisclosureGroup(isExpanded: $expanded) { content.padding(.top, 8).padding(.bottom, 6) } label: {
+                if emptySummary { Text("Details").fontWeight(.medium) }
+                else { summary.fontWeight(.medium) }
+            }.padding(.vertical, 8).accessibilityIdentifier("markdown-details")
+            Divider()
+        }
+    }
+}
+
+/// System colors adapt to the native appearance; labels and symbols preserve
+/// each alert's meaning without relying on color or announcing a live warning.
+@MainActor private struct MarkdownAlertPresentation {
+    let title: String
+    let symbol: String
+    let color: Color
+    init(_ kind: MarkdownAlertKind) {
+        switch kind {
+        case .note: title = String(localized: "Note"); symbol = "info.circle"; color = Color(nsColor: .systemBlue)
+        case .tip: title = String(localized: "Tip"); symbol = "lightbulb"; color = Color(nsColor: .systemGreen)
+        case .important: title = String(localized: "Important"); symbol = "exclamationmark.bubble"; color = Color(nsColor: .systemPurple)
+        case .warning: title = String(localized: "Warning"); symbol = "exclamationmark.triangle"; color = Color(nsColor: .systemOrange)
+        case .caution: title = String(localized: "Caution"); symbol = "exclamationmark.octagon"; color = Color(nsColor: .systemRed)
+        }
     }
 }
 

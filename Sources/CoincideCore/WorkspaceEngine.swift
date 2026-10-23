@@ -8,6 +8,106 @@ public struct WorkspaceUpdate: Sendable {
 }
 
 extension WorkspaceEngine {
+    private func ownedWorkspaceLifecycleService() -> WorkspaceLifecycleService {
+        if let workspaceLifecycleService { return workspaceLifecycleService }
+        let service = WorkspaceLifecycleService(read: { [weak self] in
+            guard let self else { throw CancellationError() }; return try await self.readWorkspaceLifecycleSnapshot()
+        }, lookup: { [weak self] facts in
+            guard let self else { throw CancellationError() }; return try await self.lookupWorkspaceLifecyclePullRequests(facts)
+        }, apply: { [weak self] proposal in
+            guard let self else { throw CancellationError() }; try await self.admitWorkspaceLifecycleProposal(proposal)
+        }, wake: { [weak self] wake in
+            guard let self else { throw CancellationError() }; try await self.wakeExpiredWorkspaceSnooze(wake)
+        })
+        workspaceLifecycleService = service; return service
+    }
+    public func sweepWorkspaceLifecycle() async {
+        guard (try? await load()) != nil, !closing, !stoppingEffects, !workspaceLifecycleClosing else { return }
+        let service = ownedWorkspaceLifecycleService(); await service.requestSweep(); await service.drain()
+    }
+    private func closeWorkspaceLifecycle() async {
+        await stopWorkspaceLifecycle()
+        await workspaceLifecycleDrain?.value
+    }
+    private func stopWorkspaceLifecycle() async {
+        if workspaceLifecycleClosing { return }
+        workspaceLifecycleClosing = true
+        let service = workspaceLifecycleService; workspaceLifecycleService = nil
+        // Publish the join owner before suspending so a concurrent shutdown
+        // cannot observe a closing service with no drain to await.
+        workspaceLifecycleDrain = Task { if let service { await service.close() } }
+        workspaceLifecycleProposals = [:]; workspaceLifecycleReadOwners = nil
+    }
+    private func readWorkspaceLifecycleSnapshot() throws -> WorkspaceLifecycleSweepSnapshot {
+        guard loaded, !closing, !stoppingEffects, !workspaceLifecycleClosing, fatalError == nil else { throw CancellationError() }
+        let facts = try revision.snapshot.threads.compactMap { try revision.snapshot.workspaceLifecycleFacts(threadID: $0.id) }
+        let bindingID = UUID(); workspaceLifecycleReadOwners = (bindingID, threadIncarnations, projectIncarnations)
+        return .init(facts: facts, policy: revision.snapshot.workspaceLifecyclePolicy ?? .init(), bindingID: bindingID)
+    }
+    private func admitWorkspaceLifecycleProposal(_ proposal: ThreadAutoSettlementProposal) async throws {
+        guard !closing, !stoppingEffects, !workspaceLifecycleClosing, fatalError == nil else { throw CancellationError() }
+        workspaceLifecycleProposals[proposal.id] = proposal
+        defer { workspaceLifecycleProposals.removeValue(forKey: proposal.id) }
+        let receipt = try await enqueue(.client(.workspaceLifecycle(.automaticallySettle(proposal))), id: proposal.id)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+    }
+    private func wakeExpiredWorkspaceSnooze(_ wake: WorkspaceLifecycleExpiredSnooze) async throws {
+        guard !closing, !stoppingEffects, !workspaceLifecycleClosing, fatalError == nil else { throw CancellationError() }
+        let receipt = try await enqueue(.client(.workspaceLifecycle(.wakeExpired(wake))), id: wake.id)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+    }
+    private func validateOwnedWorkspaceLifecycleProposal(_ proposal: ThreadAutoSettlementProposal, commandID: UUID, snapshot: WorkspaceSnapshot) throws {
+        guard !closing, !stoppingEffects, !workspaceLifecycleClosing, fatalError == nil,
+              proposal.id == commandID, workspaceLifecycleProposals[proposal.id] == proposal,
+              proposal.bindingID == workspaceLifecycleReadOwners?.id,
+              workspaceLifecycleReadOwners?.threads[proposal.threadID] == threadIncarnations[proposal.threadID],
+              workspaceLifecycleReadOwners?.projects[proposal.projectID] == projectIncarnations[proposal.projectID],
+              let facts = try snapshot.workspaceLifecycleFacts(threadID: proposal.threadID) else { throw WorkspaceLifecycleError.stale }
+        try WorkspaceLifecyclePolicyDecision.validate(proposal, facts: facts, policy: snapshot.workspaceLifecyclePolicy ?? .init(), now: Date())
+    }
+    private func lookupWorkspaceLifecyclePullRequests(_ facts: ThreadWorkspaceLifecycleFacts) async throws -> [WorkspaceLifecyclePullRequestObservation] {
+        guard !closing, !stoppingEffects, !workspaceLifecycleClosing, fatalError == nil,
+              facts.pullRequests.count == 1, let current = try revision.snapshot.workspaceLifecycleFacts(threadID: facts.id),
+              try ContextTransferProtocol.digest(current) == ContextTransferProtocol.digest(facts),
+              let incarnation = projectIncarnations[facts.projectID] else { throw WorkspaceLifecycleError.stale }
+        var expectedBranches: [UUID: String] = [:]
+        for link in facts.pullRequests {
+            if let creation = revision.snapshot.pullRequestCreations?.first(where: { $0.id == link.id && $0.sourceThreadID == facts.id }),
+               let branch = creation.review.context.branch { expectedBranches[link.id] = branch }
+            else if let checkout = revision.snapshot.pullRequestCheckouts?.first(where: { $0.id == link.id && $0.targetThreadID == facts.id }),
+                    let branch = checkout.result?.branch { expectedBranches[link.id] = branch }
+            else { throw WorkspaceLifecycleError.stale }
+        }
+        let branches = expectedBranches
+        let session = try pullRequestFactory(URL(fileURLWithPath: facts.workspacePath))
+        let result: [WorkspaceLifecyclePullRequestObservation] = try await readPullRequest(projectID: facts.projectID, incarnation: incarnation) {
+            var details: [(WorkspaceLifecyclePullRequestLink, GitHubPullRequestDetail)] = []
+            for link in facts.pullRequests {
+                try Task.checkCancellation()
+                let detail = try await session.detail(link.reference)
+                guard detail.summary.reference == link.reference else { throw WorkspaceLifecycleError.stale }
+                details.append((link, detail))
+            }
+            // Read the native branch again after linked terminal observations:
+            // a newer open PR on that branch wins over a stale closed link.
+            let context = try await session.context()
+            let actualPath = URL(fileURLWithPath: context.workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
+            let expectedPath = URL(fileURLWithPath: facts.workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
+            guard actualPath.utf8.elementsEqual(expectedPath.utf8),
+                  facts.pullRequests.allSatisfy({ $0.reference.repository == context.repository }),
+                  details.allSatisfy({ branches[$0.0.id] == context.branch && context.headCommit == $0.1.summary.headCommit }) else { throw WorkspaceLifecycleError.stale }
+            let newerOpen = context.existingPullRequest?.state == .open, observedAt = Date()
+            return details.map { link, detail in
+                .init(link: link, state: detail.summary.state, closedAt: detail.summary.closedAt, mergedAt: detail.summary.mergedAt,
+                    observedAt: observedAt, newerOpenPullRequest: newerOpen)
+            }
+        }
+        guard !closing, !stoppingEffects, !workspaceLifecycleClosing,
+              let latest = try revision.snapshot.workspaceLifecycleFacts(threadID: facts.id),
+              try ContextTransferProtocol.digest(latest) == ContextTransferProtocol.digest(facts) else { throw WorkspaceLifecycleError.stale }
+        return result
+    }
+
     private struct ReviewedCodexDefault: Sendable {
         let selection: CodexDefaultModelSelection
         let incarnation: UUID
@@ -2275,7 +2375,10 @@ public actor WorkspaceEngine {
     private struct PreparedPullRequestCheckout: Sendable { let operation: PullRequestCheckoutOperation; let digest: String }
     private var pullRequestCheckoutReviews: [UUID: PreparedPullRequestCheckout] = [:]
     private var acceptingPullRequestCheckouts: Set<UUID> = []
-    private struct PreparedPullRequestCreation: Sendable { let operation: PullRequestCreationOperation; let digest: String }
+    private struct PreparedPullRequestCreation: Sendable {
+        let operation: PullRequestCreationOperation; let digest: String
+        let sourceThreadIncarnation: UUID?; let sourceThreadCreatedAt: Date?
+    }
     private var pullRequestCreationReviews: [UUID: PreparedPullRequestCreation] = [:]
     private var acceptingPullRequestCreations: Set<UUID> = []
     private struct PullRequestRead: Sendable { let projectID: UUID; let drain: Task<Void, Never>; let cancel: @Sendable () -> Void }
@@ -2385,6 +2488,12 @@ public actor WorkspaceEngine {
     }
     private let appMCPEnabled: Bool
     private let contextMCPEnabled: Bool
+    private let workspaceLifecycleEnabled: Bool
+    private var workspaceLifecycleService: WorkspaceLifecycleService?
+    private var workspaceLifecycleProposals: [UUID: ThreadAutoSettlementProposal] = [:]
+    private var workspaceLifecycleDrain: Task<Void, Never>?
+    private var workspaceLifecycleReadOwners: (id: UUID, threads: [UUID: UUID], projects: [UUID: UUID])?
+    private var workspaceLifecycleClosing = false
     private var delegatedTaskDeliveryJob: Task<Void, Never>?
     private var delegatedTaskWakeGeneration: UInt64 = 0
     private var delegatedTaskDrains: [UUID: Task<Void, Never>] = [:]
@@ -2464,7 +2573,7 @@ public actor WorkspaceEngine {
     private var cloneProgressTimes: [UUID: (ContinuousClock.Instant, GitCloneProgress)] = [:]
     private let encoder: JSONEncoder = { let value = JSONEncoder(); value.outputFormatting = [.sortedKeys]; return value }()
 
-    public init(url: URL, appMCPEnabled: Bool = false, contextMCPEnabled: Bool = false, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
+    public init(url: URL, appMCPEnabled: Bool = false, contextMCPEnabled: Bool = false, workspaceLifecycleEnabled: Bool = false, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
                 cloneFactory: @escaping CloneFactory = { GitCloneService(plan: $0) },
                 identityResolver: IdentityResolver? = nil,
                 worktreeFactory: @escaping WorktreeFactory = { GitWorktreeService(request: $0) },
@@ -2475,6 +2584,7 @@ public actor WorkspaceEngine {
                 pullRequestCheckoutFactory: @escaping PullRequestCheckoutFactory = { GitHubPullRequestCheckoutService(request: $0) }) throws {
         self.appMCPEnabled = appMCPEnabled
         self.contextMCPEnabled = contextMCPEnabled
+        self.workspaceLifecycleEnabled = workspaceLifecycleEnabled
         agentSessionDataRoot = url.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
@@ -2521,6 +2631,7 @@ public actor WorkspaceEngine {
         scheduleIdentityRefreshes(previous: nil)
         scheduleWorktreeReconciliation()
         scheduleCheckpointReconciliation()
+        if workspaceLifecycleEnabled { await ownedWorkspaceLifecycleService().start() }
         return recovered
     }
     public func current() -> WorkspaceUpdate { .init(snapshot: revision.snapshot, sequence: revision.sequence, error: fatalError) }
@@ -2535,10 +2646,15 @@ public actor WorkspaceEngine {
     private func publish(error: String? = nil) {
         let update = WorkspaceUpdate(snapshot: revision.snapshot, sequence: revision.sequence, error: error ?? fatalError)
         for listener in listeners.values { listener.yield(update) }
+        if workspaceLifecycleEnabled, !closing, !stoppingEffects, fatalError == nil, let service = workspaceLifecycleService {
+            Task { await service.requestSweep() }
+        }
     }
     @discardableResult public func dispatch(_ command: WorkspaceCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         guard !stoppingEffects else { throw CancellationError() }
+        if case .setWorkspaceLifecyclePolicy(let policy) = command { try policy.validate() }
+        if case .workspaceLifecycle(let action) = command { try action.validateEncoding() }
         var capturedCommand = command
         if case .editThread(let threadID, .workspacePath(let path)) = command,
            let runtime = revision.snapshot.threads.first(where: { $0.id == threadID })?.claudeRuntimeConfiguration {
@@ -2716,6 +2832,10 @@ public actor WorkspaceEngine {
                         admissionCommands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: base.snapshot)
                     } else { admissionCommands = [envelope.command] }
                     for command in admissionCommands {
+                        if case .pullRequestCreationAccepted(let operation) = command { try validatePullRequestCreationThread(operation) }
+                        if case .client(.workspaceLifecycle(.automaticallySettle(let proposal))) = command {
+                            try validateOwnedWorkspaceLifecycleProposal(proposal, commandID: envelope.id, snapshot: base.snapshot)
+                        }
                         if case .agentSessionImportAccepted(let admission) = command { try await validateAgentSessionImportAdmission(admission, snapshot: base.snapshot) }
                         if case .contextTransferAccepted(let review, _) = command { try validateContextTransferAcceptance(review, snapshot: base.snapshot) }
                         try validateCodexDefaultCommand(command, snapshot: base.snapshot)
@@ -2757,9 +2877,9 @@ public actor WorkspaceEngine {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
                 }
-                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError {
+                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError {
                     do {
-                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
+                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? (error as? WorkspaceLifecycleError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)
                         envelope.continuation.resume(returning: receipt); return
                     } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
@@ -3703,6 +3823,9 @@ public actor WorkspaceEngine {
     private func infrastructureFailed(_ message: String) async {
         guard fatalError == nil else { return }
         fatalError = "Workspace execution stopped: \(message)"; publish()
+        // A lifecycle worker can be waiting on an envelope behind this failed
+        // command. Cancel now; the inbox must advance before owned shutdown joins.
+        await stopWorkspaceLifecycle()
         for task in effects.values { task.cancel() }
         cancelIdentityRefreshes()
         cancelCheckpointReads()
@@ -3731,11 +3854,15 @@ public actor WorkspaceEngine {
             _ = startCleanup(projectIDs: [id], sessions: [], jobs: [Task { _ = try? await refresh.task.value }])
         }
     }
-    public func models(provider: ProviderKind, codexRuntimeConfiguration: CodexRuntimeConfiguration? = nil) async throws -> [ProviderModel] {
+    public func models(provider: ProviderKind, codexRuntimeConfiguration: CodexRuntimeConfiguration? = nil, claudeRuntimeConfiguration: ClaudeRuntimeConfiguration? = nil) async throws -> [ProviderModel] {
         guard provider == .codex || codexRuntimeConfiguration == nil else { throw CodexRuntimeConfiguration.invalid() }
+        guard provider == .claude || claudeRuntimeConfiguration == nil else { throw ClaudeRuntimeConfiguration.invalid() }
         try codexRuntimeConfiguration?.validate()
-        var thread = CodingThread(project: WorkspaceProject(path: FileManager.default.homeDirectoryForCurrentUser.path)); thread.provider = provider
+        try claudeRuntimeConfiguration?.validate()
+        let path = claudeRuntimeConfiguration?.registeredWorkspacePath ?? FileManager.default.homeDirectoryForCurrentUser.path
+        var thread = CodingThread(project: WorkspaceProject(path: path)); thread.provider = provider; thread.workspacePath = path
         thread.codexRuntimeConfiguration = codexRuntimeConfiguration
+        thread.claudeRuntimeConfiguration = claudeRuntimeConfiguration
         return try await queryModels(thread: thread, owned: false)
     }
     /// Provider-level CLI account metadata is deliberately never published in a
@@ -3922,6 +4049,7 @@ public actor WorkspaceEngine {
         if let initialization { _ = try? await initialization.value }
         guard !closing else { return }
         stoppingEffects = true
+        await closeWorkspaceLifecycle()
         await closeAgentSessionImports()
         delegatedTaskDeliveryJob?.cancel()
         if loaded, fatalError == nil { _ = try? await enqueue(.pauseQueues) }
@@ -4145,13 +4273,21 @@ extension WorkspaceEngine {
     }
 
     public func reviewPullRequestCreation(projectID: UUID, workspacePath: String, title: String, body: String,
-                                          baseBranch: String?, isDraft: Bool) async throws -> GitHubPullRequestCreateReview {
+                                          baseBranch: String?, isDraft: Bool, sourceThreadID: UUID? = nil) async throws -> GitHubPullRequestCreateReview {
         _ = try await load(); try Task.checkCancellation()
         if await waitForRemovalCommit(projectID: projectID) { throw CancellationError() }
+        let canonical = URL(fileURLWithPath: workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
+        let source = sourceThreadID.flatMap { id in revision.snapshot.threads.first { $0.id == id } }
+        let sourceIncarnation = sourceThreadID.flatMap { threadIncarnations[$0] }
+        if let sourceThreadID {
+            guard let source, source.id == sourceThreadID, source.projectID == projectID, !source.isArchived,
+                  sourceIncarnation != nil, URL(fileURLWithPath: source.workspacePath).standardizedFileURL.resolvingSymlinksInPath().path.utf8.elementsEqual(canonical.utf8) else { throw GitHubPullRequestError(.staleReview) }
+        }
+        let registeredPath = source?.workspacePath ?? workspacePath
         guard !closing, !stoppingEffects, fatalError == nil,
               let project = revision.snapshot.projects.first(where: { $0.id == projectID }),
               let incarnation = projectIncarnations[projectID],
-              revision.snapshot.ownsPullRequestWorkspace(projectID: projectID, workspacePath: workspacePath),
+              revision.snapshot.ownsPullRequestWorkspace(projectID: projectID, workspacePath: registeredPath),
               !revision.snapshot.isPullRequestCreationLocked(path: workspacePath),
               !revision.snapshot.isCheckpointRestoreLocked(path: workspacePath) else {
             throw WorkspaceCommandError("Choose an available registered project checkout before reviewing a pull request.")
@@ -4160,15 +4296,18 @@ extension WorkspaceEngine {
         let review = try await readPullRequest(projectID: projectID, incarnation: incarnation) {
             try await session.reviewCreate(title: title, body: body, baseBranch: baseBranch, isDraft: isDraft)
         }
-        let canonical = URL(fileURLWithPath: workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
         guard review.context.workspacePath == canonical,
               projectIncarnations[projectID] == incarnation else { throw GitHubPullRequestError(.staleReview) }
+        if let source {
+            guard threadIncarnations[source.id] == sourceIncarnation,
+                  revision.snapshot.threads.contains(where: { $0.id == source.id && $0.projectID == source.projectID && !$0.isArchived && $0.createdAt == source.createdAt && $0.workspacePath.utf8.elementsEqual(source.workspacePath.utf8) }) else { throw GitHubPullRequestError(.staleReview) }
+        }
         let operation = PullRequestCreationOperation(projectID: projectID, projectPath: project.path, sourceIncarnation: incarnation,
-            review: review, registeredWorkspacePath: workspacePath)
+            review: review, registeredWorkspacePath: registeredPath, sourceThreadID: sourceThreadID)
         var admission = WorkspaceDecision(snapshot: revision.snapshot)
         try admission.acceptPullRequestCreation(operation)
         guard pullRequestRuntimeScopeAvailable(operation) else { throw WorkspaceCommandError("Finish workspace scripts and closing jobs before creating a pull request.") }
-        pullRequestCreationReviews[review.id] = .init(operation: operation, digest: try pullRequestReviewDigest(review))
+        pullRequestCreationReviews[review.id] = .init(operation: operation, digest: try pullRequestReviewDigest(review), sourceThreadIncarnation: sourceIncarnation, sourceThreadCreatedAt: source?.createdAt)
         return review
     }
     public func discardPullRequestCreationReview(reviewID: UUID) {
@@ -4185,6 +4324,7 @@ extension WorkspaceEngine {
         guard let prepared = pullRequestCreationReviews[review.id], prepared.operation.projectID == projectID,
               prepared.digest == (try pullRequestReviewDigest(review)),
               projectIncarnations[projectID] == prepared.operation.sourceIncarnation else { throw GitHubPullRequestError(.staleReview) }
+        try validatePullRequestCreationThread(prepared.operation)
         var admission = WorkspaceDecision(snapshot: revision.snapshot); try admission.acceptPullRequestCreation(prepared.operation)
         guard pullRequestRuntimeScopeAvailable(prepared.operation) else { throw WorkspaceCommandError("Finish workspace scripts and closing jobs before creating a pull request.") }
         acceptingPullRequestCreations.insert(review.id)
@@ -4211,6 +4351,14 @@ extension WorkspaceEngine {
     }
     private func pullRequestReviewDigest(_ review: GitHubPullRequestCreateReview) throws -> String {
         SHA256.hash(data: try encoder.encode(review)).map { String(format: "%02x", $0) }.joined()
+    }
+    private func validatePullRequestCreationThread(_ operation: PullRequestCreationOperation) throws {
+        guard let id = operation.sourceThreadID else { return }
+        guard let prepared = pullRequestCreationReviews[operation.id], prepared.operation == operation,
+              prepared.sourceThreadIncarnation == threadIncarnations[id], prepared.sourceThreadIncarnation != nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == id && $0.projectID == operation.projectID && !$0.isArchived }),
+              thread.createdAt == prepared.sourceThreadCreatedAt, thread.createdAt <= operation.review.reviewedAt,
+              thread.workspacePath.utf8.elementsEqual(operation.registeredWorkspacePath.utf8) else { throw WorkspaceCommandError("The reviewed source conversation changed before pull request creation.") }
     }
     private func readPullRequest<Value: Sendable>(projectID: UUID, incarnation: UUID,
         operation: @escaping @Sendable () async throws -> Value) async throws -> Value {
@@ -4993,7 +5141,7 @@ extension WorkspaceEngine {
         switch request.intent {
         case .create(let title, let body, let base, let draft):
             value = .creation(try await reviewPullRequestCreation(projectID: thread.projectID, workspacePath: thread.workspacePath,
-                title: title, body: body, baseBranch: base, isDraft: draft))
+                title: title, body: body, baseBranch: base, isDraft: draft, sourceThreadID: thread.id))
         case .checkout(let reference, let mode, let submodules, let title):
             guard case .context(let context) = try await readRemotePullRequest(.init(target: request.target, query: .context)),
                   context.repository == reference.repository else { throw RemotePullRequestFailure(.invalidRequest) }

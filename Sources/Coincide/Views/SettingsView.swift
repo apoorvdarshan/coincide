@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Bindable var store: WorkspaceStore
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("followUpBehavior") private var followUpBehavior = ComposerFollowUpBehavior.queue.rawValue
+    @AppStorage("renderMathInMarkdown") private var renderMathInMarkdown = false
     @State private var provider = ProviderKind.codex
     @State private var editingAgent: ACPAgentConfiguration?
     var body: some View {
@@ -14,7 +15,7 @@ struct SettingsView: View {
                 if provider == .antigravity {
                     AntigravitySettingsSection(account: store.antigravityAccount, installation: store.antigravityInstallation)
                 } else {
-                if provider != .codex || store.codexRuntime.configuration.authenticationMode == .cliDefault {
+                if provider != .claude && (provider != .codex || store.codexRuntime.configuration.authenticationMode == .cliDefault) {
                     LabeledContent("CLI", value: ProcessChannel.findExecutable(provider.executable)?.path ?? "Not installed")
                     Text("Coincide uses each provider’s existing CLI sign-in and settings on this Mac.").foregroundStyle(.secondary)
                 }
@@ -41,6 +42,7 @@ struct SettingsView: View {
                             .id(store.codexRuntime.configuration)
                     }
                 }
+                if provider == .claude { ClaudeRuntimeSettingsSection(runtime: store.claudeRuntime) }
                 }
                 Section("ACP Agents") {
                     ForEach(store.snapshot.acpAgents) { agent in
@@ -75,7 +77,12 @@ struct SettingsView: View {
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "cpu") }
             Form {
                 Picker("Appearance", selection: $appearance) { Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark") }
+                Toggle("Render Math in Messages", isOn: $renderMathInMarkdown)
+                    .accessibilityIdentifier("settings-render-math")
+                Text("Render complete LaTeX formulas in responses and previews. Code, authored text and copied responses keep their original contents.")
+                    .font(.caption).foregroundStyle(.secondary)
                 ThreadNotificationSettings(notifications: store.notifications)
+                WorkspaceLifecycleSettingsSection(store: store)
                 Picker("Messages during a running turn", selection: $followUpBehavior) {
                     ForEach(ComposerFollowUpBehavior.allCases) { Text($0.title).tag($0.rawValue) }
                 }

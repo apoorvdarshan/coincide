@@ -65,6 +65,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var workspacePath: String
     public var workspacePreparation: ThreadWorkspacePreparation?
     public var settlement: ThreadSettlement?
+    public var workspaceLifecycle: ThreadWorkspaceLifecycle?
     public var providerThreadID: String?
     public var provider: ProviderKind
     public var codexRuntimeConfiguration: CodexRuntimeConfiguration?
@@ -121,7 +122,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
         case delegatedTaskLineage
-        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, contextTransferLineage, contextProviderBindings, forkedFromHistoryOperationID, createdByAppMCP, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
+        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, contextTransferLineage, contextProviderBindings, forkedFromHistoryOperationID, createdByAppMCP, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement, workspaceLifecycle
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
         case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
         case piFreshSessionIntent, piFreshConsumerRunID, piFreshContextResolutions
@@ -138,6 +139,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         workspacePath = try values.decode(String.self, forKey: .workspacePath)
         workspacePreparation = try values.decodeIfPresent(ThreadWorkspacePreparation.self, forKey: .workspacePreparation)
         settlement = try values.decodeIfPresent(ThreadSettlement.self, forKey: .settlement)
+        workspaceLifecycle = try values.decodeIfPresent(ThreadWorkspaceLifecycle.self, forKey: .workspaceLifecycle)
         providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
         provider = try values.decodeIfPresent(ProviderKind.self, forKey: .provider) ?? .codex
         codexRuntimeConfiguration = try values.decodeIfPresent(CodexRuntimeConfiguration.self, forKey: .codexRuntimeConfiguration)
@@ -206,8 +208,9 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var delegatedTaskTransfers: [DelegatedTaskResultTransfer]?
     public var contextTransfers: [ContextTransfer]?
     public var agentSessionImports: [AgentSessionImportRecord]?
+    public var workspaceLifecyclePolicy: WorkspaceLifecyclePolicy?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -225,6 +228,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         delegatedTaskCohorts = try values.decodeIfPresent([DelegatedTaskCohort].self, forKey: .delegatedTaskCohorts)
         contextTransfers = try values.decodeIfPresent([ContextTransfer].self, forKey: .contextTransfers)
         agentSessionImports = try values.decodeIfPresent([AgentSessionImportRecord].self, forKey: .agentSessionImports)
+        workspaceLifecyclePolicy = try values.decodeIfPresent(WorkspaceLifecyclePolicy.self, forKey: .workspaceLifecyclePolicy)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {

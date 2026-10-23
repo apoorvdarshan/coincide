@@ -84,6 +84,8 @@ func nativeSettlementOwnsBackgroundJobsAndNewMessagesResumeOnlyAfterDrainWithCap
         #expect(try String(contentsOf: checkout.appendingPathComponent("settle-executions"), encoding: .utf8) == "once")
         try fixture.checkSource()
     } catch {
+        let providerCallCount = await fixture.provider.calls.count
+        await reportNativeQueueFailureDiagnostics(store: store, engine: fixture.engine, threadID: id, providerCallCount: providerCallCount)
         firstReader?.cancel(); secondReader?.cancel(); await fixture.cleanup()
         _ = await firstReader?.value; _ = await secondReader?.value; throw error
     }

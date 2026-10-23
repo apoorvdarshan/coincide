@@ -59,11 +59,12 @@ public struct ThreadAttentionNotificationTracker: Sendable {
         current[event.threadID] == event
     }
 
-    public mutating func observe(_ snapshot: WorkspaceSnapshot, baseline: Bool = false) -> [ThreadAttentionNotification] {
+    public mutating func observe(_ snapshot: WorkspaceSnapshot, baseline: Bool = false, now: Date = Date()) -> [ThreadAttentionNotification] {
         var next: [UUID: Observation] = [:]
         var current: [UUID: ThreadAttentionNotification] = [:]
         var result: [ThreadAttentionNotification] = []
         for thread in snapshot.threads where !thread.isArchived {
+            let snoozed = snapshot.isEffectivelySnoozed(threadID: thread.id, at: now)
             let prior = previous[thread.id]
             let latest = thread.runHistory?.last(where: { $0.removedByHistoryOperationID == nil })
             let runID = thread.activeRun?.id ?? latest?.id
@@ -81,7 +82,7 @@ public struct ThreadAttentionNotificationTracker: Sendable {
             let completion = completed ? latest?.id : prior?.completion
             next[thread.id] = .init(attention: attention, runID: runID, status: latest?.status, completion: completion, requestID: request?.id)
             let currentKind: ThreadAttentionNotification.Kind?
-            if stopping { currentKind = nil }
+            if stopping || snoozed { currentKind = nil }
             else if let request { currentKind = request.isQuestion ? .input : .approval }
             else if thread.state == .failed && latest?.status == .failed { currentKind = .failed }
             else if thread.activeRun == nil && latest?.status == .completed && latest?.endedAt != nil { currentKind = .completed }

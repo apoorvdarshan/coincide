@@ -120,6 +120,31 @@ actor NativeSetupOutput {
     }
 }
 
+/// Failure-only state summary. Never include authored text, paths, native IDs,
+/// model values, error descriptions, or provider credentials in diagnostics.
+@MainActor func reportNativeQueueFailureDiagnostics(store: WorkspaceStore, engine: WorkspaceEngine,
+                                                    threadID: UUID, providerCallCount: Int) async {
+    let current = await engine.current()
+    let stored = store.thread(threadID), native = current.snapshot.threads.first { $0.id == threadID }
+    let modelsEqual: String
+    if let stored, let native { modelsEqual = String(stored.model.utf8.elementsEqual(native.model.utf8)) }
+    else { modelsEqual = "unavailable" }
+    func fields(_ prefix: String, _ thread: CodingThread?) -> [String] {
+        ["\(prefix).queueCount=\(thread?.queuedTurns.count ?? -1)",
+         "\(prefix).queuePaused=\(thread?.queuePaused ?? false)",
+         "\(prefix).activeRun=\(thread?.activeRun != nil)",
+         "\(prefix).nativeTurn=\(thread?.activeRun?.nativeTurnID != nil)",
+         "\(prefix).heldCheckpoint=\(thread?.heldPostRunCheckpoint != nil)",
+         "\(prefix).preparation=\(thread?.workspacePreparation?.phase.rawValue ?? "none")",
+         "\(prefix).settlement=\(thread?.settlement?.phase.rawValue ?? "none")",
+         "\(prefix).lastRunStatus=\(thread?.runHistory?.last?.status.rawValue ?? "none")"]
+    }
+    let summary = ["NATIVE_QUEUE_FAILURE", "engineFatalError=\(current.error != nil)",
+        "storeError=\(store.errorMessage != nil)", "modelsEqual=\(modelsEqual)",
+        "providerCallCount=\(providerCallCount)"] + fields("store", stored) + fields("engine", native)
+    print(summary.joined(separator: " "))
+}
+
 @MainActor @Test(.timeLimit(.minutes(1)))
 func nativeWorkspaceSetupReviewRunsOnlyFirstRoleAndDrainsAcrossWindowsBeforeReleasingCapturedQueue() async throws {
     let command = #"""
@@ -189,6 +214,8 @@ func nativeWorkspaceSetupReviewRunsOnlyFirstRoleAndDrainsAcrossWindowsBeforeRele
         #expect(store.thread(id)?.draft == "Unsent while reviewing setup")
         try fixture.checkSource()
     } catch {
+        let providerCallCount = await fixture.provider.calls.count
+        await reportNativeQueueFailureDiagnostics(store: store, engine: fixture.engine, threadID: id, providerCallCount: providerCallCount)
         firstReader?.cancel(); secondReader?.cancel(); await fixture.cleanup()
         _ = await firstReader?.value; _ = await secondReader?.value; throw error
     }

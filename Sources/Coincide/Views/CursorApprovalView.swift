@@ -103,6 +103,7 @@ struct CursorQuestionApprovalView: View {
 }
 
 struct CursorPlanApprovalView: View {
+    @AppStorage("renderMathInMarkdown") private var renderMathInMarkdown = false
     let request: CursorACPPlanRequest
     let isResponding: Bool
     let onDecision: (Bool) -> Void
@@ -117,7 +118,7 @@ struct CursorPlanApprovalView: View {
                     if let name = request.name { Text(name).font(.title3).textSelection(.enabled) }
                     if let overview = request.overview { Text(overview).foregroundStyle(.secondary).textSelection(.enabled) }
                     if request.isProject == true { Label("Project plan", systemImage: "folder").font(.caption).foregroundStyle(.secondary) }
-                    MarkdownView(request.plan)
+                    MarkdownView(request.plan, mathEnabled: renderMathInMarkdown)
                     if !request.todos.isEmpty {
                         Text("Tasks").font(.subheadline.weight(.semibold))
                         ForEach(request.todos, id: \.id) { CursorPlanTodoView(todo: $0) }

@@ -154,6 +154,9 @@ extension WorkspaceSnapshot {
         thread.title = ""; thread.draft = ""; thread.draftAttachments = []; thread.isPinned = false
         thread.updatedAt = .init(timeIntervalSince1970: 0); thread.runtimeID = nil
         thread.providerMetadata = nil; thread.providerActivity = nil
+        // Pin/wake/snooze preferences change attention, not workspace ownership.
+        // Settlement and the exact checkpoint/runtime remain bound separately.
+        thread.workspaceLifecycle = nil
         struct Source: Encodable { let thread: CodingThread; let projectID: UUID; let projectPath: String; let clone: ProjectCloneState? }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return SHA256.hash(data: try encoder.encode(Source(thread: thread, projectID: project.id, projectPath: project.path, clone: project.clone)))

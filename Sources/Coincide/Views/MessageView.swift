@@ -3,6 +3,7 @@ import CoincideMarkdown
 import SwiftUI
 
 struct MessageView: View {
+    @AppStorage("renderMathInMarkdown") private var renderMathInMarkdown = false
     var store: WorkspaceStore
     let message: ChatMessage
     let providerName: String
@@ -41,7 +42,7 @@ struct MessageView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if let title = copilotTaskTitle { Label("Copilot task · \(title)", systemImage: "person.crop.square.badge.ellipsis").font(.caption).foregroundStyle(.secondary) }
                     if message.role == .system { Label("Notice", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
-                    MarkdownView(message.text, workspace: URL(fileURLWithPath: workspacePath), openFile: openFile)
+                    MarkdownView(message.text, workspace: URL(fileURLWithPath: workspacePath), mathEnabled: renderMathInMarkdown, openFile: openFile)
                     Button {
                         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string)
                     } label: { Image(systemName: "doc.on.doc").font(.caption).foregroundStyle(.secondary) }

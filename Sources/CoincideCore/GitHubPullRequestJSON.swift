@@ -2,7 +2,7 @@ import CoreFoundation
 import Foundation
 
 enum GitHubPullRequestJSON {
-    static let fields = "number,title,url,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,headRepository,headRepositoryOwner,isCrossRepository,author,updatedAt,reviewDecision,statusCheckRollup"
+    static let fields = "number,title,url,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,headRepository,headRepositoryOwner,isCrossRepository,author,updatedAt,closedAt,mergedAt,reviewDecision,statusCheckRollup"
     static let detailFields = fields + ",body,createdAt,additions,deletions,changedFiles,reviewRequests,labels"
     static func object(_ data: Data) throws -> [String: Any] {
         guard let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw GitHubPullRequestError(.invalidResponse) }; return result
@@ -18,6 +18,10 @@ enum GitHubPullRequestJSON {
         if let date = parser.date(from: value) { return date }
         parser.formatOptions.insert(.withFractionalSeconds)
         guard let date = parser.date(from: value) else { throw GitHubPullRequestError(.invalidResponse) }; return date
+    }
+    static func optionalDate(_ row: [String: Any], _ key: String) throws -> Date? {
+        guard let value = row[key], !(value is NSNull) else { return nil }
+        return try date(row, key)
     }
     static func integer(_ row: [String: Any], _ key: String) throws -> Int {
         guard let value = row[key] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
@@ -52,7 +56,8 @@ enum GitHubPullRequestJSON {
             state: state, isDraft: isDraft, headBranch: string(row, "headRefName"), baseBranch: string(row, "baseRefName"),
             headCommit: string(row, "headRefOid"), baseCommit: string(row, "baseRefOid"), headRepository: headRepository,
             author: (row["author"] as? [String: Any])?["login"] as? String,
-            updatedAt: date(row, "updatedAt"), reviewDecision: decision, checksState: checkState)
+            updatedAt: date(row, "updatedAt"), reviewDecision: decision, checksState: checkState,
+            closedAt: optionalDate(row, "closedAt"), mergedAt: optionalDate(row, "mergedAt"))
     }
     static func detail(_ data: Data, reference: GitHubPullRequestReference) throws -> GitHubPullRequestDetail {
         let row = try object(data), summary = try summary(row, repository: reference.repository)

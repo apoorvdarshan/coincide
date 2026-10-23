@@ -46,6 +46,8 @@ public enum GitHubPullRequestReadiness: String, Codable, Sendable {
 }
 
 public struct GitHubPullRequestSummary: Codable, Sendable, Equatable, Identifiable {
+    private struct TerminalDates: Sendable, Equatable { let closedAt: Date?; let mergedAt: Date? }
+    private let terminalDates: [TerminalDates]
     public let reference: GitHubPullRequestReference
     public let title: String
     public let url: String
@@ -60,11 +62,15 @@ public struct GitHubPullRequestSummary: Codable, Sendable, Equatable, Identifiab
     public let updatedAt: Date
     public let reviewDecision: GitHubPullRequestReviewDecision?
     public let checksState: GitHubPullRequestChecksState?
+    public var closedAt: Date? { terminalDates[0].closedAt }
+    public var mergedAt: Date? { terminalDates[0].mergedAt }
     public var id: GitHubPullRequestReference { reference }
     public init(reference: GitHubPullRequestReference, title: String, url: String, state: GitHubPullRequestState,
                 isDraft: Bool = false, headBranch: String, baseBranch: String, headCommit: String, baseCommit: String,
                 headRepository: GitHubRepository? = nil, author: String? = nil, updatedAt: Date = Date(),
-                reviewDecision: GitHubPullRequestReviewDecision? = nil, checksState: GitHubPullRequestChecksState? = nil) throws {
+                reviewDecision: GitHubPullRequestReviewDecision? = nil, checksState: GitHubPullRequestChecksState? = nil,
+                closedAt: Date? = nil, mergedAt: Date? = nil) throws {
+        terminalDates = [.init(closedAt: closedAt, mergedAt: mergedAt)]
         self.reference = reference; self.title = title; self.url = url; self.state = state; self.isDraft = isDraft
         self.headBranch = headBranch; self.baseBranch = baseBranch; self.headCommit = headCommit; self.baseCommit = baseCommit
         self.headRepository = headRepository; self.author = author; self.updatedAt = updatedAt
@@ -75,7 +81,34 @@ public struct GitHubPullRequestSummary: Codable, Sendable, Equatable, Identifiab
         guard GitHubValidation.text(title, maximum: 4_096), GitHubValidation.branch(headBranch), GitHubValidation.branch(baseBranch),
               GitHubValidation.object(headCommit), GitHubValidation.object(baseCommit), updatedAt.timeIntervalSince1970.isFinite,
               author.map({ GitHubValidation.text($0, maximum: 256) }) ?? true,
+              [closedAt, mergedAt].compactMap({ $0 }).allSatisfy({ $0.timeIntervalSince1970.isFinite }),
+              state != .open || (closedAt == nil && mergedAt == nil), state == .merged || mergedAt == nil,
               GitHubValidation.pullRequestURL(url, reference: reference) else { throw GitHubPullRequestError(.invalidResponse) }
+    }
+    private enum CodingKeys: String, CodingKey {
+        case reference, title, url, state, isDraft, headBranch, baseBranch, headCommit, baseCommit, headRepository, author, updatedAt, reviewDecision, checksState, closedAt, mergedAt
+    }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(reference: c.decode(GitHubPullRequestReference.self, forKey: .reference), title: c.decode(String.self, forKey: .title),
+            url: c.decode(String.self, forKey: .url), state: c.decode(GitHubPullRequestState.self, forKey: .state),
+            isDraft: c.decode(Bool.self, forKey: .isDraft), headBranch: c.decode(String.self, forKey: .headBranch),
+            baseBranch: c.decode(String.self, forKey: .baseBranch), headCommit: c.decode(String.self, forKey: .headCommit),
+            baseCommit: c.decode(String.self, forKey: .baseCommit), headRepository: c.decodeIfPresent(GitHubRepository.self, forKey: .headRepository),
+            author: c.decodeIfPresent(String.self, forKey: .author), updatedAt: c.decode(Date.self, forKey: .updatedAt),
+            reviewDecision: c.decodeIfPresent(GitHubPullRequestReviewDecision.self, forKey: .reviewDecision),
+            checksState: c.decodeIfPresent(GitHubPullRequestChecksState.self, forKey: .checksState),
+            closedAt: c.decodeIfPresent(Date.self, forKey: .closedAt), mergedAt: c.decodeIfPresent(Date.self, forKey: .mergedAt))
+    }
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(reference, forKey: .reference); try c.encode(title, forKey: .title); try c.encode(url, forKey: .url)
+        try c.encode(state, forKey: .state); try c.encode(isDraft, forKey: .isDraft)
+        try c.encode(headBranch, forKey: .headBranch); try c.encode(baseBranch, forKey: .baseBranch)
+        try c.encode(headCommit, forKey: .headCommit); try c.encode(baseCommit, forKey: .baseCommit)
+        try c.encodeIfPresent(headRepository, forKey: .headRepository); try c.encodeIfPresent(author, forKey: .author)
+        try c.encode(updatedAt, forKey: .updatedAt); try c.encodeIfPresent(reviewDecision, forKey: .reviewDecision)
+        try c.encodeIfPresent(checksState, forKey: .checksState); try c.encodeIfPresent(closedAt, forKey: .closedAt); try c.encodeIfPresent(mergedAt, forKey: .mergedAt)
     }
 }
 

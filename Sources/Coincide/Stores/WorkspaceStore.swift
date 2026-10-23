@@ -112,11 +112,27 @@ final class WorkspaceStore {
     let worktreesRoot: URL
     let composerDraftTools: ComposerDraftToolsStore
     let agentSessionImports: AgentSessionImportStore
+    let claudeRuntime: ClaudeRuntimeSettingsStore
     @ObservationIgnored private var agentSessionImportScans: [UUID: [AgentSessionProjectCandidate]] = [:]
     @ObservationIgnored private var agentSessionImportProjects: [UUID: [UUID: UUID]] = [:]
     private let projectCreator: ProjectCreator
     private let projectScriptReader: NativeProjectScriptService.Reader
-    @ObservationIgnored private let claudeRuntimeCapture: ClaudeRuntimeCapture
+    @ObservationIgnored private let claudeRuntimeCaptureOverride: ClaudeRuntimeCapture?
+    @ObservationIgnored private var neutralClaudeModelProfile: ClaudeRuntimeProfile?
+    private var claudeRuntimeCapture: ClaudeRuntimeCapture {
+        if let override = claudeRuntimeCaptureOverride { return override }
+        let profile = claudeRuntime.profile, available = claudeRuntime.isLoaded && !terminating
+        let environment = ProcessChannel.environment()
+        return { path in
+            guard available else { throw CoincideError("Load the saved Claude profile in Settings before creating a Claude conversation.") }
+            return try profile.capture(workspacePath: path, environment: environment)
+        }
+    }
+    private var legacyClaudeRuntimeCapture: ClaudeRuntimeCapture {
+        if let override = claudeRuntimeCaptureOverride { return override }
+        let environment = ProcessChannel.environment()
+        return { try ClaudeRuntimeConfiguration.capture(workspacePath: $0, environment: environment) }
+    }
     @ObservationIgnored private let piRuntimeCapture: PiRuntimeCapture
     var snapshot = WorkspaceSnapshot()
     @ObservationIgnored private var contextTransferStores: [UUID: ContextTransferStore] = [:]
@@ -165,7 +181,7 @@ final class WorkspaceStore {
     @ObservationIgnored private var codexAuthenticationChanges: Set<UUID> = []
     @ObservationIgnored private var codexAuthenticationLeases: [UUID: CodexWorkspaceAuthenticationLease] = [:]
     var codexModels: [UUID: [ProviderModel]] = [:]
-    private var claudeModels: [UUID: (identity: ClaudeRuntimeIdentity, models: [ProviderModel])] = [:]
+    private var claudeModels: [UUID: (identity: ClaudeRuntimeIdentity?, models: [ProviderModel])] = [:]
     @ObservationIgnored private var codexCatalogReads: [UUID: Task<[ProviderModel], any Error>] = [:]
     @ObservationIgnored private var codexMetadataScope = UUID()
     private var providerSkills: [UUID: ProviderSkillsStore] = [:]
@@ -246,7 +262,8 @@ final class WorkspaceStore {
         composerDraftTools = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AgentSessionImports", isDirectory: true))
         terminalArchives = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("TerminalHistory", isDirectory: true))
-        self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
+        claudeRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot)
+        self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot, installation: codexInstallation)
@@ -274,10 +291,10 @@ final class WorkspaceStore {
                 codexOwnedRuntime: codexOwnedRuntime)
         }
         do {
-            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, appMCPEnabled: appMCPEnabled, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory); return }
+            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, appMCPEnabled: appMCPEnabled, workspaceLifecycleEnabled: true, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory); return }
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Coincide", isDirectory: true)
-            engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), appMCPEnabled: appMCPEnabled, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory)
+            engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), appMCPEnabled: appMCPEnabled, workspaceLifecycleEnabled: true, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory)
         } catch { errorMessage = error.localizedDescription }
     }
     init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
@@ -291,7 +308,8 @@ final class WorkspaceStore {
         composerDraftTools = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AgentSessionImports", isDirectory: true))
         terminalArchives = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("TerminalHistory", isDirectory: true))
-        self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
+        claudeRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent())
+        self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
@@ -667,7 +685,8 @@ final class WorkspaceStore {
                 case .explicitDirectory(let raw): environment["CLAUDE_CONFIG_DIR"] = raw
                 }
                 configuration.claudeRuntimeConfiguration = try .capture(workspacePath: path, executable: runtime.executable,
-                    projectDirectoryName: runtime.projectDirectoryName, environment: environment)
+                    projectDirectoryName: runtime.projectDirectoryName, environment: environment,
+                    instanceID: runtime.instanceID, launchSettings: runtime.launchSettings)
             }
             if let native = configuration.piConfiguration, let runtime = native.runtime {
                 let captured = try PiRuntimeConfiguration.capture(workspacePath: path, executable: runtime.requestedExecutable,
@@ -767,7 +786,12 @@ final class WorkspaceStore {
                 }, open: { [weak self] id in self?.openPullRequestCheckoutConversation(id) },
                 unavailableReason: { [weak self] mode, plan, excluded in
                     self?.pullRequestCheckoutUnavailableReason(path: path, mode: mode, plan: plan, excludingOperationID: excluded)
-                }, busyWorktreePaths: { [weak self] in self?.busyPullRequestWorktreePaths() ?? [] }))
+                }, busyWorktreePaths: { [weak self] in self?.busyPullRequestWorktreePaths() ?? [] }),
+            sourceThreadID: { [weak self] in
+                guard let self, let thread = self.selectedThread, !thread.isArchived,
+                      thread.projectID == self.pullRequestProjectID(path: path), Self.canonicalPath(thread.workspacePath) == path else { return nil }
+                return thread.id
+            })
         model.apply(snapshot)
         if terminating { model.prepareForShutdown() }
         pullRequestStores[path] = model
@@ -797,7 +821,7 @@ final class WorkspaceStore {
             ?? newCodingThread(project: project)
         var configuration = ProviderConfiguration(thread: source); configuration.nativeThreadID = nil
         if source.provider == .claude, configuration.claudeRuntimeConfiguration == nil {
-            guard let captured = try? claudeRuntimeCapture(source.workspacePath) else { return nil }
+            guard let captured = try? legacyClaudeRuntimeCapture(source.workspacePath) else { return nil }
             configuration.claudeRuntimeConfiguration = captured
         }
         if source.provider == .pi, let native = source.piConfiguration, native.runtime == nil {
@@ -1276,6 +1300,7 @@ final class WorkspaceStore {
         do {
             let stream = await engine.updates()
             updatesTask = Task { [weak self] in for await value in stream { self?.apply(value) } }
+            await claudeRuntime.load()
             _ = try await engine.load()
             apply(await engine.current())
             await composerDraftTools.load()
@@ -1849,8 +1874,10 @@ final class WorkspaceStore {
     func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] {
         if provider == .codex, let selectedThread, selectedThread.provider == .codex { return models(for: selectedThread) }
-        if provider == .claude, let selectedThread, selectedThread.provider == .claude,
-           selectedThread.claudeRuntimeConfiguration != nil { return models(for: selectedThread) }
+        if provider == .claude, let selectedThread, selectedThread.provider == .claude { return models(for: selectedThread) }
+        if provider == .claude, !claudeRuntime.isLoaded { return [] }
+        if provider == .claude, neutralClaudeModelProfile != claudeRuntime.profile,
+           !(neutralClaudeModelProfile == nil && claudeRuntime.profile == .init()) { return [] }
         if provider == .opencode || provider == .pi || provider == .muse || provider == .antigravity {
             guard let selectedThread, selectedThread.provider == provider else { return [] }
             return models(for: selectedThread)
@@ -1858,8 +1885,8 @@ final class WorkspaceStore {
         return providerModels[provider] ?? []
     }
     func models(for thread: CodingThread) -> [ProviderModel] {
-        if thread.provider == .claude, let runtime = thread.claudeRuntimeConfiguration {
-            guard let catalog = claudeModels[thread.id], catalog.identity == runtime.runtimeIdentity else { return [] }
+        if thread.provider == .claude {
+            guard let catalog = claudeModels[thread.id], catalog.identity == thread.claudeRuntimeConfiguration?.runtimeIdentity else { return [] }
             return catalog.models
         }
         if thread.provider == .codex {
@@ -2030,7 +2057,7 @@ final class WorkspaceStore {
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
         let capturedClaude: ClaudeRuntimeConfiguration?
         if thread.provider == .claude, thread.claudeRuntimeConfiguration == nil {
-            do { capturedClaude = try claudeRuntimeCapture(thread.workspacePath) }
+            do { capturedClaude = try legacyClaudeRuntimeCapture(thread.workspacePath) }
             catch { errorMessage = "Install and sign in to Claude before sending a message."; return Task { false } }
         } else { capturedClaude = nil }
         let capturedPi: PiRuntimeConfiguration?
@@ -2245,13 +2272,20 @@ final class WorkspaceStore {
                           ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: captured).codexRuntimeBinding else { return }
                     codexModels[captured.id] = models
                 } else if codexRuntime.configuration == configuration { providerModels[.codex] = models }
-            } else if kind == .claude, let captured = selectedThread,
-                      captured.provider == .claude, let runtime = captured.claudeRuntimeConfiguration {
+            } else if kind == .claude, let captured = selectedThread, captured.provider == .claude {
                 let models = try await engine.models(thread: captured)
                 guard !terminating, let current = thread(captured.id), current.provider == .claude,
                       current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
-                      current.claudeRuntimeConfiguration?.runtimeIdentity == runtime.runtimeIdentity else { return }
-                claudeModels[captured.id] = (runtime.runtimeIdentity, models)
+                      current.claudeRuntimeConfiguration?.runtimeIdentity == captured.claudeRuntimeConfiguration?.runtimeIdentity else { return }
+                claudeModels[captured.id] = (captured.claudeRuntimeConfiguration?.runtimeIdentity, models)
+            } else if kind == .claude {
+                guard !claudeRuntime.isApplying else { return }
+                let profile = claudeRuntime.profile
+                let path = selectedThread?.workspacePath ?? snapshot.projects.first?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+                let runtime = try claudeRuntimeCapture(path)
+                let models = try await engine.models(provider: .claude, claudeRuntimeConfiguration: runtime)
+                guard !terminating, claudeRuntime.isLoaded, profile == claudeRuntime.profile else { return }
+                neutralClaudeModelProfile = profile; providerModels[.claude] = models
             } else if kind == .opencode {
                 guard let thread = selectedThread, thread.provider == .opencode else {
                     throw CoincideError("Choose OpenCode in a conversation before refreshing its workspace models.")
@@ -3060,6 +3094,64 @@ final class WorkspaceStore {
     func canSettle(_ thread: CodingThread) -> Bool {
         !terminating && snapshot.canSettle(threadID: thread.id) && canEditWorkspace(thread.workspacePath)
     }
+    var workspaceLifecyclePolicy: WorkspaceLifecyclePolicy { snapshot.workspaceLifecyclePolicy ?? .init() }
+    func setAutoSettlementAfterDays(_ days: Double?) {
+        updateWorkspaceLifecyclePolicy { .init(afterDays: days, onMerge: $0.onMerge, keepPullRequests: $0.keepPullRequests) }
+    }
+    func setAutoSettlementOnMerge(_ value: Bool) {
+        updateWorkspaceLifecyclePolicy { .init(afterDays: $0.afterDays, onMerge: value, keepPullRequests: $0.keepPullRequests) }
+    }
+    func setAutoSettlementKeepsPullRequests(_ value: Bool) {
+        updateWorkspaceLifecyclePolicy { .init(afterDays: $0.afterDays, onMerge: $0.onMerge, keepPullRequests: value) }
+    }
+    private func updateWorkspaceLifecyclePolicy(_ update: @escaping @MainActor (WorkspaceLifecyclePolicy) -> WorkspaceLifecyclePolicy) {
+        let task = enqueuePreparing { [weak self] in
+            guard let self, !self.terminating else { throw CancellationError() }
+            let policy = update(self.workspaceLifecyclePolicy); try policy.validate()
+            return .setWorkspaceLifecyclePolicy(policy)
+        }
+        Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
+    }
+    func canSnooze(_ thread: CodingThread) -> Bool {
+        guard !terminating, let facts = try? snapshot.workspaceLifecycleFacts(threadID: thread.id) else { return false }
+        return WorkspaceLifecyclePolicyDecision.canSnooze(facts, now: Date())
+    }
+    func snoozeThread(_ id: UUID, until: Date) async throws {
+        try await performWorkspaceLifecycle(.snooze(threadID: id, until: until))
+    }
+    func wakeThread(_ id: UUID) {
+        requestWorkspaceLifecycle(.wake(threadID: id))
+    }
+    func setAutoSettlement(_ id: UUID, enabled: Bool) {
+        requestWorkspaceLifecycle(.setAutoSettle(threadID: id, enabled: enabled))
+    }
+    private func requestWorkspaceLifecycle(_ action: WorkspaceLifecycleAction) {
+        Task {
+            do {
+                try await performWorkspaceLifecycle(action)
+            } catch is CancellationError { }
+            catch { if !terminating { errorMessage = error.localizedDescription } }
+        }
+    }
+    private func performWorkspaceLifecycle(_ action: WorkspaceLifecycleAction) async throws {
+        guard !terminating, let engine, let captured = thread(action.threadID), !captured.isArchived,
+              removalEditorLocks[captured.projectID] == nil else { throw CancellationError() }
+        flushDrafts()
+        let previous = commandTail
+        let task = Task<WorkspaceCommandReceipt, any Error> {
+            await previous?.value
+            try Task.checkCancellation()
+            guard !self.terminating, let current = self.thread(action.threadID), !current.isArchived,
+                  current.projectID == captured.projectID, current.createdAt == captured.createdAt,
+                  current.workspacePath.utf8.elementsEqual(captured.workspacePath.utf8),
+                  self.removalEditorLocks[current.projectID] == nil else { throw CancellationError() }
+            let receipt = try await engine.dispatch(.workspaceLifecycle(action))
+            if let rejection = receipt.rejection { throw CoincideError(rejection) }
+            self.apply(await engine.current()); return receipt
+        }
+        commandTail = Task { _ = await task.result }
+        _ = try await task.value
+    }
     func settleThread(_ id: UUID, reviewScript: Bool = true) async throws {
         try await performSettlementCommand(for: id) { engine, thread in
             try await engine.settleThread(threadID: id, expectedWorkspacePath: thread.workspacePath, reviewScript: reviewScript)
@@ -3186,6 +3278,7 @@ final class WorkspaceStore {
         await antigravityInstallation.shutdown()
         await codexAccount.cancel()
         await codexRuntime.shutdown()
+        await claudeRuntime.shutdown()
         for task in skills { await task.value }
         let codexReads = Array(codexCatalogReads.values)
         for task in codexReads { task.cancel() }

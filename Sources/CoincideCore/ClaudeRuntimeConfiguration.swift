@@ -30,14 +30,17 @@ public struct ClaudeRuntimeConfiguration: Codable, Sendable, Equatable, Hashable
     public let registeredWorkspacePath: String
     public let precompactProfile: ClaudePrecompactProfile
     public let configurationDirectorySelection: ClaudeConfigurationDirectorySelection
+    public let launchSettings: ClaudeLaunchSettings?
     public init(instanceID: UUID = Self.defaultInstanceID, executable: String, configurationDirectory: String,
                 projectDirectoryName: String? = nil, workspacePath: String, registeredWorkspacePath: String? = nil,
                 precompactProfile: ClaudePrecompactProfile = .defaultSkipping,
-                configurationDirectorySelection: ClaudeConfigurationDirectorySelection? = nil) {
+                configurationDirectorySelection: ClaudeConfigurationDirectorySelection? = nil,
+                launchSettings: ClaudeLaunchSettings? = nil) {
         self.instanceID = instanceID; self.executable = executable; self.configurationDirectory = configurationDirectory
         self.projectDirectoryName = projectDirectoryName; self.workspacePath = workspacePath
         self.registeredWorkspacePath = registeredWorkspacePath ?? workspacePath; self.precompactProfile = precompactProfile
         self.configurationDirectorySelection = configurationDirectorySelection ?? .explicitDirectory(environmentPath: configurationDirectory)
+        self.launchSettings = launchSettings
     }
     public var projectKey: String { projectDirectoryName ?? ClaudeRuntimeValidation.projectKey(workspacePath) }
     public var projectDirectoryNames: [String] {
@@ -49,7 +52,7 @@ public struct ClaudeRuntimeConfiguration: Codable, Sendable, Equatable, Hashable
         let result = Self(instanceID: instanceID, executable: executable, configurationDirectory: configurationDirectory,
             projectDirectoryName: projectDirectoryName, workspacePath: (physicalPath ?? path).precomposedStringWithCanonicalMapping,
             registeredWorkspacePath: path,
-            precompactProfile: precompactProfile, configurationDirectorySelection: configurationDirectorySelection)
+            precompactProfile: precompactProfile, configurationDirectorySelection: configurationDirectorySelection, launchSettings: launchSettings)
         try result.validate(); return result
     }
     public func validate() throws {
@@ -57,6 +60,7 @@ public struct ClaudeRuntimeConfiguration: Codable, Sendable, Equatable, Hashable
         try ClaudeRuntimeValidation.path(workspacePath)
         try ProviderHistoryValidation.path(registeredWorkspacePath)
         try configurationDirectorySelection.validate()
+        try launchSettings?.validate()
         guard configurationDirectory == configurationDirectory.precomposedStringWithCanonicalMapping,
               workspacePath == workspacePath.precomposedStringWithCanonicalMapping else { throw Self.invalid() }
         if let projectDirectoryName {
@@ -68,7 +72,8 @@ public struct ClaudeRuntimeConfiguration: Codable, Sendable, Equatable, Hashable
     /// New queues must receive this value before acceptance, never resolve PATH later.
     public static func capture(workspacePath: String, executable: String = "claude", configurationDirectory: String? = nil,
                                projectDirectoryName: String? = nil,
-                               environment: [String: String] = ProcessChannel.environment()) throws -> Self {
+                               environment: [String: String] = ProcessChannel.environment(),
+                               instanceID: UUID = Self.defaultInstanceID, launchSettings: ClaudeLaunchSettings? = nil) throws -> Self {
         guard environment["CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP"].map({ $0.isEmpty }) ?? true else { throw invalid() }
         guard let selected = ProcessChannel.findExecutable(executable) else { throw CoincideError("The selected Claude executable is unavailable.") }
         let directorySelection: ClaudeConfigurationDirectorySelection
@@ -79,15 +84,15 @@ public struct ClaudeRuntimeConfiguration: Codable, Sendable, Equatable, Hashable
         let physicalRoot = try ClaudeRuntimeValidation.configurationDirectory(directorySelection)
         let physicalWorkspace = try ClaudeRuntimeValidation.physical(workspacePath, allowMissing: false)
         let explicit = directorySelection.isExplicit ? projectDirectoryName ?? environment["CLAUDE_CODE_PROJECT_DIR_NAME"] : nil
-        let result = Self(executable: selected.path, configurationDirectory: physicalRoot, projectDirectoryName: explicit,
+        let result = Self(instanceID: instanceID, executable: selected.path, configurationDirectory: physicalRoot, projectDirectoryName: explicit,
                           workspacePath: physicalWorkspace, registeredWorkspacePath: workspacePath,
-                          configurationDirectorySelection: directorySelection)
+                          configurationDirectorySelection: directorySelection, launchSettings: launchSettings)
         try result.validate(); return result
     }
     public static func invalid() -> CoincideError {
         .init("The Claude runtime capture is invalid or uses an unsupported transcript profile. Choose the executable, workspace and Claude configuration again.")
     }
-    private enum CodingKeys: String, CodingKey { case instanceID, executable, configurationDirectory, projectDirectoryName, workspacePath, registeredWorkspacePath, precompactProfile, configurationDirectorySelection }
+    private enum CodingKeys: String, CodingKey { case instanceID, executable, configurationDirectory, projectDirectoryName, workspacePath, registeredWorkspacePath, precompactProfile, configurationDirectorySelection, launchSettings }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(instanceID: try c.decode(UUID.self, forKey: .instanceID), executable: try c.decode(String.self, forKey: .executable),
@@ -96,7 +101,8 @@ public struct ClaudeRuntimeConfiguration: Codable, Sendable, Equatable, Hashable
             workspacePath: try c.decode(String.self, forKey: .workspacePath),
             registeredWorkspacePath: try c.decodeIfPresent(String.self, forKey: .registeredWorkspacePath),
             precompactProfile: try c.decode(ClaudePrecompactProfile.self, forKey: .precompactProfile),
-            configurationDirectorySelection: try c.decodeIfPresent(ClaudeConfigurationDirectorySelection.self, forKey: .configurationDirectorySelection))
+            configurationDirectorySelection: try c.decodeIfPresent(ClaudeConfigurationDirectorySelection.self, forKey: .configurationDirectorySelection),
+            launchSettings: try c.decodeIfPresent(ClaudeLaunchSettings.self, forKey: .launchSettings))
         try validate()
     }
 }
@@ -124,12 +130,14 @@ public struct ClaudeRuntimeIdentity: Codable, Sendable, Equatable, Hashable {
     public let registeredWorkspacePath: String
     public let precompactProfile: ClaudePrecompactProfile
     public let configurationDirectorySelection: ClaudeConfigurationDirectorySelection
+    public let launchSettings: ClaudeLaunchSettings?
     public init(configuration: ClaudeRuntimeConfiguration) {
         instanceID = configuration.instanceID; executable = configuration.executable
         configurationDirectory = configuration.configurationDirectory; projectDirectoryName = configuration.projectDirectoryName
         workspacePath = configuration.workspacePath; registeredWorkspacePath = configuration.registeredWorkspacePath
         precompactProfile = configuration.precompactProfile
         configurationDirectorySelection = configuration.configurationDirectorySelection
+        launchSettings = configuration.launchSettings
     }
     public var projectKey: String { projectDirectoryName ?? ClaudeRuntimeValidation.projectKey(workspacePath) }
     public var projectDirectoryNames: [String] {
@@ -140,9 +148,9 @@ public struct ClaudeRuntimeIdentity: Codable, Sendable, Equatable, Hashable {
         try ClaudeRuntimeConfiguration(instanceID: instanceID, executable: executable, configurationDirectory: configurationDirectory,
             projectDirectoryName: projectDirectoryName, workspacePath: workspacePath,
             registeredWorkspacePath: registeredWorkspacePath, precompactProfile: precompactProfile,
-            configurationDirectorySelection: configurationDirectorySelection).validate()
+            configurationDirectorySelection: configurationDirectorySelection, launchSettings: launchSettings).validate()
     }
-    private enum CodingKeys: String, CodingKey { case instanceID, executable, configurationDirectory, projectDirectoryName, workspacePath, registeredWorkspacePath, precompactProfile, configurationDirectorySelection }
+    private enum CodingKeys: String, CodingKey { case instanceID, executable, configurationDirectory, projectDirectoryName, workspacePath, registeredWorkspacePath, precompactProfile, configurationDirectorySelection, launchSettings }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let configuration = ClaudeRuntimeConfiguration(instanceID: try c.decode(UUID.self, forKey: .instanceID),
@@ -150,7 +158,8 @@ public struct ClaudeRuntimeIdentity: Codable, Sendable, Equatable, Hashable {
             projectDirectoryName: try c.decodeIfPresent(String.self, forKey: .projectDirectoryName), workspacePath: try c.decode(String.self, forKey: .workspacePath),
             registeredWorkspacePath: try c.decodeIfPresent(String.self, forKey: .registeredWorkspacePath),
             precompactProfile: try c.decode(ClaudePrecompactProfile.self, forKey: .precompactProfile),
-            configurationDirectorySelection: try c.decodeIfPresent(ClaudeConfigurationDirectorySelection.self, forKey: .configurationDirectorySelection))
+            configurationDirectorySelection: try c.decodeIfPresent(ClaudeConfigurationDirectorySelection.self, forKey: .configurationDirectorySelection),
+            launchSettings: try c.decodeIfPresent(ClaudeLaunchSettings.self, forKey: .launchSettings))
         try configuration.validate(); self.init(configuration: configuration)
     }
 }

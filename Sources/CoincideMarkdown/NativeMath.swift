@@ -3,10 +3,18 @@ import SwiftMath
 import SwiftUI
 
 @MainActor public enum NativeMath {
-    private static let cache: NSCache<NSString, NSImage> = {
-        let value = NSCache<NSString, NSImage>(); value.countLimit = 128; value.totalCostLimit = 8_388_608; return value
+    final class Rendered: NSObject {
+        let image: NSImage
+        let descent: CGFloat
+        init(image: NSImage, descent: CGFloat) { self.image = image; self.descent = descent }
+    }
+    private static let cache: NSCache<NSString, Rendered> = {
+        let value = NSCache<NSString, Rendered>(); value.countLimit = 128; value.totalCostLimit = 8_388_608; return value
     }()
     public static func image(_ latex: String, dark: Bool, display: Bool = true) -> NSImage? {
+        render(latex, dark: dark, display: display)?.image
+    }
+    static func render(_ latex: String, dark: Bool, display: Bool) -> Rendered? {
         guard !latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               latex.utf8.count <= 4_096, latex.filter({ $0 == "\\" }).count <= 128 else { return nil }
         let key = "\(dark)|\(display)|\(latex)" as NSString
@@ -19,12 +27,13 @@ import SwiftUI
         var renderer = MathImage(latex: latex, fontSize: display ? 22 : 15,
                                  textColor: dark ? NSColor(calibratedWhite: 0.9, alpha: 1) : NSColor(calibratedWhite: 0.12, alpha: 1),
                                  labelMode: display ? .display : .text, textAlignment: .left)
-        let (error, image, _) = renderer.asImage()
+        let (error, image, layout) = renderer.asImage()
         guard error == nil, let image, image.size.width.isFinite, image.size.height.isFinite,
               image.size.width > 0, image.size.height > 0, image.size.width <= 16_384, image.size.height <= 4_096 else { return nil }
         let cost = Int(image.size.width * image.size.height * 4)
-        if cost <= 4_194_304 { cache.setObject(image, forKey: key, cost: cost) }
-        return image
+        let value = Rendered(image: image, descent: layout?.descent ?? 0)
+        if cost <= 4_194_304 { cache.setObject(value, forKey: key, cost: cost) }
+        return value
     }
 }
 

@@ -22,7 +22,9 @@ import Testing
     let document = MarkdownDocument(parsing: source)
     #expect(!document.blocks.contains { if case .math = $0 { true } else { false } })
     let protectedCloser = MarkdownDocument(parsing: "$$\nunclosed\n\n```text\n$$\n```")
-    #expect(!protectedCloser.blocks.contains { if case .math = $0 { true } else { false } })
+    // Pinned flow math owns its contents before Markdown code parsing. The
+    // literal ``` line is TeX until the explicit own-line closing dollars.
+    #expect(protectedCloser.blocks.first == .math("unclosed\n\n```text"))
     let many = String(repeating: "\\[\n", count: 5_000)
     #expect(!MarkdownDocument(parsing: many).blocks.isEmpty)
 }

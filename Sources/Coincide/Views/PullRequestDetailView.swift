@@ -22,6 +22,7 @@ struct PullRequestSummaryRow: View {
 }
 
 struct PullRequestDetailContent: View {
+    @AppStorage("renderMathInMarkdown") private var renderMathInMarkdown = false
     let detail: GitHubPullRequestDetail
     var canCheckout = false
     var checkout: (() -> Void)? = nil
@@ -55,7 +56,7 @@ struct PullRequestDetailContent: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Description").font(.headline)
                     if detail.body.isEmpty { Text("No description provided.").foregroundStyle(.secondary) }
-                    else { MarkdownView(String(detail.body.prefix(bodyPreviewLimit)), workspace: nil) }
+                    else { MarkdownView(String(detail.body.prefix(bodyPreviewLimit)), workspace: nil, mathEnabled: renderMathInMarkdown) }
                     if detail.body.count > bodyPreviewLimit {
                         Text("This description preview is limited. Open on GitHub to read the complete description.").font(.caption).foregroundStyle(.secondary)
                     }

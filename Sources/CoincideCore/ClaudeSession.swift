@@ -91,6 +91,12 @@ public actor ClaudeSession: ProviderSession {
             guard arguments == nil else { throw ClaudeModelControl.requiresFreshSession() }
             args += ["--thinking", thinking ? "adaptive" : "disabled"]
         }
+        if let settings = configuration?.launchSettings, settings.autoCompactWindow != nil {
+            // Agent SDK query.settings lowers to the native inline --settings
+            // argument. Custom argument fixtures cannot silently bypass it.
+            guard arguments == nil else { throw ClaudeRuntimeConfiguration.invalid() }
+            args += try settings.arguments()
+        }
         if let launchSelection {
             guard let configuration, arguments == nil else { throw ClaudeRuntimeConfiguration.invalid() }
             try launchSelection.validate(runtime: configuration)
@@ -142,10 +148,24 @@ public actor ClaudeSession: ProviderSession {
                 reader = Task { [weak self] in for await event in stream { await self?.consume(event) } }
             }
             let rpc = rpc, appMCP = appMCPConnection, redaction = appMCPRedaction
+            let launchSettings = runtimeConfiguration?.launchSettings
             connectingID = UUID()
             connecting = Task {
                 try await redaction?.value
                 let result = try await rpc.request("initialize", params: .object(["hooks": .null]), timeout: .seconds(60))
+                if let launchSettings, launchSettings.autoCompactWindow != nil {
+                    do {
+                        try Task.checkCancellation()
+                        let settings = try await rpc.request("get_settings", timeout: .seconds(15))
+                        try launchSettings.validateEffective(settings)
+                        try Task.checkCancellation()
+                    } catch {
+                        // Raw native settings/control errors may contain private
+                        // settings. Keep only the safe requested numeric value.
+                        await rpc.close()
+                        throw ClaudeLaunchSettings.unconfirmed()
+                    }
+                }
                 if let appMCP {
                     do {
                         try Task.checkCancellation()
@@ -182,6 +202,11 @@ public actor ClaudeSession: ProviderSession {
             if !initialized {
                 initialization = result; initialized = true
                 observeModelControlMetadata(result)
+                if let requested = runtimeConfiguration?.launchSettings?.autoCompactWindow {
+                    emit(.configuration(.object(["claudeLaunchSettings": .object([
+                        "requestedAutoCompactWindow": .number(Double(requested)),
+                        "effectiveAutoCompactWindow": .number(Double(requested))]) ])))
+                }
                 if advertisedCommands == nil { advertisedCommands = result.object?["commands"] }
                 logger.info("Claude connection ready")
             }

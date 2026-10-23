@@ -55,6 +55,17 @@ and edited/deleted import protection. It creates settled history without running
 a provider. These source implementations do not establish installed-provider or
 hosted UI acceptance; see the current validation record.
 
+Claude runtime profiles now persist a future-conversation executable, native
+configuration-directory selection and optional auto-compaction threshold using
+private compare-and-swap storage. Executable/home changes mint a new runtime
+identity. Existing conversations and captured queues retain their original
+selection. Legacy conversations without a capture retain native CLI defaults
+until their first durable capture; changing the future profile does not retarget
+their catalog or resume namespace. Explicit thresholds lower to the native numeric SDK settings and
+require effective `get_settings` confirmation before user input. A failed or
+corrupt profile load cannot silently use a default capture. This does not prove
+actual installed compaction behavior or provide managed installation/auth.
+
 At the pinned revision, MCP setup remains provider-owned. T3 injects only its
 scoped app server through Codex thread overrides or Claude stdin registration;
 the provider Settings contracts/panels have no shared cross-provider MCP editor.

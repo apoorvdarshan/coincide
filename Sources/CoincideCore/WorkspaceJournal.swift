@@ -18,6 +18,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case delegatedTaskCohortsReplaced([DelegatedTaskCohort]?)
     case delegatedTaskTransfersReplaced([DelegatedTaskResultTransfer]?)
     case agentSessionImportsReplaced([AgentSessionImportRecord]?)
+    case workspaceLifecyclePolicyChanged(WorkspaceLifecyclePolicy?)
     case threadMetadataUpserted(CodingThread)
     case threadRemoved(UUID)
     case threadsOrdered([UUID])
@@ -27,6 +28,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
 
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
+        case .workspaceLifecyclePolicyChanged(let value): snapshot.workspaceLifecyclePolicy = value
         case .agentSessionImportsReplaced(let values): snapshot.agentSessionImports = values
         case .delegatedTaskTransfersReplaced(let values): snapshot.delegatedTaskTransfers = values
         case .delegatedTasksReplaced(let values): snapshot.delegatedTasks = values
@@ -109,6 +111,7 @@ public enum WorkspaceJournal {
         }
         try snapshot.validateDelegatedTasks()
         try snapshot.validateAgentSessionImports()
+        try snapshot.validateWorkspaceLifecycle()
         try snapshot.validatePromptSteerings()
         try snapshot.validateContextTransfers()
         try snapshot.validatePullRequestCheckouts()
@@ -205,6 +208,7 @@ public enum WorkspaceJournal {
     @inline(never)
     private static func changesAfterValidation(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) -> [WorkspaceEvent] {
         var events: [WorkspaceEvent] = []
+        if previous.workspaceLifecyclePolicy != next.workspaceLifecyclePolicy { events.append(.workspaceLifecyclePolicyChanged(next.workspaceLifecyclePolicy)) }
         if previous.agentSessionImports != next.agentSessionImports { events.append(.agentSessionImportsReplaced(next.agentSessionImports)) }
         if previous.delegatedTaskTransfers != next.delegatedTaskTransfers { events.append(.delegatedTaskTransfersReplaced(next.delegatedTaskTransfers)) }
         if previous.delegatedTasks != next.delegatedTasks { events.append(.delegatedTasksReplaced(next.delegatedTasks)) }

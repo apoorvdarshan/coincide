@@ -4806,3 +4806,89 @@ control acceptance, remote display controls/composer/import parity and broader T
 unverified. Scanner-only duplicate alias metadata is reported without a hidden
 write in the read-only preparation API; deterministic native ownership still
 prevents duplicate thread adoption.
+
+## 2026-10-23 — lifecycle, Claude profiles and rich Markdown
+
+This batch adds local snooze/wake and an owned automatic-settlement service,
+private future-conversation Claude profiles with optional native auto-compaction
+settings, and native alerts, details and optional inline/display math. Existing
+captured Claude runtimes retain their namespace and launch settings; legacy
+nil-runtime conversations retain native CLI defaults. Neutral profile catalogs
+cannot leak into captured/legacy conversations or republish after a corrupt
+profile reload. The product's math preference defaults off. SSH automatic
+settlement remains disabled until its remote settings/Resume controls exist.
+
+The first complete focused run passes **98 declarations**: 59 Core in 56.845
+seconds, 10 native UI/store in 0.981 seconds, and 29 Markdown in 0.636 seconds.
+It covers stale settings and proposals, exact snooze stamps, owned timer/lookup
+cancellation and drain, latest proven PR associations, notification suppression
+without completion replay, profile persistence, late catalog replies, inert
+HTML/code and the pinned math grammar. Initial new fixtures needed their exact
+registered path and terminal-run end reason corrected, plus test-only error
+markers/import access. The alert test also exposed a real upstream nested-task
+scanner limitation; the renderer now recovers only source-verified plain task
+markers and preserves escaped/code/entity text and styled bodies. Assertions
+and deadlines are retained.
+
+The preceding pushed head `fe8b934` passed its local aggregate but its
+[hosted run](https://github.com/apoorvdarshan/coincide/actions/runs/39962570256)
+crashed with SIGBUS in the local PR-checkout case. The sanitized stack records a
+guard-page fault in `___chkstk_darwin` / ICU IDNA / `URLComponents.host` during
+checkout validation beneath the general command reducer. All six checkout
+command stages now use a dedicated non-inlined reducer with the original
+admission and common finalization. Fresh compiled fixed locals along that path
+fall from **59008 to 3504 bytes**, excluding saved-register prologues; the new
+reducer itself uses 976 bytes and avoids the broad reducer's dynamic temporaries.
+The exact previously crashing test passes locally in all five cases. New hosted
+crash resolution still requires the next CI run. URL parsing, validation,
+hashing, stack limits and timeouts are unchanged.
+
+The first ABI check found mismatched weak async-default sleep-closure contexts
+(144 production bytes versus 128 test bytes). The default is now nil, resolved to
+a named static async function inside the initializer. The first aggregate was
+intentionally interrupted after all 358 UI/store declarations passed, so the
+corrected build can be checked and run as a whole; it is not counted as a full
+aggregate success. The partial terminal run had no assertion failure. Only its
+owned Swift test process was interrupted, and no owned test helper remained.
+
+After rebuilding the sleep change, all 17 targeted lifecycle declarations pass
+(3 native UI/store and 14 Core). The ABI guard passes across **1209 objects**,
+with 855 Core and 351 app coverage entries, **zero weak async-default records**
+and three local ones. The separate 75 Python helper tests pass in 7.485 seconds.
+
+The first completed aggregate of this batch executes all **2257 declarations**:
+1853 Core (13 optional skips), 358 UI/store, 17 Terminal and 29 Markdown.
+Terminal and Markdown pass (11.500 and 0.675 seconds). Core finishes in 1327.615
+seconds with three failed declarations / eleven expanded-case issues, all at
+reviewed file-ledger validation after pin edits. The UI/store suite finishes in
+202.673 seconds with three existing queue/setup wait timeouts. This aggregate
+exits nonzero and is not reported as a passing full suite.
+
+The file-ledger regression is corrected by excluding workspace attention metadata
+from the file-ownership fingerprint; workspace, runtime, checkpoint, settlement
+and source-audit guards remain intact. No-op pin/submit reconciliation also
+preserves absent legacy lifecycle metadata. The existing restore regression now
+includes an actual snooze and pin-wake with retained wake timestamp before
+acceptance, retaining all previous assertions. Targeted verification passes all
+**23 affected declarations**: 17 Core in 0.528 seconds and 6 UI/store in 19.648
+seconds, including all six previously failing declarations. The three UI tests
+retain their original deadlines and assertions and now emit safe boolean/count/
+enum diagnostics only on failure. Their timeout cause has not been established;
+a separate whole-UI rerun checks ordering. High concurrent build load was observed
+but is not treated as proof of causality. Full-suite CI after the push remains
+the next combined verification of this final patch.
+
+The final whole-UI rerun passes **all 358 declarations in 80.542 seconds** with no
+failure diagnostics. Final ABI inspection again reports 1209 objects, zero weak
+async-default records and three local records. The packaged app passes strict
+deep code-signature verification and native resource rendering. Compiled and
+packaged UUIDs match: Coincide `8D31AFA8-9C5A-38CB-92B9-9097D5E465CE`,
+CoincideEnvironment `F4B16351-3431-34D4-B35D-F4C8C006CB42`, and
+CoincideScriptHelper `31980CE8-C6BE-32A5-876D-73D41F10E5C4`.
+
+No installed app was replaced/opened, authentication migrated, real provider
+turn sent, or native session changed by this batch. Hosted GUI interaction,
+installed compaction behavior, the next combined CI result and broader full T3
+parity remain unverified. The final local patch has complete whole-UI, focused
+Core regression, Markdown, Terminal, helper, ABI and package evidence; a new
+single all-green aggregate after the final file-proof fix is not claimed.

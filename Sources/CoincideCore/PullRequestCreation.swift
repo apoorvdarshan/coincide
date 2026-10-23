@@ -6,6 +6,7 @@ public enum PullRequestCreationPhase: String, Codable, Sendable {
 
 /// One captured checkout and one non-replayed remote creation intent.
 public struct PullRequestCreationOperation: Codable, Sendable, Equatable, Identifiable {
+    public let sourceThreadID: UUID?
     public let projectID: UUID
     public let projectPath: String
     public let registeredWorkspacePath: String
@@ -27,7 +28,9 @@ public struct PullRequestCreationOperation: Codable, Sendable, Equatable, Identi
     public static let notFoundMessage = "No matching pull request was found. This does not prove the request never reached GitHub. Acknowledge this outcome explicitly before creating another request."
     public init(projectID: UUID, projectPath: String, sourceIncarnation: UUID, effectID: UUID = UUID(),
                 review: GitHubPullRequestCreateReview, phase: PullRequestCreationPhase = .accepted,
-                registeredWorkspacePath: String? = nil, updatedAt: Date? = nil, result: GitHubPullRequestCreateOutcome? = nil, error: String? = nil, acknowledgedAt: Date? = nil) {
+                registeredWorkspacePath: String? = nil, updatedAt: Date? = nil, result: GitHubPullRequestCreateOutcome? = nil, error: String? = nil, acknowledgedAt: Date? = nil,
+                sourceThreadID: UUID? = nil) {
+        self.sourceThreadID = sourceThreadID
         self.projectID = projectID; self.projectPath = projectPath; self.sourceIncarnation = sourceIncarnation
         self.registeredWorkspacePath = registeredWorkspacePath ?? review.context.workspacePath
         self.effectID = effectID; self.review = review; self.phase = phase; self.updatedAt = updatedAt ?? review.reviewedAt

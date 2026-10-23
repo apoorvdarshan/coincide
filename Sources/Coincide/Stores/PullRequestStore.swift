@@ -66,6 +66,7 @@ final class PullRequestStore {
     private let canMutate: @MainActor () -> Bool
     private let updateWorkspace: @MainActor (WorkspaceUpdate) -> Void
     private let checkoutSupport: CheckoutSupport?
+    private let sourceThreadID: @MainActor () -> UUID?
     private var closed = false
     private var readsSuspended = false
     private var contextGeneration = UUID()
@@ -94,10 +95,11 @@ final class PullRequestStore {
          owner: @escaping @MainActor () -> UUID?, canRead: @escaping @MainActor () -> Bool,
          canMutate: @escaping @MainActor () -> Bool,
          updateWorkspace: @escaping @MainActor (WorkspaceUpdate) -> Void,
-         checkoutSupport: CheckoutSupport? = nil) {
+         checkoutSupport: CheckoutSupport? = nil, sourceThreadID: @escaping @MainActor () -> UUID? = { nil }) {
         self.path = Self.canonical(path); self.session = session; self.engine = engine
         self.owner = owner; self.canRead = canRead; self.canMutate = canMutate; self.updateWorkspace = updateWorkspace
         self.checkoutSupport = checkoutSupport
+        self.sourceThreadID = sourceThreadID
     }
 
     func apply(_ snapshot: WorkspaceSnapshot) {
@@ -219,9 +221,9 @@ final class PullRequestStore {
               canMutate(), let engine, let projectID = owner() else { throw CancellationError() }
         isPreparing = true; actionError = nil
         let generation = UUID(); reviewGeneration = generation
-        let path = path
+        let path = path, sourceThreadID = sourceThreadID()
         let task = Task { try await engine.reviewPullRequestCreation(projectID: projectID, workspacePath: path,
-            title: title, body: body, baseBranch: baseBranch, isDraft: isDraft) }
+            title: title, body: body, baseBranch: baseBranch, isDraft: isDraft, sourceThreadID: sourceThreadID) }
         reviewTask = task
         ownRead(task, id: generation)
         defer {

@@ -396,6 +396,7 @@ private struct RemoteConversationHeader: View {
 }
 
 private struct RemoteMessageView: View {
+    @AppStorage("renderMathInMarkdown") private var renderMathInMarkdown = false
     let message: ChatMessage
     let source: AttachmentAccess?
     var body: some View {
@@ -410,7 +411,7 @@ private struct RemoteMessageView: View {
             } else {
                 // No local workspace URL: a remote file link must never resolve
                 // against files on this Mac.
-                MarkdownView(message.text)
+                MarkdownView(message.text, mathEnabled: renderMathInMarkdown)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
