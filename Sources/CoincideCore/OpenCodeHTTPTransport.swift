@@ -60,6 +60,7 @@ public actor OpenCodeHTTPClient {
     private let origin: URLComponents
     private let credential: OpenCodeHTTPCredential?
     private let owner: OpenCodeHTTPSessionOwner
+    private var appMCPRedaction: AppMCPConnection?
 
     public init(origin: URL, credential: OpenCodeHTTPCredential? = nil,
                 configuration: URLSessionConfiguration? = nil) throws {
@@ -70,18 +71,31 @@ public actor OpenCodeHTTPClient {
 
     deinit { owner.beginClose() }
 
+    func configureAppMCPRedaction(_ connection: AppMCPConnection) throws {
+        guard appMCPRedaction == nil else { throw OpenCodeAppMCP.failure() }
+        appMCPRedaction = connection
+    }
+
     public func request(method: String = "GET", path: [String], query: [URLQueryItem] = [],
                         body: Data? = nil, maximumBytes: Int = 4 * 1_024 * 1_024) async throws -> OpenCodeHTTPResponse {
         guard (1...16 * 1_024 * 1_024).contains(maximumBytes) else { throw OpenCodeHTTPError.invalidLimit }
         let request = try makeRequest(method: method, path: path, query: query, body: body, events: false)
         try Task.checkCancellation()
         let operation = OpenCodeHTTPTaskState(maximumBytes: maximumBytes, events: false)
-        return try await withTaskCancellationHandler {
+        let response = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 operation.setResponseContinuation(continuation)
                 owner.start(operation, request: request)
             }
         } onCancel: { operation.cancel() }
+        guard let appMCPRedaction else { return response }
+        let headers = response.headers.reduce(into: [String: String]()) { result, pair in
+            result[appMCPRedaction.redacting(pair.key)] = appMCPRedaction.redacting(pair.value)
+        }
+        // Native endpoints return JSON. Reject an opaque body rather than let
+        // an uninspectable credential echo reach a catalog or projection.
+        let body = try appMCPRedaction.redactingOpenCodeJSON(response.body)
+        return .init(status: response.status, headers: headers, body: body)
     }
 
     /// Returns only after the server accepted a 200 text/event-stream response.

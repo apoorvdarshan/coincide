@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 MODE="${1:---build-for-testing}"
+SHARD_INDEX=0
+SHARD_COUNT=1
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData/coincide-desktop-ui-tests"
 PROJECT="$ROOT_DIR/UITests/macOS/CoincideDesktopUITests.xcodeproj"
@@ -11,6 +13,18 @@ case "$MODE" in
     if [[ "${GITHUB_ACTIONS:-}" != "true" || "${CI:-}" != "true" ]]; then
       echo "Native GUI execution is limited to GitHub Actions; use --build-for-testing for a local compile." >&2
       exit 2
+    fi
+    if [[ "$#" != 2 && "$#" != 6 ]]; then
+      echo "usage: $0 --ci <SwiftPM-app-bundle> [--shard-index <index> --shard-count <count>]" >&2
+      exit 2
+    fi
+    if [[ "$#" == 6 ]]; then
+      if [[ "$3" != --shard-index || "$5" != --shard-count ]]; then
+        echo "Expected --shard-index and --shard-count after the app bundle." >&2
+        exit 2
+      fi
+      SHARD_INDEX="$4"
+      SHARD_COUNT="$6"
     fi
     ;;
   *) echo "usage: $0 [--build-for-testing | --ci <SwiftPM-app-bundle>]" >&2; exit 2 ;;
@@ -43,6 +57,11 @@ if [[ "$MODE" == "--build-for-testing" ]]; then
 fi
 ARTIFACTS="${COINCIDE_UI_ARTIFACTS:-$RUNNER_TEMP/coincide-desktop-ui-artifacts}"
 mkdir -p "$ARTIFACTS"
+python3 "$ROOT_DIR/script/macos_ui_ci.py" plan --shard-index "$SHARD_INDEX" --shard-count "$SHARD_COUNT" \
+  --manifest "$ARTIFACTS/selection.json" > "$ARTIFACTS/only-testing.txt"
+TEST_SELECTION=()
+while IFS= read -r selector; do TEST_SELECTION+=("$selector"); done < "$ARTIFACTS/only-testing.txt"
+[[ "${#TEST_SELECTION[@]}" -gt 0 ]]
 build_runner 2>&1 | tee "$ARTIFACTS/xcodebuild-build.log"
 SOURCE_APP="${2:?Provide the SwiftPM-built application bundle.}"
 [[ -d "$SOURCE_APP/Contents/MacOS" && -f "$SOURCE_APP/Contents/Info.plist" ]]
@@ -78,6 +97,7 @@ python3 "$ROOT_DIR/script/macos_ui_ci.py" prepare --xctestrun "$XCTESTRUN" --app
 set +e
 xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination 'platform=macOS' \
   -parallel-testing-enabled NO -collect-test-diagnostics never -resultBundlePath "$ARTIFACTS/Results.xcresult" \
+  "${TEST_SELECTION[@]}" \
   2>&1 | tee "$ARTIFACTS/xcodebuild-test.log"
 PIPE_RESULTS=("${PIPESTATUS[@]}")
 set -e
@@ -85,8 +105,10 @@ STATUS="${PIPE_RESULTS[0]}"
 if [[ "${PIPE_RESULTS[1]}" != 0 ]]; then STATUS=1; fi
 if [[ -d "$ARTIFACTS/Results.xcresult" ]]; then
   xcrun xcresulttool get test-results summary --path "$ARTIFACTS/Results.xcresult" > "$ARTIFACTS/summary.json" || STATUS=1
+  xcrun xcresulttool get test-results tests --path "$ARTIFACTS/Results.xcresult" > "$ARTIFACTS/tests.json" || STATUS=1
   xcrun xcresulttool export attachments --path "$ARTIFACTS/Results.xcresult" --output-path "$ARTIFACTS/attachments" || STATUS=1
-  python3 "$ROOT_DIR/script/macos_ui_ci.py" verify-results "$ARTIFACTS/summary.json" || STATUS=1
+  python3 "$ROOT_DIR/script/macos_ui_ci.py" verify-results "$ARTIFACTS/summary.json" \
+    --tests "$ARTIFACTS/tests.json" --manifest "$ARTIFACTS/selection.json" || STATUS=1
 else
   echo "No native UI test result bundle was produced." >&2
   STATUS=1

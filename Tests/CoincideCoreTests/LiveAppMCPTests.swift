@@ -2,11 +2,15 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+private let liveAppMCPProviders: [ProviderKind] =
+    ProcessInfo.processInfo.environment["COINCIDE_LIVE_APP_MCP_PROVIDER"] == "opencode"
+        ? [.opencode] : [.codex, .claude, .opencode]
+
 /// Explicit opt-in: two small model turns per installed provider, using its
 /// existing CLI login. All app tools address a newly generated private database;
 /// no sign-in, provider configuration or existing conversation is changed.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_APP_MCP"] == "1"),
-      .timeLimit(.minutes(6)), arguments: [ProviderKind.codex, .claude])
+      .timeLimit(.minutes(6)), arguments: liveAppMCPProviders)
 func installedProvidersUseAppMCPThroughNativeEngineAndRetainChangesAcrossRestart(_ kind: ProviderKind) async throws {
     let manager = FileManager.default, testID = UUID()
     let root = manager.temporaryDirectory.appendingPathComponent("coincide-live-app-mcp-" + testID.uuidString)
@@ -24,6 +28,7 @@ func installedProvidersUseAppMCPThroughNativeEngineAndRetainChangesAcrossRestart
     if kind == .claude {
         source.claudeRuntimeConfiguration = try ClaudeRuntimeConfiguration.capture(workspacePath: project.path)
     }
+    if kind == .opencode { source.openCodeConfiguration = .init(generation: .v2) }
     let targetID = source.id.uuidString.lowercased()
     let title = "MCP_" + testID.uuidString.replacingOccurrences(of: "-", with: "")
     let requestID = "live-mcp-" + testID.uuidString.lowercased()
@@ -157,6 +162,10 @@ private func liveAppMCPHasTool(_ thread: CodingThread, runID: UUID, name: String
         guard message.role == .tool, message.runReference?.runID == runID else { return false }
         if thread.provider == .codex {
             return message.providerEntity?.fields["title"] == .string("coincide." + name)
+                && message.providerEntity?.fields["status"] == .string("completed")
+        }
+        if thread.provider == .opencode {
+            return message.providerEntity?.fields["title"] == .string("coincide_" + name)
                 && message.providerEntity?.fields["status"] == .string("completed")
         }
         return message.text.hasPrefix("mcp__coincide__" + name + "\n")

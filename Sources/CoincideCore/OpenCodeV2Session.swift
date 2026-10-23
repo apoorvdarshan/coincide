@@ -31,10 +31,14 @@ protocol OpenCodeV2SessionTransport: Sendable {
     func agentPathRules(directory: URL, agentID: String) async throws -> [OpenCodeV2PermissionRule]
     func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse
     func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse
+    func configureAppMCPRedaction(_ connection: AppMCPConnection) async throws
+    func prepareAppMCP() async throws
     func close() async
 }
 
 extension OpenCodeV2SessionTransport {
+    func configureAppMCPRedaction(_ connection: AppMCPConnection) async throws {}
+    func prepareAppMCP() async throws { throw OpenCodeAppMCP.failure() }
     func commands(directory: URL) async throws -> ProviderCommandInventory { throw ProviderCommandError(.unsupported) }
     func agentPathRules(directory: URL, agentID: String) async throws -> [OpenCodeV2PermissionRule] { [] }
     func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
@@ -46,6 +50,9 @@ extension OpenCodeV2SessionTransport {
 /// Native OpenCode 2 HTTP conversation. Admission, execution and stream ownership
 /// are separate; neither an HTTP acknowledgement nor a step end completes a run.
 public actor OpenCodeV2Session: ProviderSession {
+    public nonisolated let supportsAppMCP = true
+    private var appMCPConnection: AppMCPConnection?
+    private var appMCPConfiguring = false
     public nonisolated let events: AsyncStream<ProviderEvent>
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let cwd: URL
@@ -110,6 +117,17 @@ public actor OpenCodeV2Session: ProviderSession {
         self.cwd = cwd.standardizedFileURL.resolvingSymlinksInPath()
         historyWorkspacePath = cwd.standardizedFileURL.path
         self.configuration = configuration; self.transport = transport
+    }
+
+    public func configureAppMCP(_ connection: AppMCPConnection) async throws {
+        guard !closing, !connected, connecting == nil, reader == nil, appMCPConnection == nil,
+              preparing == nil, sessionID == nil else { throw OpenCodeAppMCP.failure() }
+        appMCPConfiguring = true
+        defer { appMCPConfiguring = false }
+        appMCPConnection = connection
+        do { try await transport.configureAppMCPRedaction(connection) }
+        catch { throw OpenCodeAppMCP.failure() }
+        guard !closing else { throw OpenCodeAppMCP.failure() }
     }
 
     public func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
@@ -451,6 +469,7 @@ public actor OpenCodeV2Session: ProviderSession {
     }
 
     private func connect() async throws {
+        guard !appMCPConfiguring else { throw OpenCodeAppMCP.failure() }
         try Task.checkCancellation()
         guard !closing else { throw OpenCodeV2SessionError.closed }
         guard !uncertain else { throw OpenCodeV2SessionError.connectionLost }
@@ -512,6 +531,9 @@ public actor OpenCodeV2Session: ProviderSession {
         var posted = false
         do {
             try await connect(); try requirePreparation(token)
+            if appMCPConnection != nil {
+                try await transport.prepareAppMCP(); try requirePreparation(token)
+            }
             let catalog: ProviderCommandInventory?
             if try ProviderCommandCatalog.requiresInventory(input.text) {
                 do { catalog = try await providerCommands() }
@@ -533,7 +555,7 @@ public actor OpenCodeV2Session: ProviderSession {
             let agentPaths = try await transport.agentPathRules(directory: cwd, agentID: selected.agentID)
             try requirePreparation(token)
             let grants = sessionID.flatMap { sessionGrants[$0] } ?? []
-            let rules = Self.permissions(captured.permission, agentID: selected.agentID, agentPaths: agentPaths, grants: grants)
+            let rules = Self.permissions(captured.permission, agentID: selected.agentID, agentPaths: agentPaths, grants: grants, appMCP: appMCPConnection != nil)
             let nativeID = try await ensureSession(thread: thread, captured: captured, selected: selected,
                                                    model: model, rules: rules, token: token)
             try requirePreparation(token)
@@ -618,6 +640,7 @@ public actor OpenCodeV2Session: ProviderSession {
                 throw OpenCodeV2SessionError.uncertainDelivery
             }
             if error is CancellationError || stoppedPreparations.contains(token) { throw CancellationError() }
+            if let safe = error as? OpenCodeAppMCPError { throw safe }
             if let safe = error as? OpenCodeV2SessionError { throw safe }
             throw OpenCodeV2SessionError.invalidResponse
         }
@@ -879,9 +902,10 @@ public actor OpenCodeV2Session: ProviderSession {
         } onCancel: { task.cancel() }
     }
 
-    private func consume(_ frame: OpenCodeSSEEvent) {
+    private func consume(_ inbound: OpenCodeSSEEvent) {
         guard !closing, !uncertain else { return }
         do {
+            let frame = try appMCPConnection.map { try $0.redactingOpenCodeEvent(inbound) } ?? inbound
             // V2 broadcasts all native sessions. Unknown global owners must not
             // poison this actor's state or fill its retained ownership maps.
             guard let envelope = try? JSONDecoder().decode(JSONValue.self, from: Data(frame.data.utf8)) else {
@@ -1245,7 +1269,7 @@ public actor OpenCodeV2Session: ProviderSession {
                 guard grants.count < 256 else { throw OpenCodeV2SessionError.invalidResponse }
                 grants.append(.init(action: permission.action, resource: resource, effect: .allow))
             }
-            let rules = Self.permissions(policy.permission, agentID: policy.agentID, agentPaths: policy.agentPaths, grants: grants)
+            let rules = Self.permissions(policy.permission, agentID: policy.agentID, agentPaths: policy.agentPaths, grants: grants, appMCP: appMCPConnection != nil)
             try Self.noContent(try await call(method: "PATCH", path: ["api", "session", entry.sessionID], body: .object(["permissions": rules])))
             sessionGrants[entry.sessionID] = grants
             try await reply(entry, method: "POST", tail: ["permission", entry.nativeID, "reply"], body: permission.replyBody(decision: .once), reserved: true)
@@ -1378,13 +1402,14 @@ public actor OpenCodeV2Session: ProviderSession {
         return model
     }
 
-    private static func permissions(_ permission: PermissionMode, agentID: String, agentPaths: [OpenCodeV2PermissionRule], grants: [OpenCodeV2PermissionRule]) -> JSONValue {
+    private static func permissions(_ permission: PermissionMode, agentID: String, agentPaths: [OpenCodeV2PermissionRule], grants: [OpenCodeV2PermissionRule], appMCP: Bool = false) -> JSONValue {
         var rules = permission == .fullAccess ? [rule("*", "allow")] : [rule("shell", "ask"), rule("edit", permission == .autoAcceptEdits ? "allow" : "ask"), rule("external_directory", "ask")]
         if permission != .fullAccess { rules += grants.map(\.json) }
         if agentID == "plan" { rules.append(rule("edit", "deny")) }
         if permission != .fullAccess || agentID == "plan" {
             rules += agentPaths.filter { $0.effect == .allow && $0.resource != "*" && ["edit", "external_directory"].contains($0.action) }.map(\.json)
         }
+        if appMCP { rules.append(rule(OpenCodeAppMCP.serverName + "_*", "allow")) }
         return .array(rules)
     }
 
@@ -1531,10 +1556,24 @@ private actor OpenCodeV2OwnedRuntime: OpenCodeV2SessionTransport {
     private var metadata: OpenCodeMetadataConnection?
     private var stream: OpenCodeSSEConnection?
     private var closing = false
+    private var appMCPConnection: AppMCPConnection?
+    private var appMCP: OpenCodeAppMCP?
+
+    func configureAppMCPRedaction(_ connection: AppMCPConnection) throws {
+        guard !closing, client == nil, appMCPConnection == nil else { throw OpenCodeAppMCP.failure() }
+        appMCPConnection = connection
+    }
+
+    func prepareAppMCP() async throws {
+        guard !closing, let appMCP else { throw OpenCodeAppMCP.failure() }
+        try await appMCP.prepare()
+        guard !closing else { throw OpenCodeAppMCP.failure() }
+    }
 
     init(executable: URL, cwd: URL, configuration: OpenCodeConfiguration) {
-        self.cwd = cwd
-        owner = .init(executable: executable, generation: configuration.generation, cwd: cwd)
+        let canonical = cwd.standardizedFileURL.resolvingSymlinksInPath()
+        self.cwd = canonical
+        owner = .init(executable: executable, generation: configuration.generation, cwd: canonical)
     }
 
     func connect() async throws -> AsyncThrowingStream<OpenCodeSSEEvent, any Error> {
@@ -1544,6 +1583,10 @@ private actor OpenCodeV2OwnedRuntime: OpenCodeV2SessionTransport {
             guard !closing else { throw CancellationError() }
             let client = try OpenCodeHTTPClient(origin: endpoint.origin, credential: endpoint.credential)
             self.client = client
+            if let connection = appMCPConnection {
+                try await client.configureAppMCPRedaction(connection)
+                appMCP = OpenCodeAppMCP(client: client, generation: .v2, directory: cwd, connection: connection)
+            }
             let metadata = OpenCodeMetadataConnection(client: client, expectedGeneration: .v2, ownedProcessIdentifier: endpoint.processIdentifier)
             self.metadata = metadata
             _ = try await metadata.identify()
@@ -1586,6 +1629,8 @@ private actor OpenCodeV2OwnedRuntime: OpenCodeV2SessionTransport {
 
     func close() async {
         closing = true
+        await appMCP?.close()
+        appMCP = nil; appMCPConnection = nil
         await stream?.close(); await metadata?.close(); await client?.close(); await owner.close()
     }
 }

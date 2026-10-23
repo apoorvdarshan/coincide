@@ -26,7 +26,13 @@ public actor ClaudeSession: ProviderSession {
     private var requestedInterrupt = false
     private var messageID = ""
     private var initialization = JSONValue.null
-    private var pendingApprovals: [JSONValue: ApprovalRequest] = [:]
+    private struct PendingApproval {
+        let request: ApprovalRequest
+        let generation: Int
+    }
+    private var pendingApprovals: [JSONValue: PendingApproval] = [:]
+    // A native question ID cannot be recycled into a later question in this process.
+    private var resolvedApprovalIDs: Set<JSONValue> = []
     private var emittedAssistant = false
     private var activeTurnID: String?
     private var activeNativeThreadID: String?
@@ -325,23 +331,56 @@ public actor ClaudeSession: ProviderSession {
         catch { if generation == turnGeneration { requestedInterrupt = false }; throw error }
     }
     public func respond(_ request: ApprovalRequest, allow: Bool) async throws {
-        guard pendingApprovals[request.id] != nil else { throw CoincideError("This approval is no longer pending.") }
+        try validatePending(request)
+        guard !request.isClaudeQuestion || !allow else {
+            throw CoincideError("Answer Claude's questions before submitting them.")
+        }
         let response: JSONValue = allow
             ? .object(["behavior": .string("allow"), "updatedInput": request.params["input"]])
-            : .object(["behavior": .string("deny"), "message": .string("Declined by the user in Coincide.")])
-        try await rpc.respond(id: request.id, result: response)
-        pendingApprovals.removeValue(forKey: request.id)
+            : .object(["behavior": .string("deny"), "message": .string(request.isClaudeQuestion
+                ? "User cancelled the questions in Coincide." : "Declined by the user in Coincide.")])
+        try await submitResponse(request, result: response)
     }
     public func answer(_ request: ApprovalRequest, answers: [String: String]) async throws {
-        guard pendingApprovals[request.id] != nil, request.isQuestion else { throw CoincideError("This question is no longer pending.") }
-        var input = request.params["input"].object ?? [:]
-        input["answers"] = .object(answers.mapValues(JSONValue.string))
-        try await rpc.respond(id: request.id, result: .object(["behavior": .string("allow"), "updatedInput": .object(input)]))
+        try validatePending(request)
+        let question = try ClaudeQuestionRequest(request: request)
+        try await submitResponse(request, result: question.response(answers: answers))
+    }
+    public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws {
+        try await selectAnswers(request, selections: selections, notes: [:])
+    }
+    public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]], notes: [String: String]) async throws {
+        try validatePending(request)
+        let question = try ClaudeQuestionRequest(request: request)
+        try await submitResponse(request, result: question.response(selections: selections, notes: notes))
+    }
+    private func validatePending(_ request: ApprovalRequest) throws {
+        guard !shuttingDown, let pending = pendingApprovals[request.id], Self.sameRequest(pending.request, request),
+              pending.generation == turnGeneration else { throw CoincideError("This Claude request is no longer pending.") }
+        if request.isClaudeQuestion {
+            guard working, submittedOpening, activeTurnID != nil, !requestedInterrupt else {
+                throw CoincideError("This Claude question is no longer pending.")
+            }
+        }
+    }
+    private func submitResponse(_ request: ApprovalRequest, result: JSONValue) async throws {
+        // Remove before the transport await so concurrent clicks and replays
+        // cannot send a second answer if the write's outcome is uncertain.
+        try validatePending(request)
         pendingApprovals.removeValue(forKey: request.id)
+        if request.isClaudeQuestion { resolvedApprovalIDs.insert(request.id) }
+        try await rpc.respond(id: request.id, result: result)
+    }
+    private static func sameRequest(_ lhs: ApprovalRequest, _ rhs: ApprovalRequest) -> Bool {
+        // String equality folds canonically equivalent Unicode. Wire question
+        // keys and native inputs must retain their exact original spelling.
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        guard let left = try? encoder.encode(lhs), let right = try? encoder.encode(rhs) else { return false }
+        return left == right
     }
     public func close() async {
         if let closeTask { await closeTask.value; return }
-        shuttingDown = true; working = false
+        shuttingDown = true; working = false; pendingApprovals.removeAll()
         connecting?.cancel()
         let rpc = rpc, reading = reader, steering = steeringTask?.task, initializing = connecting,
             redaction = appMCPRedaction, continuation = continuation
@@ -363,12 +402,35 @@ public actor ClaudeSession: ProviderSession {
         case .barrier(let complete): complete()
         case .disconnected(let reason):
             if !shuttingDown { continuation.yield(.connectionClosed(reason)) }
-            working = false; continuation.finish()
+            working = false; pendingApprovals.removeAll(); continuation.finish()
         case .request(let id, let method, let params):
             guard !shuttingDown else { return }
             if method == "can_use_tool" {
                 let request = ApprovalRequest(id: id, method: method, params: params)
-                pendingApprovals[id] = request; emit(.approval(request))
+                guard let requestID = id.string, !requestID.isEmpty, requestID.utf8.count <= 1_024,
+                      !requestID.contains("\0"),
+                      resolvedApprovalIDs.count < 16_384, !resolvedApprovalIDs.contains(id) else {
+                    try? await rpc.reject(id: id, message: "Claude sent an invalid or resolved control request."); return
+                }
+                if let pending = pendingApprovals[id] {
+                    if Self.sameRequest(pending.request, request), pending.generation == turnGeneration { return }
+                    pendingApprovals.removeValue(forKey: id)
+                    if pending.request.isClaudeQuestion || request.isClaudeQuestion { resolvedApprovalIDs.insert(id) }
+                    emit(.approvalDismissed(id))
+                    try? await rpc.reject(id: id, message: "Claude changed a pending control request."); return
+                }
+                guard pendingApprovals.count < 64 else {
+                    try? await rpc.reject(id: id, message: "Claude has too many pending control requests."); return
+                }
+                if request.isClaudeQuestion {
+                    guard working, submittedOpening, activeTurnID != nil, !requestedInterrupt,
+                          (try? ClaudeQuestionRequest(request: request)) != nil else {
+                        resolvedApprovalIDs.insert(id)
+                        try? await rpc.reject(id: id, message: "Claude sent an invalid or inactive question request."); return
+                    }
+                }
+                pendingApprovals[id] = .init(request: request, generation: turnGeneration)
+                emit(.approval(request))
             } else {
                 try? await rpc.reject(id: id, message: "Coincide does not support this Claude control request yet.")
                 emit(.message(.init(role: .system, text: "Unsupported Claude control request: \(method).")))
@@ -388,7 +450,9 @@ public actor ClaudeSession: ProviderSession {
             switch method {
             case "control_cancel_request":
                 let id = frame["request_id"]
-                pendingApprovals.removeValue(forKey: id); emit(.approvalDismissed(id))
+                if let pending = pendingApprovals.removeValue(forKey: id) {
+                    if pending.request.isClaudeQuestion { resolvedApprovalIDs.insert(id) }; emit(.approvalDismissed(id))
+                }
             case "stream_event":
                 guard !isRoot || !working || submittedOpening else { return }
                 consumeStream(frame["event"], isRoot: isRoot)
@@ -423,7 +487,9 @@ public actor ClaudeSession: ProviderSession {
                    ["aborted_tools", "aborted_streaming"].contains(frame["terminal_reason"].string ?? "") { return }
                 let terminal: ThreadRunStatus = requestedInterrupt ? .interrupted : (frame["is_error"] == .bool(true) ? .failed : .completed)
                 finishHistory(terminal)
-                working = false; pendingApprovals.removeAll()
+                working = false
+                for (id, pending) in pendingApprovals where pending.request.isClaudeQuestion { resolvedApprovalIDs.insert(id) }
+                pendingApprovals.removeAll()
                 activeTurnID = nil; steeringSubmitted = false; clearRootSubagents(); activeSubagentTasks = [:]
                 if requestedInterrupt { emit(.completed(.interrupted)) }
                 else if frame["is_error"] == .bool(true) {

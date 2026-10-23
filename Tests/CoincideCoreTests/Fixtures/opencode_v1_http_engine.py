@@ -84,7 +84,8 @@ def run_turn(sid, body, number):
             "type": "text", "text": "discarded incremental 工作 🌍", "time": {"start": now}}
     emit("message.part.updated", sid, {"part": text, "time": now}, split=True)
     emit("message.part.delta", sid, {"messageID": assistant["id"], "partID": text["id"], "field": "text", "delta": " plus stale"})
-    final = dict(text, text=" authoritative first 工作 🌍 " if number == 1 else " authoritative second FIFO ",
+    final_text = app_mcp.invoke(number) if app_mcp else (" authoritative first 工作 🌍 " if number == 1 else " authoritative second FIFO ")
+    final = dict(text, text=final_text,
                  time={"start": now, "end": now + 1})
     emit("message.part.updated", sid, {"part": final, "time": now + 1}, split=True)
     assistant["time"]["completed"] = now + 1
@@ -156,6 +157,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         url = self.route()
         if url is None:
             return
+        if app_mcp and app_mcp.route(self, url):
+            return
         if url.path == "/global/health":
             self.reply(200, {"healthy": True, "version": "1.14.19"})
             return
@@ -217,6 +220,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if url is None:
             return
         body = self.body()
+        if app_mcp and app_mcp.route(self, url, body):
+            return
         with lock:
             if url.path == "/session":
                 if sessions or set(body) != {"permission"}:
@@ -270,6 +275,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 self.reply(404, {"error": "unsupported private update"})
 
+
+app_mcp = None
+if (root / "fixture-app-mcp.json").exists():
+    from opencode_app_mcp import AppMCPFixture
+    app_mcp = AppMCPFixture(root, directory, 1, record, stop)
 
 write_json("process.json", {"pid": os.getpid(), "exactArguments": exact_arguments,
            "freshCredential": fresh_credential, "noInheritedService": no_inherited_service, "directoryAliasVerified": True})

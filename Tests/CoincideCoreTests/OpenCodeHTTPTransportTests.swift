@@ -3,6 +3,31 @@ import Testing
 @testable import CoincideCore
 
 @Suite struct OpenCodeHTTPTransportTests {
+    @Test func openCodeAppMCPRedactsDecodedResponseBodiesAndHeadersBeforeReturningThem() async throws {
+        let fixture = OpenCodeHTTPFixture(); defer { fixture.remove() }
+        let client = try OpenCodeHTTPClient(origin: fixture.origin, configuration: fixture.configuration)
+        let connection = try AppMCPConnection(endpoint: URL(string: "http://127.0.0.1:34567/mcp")!,
+            authorizationHeader: "Bearer " + String(repeating: "A", count: 43), scopeID: UUID())
+        try await client.configureAppMCPRedaction(connection)
+        let operation = Task { try await client.request(path: ["api", "mcp"]) }
+        let channel = try await fixture.started()
+        channel.respond(status: 200, headers: ["Content-Type": "application/json", "X-Native-Echo": connection.authorizationHeader])
+        // A native JSON serializer may escape otherwise literal token bytes.
+        let escapedToken = String(repeating: "\\u0041", count: 43)
+        channel.send(Data(("{\"echo\":\"Bearer " + escapedToken + "\",\"nested\":[\"" + escapedToken + "\"]}").utf8))
+        channel.finish()
+        let response = try await operation.value
+        let value = try JSONDecoder().decode(JSONValue.self, from: response.body)
+        #expect(response.headers["x-native-echo"] == "[private app tool credential]")
+        #expect(value["echo"] == .string("[private app tool credential]"))
+        #expect(value["nested"] == .array([.string("[private app tool credential]")]))
+        let frame = OpenCodeSSEEvent(event: "message", data: "{\"text\":\"" + escapedToken + "\"}", id: connection.authorizationHeader, retryMilliseconds: nil)
+        let scrubbed = try connection.redactingOpenCodeEvent(frame)
+        #expect(scrubbed.id == "[private app tool credential]")
+        #expect(try JSONDecoder().decode(JSONValue.self, from: Data(scrubbed.data.utf8))["text"] == .string("[private app tool credential]"))
+        await client.close()
+    }
+
     @Test func onlyOriginURLsAndLoopbackHTTPAreAccepted() async throws {
         for source in ["https://server.example", "http://127.0.0.1:49152/", "http://127.2.3.4", "http://[::1]:49152", "http://localhost:49152"] {
             let client = try OpenCodeHTTPClient(origin: #require(URL(string: source)))

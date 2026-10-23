@@ -9,7 +9,15 @@ launching any GUI. It reuses
 
 GitHub Actions runs `script/test_macos_ui.sh --ci <verified-app-bundle>` after
 all SwiftPM tests, packaging, signature checks, and resource checks pass. The
-script stages a separate app copy in task-owned temporary storage, gives it the
+workflow partitions the complete XCTest source into four disjoint selections
+on separate macOS runners. Each runner reuses that same verified app artifact
+and executes its six or seven workflows serially with parallel XCTest execution
+disabled. Use `--shard-index 0 --shard-count 4` after the app path to select a
+shard; the default still selects every workflow. Selection fails before building
+when the index/count is invalid, the shard would be empty, or a test declaration
+cannot be discovered safely. No tests are retried.
+
+The script stages a separate app copy in task-owned temporary storage, gives it the
 dedicated `com.apoorvdarshan.coincide.uitesting` bundle identifier, signs it ad
 hoc, and points the generated `.xctestrun` at that copy. Neither `dist/` nor an
 installed app is replaced. GUI execution refuses to run outside GitHub Actions.
@@ -159,9 +167,18 @@ exact-head hosted job runs; compilation and fixture tests alone are not GUI proo
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all twenty-five tests to pass with zero
-skips. Startup or Accessibility failures remain failed verification, and are not
+gate requires all twenty-five tests to pass with zero skips. Each shard retains
+its selection manifest, summary counts, and complete xcresult test identities;
+these must match exactly, including one passing execution per assigned method.
+The final `native-ui` job checks all four artifacts together and rejects missing
+shards, duplicate selections, unexpected methods, failed runs, and empty results.
+Failed shards do not cancel their peers. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
+
+Sharding preserves the existing 45-minute job timeout and each workflow's
+deadlines. It is intended to reduce elapsed GUI time by using isolated desktops;
+actual timing improvements require hosted runs and are not inferred from local
+configuration checks.
 
 The existing SwiftPM suite remains independent and runs in full. A separate
 change-classification job limits the native UI job to product, package,

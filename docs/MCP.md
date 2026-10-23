@@ -1,11 +1,11 @@
 # Native app MCP
 
 Coincide now implements an app-owned MCP server, session registry, tool router
-and Engine admission path in Swift. Native **Pi**, **Codex**, and captured normal
-**Claude** sessions now register those tools through their own protocols. Other
+and Engine admission path in Swift. Native **Pi**, **Codex**, captured normal
+**Claude**, and **OpenCode HTTP v1/v2** sessions register those tools through their own protocols. Other
 providers' app-MCP registration remains unfinished. Prior local protocol, Engine
 and intact Pi package checks are recorded in [VALIDATION.md](VALIDATION.md);
-that record separately tracks the new Codex/Claude test results. Hosted UI
+that record separately tracks provider-specific test results. Hosted UI
 acceptance and authenticated-provider verification remain open. This does not
 establish full T3 parity.
 
@@ -135,6 +135,33 @@ authentication, all thirty tools, or rendered approval interaction. Run explicit
 with `COINCIDE_LIVE_APP_MCP=1 swift test --no-parallel --filter installedProvidersUseAppMCPThroughNativeEngineAndRetainChangesAcrossRestart`.
 Successful checks delete their generated app database; provider-native test
 conversations remain in the CLI's history.
+Set `COINCIDE_LIVE_APP_MCP_PROVIDER=opencode` alongside the opt-in flag to run
+only the installed OpenCode 2 case when verifying that adapter.
+
+## Native OpenCode registration
+
+Each native HTTP adapter owns its local process. App-tool registration is
+runtime-only and happens before an authored prompt, after checking the exact
+workspace's native MCP status. V1 uses `GET/POST /mcp`; v2 uses location-scoped
+`GET /api/mcp`, `PUT /api/experimental/mcp/coincide` and `DELETE` on close. V1
+disconnects the installed server before joining its owned process. Metadata and
+history workers receive no app-tool connection.
+
+Existing `coincide` names and foreign names sharing its flattened tool prefix
+are refused before mutation. Other servers retain their settings. A bounded,
+connected catalogue is required; unavailable or contradictory registration
+refuses input. Narrow native app-tool permission rules leave final admission
+with the Engine's captured run authority and capability-filtered catalogue.
+HTTP bodies and SSE payloads are decoded and redacted before projection, including
+JSON-escaped header/token echoes; outgoing registration retains its credential.
+
+Production-Engine tests with synthetic v1/v2 children exercise actual loopback
+MCP read/rename, FIFO, Stop, durable rebuild, collision/failure refusal, redaction,
+metadata isolation and registration-close races. The installed OpenCode 2.1.3
+no-model probe separately confirms native add/list/connected/remove behavior.
+Native idle-location eviction/client recreation and broader reconnect recovery
+remain unverified. See [OpenCode boundaries](OPENCODE_HTTP.md) and
+[validation evidence](VALIDATION.md) for installed model results.
 
 ## Tools and durable authority
 
@@ -176,7 +203,7 @@ The catalogue is not a promise that every upstream argument variant works.
 Unsupported cases return fixed errors and remain visible through
 `AppMCPTools.unsupportedCapabilities`:
 
-- OpenCode, Muse, Antigravity and ACP providers' app-MCP registration,
+- Muse, Antigravity and ACP providers' app-MCP registration,
   external-client authorization and remote access; shared native MCP
   configuration editing and MCP Apps/resources/HTML presentation.
 - Background-run write ownership, delegated/app-owned subagents and wakeups,

@@ -75,6 +75,7 @@ struct SettingsView: View {
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "cpu") }
             Form {
                 Picker("Appearance", selection: $appearance) { Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark") }
+                ThreadNotificationSettings(notifications: store.notifications)
                 Picker("Messages during a running turn", selection: $followUpBehavior) {
                     ForEach(ComposerFollowUpBehavior.allCases) { Text($0.title).tag($0.rawValue) }
                 }

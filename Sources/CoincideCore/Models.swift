@@ -324,6 +324,8 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var method: String
     public var params: JSONValue
     public var isQuestion: Bool { method == AntigravityProtocol.questionMethod || method == "muse/userInput" || method == "opencode/form" || method == "opencode/question" || GrokACP.questionMethod(method) || method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
+    public var isClaudeQuestion: Bool { method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion" }
+    public var claudeQuestion: ClaudeQuestionRequest? { isClaudeQuestion ? try? .init(request: self) : nil }
     public var openCodeForm: OpenCodeV2Form? { try? OpenCodeV2Form.presentation(self) }
     public var openCodeQuestion: OpenCodeV1Question? { try? OpenCodeV1Question.presentation(self) }
     public var grokQuestion: GrokACPQuestionRequest? { GrokACP.questionMethod(method) ? try? .init(params: params) : nil }
@@ -344,6 +346,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
+        if isClaudeQuestion { return "Answer Claude questions" }
         if let approval = codexMCPApproval { return approval.title }
         if method == AntigravityProtocol.questionMethod || method == AntigravityProtocol.permissionMethod {
             return antigravityPermission?.title ?? "Antigravity needs a decision"

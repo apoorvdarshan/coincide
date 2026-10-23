@@ -98,7 +98,7 @@ def run_turn(sid, admission, number, captured):
     text_fields = {"assistantMessageID": assistant, "ordinal": 0}
     emit("session.text.started", sid, text_fields)
     emit("session.text.delta", sid, dict(text_fields, delta="discarded incremental 工作 🌍"), ephemeral=True, split=True)
-    final_text = " authoritative first 工作 🌍 " if number == 1 else " authoritative second FIFO "
+    final_text = app_mcp.invoke(number) if app_mcp else (" authoritative first 工作 🌍 " if number == 1 else " authoritative second FIFO ")
     emit("session.text.ended", sid, dict(text_fields, text=final_text), split=True)
     tool_fields = {"assistantMessageID": assistant, "id": "call_tcp_" + str(number)}
     emit("session.tool.input.started", sid, dict(tool_fields, name="shell"))
@@ -171,6 +171,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         url = self.route()
         if url is None:
             return
+        if app_mcp and app_mcp.route(self, url):
+            return
         if url.path == "/api/info" and not url.query:
             self.reply(200, {"version": "2.1.2", "pid": os.getpid()})
             return
@@ -239,6 +241,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if url is None:
             return
         body = self.body()
+        if app_mcp and app_mcp.route(self, url, body):
+            return
         if url.query:
             self.reply(400, {"error": "unexpected query"})
             return
@@ -310,9 +314,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 self.reply(404, {"error": "unsupported route"})
 
+    def do_PUT(self):
+        url = self.route()
+        if url is not None and not (app_mcp and app_mcp.route(self, url, self.body())):
+            self.reply(404, {"error": "unsupported route"})
+
     def do_DELETE(self):
         url = self.route()
         if url is None:
+            return
+        if app_mcp and app_mcp.route(self, url):
             return
         parts = url.path.strip("/").split("/")
         with lock:
@@ -322,6 +333,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 self.reply(404, {"error": "unsupported route"})
 
+
+app_mcp = None
+if (root / "fixture-app-mcp.json").exists():
+    from opencode_app_mcp import AppMCPFixture
+    app_mcp = AppMCPFixture(root, directory, 2, record, stop)
 
 write_json("process.json", {"pid": os.getpid(), "exactArguments": exact_arguments,
            "freshCredential": fresh_credential, "noInheritedService": no_inherited_service,

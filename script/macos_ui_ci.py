@@ -5,11 +5,82 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import subprocess
 import sys
 
 TEST_BUNDLE_ID = "com.apoorvdarshan.coincide.uitesting"
 TEST_TARGET = "CoincideDesktopUITests"
+UI_SHARD_COUNT = 4
+MINIMUM_TEST_COUNT = 25
+TEST_SOURCE = Path(__file__).resolve().parents[1] / "UITests/macOS/CoincideDesktopUITests.swift"
+
+
+def native_test_identifiers(source=None):
+    """Discover every XCTest method; unsupported declarations must fail closed."""
+    source = TEST_SOURCE.read_text(encoding="utf-8") if source is None else source
+    declarations = re.findall(r"\bfunc\s+(test\w+)\s*\(", source)
+    names = re.findall(r"@MainActor\s+func\s+(test\w+)\s*\(\s*\)\s*throws\s*\{", source)
+    if len(names) < MINIMUM_TEST_COUNT or len(names) != len(set(names)) or sorted(names) != sorted(declarations):
+        raise ValueError("Native UI discovery requires every test method exactly once in the supported XCTest form.")
+    return [TEST_TARGET + "/" + name for name in sorted(names)]
+
+
+def shard_manifest(index, count, identifiers=None):
+    identifiers = native_test_identifiers() if identifiers is None else identifiers
+    if type(index) is not int or type(count) is not int or not 0 <= index < count <= len(identifiers):
+        raise ValueError("Native UI shard index/count is invalid or would produce an empty shard.")
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("Native UI test identifiers must be unique.")
+    return {"shardIndex": index, "shardCount": count, "testIdentifiers": identifiers[index::count]}
+
+
+def verify_test_identifiers(report, expected):
+    """Use xcresult identities as well as counts so a wrong/duplicate selection cannot pass."""
+    observed = []
+
+    def visit(nodes):
+        if not isinstance(nodes, list):
+            raise ValueError("Native UI test report has no valid test-node list.")
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise ValueError("Native UI test report contains an invalid node.")
+            if node.get("nodeType") == "Repetition":
+                raise ValueError("Native UI tests must run once without repetitions.")
+            if node.get("nodeType") == "Test Case":
+                identifier = node.get("nodeIdentifier", "")
+                if not isinstance(identifier, str) or not identifier.endswith("()") or node.get("result") != "Passed":
+                    raise ValueError("Every selected native UI test must have a passing XCTest identity.")
+                observed.append(identifier[:-2])
+                if sum(child.get("nodeType") == "Test Case Run" for child in node.get("children", [])) > 1:
+                    raise ValueError("Native UI tests must not be retried.")
+            visit(node.get("children", []))
+
+    visit(report.get("testNodes"))
+    if len(observed) != len(set(observed)) or sorted(observed) != sorted(expected):
+        raise ValueError("The native UI result identities do not match the assigned tests exactly once.")
+    return observed
+
+
+def verify_shards(directory, count=UI_SHARD_COUNT):
+    identifiers = native_test_identifiers()
+    manifests = sorted(Path(directory).glob("*/selection.json"))
+    if len(manifests) != count:
+        raise ValueError(f"Expected {count} native UI shard artifacts, found {len(manifests)}.")
+    observed, indexes = [], []
+    for path in manifests:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        index = manifest.get("shardIndex")
+        if manifest != shard_manifest(index, count, identifiers):
+            raise ValueError("A native UI shard manifest differs from the complete source partition.")
+        indexes.append(index)
+        summary = json.loads(path.with_name("summary.json").read_text(encoding="utf-8"))
+        tests = json.loads(path.with_name("tests.json").read_text(encoding="utf-8"))
+        verify_results(summary, expected=len(manifest["testIdentifiers"]))
+        observed.extend(verify_test_identifiers(tests, manifest["testIdentifiers"]))
+    if sorted(indexes) != list(range(count)) or len(observed) != len(set(observed)) or sorted(observed) != identifiers:
+        raise ValueError("Native UI shards must cover every source test exactly once.")
+    return {"shardCount": count, "passedTests": len(observed), "failedTests": 0, "skippedTests": 0, "testIdentifiers": sorted(observed)}
 
 
 def needs_native_ui(paths):
@@ -63,13 +134,13 @@ def prepare_configuration(configuration, app, bootstrap, git, python):
     return configuration
 
 
-def verify_results(summary, expected=25):
+def verify_results(summary, expected=MINIMUM_TEST_COUNT):
     counts = [summary.get(key) for key in ("totalTestCount", "passedTests", "failedTests", "skippedTests")]
     if not all(type(value) is int for value in counts):
         raise ValueError("The xcresult summary is missing native test counts.")
     total, passed, failed, skipped = counts
-    if total < expected or passed != total or failed != 0 or skipped != 0:
-        raise ValueError(f"Native UI verification failed: total={total}, passed={passed}, failed={failed}, skipped={skipped}; at least {expected} passing tests are required.")
+    if type(expected) is not int or expected <= 0 or total != expected or passed != total or failed != 0 or skipped != 0:
+        raise ValueError(f"Native UI verification failed: total={total}, passed={passed}, failed={failed}, skipped={skipped}; exactly {expected} passing tests are required.")
     return total
 
 
@@ -96,7 +167,14 @@ def main():
     prepare = commands.add_parser("prepare")
     for name in ("xctestrun", "app", "bootstrap", "git", "python"):
         prepare.add_argument("--" + name, required=True)
+    plan = commands.add_parser("plan")
+    plan.add_argument("--shard-index", type=int, default=0)
+    plan.add_argument("--shard-count", type=int, default=1)
+    plan.add_argument("--manifest", required=True)
     results = commands.add_parser("verify-results"); results.add_argument("summary")
+    results.add_argument("--tests", required=True)
+    results.add_argument("--manifest", required=True)
+    shards = commands.add_parser("verify-shards"); shards.add_argument("directory")
     arguments = parser.parse_args()
     if arguments.command == "changes":
         with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as handle:
@@ -110,9 +188,20 @@ def main():
             configuration = prepare_configuration(plistlib.load(handle), arguments.app, arguments.bootstrap, arguments.git, arguments.python)
         with path.open("wb") as handle:
             plistlib.dump(configuration, handle)
+    elif arguments.command == "plan":
+        manifest = shard_manifest(arguments.shard_index, arguments.shard_count)
+        Path(arguments.manifest).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        for identifier in manifest["testIdentifiers"]:
+            print("-only-testing:" + TEST_TARGET + "/" + identifier)
+    elif arguments.command == "verify-shards":
+        print(json.dumps(verify_shards(arguments.directory), indent=2))
     else:
+        manifest = json.loads(Path(arguments.manifest).read_text(encoding="utf-8"))
+        if manifest != shard_manifest(manifest.get("shardIndex"), manifest.get("shardCount")):
+            raise ValueError("The native UI selection manifest differs from the source tests.")
         with open(arguments.summary, encoding="utf-8") as handle:
-            count = verify_results(json.load(handle))
+            count = verify_results(json.load(handle), expected=len(manifest["testIdentifiers"]))
+        verify_test_identifiers(json.loads(Path(arguments.tests).read_text(encoding="utf-8")), manifest["testIdentifiers"])
         print(f"Verified {count} native macOS UI tests, with zero failures or skipped tests.")
 
 

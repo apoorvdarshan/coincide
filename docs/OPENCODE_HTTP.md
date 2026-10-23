@@ -40,6 +40,53 @@ cookie, cache or shared credential store. Request bodies, incremental response
 bodies and headers have explicit bounds. Cancellation closes only owned I/O;
 it does not retry a mutation or imply that a server-side action was cancelled.
 
+## App-owned MCP tools
+
+Native v1 and v2 conversation actors accept the Engine's runtime-only
+`AppMCPConnection` before connecting. Metadata and history workers receive no
+connection and do not register app tools. Each owned OpenCode process gets one
+`coincide` server; a case-insensitive name or namespace-prefix collision refuses
+input rather than replacing an existing server or granting its flattened tool
+names the owned server's native permission. Other configured MCP servers are preserved.
+
+V1 registers with `POST /mcp` using `name` and `config`, scoped by `directory`.
+V2 uses the location-scoped `GET /api/mcp` catalogue and
+`PUT /api/experimental/mcp/coincide` with a `config` body. A native connected
+status is required before every authored input. The v2 runtime may evict an idle
+location, so an absent owned registration is installed again on the next input;
+a present failed or disabled server is refused. Registration failures have fixed
+messages and cannot fall back to a prompt without app tools.
+
+The private loopback MCP URL and bearer header travel only in that native HTTP
+registration body. They are absent from arguments, environment, saved provider
+settings and workspace configuration. Native HTTP response headers/bodies and
+complete SSE frames redact both the exact header and bare token before metadata
+or transcript projection. Native session permissions allow only this owned
+server's `coincide_*` tools; each invocation independently retains the Engine's
+captured permission and active-run checks. Native tool execution gets 660 seconds,
+so the app's maximum ten-minute wait remains reachable; registration has a
+separate thirty-second bound.
+
+The owned transport and conversation actor resolve the same working-directory
+spelling before registration and native requests. OpenCode treats macOS `/var`
+and `/private/var` aliases as distinct location names; installing tools under one
+while creating the session under the other loses their visibility. Captured
+workspace/history paths keep the user's original spelling.
+
+Stop during registration prevents subsequent prompt admission. Close cancels
+and joins registration, then removes the exact owned v2 runtime server or
+disconnects the v1 server before joining the owned process. The app never removes
+another server or writes a persistent native MCP setting. Configuration changes
+retain the existing Engine rule: a successor with changed captured permissions
+gets a new runtime and credential after its predecessor drains.
+
+Focused offline acceptance uses the production native factory, real HTTP/SSE,
+the real app server and SQLite, with an explicitly synthetic OpenCode child.
+It covers app-tool read/rename, FIFO, Stop, durable writes, credential echoes,
+collision and registration refusal, metadata isolation and held startup cleanup.
+The installed **2.1.3** no-model probe verifies add/list/remove compatibility;
+installed v1 and model-driven OpenCode app-tool acceptance remain unverified.
+
 ## Metadata and events
 
 V1 catalogs use connected provider/model records and name-based agents. V2 uses

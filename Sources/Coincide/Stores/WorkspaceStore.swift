@@ -115,6 +115,13 @@ final class WorkspaceStore {
     @ObservationIgnored private let claudeRuntimeCapture: ClaudeRuntimeCapture
     @ObservationIgnored private let piRuntimeCapture: PiRuntimeCapture
     var snapshot = WorkspaceSnapshot()
+    @ObservationIgnored lazy var notifications = NativeThreadNotifications { [weak self] id in
+        guard let self, !self.terminating, let thread = self.thread(id), !thread.isArchived,
+              self.snapshot.projects.contains(where: { $0.id == thread.projectID }) else { return }
+        self.selectedProjectID = thread.projectID; self.showArchived = false; self.selectedThreadID = id
+        _ = NSApp?.delegate?.applicationShouldHandleReopen?(NSApplication.shared, hasVisibleWindows: false)
+        NSApp?.activate(ignoringOtherApps: true)
+    }
     var selectedThreadID: UUID? {
         didSet {
             if selectedThreadID != oldValue {
@@ -1033,6 +1040,7 @@ final class WorkspaceStore {
         projectScriptService?.invalidate(threadIDs: changedScriptThreads)
         let previous = snapshot
         lastSequence = update.sequence; snapshot = update.snapshot
+        if !terminating { notifications.observe(snapshot, baseline: isLoading, appIsActive: NSApp?.isActive ?? false) }
         acpConnections.invalidate(validAgents: snapshot.acpAgents)
         for model in pullRequestStores.values { model.apply(snapshot) }
         closeUnreferencedFileServices(previous: previous)
@@ -2790,6 +2798,7 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        await notifications.shutdown()
         let skills = retireSkills()
         codexAuthenticationBinding?.cancel()
         await codexAuthenticationBinding?.value

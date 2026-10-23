@@ -1,5 +1,49 @@
 # Validation record
 
+## 2026-10-23 — Parallel implementation milestone
+
+- The complete serial local suite passes 1738 of 1750 declarations, with twelve
+  optional live declarations skipped: 1515 Core declarations in 350.534 seconds,
+  216 native view/store in 65.869 seconds, six terminal in 1.384 seconds and
+  thirteen Markdown in 0.137 seconds. The pinned Pi package acceptance is enabled.
+  This run includes typed Claude questions, OpenCode app-MCP integration and
+  notification transition/revalidation coverage. The subsequent OpenCode path
+  normalization and alias cases are verified separately below.
+- Five final OpenCode app-MCP declarations pass in 2.180 seconds, including both
+  generations through real owned-process/HTTP/SSE/Engine paths and explicit
+  symlinked workspace aliases, FIFO, Stop, durable writes, namespace collisions,
+  registration failures, credential redaction and metadata-only isolation.
+  The native child remains a deterministic peer.
+- The combined installed-provider acceptance completes both model turns and
+  durability checks for Codex 0.163.0 and Claude 2.1.308. Installed OpenCode 2.1.3
+  exposes a genuine directory-scope mismatch: owned transport and actor now use
+  the same resolved path. Its retry establishes a native session but stops on
+  captured configuration readback; live OpenCode tool execution is not yet
+  accepted. The failed generated fixture is retained for diagnosis.
+- The focused integration run passes 27 Core declarations and three native
+  view/store declarations. Claude question coverage exercises the real Engine
+  command path and native stdio response, exact request ownership, single/multiple
+  choices, custom answers, notes, cancellation and stale/reused requests. Its
+  protocol child is synthetic; no installed model question or rendered hosted
+  question-form interaction is claimed.
+- Notification checks cover history/import baselines, Stop, archive, rewind,
+  approval/input/failure/completion transitions, repeated projections and stale
+  queued events after resolution, replacement, rename, new work or removal.
+  Native settings, background delivery, sound coalescing, Dock counts and click
+  navigation are wired, but packaged OS permission/banner/sound/click acceptance
+  remains unverified. Notifications default to Off; synthetic test bundles cannot
+  request permission, play sounds or alter the product's Dock badge.
+- All 72 Python harness checks pass, along with actionlint and shell syntax.
+  Native UI execution now partitions all 25 workflows across four isolated hosts,
+  serially within each desktop. Selection manifests and actual xcresult identities
+  must cover every test exactly once, with no skips, retries or missing shards.
+  Existing checks remain enabled. Hosted timing and acceptance are still required;
+  local harness verification does not establish an observed speed improvement.
+- Build-only app packaging, deep strict signature verification and native math
+  resource rendering pass. The async-default ABI guard checks 912 objects,
+  including 604 Core and 235 app objects, with zero weak records. The installed
+  application is not replaced or relaunched by these checks.
+
 ## 2026-10-23 — Installed OpenCode 2 MCP registration contract
 
 - An isolated probe of installed OpenCode **2.1.3** passes the native runtime

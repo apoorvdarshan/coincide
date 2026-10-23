@@ -61,6 +61,14 @@ struct ApprovalView: View {
                     Text("These Grok questions cannot be displayed safely.")
                     Button("Cancel Questions") { onDecision(false) }
                 }
+            } else if request.isClaudeQuestion {
+                if let question = request.claudeQuestion {
+                    ClaudeQuestionApprovalView(request: question, isResponding: isResponding,
+                        onSubmit: onSelectionsWithNotes, onCancel: { onDecision(false) })
+                } else {
+                    Text("These Claude questions cannot be displayed safely.")
+                    Button("Cancel Questions") { onDecision(false) }
+                }
             } else if let question = request.cursorQuestion {
                 CursorQuestionApprovalView(request: question, isResponding: isResponding,
                     onSelections: onSelections, onSkip: { onDecision(false) })

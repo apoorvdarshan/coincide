@@ -1,19 +1,20 @@
 """Configuration checks run without launching a native app or touching user state.
 
-The native job has a 45-minute whole-suite budget after the fourteen-workflow
-run used 29m59s with five paths still failing early. Individual test/command
-deadlines and all fourteen scenarios stay unchanged. Two explicit authentication
-settings scenarios and two skills workflows bring the zero-skip result gate to eighteen. Three additional synthetic Claude
-history/selection/inspection flows bring it to twenty-one without replacing them.
-Three Pi history workflows and native main-window recovery bring it to twenty-five.
+Four isolated macOS runners partition all twenty-five workflows without sharing
+a desktop. Counts and xcresult identities must match each shard, and the final
+gate requires complete, unique coverage across every shard. Individual test and
+command deadlines remain unchanged.
 After a failed production suite, diagnostic-only report arrival polling is
 capped at thirty seconds; it never reruns tests or changes their result.
 """
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import plistlib
 import tempfile
+import subprocess
+import sys
 import unittest
 
 spec = importlib.util.spec_from_file_location("macos_ui_ci", Path(__file__).resolve().parents[2] / "script/macos_ui_ci.py")
@@ -22,6 +23,117 @@ spec.loader.exec_module(ci)
 
 
 class NativeUIConfigurationTests(unittest.TestCase):
+    def test_shards_partition_every_source_case_once_and_reject_invalid_or_empty_selections(self):
+        identifiers = ci.native_test_identifiers()
+        self.assertEqual(len(identifiers), 25)
+        shards = [ci.shard_manifest(index, ci.UI_SHARD_COUNT, identifiers) for index in range(ci.UI_SHARD_COUNT)]
+        flattened = [case for shard in shards for case in shard["testIdentifiers"]]
+        self.assertEqual(sorted(flattened), identifiers)
+        self.assertEqual(len(set(flattened)), len(flattened))
+        self.assertEqual([len(shard["testIdentifiers"]) for shard in shards], [7, 6, 6, 6])
+        for index, count in ((-1, 4), (4, 4), (0, 0), (0, 26), (True, 4), (0, False)):
+            with self.assertRaises(ValueError):
+                ci.shard_manifest(index, count, identifiers)
+        with self.assertRaises(ValueError):
+            ci.shard_manifest(0, 4, identifiers + identifiers[:1])
+        source = ci.TEST_SOURCE.read_text()
+        for invalid in (source.replace("@MainActor func test", "func test", 1), source + "\nfunc testUnsupported() {}",
+                        source.replace("func testNativeMainWindowCloseNewWindowAndReopenPreserveUnsentWorkspace() throws", "func testNativeMainWindowCloseNewWindowAndReopenPreserveUnsentWorkspace()", 1)):
+            with self.assertRaises(ValueError):
+                ci.native_test_identifiers(invalid)
+
+    @staticmethod
+    def report(identifiers):
+        return {"testNodes": [{"nodeType": "Test Plan", "name": "Plan", "children": [
+            {"nodeType": "Test Case", "nodeIdentifier": name + "()", "name": name.rsplit("/", 1)[-1] + "()", "result": "Passed"}
+            for name in identifiers]}]}
+
+    def test_result_identity_gate_rejects_wrong_duplicate_missing_skipped_failed_or_retried_cases(self):
+        identifiers = ci.shard_manifest(0, 4)["testIdentifiers"]
+        report = self.report(identifiers)
+        self.assertEqual(ci.verify_test_identifiers(report, identifiers), identifiers)
+        bad_reports = [{}, {"testNodes": None}]
+        for result in ("Failed", "Skipped", "Expected Failure", "unknown", None):
+            value = copy.deepcopy(report)
+            value["testNodes"][0]["children"][0]["result"] = result
+            bad_reports.append(value)
+        for cases in (identifiers[:-1], identifiers + identifiers[:1], ["OtherTests/testUnexpected"] + identifiers[1:]):
+            bad_reports.append(self.report(cases))
+        repeated = copy.deepcopy(report)
+        repeated["testNodes"][0]["children"][0]["children"] = [{"nodeType": "Test Case Run"}] * 2
+        bad_reports.append(repeated)
+        repetition = copy.deepcopy(report)
+        repetition["testNodes"][0]["children"].append({"nodeType": "Repetition"})
+        bad_reports.append(repetition)
+        for value in bad_reports:
+            with self.assertRaises(ValueError):
+                ci.verify_test_identifiers(value, identifiers)
+
+    def write_shard(self, root, index):
+        directory = root / ("shard-" + str(index))
+        directory.mkdir(exist_ok=True)
+        manifest = ci.shard_manifest(index, 4)
+        (directory / "selection.json").write_text(json.dumps(manifest))
+        size = len(manifest["testIdentifiers"])
+        (directory / "summary.json").write_text(json.dumps(dict(totalTestCount=size, passedTests=size, failedTests=0, skippedTests=0)))
+        (directory / "tests.json").write_text(json.dumps(self.report(manifest["testIdentifiers"])))
+        return directory
+
+    def test_aggregate_requires_all_shards_exact_manifests_and_all_real_passing_results(self):
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-shards-") as directory:
+            root = Path(directory)
+            for index in range(3):
+                self.write_shard(root, index)
+            with self.assertRaises(ValueError):
+                ci.verify_shards(root)
+            last = self.write_shard(root, 3)
+            self.assertEqual(ci.verify_shards(root)["passedTests"], 25)
+            self.assertEqual(ci.verify_shards(root)["testIdentifiers"], ci.native_test_identifiers())
+            (last / "selection.json").write_text(json.dumps(ci.shard_manifest(2, 4)))
+            with self.assertRaises(ValueError):
+                ci.verify_shards(root)
+            self.write_shard(root, 3)
+            (last / "summary.json").write_text(json.dumps(dict(totalTestCount=0, passedTests=0, failedTests=0, skippedTests=0)))
+            with self.assertRaises(ValueError):
+                ci.verify_shards(root)
+            self.write_shard(root, 3)
+            (last / "tests.json").write_text(json.dumps(self.report(ci.shard_manifest(2, 4)["testIdentifiers"])))
+            with self.assertRaises(ValueError):
+                ci.verify_shards(root)
+
+    def test_command_line_plan_generates_only_exact_xcode_selections_and_fails_empty_requests(self):
+        with tempfile.TemporaryDirectory(prefix="coincide-ui-plan-") as directory:
+            path = Path(directory) / "selection.json"
+            command = [sys.executable, str(ci.TEST_SOURCE.parents[2] / "script/macos_ui_ci.py"), "plan",
+                       "--shard-index", "1", "--shard-count", "4", "--manifest", str(path)]
+            result = subprocess.run(command, check=True, text=True, capture_output=True)
+            manifest = json.loads(path.read_text())
+            self.assertEqual(manifest, ci.shard_manifest(1, 4))
+            self.assertEqual(result.stdout.splitlines(), ["-only-testing:" + ci.TEST_TARGET + "/" + case for case in manifest["testIdentifiers"]])
+            result = subprocess.run(command[:command.index("--shard-index")] + ["--shard-count", "26", "--manifest", str(path)], text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_workflow_uses_isolated_serial_runners_keeps_failed_shards_and_enforces_aggregate(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/swift.yml").read_text()
+        shard = workflow.split("  native-ui-shard:\n", 1)[1].split("  native-ui:\n", 1)[0]
+        gate = workflow.split("  native-ui:\n", 1)[1]
+        self.assertIn("needs: [test, changes]", shard)
+        self.assertIn("fail-fast: false", shard)
+        self.assertIn("shard: [0, 1, 2, 3]", shard)
+        self.assertIn('--shard-index "${{ matrix.shard }}" --shard-count 4', shard)
+        self.assertIn("coincide-native-app-${{ github.sha }}", shard)
+        self.assertNotIn("swift test", shard)
+        self.assertIn("if-no-files-found: error", shard)
+        self.assertIn("needs: [native-ui-shard, changes]", gate)
+        self.assertIn("verify-shards", gate)
+        self.assertIn("needs.native-ui-shard.result != 'success'", gate)
+        runner = (root / "script/test_macos_ui.sh").read_text()
+        self.assertIn("-parallel-testing-enabled NO", runner)
+        self.assertNotIn("-retry-tests-on-failure", runner)
+        self.assertIn('"${TEST_SELECTION[@]}"', runner)
+        self.assertIn("get test-results tests", runner)
+        self.assertIn('--manifest "$ARTIFACTS/selection.json"', runner)
     def test_isolated_crash_probe_cannot_replace_full_coverage_or_hide_its_failure(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
         isolation = workflow.split("      - name: Isolate the Codex executable inspection crash", 1)[1].split("      - name: Build and test", 1)[0]
@@ -118,7 +230,8 @@ class NativeUIConfigurationTests(unittest.TestCase):
 
     def test_results_require_twenty_five_real_tests_without_silent_skips(self):
         self.assertEqual(ci.verify_results(dict(totalTestCount=25, passedTests=25, failedTests=0, skippedTests=0)), 25)
-        for summary in [dict(totalTestCount=25, passedTests=24, failedTests=0, skippedTests=1),
+        for summary in [dict(totalTestCount=26, passedTests=26, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=25, passedTests=24, failedTests=0, skippedTests=1),
                         dict(totalTestCount=25, passedTests=24, failedTests=1, skippedTests=0),
                         dict(totalTestCount=24, passedTests=24, failedTests=0, skippedTests=0),
                         dict(totalTestCount=23, passedTests=23, failedTests=0, skippedTests=0),

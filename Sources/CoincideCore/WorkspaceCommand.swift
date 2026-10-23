@@ -1103,7 +1103,11 @@ struct WorkspaceDecision: Sendable {
                         throw WorkspaceCommandError("This permission option is no longer available.")
                     }
                 case .decision(let allow):
-                    if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
+                    if request.isClaudeQuestion {
+                        guard thread.provider == .claude, !allow, request.claudeQuestion != nil else {
+                            throw WorkspaceCommandError("Answer the Claude questions or cancel them.")
+                        }
+                    } else if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
                         guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity request is no longer available.") }
                         do {
                             if input.isQuestion {
@@ -1137,7 +1141,10 @@ struct WorkspaceDecision: Sendable {
                         }
                     } else { guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") } }
                 case .answers(let answers):
-                    if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
+                    if request.isClaudeQuestion {
+                        guard thread.provider == .claude, let question = request.claudeQuestion else { throw WorkspaceCommandError("This Claude question is no longer available.") }
+                        _ = try question.response(answers: answers)
+                    } else if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
                         guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity question is no longer available.") }
                         do { _ = try input.answer(answers: answers) }
                         catch { throw WorkspaceCommandError("Choose one offered Antigravity option.") }
@@ -1164,7 +1171,10 @@ struct WorkspaceDecision: Sendable {
                         guard CursorACPMethod.canonical(request.method) == nil, request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
                     }
                 case .selections(let selections):
-                    if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
+                    if request.isClaudeQuestion {
+                        guard thread.provider == .claude, let question = request.claudeQuestion else { throw WorkspaceCommandError("This Claude question is no longer available.") }
+                        _ = try question.response(selections: selections)
+                    } else if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
                         guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity question is no longer available.") }
                         do { _ = try input.answer(selections: selections) }
                         catch { throw WorkspaceCommandError("Choose one offered Antigravity option.") }
@@ -1189,6 +1199,11 @@ struct WorkspaceDecision: Sendable {
                       catch { throw WorkspaceCommandError("Select valid answers for every required question.") }
                     }
                 case .selectionsWithNotes(let selections, let notes):
+                    if request.isClaudeQuestion {
+                        guard thread.provider == .claude, let question = request.claudeQuestion else { throw WorkspaceCommandError("This Claude question is no longer available.") }
+                        _ = try question.response(selections: selections, notes: notes)
+                        break
+                    }
                     if request.method == "muse/userInput" {
                         guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
                         do { _ = try input.answerBody(selections: selections, notes: notes) }

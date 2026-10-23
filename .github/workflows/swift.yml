@@ -112,13 +112,17 @@ jobs:
           path: ${{ runner.temp }}/coincide-native-app.tgz
           if-no-files-found: error
           retention-days: 1
-  native-ui:
+  native-ui-shard:
     needs: [test, changes]
     if: needs.changes.outputs.macos_ui == 'true'
     runs-on: macos-26
-    # All fourteen workflows used 29m59s with five paths still failing early.
-    # Budget the complete suite and artifacts; individual deadlines stay fixed.
+    # Each host runs one disjoint selection serially; native windows never compete
+    # within a desktop. Preserve all tests and their individual deadlines.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -130,12 +134,29 @@ jobs:
       - name: Extract the verified app
         run: tar -xzf "$RUNNER_TEMP/coincide-native-app/coincide-native-app.tgz" -C "$RUNNER_TEMP/coincide-native-app"
       - name: Run native window, menu, keyboard, and persistence tests
-        run: ./script/test_macos_ui.sh --ci "$RUNNER_TEMP/coincide-native-app/Coincide.app"
+        run: ./script/test_macos_ui.sh --ci "$RUNNER_TEMP/coincide-native-app/Coincide.app" --shard-index "${{ matrix.shard }}" --shard-count 4
       - name: Keep native UI screenshots and test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coincide-native-ui-${{ github.sha }}
+          name: coincide-native-ui-${{ github.sha }}-shard-${{ matrix.shard }}
           path: ${{ runner.temp }}/coincide-desktop-ui-artifacts
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
+  native-ui:
+    needs: [native-ui-shard, changes]
+    if: always() && needs.changes.outputs.macos_ui == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coincide-native-ui-${{ github.sha }}-shard-*
+          path: ${{ runner.temp }}/coincide-native-ui-shards
+      - name: Require every native UI test exactly once across all shards
+        run: python3 script/macos_ui_ci.py verify-shards "$RUNNER_TEMP/coincide-native-ui-shards"
+      - name: Enforce every isolated native UI runner outcome
+        if: always() && needs.native-ui-shard.result != 'success'
+        run: exit 1
