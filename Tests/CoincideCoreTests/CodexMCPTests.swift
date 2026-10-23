@@ -98,9 +98,9 @@ func codexMetadataWithoutAppMCPNeverRegistersAThreadOrTouchesMCPConfiguration() 
     } catch { await session.close(); throw error }
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: [false, true])
-func codexAppMCPProductionFactoryRoutesNativeToolsThroughEngineAndRetainsFIFOApprovalStopAndDurability(decline: Bool) async throws {
-    let f = try CodexMCPFixture(options: ["invokeTools": .bool(true), "approval": .bool(true), "lateOriginalTool": .bool(true),
+@Test(.timeLimit(.minutes(1)), arguments: [false, true], ["command", "elicitation"])
+func codexAppMCPProductionFactoryRoutesNativeToolsThroughEngineAndRetainsFIFOApprovalStopAndDurability(decline: Bool, approvalKind: String) async throws {
+    let f = try CodexMCPFixture(options: ["invokeTools": .bool(true), "approval": .bool(true), "approvalKind": .string(approvalKind), "lateOriginalTool": .bool(true),
         "readObserved": .string("marker"), "writeObserved": .string("marker"), "turnReady2": .string("marker"),
         "releaseTurn1": .string("gate"), "releaseTurn2": .string("gate")])
     // This is the production factory, native CodexSession, real JSON-RPC pipes,
@@ -117,7 +117,10 @@ func codexAppMCPProductionFactoryRoutesNativeToolsThroughEngineAndRetainsFIFOApp
         }
         let pending = try await f.current(engine)
         let approval = try #require(pending.runtimeRequests.first?.request)
-        #expect(approval.method == "item/commandExecution/requestApproval")
+        #expect(approval.method == (approvalKind == "elicitation" ? CodexMCPApproval.method : "item/commandExecution/requestApproval"))
+        if approvalKind == "elicitation" {
+            #expect(approval.title == "Approve Rename thread" && approval.detail.contains(f.renamedTitle) && !approval.isQuestion)
+        }
         #expect(pending.title != f.renamedTitle)
         let originalRuntime = try #require(pending.runtimeID)
         _ = try await engine.dispatch(.editThread(f.thread.id, .model("future-wire-model")))
@@ -182,6 +185,90 @@ func codexAppMCPProductionFactoryRoutesNativeToolsThroughEngineAndRetainsFIFOApp
         #expect(try f.rows().count == count)
         try f.remove()
     } catch { f.releaseAll(); await engine.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["foreign-thread", "foreign-turn", "missing-turn", "nonempty-form", "url", "foreign-kind"])
+func codexAppMCPDeclinesUnsupportedOrUnownedElicitationsWithoutPresentingOrRenaming(shape: String) async throws {
+    let f = try CodexMCPFixture(options: ["invokeTools": .bool(true), "approval": .bool(true),
+        "approvalKind": .string("elicitation"), "elicitationShape": .string(shape)])
+    let engine = try WorkspaceEngine(url: f.database, appMCPEnabled: true, identityResolver: { _ in nil })
+    do {
+        _ = try await engine.load()
+        _ = try await engine.dispatch(.addProjectWithThread(project: f.project, thread: f.thread))
+        let runID = UUID()
+        _ = try await engine.dispatch(.submit(threadID: f.thread.id, text: "Explicit synthetic approval test"), id: runID)
+        try await codexMCPEEventually {
+            let thread = try await f.current(engine)
+            #expect(thread.runtimeRequests.isEmpty)
+            return thread.runHistory?.first(where: { $0.id == runID })?.status == .completed
+        }
+        let thread = try await f.current(engine)
+        #expect(thread.title != f.renamedTitle && thread.runtimeRequests.isEmpty)
+        let rows = try f.rows()
+        #expect(rows.contains { $0["kind"] == .string("approvalResponse") && $0["allowed"] == .bool(false) })
+        #expect(!rows.contains { $0["kind"] == .string("mcpCall") && $0["tool"] == .string("t3_thread_update") })
+        await engine.shutdown(); try f.assertStopped(); try f.remove()
+    } catch { await engine.shutdown(); throw error }
+}
+
+@Test func codexAppMCPApprovalPreservesPresentationAndNeverEchoesRememberOptions() throws {
+    let params: JSONValue = .object(["threadId": .string("native-thread"), "turnId": .string("native-turn"),
+        "serverName": .string("coincide"), "mode": .string("form"), "message": .string("Review the exact rename."),
+        "requestedSchema": .object(["type": .string("object"), "properties": .object([:])]),
+        "_meta": .object(["codex_approval_kind": .string("mcp_tool_call"), "persist": .array([.string("session"), .string("always")]),
+            "tool_title": .string("Rename thread"), "tool_params": .object(["title": .string("Exact title 工作")])])])
+    let request = ApprovalRequest(id: .number(42), method: CodexMCPApproval.method, params: params)
+    let approval = try #require(request.codexMCPApproval)
+    #expect(!request.isQuestion && request.title == "Approve Rename thread")
+    #expect(request.detail.contains("Review the exact rename.") && request.detail.contains("Exact title 工作"))
+    #expect(approval.response(allow: true) == .object(["action": .string("accept"), "content": .object([:]), "_meta": .null]))
+    #expect(approval.response(allow: false) == .object(["action": .string("decline"), "content": .null, "_meta": .null]))
+    var invalid = try #require(params.object)
+    invalid["requestedSchema"] = .object(["type": .string("object"), "properties": .object([:]), "required": .array([.string("answer")])])
+    #expect(throws: MCPError.self) { try CodexMCPApproval(params: .object(invalid)) }
+    invalid["requestedSchema"] = .object(["type": .string("object"), "properties": .object([:]), "oneOf": .array([])])
+    #expect(throws: MCPError.self) { try CodexMCPApproval(params: .object(invalid)) }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func codexAppMCPApprovalRejectsChangedOrAlreadyAnsweredRequestsBeforeNativeResponse() async throws {
+    let f = try CodexMCPFixture(options: ["invokeTools": .bool(true), "approval": .bool(true), "approvalKind": .string("elicitation")])
+    try await withCodexMCPPeer(f) { session, connection in
+        let observed = CodexMCPApprovalObservation()
+        let reader = Task {
+            for await event in session.events { await observed.observe(event) }
+        }
+        do {
+            try await session.configureAppMCP(connection)
+            var thread = f.thread
+            thread.activeRun = .init(id: UUID(), configuration: .init(thread: thread), startedAt: .now)
+            try await session.send(text: "Explicit synthetic tool decision", thread: thread)
+            try await codexMCPEEventually { await observed.request != nil }
+            let request = try #require(await observed.request)
+            var changed = request
+            var params = try #require(changed.params.object)
+            params["message"] = .string("A different request using the same native id")
+            changed.params = .object(params)
+            await #expect(throws: CoincideError.self) { try await session.respond(changed, allow: true) }
+            #expect(!(try f.rows()).contains { $0["kind"] == .string("approvalResponse") })
+            try await session.respond(request, allow: false)
+            await #expect(throws: CoincideError.self) { try await session.respond(request, allow: true) }
+            try await codexMCPEEventually { try f.rows().contains { $0["kind"] == .string("approvalResponse") } }
+            #expect((try f.rows()).filter { $0["kind"] == .string("approvalResponse") }.count == 1)
+            await session.close(); await reader.value
+        } catch { await session.close(); await reader.value; throw error }
+    }
+}
+
+private actor CodexMCPApprovalObservation {
+    var request: ApprovalRequest?
+    func observe(_ event: ProviderEvent) {
+        switch event {
+        case .context(_, let child): observe(child)
+        case .approval(let value): request = value
+        default: break
+        }
+    }
 }
 
 private struct CodexMCPFixture: Sendable {

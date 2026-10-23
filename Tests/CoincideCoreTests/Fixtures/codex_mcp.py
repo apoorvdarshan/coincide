@@ -141,12 +141,26 @@ def model_flow(native, number):
                 waiter = {"event": threading.Event(), "allowed": False}
                 with state_lock:
                     approval_waiters[identifier] = waiter
-                # An actual existing Codex command approval, not a fabricated
-                # MCP approval protocol. The fixture's next tool follows it.
-                emit({"id": identifier, "method": "item/commandExecution/requestApproval", "params": {
-                    "threadId": thread_id, "turnId": native, "itemId": "native-command-decision", "kind": "command",
-                    "startedAtMs": 1, "environmentId": None, "command": "synthetic-local-action", "cwd": options["cwd"],
-                    "reason": "Offline approval transport acceptance"}})
+                if options.get("approvalKind") == "elicitation":
+                    params = {"threadId": thread_id, "turnId": native, "serverName": "coincide", "mode": "form",
+                        "message": 'Allow the coincide MCP server to run tool "t3_thread_update"?',
+                        "requestedSchema": {"type": "object", "properties": {}},
+                        "_meta": {"codex_approval_kind": "mcp_tool_call", "persist": ["session", "always"],
+                            "tool_title": "Rename thread", "tool_params": {"action": "rename", "title": options["renamedTitle"],
+                                "clientRequestId": "native-fixture-rename"}}}
+                    shape = options.get("elicitationShape")
+                    if shape == "foreign-thread": params["threadId"] = "foreign-thread"
+                    if shape == "foreign-turn": params["turnId"] = "foreign-turn"
+                    if shape == "missing-turn": params["turnId"] = None
+                    if shape == "nonempty-form": params["requestedSchema"]["properties"] = {"name": {"type": "string"}}
+                    if shape == "url": params["mode"] = "url"
+                    if shape == "foreign-kind": params["_meta"]["codex_approval_kind"] = "browser_auth"
+                    emit({"id": identifier, "method": "mcpServer/elicitation/request", "params": params})
+                else:
+                    emit({"id": identifier, "method": "item/commandExecution/requestApproval", "params": {
+                        "threadId": thread_id, "turnId": native, "itemId": "native-command-decision", "kind": "command",
+                        "startedAtMs": 1, "environmentId": None, "command": "synthetic-local-action", "cwd": options["cwd"],
+                        "reason": "Offline approval transport acceptance"}})
                 if not waiter["event"].wait(8) or stop.is_set():
                     return
                 if not waiter["allowed"]:
@@ -202,7 +216,12 @@ try:
             with state_lock:
                 waiter = approval_waiters.get(identifier)
             if waiter:
-                waiter["allowed"] = (frame.get("result") or {}).get("decision") == "accept"
+                result = frame.get("result") or {}
+                if options.get("approvalKind") == "elicitation":
+                    waiter["allowed"] = result.get("action") == "accept"
+                    assert result == {"action": "accept", "content": {}, "_meta": None} if waiter["allowed"] else result == {"action": "decline", "content": None, "_meta": None}
+                else:
+                    waiter["allowed"] = result.get("decision") == "accept"
                 record({"kind": "approvalResponse", "allowed": waiter["allowed"]})
                 notify("serverRequest/resolved", {"requestId": identifier})
                 waiter["event"].set()

@@ -34,6 +34,7 @@ public actor CodexSession: ProviderSession {
     private static let appMCPServerName = "coincide"
     private var nativeRunOwners: [String: UUID] = [:]
     private var nativeRunOwnerOrder: [String] = []
+    private var mcpApprovals: [JSONValue: ApprovalRequest] = [:]
 
     public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"],
                 environment: [String: String]? = nil, installationLease: CodexInstallationLease? = nil,
@@ -557,6 +558,16 @@ public actor CodexSession: ProviderSession {
         _ = try await rpc.request("turn/interrupt", params: .object(["threadId": .string(threadID), "turnId": .string(turnID)]))
     }
     public func respond(_ request: ApprovalRequest, allow: Bool) async throws {
+        if request.method == CodexMCPApproval.method {
+            guard !shuttingDown, working, mcpApprovals[request.id] == request,
+                  let approval = request.codexMCPApproval, approval.threadID == threadID,
+                  approval.turnID == turnID, nativeRunOwners[approval.turnID] == eventRunID else {
+                throw CoincideError("This Codex app-tool approval is no longer awaiting a response.")
+            }
+            mcpApprovals.removeValue(forKey: request.id)
+            try await rpc.respond(id: request.id, result: approval.response(allow: allow))
+            return
+        }
         guard request.method == "item/commandExecution/requestApproval" || request.method == "item/fileChange/requestApproval" else {
             throw CoincideError("This request requires a different response form.")
         }
@@ -577,7 +588,7 @@ public actor CodexSession: ProviderSession {
         _ = try? await steeringTask?.task.value; steeringTask = nil
         await connecting?.value; connectionTask = nil
         let reading = eventTask; reading?.cancel(); await reading?.value; eventTask = nil; continuation.finish()
-        appMCP = nil
+        appMCP = nil; mcpApprovals.removeAll()
         installationLease?.release()
     }
     private func validateRuntimeBinding(_ configuration: ProviderConfiguration) throws {
@@ -594,7 +605,23 @@ public actor CodexSession: ProviderSession {
             if !shuttingDown { continuation.yield(.connectionClosed(reason)) }
             continuation.finish()
         case .request(let id, let method, let params):
-            if ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/tool/requestUserInput"].contains(method) {
+            if method == CodexMCPApproval.method {
+                let request = ApprovalRequest(id: id, method: method, params: params)
+                guard !shuttingDown, working, let runID = eventRunID,
+                      let approval = request.codexMCPApproval, approval.threadID == threadID,
+                      approval.turnID == turnID, nativeRunOwners[approval.turnID] == runID,
+                      mcpApprovals.count < 64,
+                      mcpApprovals[id] == nil || mcpApprovals[id] == request else {
+                    if mcpApprovals.removeValue(forKey: id) != nil { emit(.approvalDismissed(id)) }
+                    try? await rpc.respond(id: id, result: .object(["action": .string("decline"), "content": .null, "_meta": .null]))
+                    emit(.message(.init(role: .system, text: "The Codex MCP request could not be matched to a supported approval in the current turn and was declined.")))
+                    return
+                }
+                if mcpApprovals[id] == nil {
+                    mcpApprovals[id] = request
+                    emit(.approval(request), runID: runID)
+                }
+            } else if ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/tool/requestUserInput"].contains(method) {
                 emit(.approval(.init(id: id, method: method, params: params)))
             } else {
                 try? await rpc.reject(id: id, message: "Coincide does not support this interactive request yet.")
@@ -620,7 +647,9 @@ public actor CodexSession: ProviderSession {
             }
             if let id = params["threadId"].string, let threadID, id != threadID { return }
             switch method {
-            case "serverRequest/resolved": emit(.approvalDismissed(params["requestId"]))
+            case "serverRequest/resolved":
+                mcpApprovals.removeValue(forKey: params["requestId"])
+                emit(.approvalDismissed(params["requestId"]))
             case "turn/started":
                 if let id = params["turn"]["id"].string, !completedTurnIDs.contains(id), working {
                     rememberNativeRun(id, runID: eventRunID); turnID = id; emit(.turn(id))
@@ -650,6 +679,7 @@ public actor CodexSession: ProviderSession {
                 // Preserve its real boundary before retiring the local active run.
                 if turnID == nil { emit(.turn(completedID)) }
                 rememberNativeRun(completedID, runID: eventRunID)
+                mcpApprovals = mcpApprovals.filter { $0.value.codexMCPApproval?.turnID != completedID }
                 working = false
                 completedTurnIDs.append(completedID)
                 if completedTurnIDs.count > 128 { completedTurnIDs.removeFirst() }

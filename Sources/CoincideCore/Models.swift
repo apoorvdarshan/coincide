@@ -332,6 +332,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var museApproval: MuseApprovalRequest? { try? MuseApprovalRequest.presentation(self) }
     public var museUserInput: MuseUserInputRequest? { try? MuseUserInputRequest.presentation(self) }
     public var antigravityPermission: AntigravityPermissionRequest? { try? AntigravityPermissionRequest.presentation(self) }
+    public var codexMCPApproval: CodexMCPApproval? { method == CodexMCPApproval.method ? try? .init(params: params) : nil }
     public var questions: [JSONValue] {
         if method == "can_use_tool" {
             return (params["input"]["questions"].array ?? []).map { question in
@@ -343,6 +344,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return params["questions"].array ?? []
     }
     public var title: String {
+        if let approval = codexMCPApproval { return approval.title }
         if method == AntigravityProtocol.questionMethod || method == AntigravityProtocol.permissionMethod {
             return antigravityPermission?.title ?? "Antigravity needs a decision"
         }
@@ -359,6 +361,7 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
         return method.contains("fileChange") ? "Approve file changes" : "Approve command"
     }
     public var detail: String {
+        if let approval = codexMCPApproval { return approval.detail }
         if method == AntigravityProtocol.questionMethod || method == AntigravityProtocol.permissionMethod { return antigravityPermission?.title ?? "Review Antigravity's request." }
         if method == "muse/approval" { return museApproval?.detail ?? "Review Muse's request." }
         if method == "pi/extension" { return piExtension?.message ?? "Review Pi's request." }

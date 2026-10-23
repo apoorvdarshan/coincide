@@ -1,5 +1,39 @@
 # Validation record
 
+## 2026-10-23 — Native Codex MCP approval and installed model acceptance
+
+- The first installed app-tool acceptance check passed on Claude **2.1.308** but
+  exposed a real Codex **0.163.0** failure: reading worked, while renaming required
+  `mcpServer/elicitation/request`, which Coincide had rejected as unsupported.
+  Coincide now routes Codex's empty `mcp_tool_call` form through the native
+  Approve Once / Decline presentation. It checks exact thread, turn and pending
+  request ownership, and sends no saved-permission metadata. Nonempty forms, URL
+  consent, user verification and remembered permissions remain unsupported.
+- Eleven focused Core declarations pass in 4.193 seconds, including parameterized
+  command/MCP approval and decline flows through the real Engine, HTTP listener,
+  native JSON-RPC pipes and SQLite. Additional cases reject foreign thread/turn,
+  missing turn, unsupported form/mode/kind, changed requests and repeated answers.
+  Existing FIFO, Stop, late-event fencing, credential checks and restart coverage
+  remain in the production-factory acceptance test. These peers are synthetic.
+- With the fix, the opt-in installed acceptance passes both provider cases in
+  35.748 seconds. Each uses its existing CLI login and two actual model turns:
+  read and rename a generated app thread, followed by a same-runtime read of its
+  resulting title. Assertions require the native tool events and exact model
+  answers, preserve an unsent draft and unchanged sentinel file, scan the durable
+  journal for registration/header markers, and verify journal rebuild and SQLite
+  reopen. Only the exact generated app-tool requests are approved. The successful
+  app fixture is removed; native CLI test conversations remain in provider history.
+  This does not verify rendered approval interaction, managed-account sign-in,
+  other tools or full provider parity. The check is off by default; its command
+  and boundaries are documented in [MCP.md](MCP.md).
+- The complete serial suite passes 1711 of 1723 declarations, with twelve optional
+  live declarations skipped: 1491 Core declarations in 347.647 seconds, 213 native
+  view/store in 66.518 seconds, six terminal in 1.356 seconds and thirteen Markdown
+  in 0.140 seconds. The pinned Pi package acceptance remains enabled in this run.
+  Build-only packaging, deep strict signature verification and native-resource
+  loading pass. The async-default ABI guard checks 899 objects, including 591 Core
+  and 228 app objects, with zero weak records. Hosted UI verification is separate.
+
 ## 2026-10-23 — Codex/Claude app tools, window recovery and history stack lifetimes
 
 - On resuming the paused work, the retained full serial run reports 1719 test

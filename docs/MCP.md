@@ -98,6 +98,14 @@ Native Codex `mcpToolCall` items project bounded arguments, status and result on
 the observed active run. A late update after that run terminates is dropped;
 this does not establish broader background-tool ownership.
 
+Native MCP write approvals use Codex's `mcpServer/elicitation/request` empty
+form with `codex_approval_kind: mcp_tool_call`. Coincide presents the native
+message and exact tool arguments in its existing Approve Once / Decline panel.
+Requests must belong to the current native thread and turn; changed, answered,
+unsupported or unowned requests cannot authorize a tool. Responses never persist
+session-wide or permanent permission. Nonempty forms, URL consent and user
+verification remain unsupported.
+
 Claude registration is available only for the captured normal stream-json
 launch, not arbitrary legacy argument invocations. Before prompting, native
 `mcp_status` must show no owned-name collision or other dynamic/SDK servers that
@@ -115,6 +123,18 @@ cleanup. Native scratch scans found no header/token persistence. No prompt,
 tool invocation, login, saved account or authenticated model service was used.
 These observations leave Codex's existing 0.163.x history/steering gates intact;
 they do not grant those capabilities to the managed 0.156.1 runtime.
+
+A separate opt-in model-driven acceptance check passes with installed Codex
+**0.163.0** and Claude **2.1.308**, using their existing CLI logins. Each provider
+reads and renames a generated thread through the real app server, then reads its
+new title in a second turn on the same runtime. The check requires native tool
+events, exact answers, a preserved unsent draft, unchanged workspace bytes and
+successful journal rebuild/SQLite restart. It authorizes only the generated
+read/rename requests. This proves those installed app-tool flows, not managed
+authentication, all thirty tools, or rendered approval interaction. Run explicitly
+with `COINCIDE_LIVE_APP_MCP=1 swift test --no-parallel --filter installedProvidersUseAppMCPThroughNativeEngineAndRetainChangesAcrossRestart`.
+Successful checks delete their generated app database; provider-native test
+conversations remain in the CLI's history.
 
 ## Tools and durable authority
 
