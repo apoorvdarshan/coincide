@@ -131,7 +131,8 @@ struct WorkspaceSetupReviewSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(role == .setup ? "Run Checkout Setup?" : "Run Settle Script?").font(.title2)
             Text(plan.script.name).font(.headline).lineLimit(2)
-            Text("Review this command from the checkout’s t3.json. It runs with your account’s access to files and network.")
+            Text(plan.projectAction == nil ? "Review this command from the checkout’s t3.json. It runs with your account’s access to files and network."
+                 : "Review this command from this project’s actions. It runs with your account’s access to files and network.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(plan.workspacePath).font(.caption.monospaced()).textSelection(.enabled)
                 .lineLimit(3).truncationMode(.middle).accessibilityIdentifier(identifier("review-cwd"))

@@ -1933,7 +1933,8 @@ extension WorkspaceEngine {
                 await waitForScriptCommit(runID)
                 guard ownsScript(threadID: threadID, owner: owner, runID: runID, incarnation: incarnation, phases: [.discovering]) else { throw CancellationError() }
                 try Task.checkCancellation()
-                let plan = try await projectScriptPlanner(.init(id: runID, projectRoot: URL(fileURLWithPath: project.path), workspacePath: URL(fileURLWithPath: thread.workspacePath), role: owner.role))
+                let plan = try await projectScriptPlanner(.init(id: runID, projectRoot: URL(fileURLWithPath: project.path), workspacePath: URL(fileURLWithPath: thread.workspacePath), role: owner.role,
+                    settingsRoot: projectSettingsRoot, settingsKeys: ProjectSettingsKey.candidates(for: project)))
                 if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
                 await waitForScriptCommit(runID)
                 guard ownsScript(threadID: threadID, owner: owner, runID: runID, incarnation: incarnation, phases: [.discovering]) else { throw CancellationError() }
@@ -2311,6 +2312,7 @@ public actor WorkspaceEngine {
     }
     private let projectScriptPlanner: ProjectScriptPlanner
     private let projectScriptFactory: ProjectScriptFactory
+    private let projectSettingsRoot: URL
     private var scriptRuntimes: [UUID: ScriptRuntime] = [:]
     private var scriptLogs: [UUID: ProjectScriptRunLog] = [:]
     private var scriptClosures: [UUID: Task<Void, Never>] = [:]
@@ -2485,6 +2487,7 @@ public actor WorkspaceEngine {
         self.worktreeFactory = worktreeFactory
         self.projectScriptPlanner = projectScriptPlanner ?? { try await ProjectScriptSetupPlanner.plan($0) }
         self.projectScriptFactory = projectScriptFactory
+        projectSettingsRoot = ProjectSettingsFiles.root(dataRoot: url.deletingLastPathComponent())
         self.checkpointFactory = checkpointFactory; self.pullRequestFactory = pullRequestFactory
         self.pullRequestCheckoutFactory = pullRequestCheckoutFactory
         worktreesRoot = url.deletingLastPathComponent().appendingPathComponent("Worktrees", isDirectory: true).standardizedFileURL

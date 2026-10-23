@@ -28,6 +28,7 @@ struct WorktreeSetupSheet: View {
     @State private var existingBranch = ""
     @State private var worktreePath = ""
     @State private var submodules = ProjectWorktreeSubmoduleMode.none
+    @State private var submodulesChosen = false
     @State private var reviewSetup = true
     @State private var options: WorktreeSetupOptions?
     @State private var loadError: String?
@@ -86,7 +87,7 @@ struct WorktreeSetupSheet: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if mode != .registeredWorktree {
-                        Picker("Initialize submodules", selection: $submodules) {
+                        Picker("Initialize submodules", selection: Binding(get: { submodules }, set: { submodules = $0; submodulesChosen = true })) {
                             Text("None").tag(ProjectWorktreeSubmoduleMode.none)
                             Text("Top level").tag(ProjectWorktreeSubmoduleMode.topLevel)
                             Text("Recursive").tag(ProjectWorktreeSubmoduleMode.recursive)
@@ -96,7 +97,7 @@ struct WorktreeSetupSheet: View {
                     }
                     Toggle("Review checkout setup script", isOn: $reviewSetup)
                         .accessibilityIdentifier("worktree-review-setup")
-                    Text("When t3.json declares a setup script, review its command before running it. Messages wait for your choice. Turning this off skips setup discovery for this checkout.")
+                    Text("When this project’s actions or t3.json declare a setup script, review its command before running it. Messages wait for your choice. Turning this off skips setup discovery for this checkout.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     if loading { ProgressView().controlSize(.small).accessibilityLabel("Loading local worktrees") }
                     if let loadError {
@@ -120,6 +121,7 @@ struct WorktreeSetupSheet: View {
         }
         .padding(24).frame(width: 520)
         .task { await loadOptions() }
+        .task { if let value = await store.projectDefaults(threadID: threadID)?.worktreeSubmodules.value, !submodulesChosen { submodules = value } }
     }
     private func loadOptions() async {
         loading = true; loadError = nil

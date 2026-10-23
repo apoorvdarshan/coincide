@@ -9,6 +9,8 @@ struct ContentView: View {
     @State private var newProjectSheetPresented = false
     @State private var agentSessionImportSheetPresented = false
     @State private var scriptThread: CodingThread?
+    @State private var scriptPreference: String?
+    @State private var projectActions = ProjectActionsPresenter()
     @State private var settlementThread: CodingThread?
     var body: some View {
         NavigationSplitView {
@@ -58,9 +60,8 @@ struct ContentView: View {
                     .keyboardShortcut("t", modifiers: [.command, .option]).disabled(store.selectedThread.map { !store.workspaceReady(for: $0) } ?? true)
             }
             ToolbarItem {
-                Button { scriptThread = store.selectedThread } label: { Label("Run Script…", systemImage: "play") }
-                    .disabled(store.selectedThread.map { !store.canOpenTerminal(for: $0) } ?? true)
-                    .accessibilityIdentifier("project-scripts")
+                ProjectActionsToolbarControl(store: store, terminals: terminals, requests: .init(review: { scriptPreference = $1; scriptThread = $0 },
+                    addAction: { projectActions.addAction($0) }, settings: { projectActions.showSettings($0) }))
             }
             ToolbarItem { Button { store.inspectorVisible.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") } }
         }
@@ -74,9 +75,10 @@ struct ContentView: View {
             SettleConversationSheet(store: store, threadID: thread.id, close: { settlementThread = nil })
         }
         .sheet(item: $scriptThread) { thread in
-            ProjectScriptsSheet(store: store, thread: thread, terminals: terminals,
+            ProjectScriptsSheet(store: store, thread: thread, terminals: terminals, preferredScriptID: scriptPreference,
                 didRun: { terminals.panelVisible = true; scriptThread = nil }, close: { scriptThread = nil })
         }
+        .projectActionsPresentation(store: store, presenter: projectActions)
         .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $cloneSheetPresented)
         .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $newProjectSheetPresented)
         .focusedSceneValue(\.settlementPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $settlementThread)

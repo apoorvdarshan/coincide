@@ -112,6 +112,7 @@ final class WorkspaceStore {
     let worktreesRoot: URL
     let composerDraftTools: ComposerDraftToolsStore
     let agentSessionImports: AgentSessionImportStore
+    let projectSettings: ProjectSettingsStore
     @ObservationIgnored private var agentSessionImportScans: [UUID: [AgentSessionProjectCandidate]] = [:]
     @ObservationIgnored private var agentSessionImportProjects: [UUID: [UUID: UUID]] = [:]
     private let projectCreator: ProjectCreator
@@ -246,6 +247,7 @@ final class WorkspaceStore {
         composerDraftTools = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AgentSessionImports", isDirectory: true))
         terminalArchives = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("TerminalHistory", isDirectory: true))
+        projectSettings = .init(root: ProjectSettingsFiles.root(dataRoot: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot))
         self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
@@ -291,6 +293,7 @@ final class WorkspaceStore {
         composerDraftTools = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AgentSessionImports", isDirectory: true))
         terminalArchives = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("TerminalHistory", isDirectory: true))
+        projectSettings = .init(root: ProjectSettingsFiles.root(dataRoot: engine.worktreesRoot.deletingLastPathComponent()))
         self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
@@ -998,7 +1001,7 @@ final class WorkspaceStore {
         let service = NativeProjectScriptService(resolve: { [weak self] thread in
             guard let self, self.canOpenTerminal(for: thread),
                   let project = self.snapshot.projects.first(where: { $0.id == thread.projectID }) else { throw CancellationError() }
-            return .init(projectRoot: project.path, files: try self.fileService(path: thread.workspacePath))
+            return .init(projectRoot: project.path, files: try self.fileService(path: thread.workspacePath), settingsKeys: ProjectSettingsKey.candidates(for: project))
         }, authorize: { [weak self] thread, workspace in
             guard let self, self.canOpenTerminal(for: thread),
                   self.snapshot.projects.contains(where: { $0.id == thread.projectID && $0.path == workspace.projectRoot }),
@@ -1006,7 +1009,7 @@ final class WorkspaceStore {
             return current === workspace.files
         }, authorizeWindow: { [weak self] terminals in
             self?.terminalStores[ObjectIdentifier(terminals)]?.value === terminals
-        }, read: projectScriptReader)
+        }, read: projectScriptReader, settingsRoot: projectSettings.root)
         projectScriptService = service; return service
     }
     func refreshExternalEditors(forceRefresh: Bool = false) async {
@@ -3214,7 +3217,7 @@ final class WorkspaceStore {
         for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
         for task in piHistoryActions { _ = await task.result }
         for task in piFreshReads { _ = await task.result }
-        await projectScriptService?.shutdown()
+        await projectScriptService?.shutdown(); await projectSettings.shutdown()
         await externalEditorService?.shutdown()
         let creations = Array(projectCreationTasks.values)
         for task in creations { task.cancel() }
