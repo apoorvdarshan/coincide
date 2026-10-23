@@ -13,6 +13,8 @@ final class RemoteWorktreeStore {
     typealias Command = @MainActor (RemoteEnvironmentCommand) async -> Bool
     typealias CatalogLoader = @Sendable (RemoteWorkspaceTarget) async throws -> RemoteWorktreeCatalog
     private(set) var preparation: ThreadWorkspacePreparation?
+    private(set) var projectedPreparation: RemoteWorktreePreparationSummary?
+    private(set) var projectedDetail: RemoteThreadDetail?
     private(set) var catalog: RemoteWorktreeCatalog?
     private(set) var isLoading = false
     private(set) var isWorking = false
@@ -60,6 +62,7 @@ final class RemoteWorktreeStore {
     func update(target next: RemoteWorkspaceTarget?, thread: CodingThread?, loader: CatalogLoader?, connected: Bool,
                 supported: Bool, canWrite: Bool, canChangeWorkspace: Bool, identityChanged: Bool = false, perform: @escaping Command) {
         guard !stopping else { return }
+        projectedDetail = nil; projectedPreparation = nil
         let changed = !Self.sameCapture(target, next) || preparation?.id != thread?.workspacePreparation?.id || identityChanged || self.connected != connected
         if changed { generation = UUID(); catalogRead = UUID(); isLoading = false }
         target = next; self.thread = thread; preparation = thread?.workspacePreparation
@@ -67,7 +70,23 @@ final class RemoteWorktreeStore {
         workspaceChangeAllowed = canChangeWorkspace; command = perform; load = loader
     }
 
+    func updateProjected(target next: RemoteWorkspaceTarget?, detail: RemoteThreadDetail?, client: RemoteEnvironmentClient?,
+                         supported: Bool, canWrite: Bool, canChangeWorkspace: Bool, perform: @escaping Command) {
+        guard !stopping else { return }
+        let identity = client.map(ObjectIdentifier.init)
+        if !Self.sameCapture(target, next) || projectedPreparation?.id != detail?.preparation?.id || identity != clientIdentity {
+            generation = UUID(); catalogRead = UUID(); isLoading = false
+        }
+        target = next; thread = nil; preparation = nil; projectedDetail = detail; projectedPreparation = detail?.preparation
+        connected = client != nil; self.supported = supported; writesAllowed = canWrite; workspaceChangeAllowed = canChangeWorkspace
+        command = perform; clientIdentity = identity
+        if let client { load = { try await client.worktreeCatalog(target: $0) } } else { load = nil }
+    }
+    private var preparationID: UUID? { projectedPreparation?.id ?? preparation?.id }
     var canChoose: Bool {
+        if let projectedDetail {
+            return !stopping && supported && connected && writesAllowed && workspaceChangeAllowed && !isWorking && target != nil && projectedDetail.chooseWorktree.allowed
+        }
         guard !stopping, supported, connected, writesAllowed, workspaceChangeAllowed, !isWorking,
               let thread, !thread.isArchived, thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty,
               thread.settlement == nil, preparation == nil || preparation?.isReady == true || preparation?.canRetry == true else { return false }
@@ -75,14 +94,15 @@ final class RemoteWorktreeStore {
     }
     var setupIsCurrent: Bool { setupGeneration == generation && setupTarget != nil && !stopping }
     var canPrepare: Bool { canChoose && setupIsCurrent && !isLoading && catalog != nil && catalogError == nil && selection != nil }
-    var canCancel: Bool { canAct && preparation?.isRunning == true && preparation?.cancelRequested == false }
-    var canRetry: Bool { canAct && workspaceChangeAllowed && preparation?.canRetry == true }
-    var canInspect: Bool { canAct && preparation?.canRetry == true && preparation?.plan != nil }
+    var canCancel: Bool { canAct && (projectedPreparation?.canCancel ?? (preparation?.isRunning == true && preparation?.cancelRequested == false)) }
+    var canRetry: Bool { canAct && workspaceChangeAllowed && (projectedPreparation?.canRetry ?? (preparation?.canRetry == true)) }
+    var canInspect: Bool { canAct && (projectedPreparation?.canInspect ?? (preparation?.canRetry == true && preparation?.plan != nil)) }
     private var canAct: Bool { !stopping && supported && connected && writesAllowed && !isWorking && target != nil }
     var eligibilityMessage: String? {
         if !supported { return "This remote helper does not support worktree setup. Update the helper to enable it." }
         if !connected { return "Reconnect to choose or recover a worktree on the remote Mac." }
         if !workspaceChangeAllowed { return "Save or discard remote file edits and close live remote terminals before changing this conversation's checkout." }
+        if let detail = projectedDetail, !detail.chooseWorktree.allowed { return detail.chooseWorktree.reason }
         if thread?.settlement != nil { return "Resume this conversation before choosing another checkout." }
         if thread?.messages.isEmpty == false || thread?.isBusy == true || thread?.queuedTurns.isEmpty == false { return "Choose a worktree before the first message, with no running or queued turns." }
         if preparation?.isRunning == true { return "Wait for the current preparation or cancel it before choosing another worktree." }
@@ -111,12 +131,12 @@ final class RemoteWorktreeStore {
     }
 
     @discardableResult func beginSetup() -> Bool {
-        guard canChoose, let target, let thread, let load else { return false }
+        guard canChoose, let target, let load else { return false }
         if setupTarget?.environmentID != target.environmentID || setupTarget?.threadID != target.threadID {
             mode = .newBranch; branchName = ""; baseRef = "HEAD"; existingBranch = Data(); worktreePath = Data(); submodules = .none
         }
         setupGeneration = generation; setupTarget = target; setupLoader = load
-        setupThreadTitle = thread.title; setupWorkspacePath = target.workspacePath
+        setupThreadTitle = projectedDetail?.summary.title.preview ?? thread?.title ?? "Remote conversation"; setupWorkspacePath = target.workspacePath
         catalog = nil; catalogError = nil; actionError = nil
         return true
     }
@@ -129,7 +149,7 @@ final class RemoteWorktreeStore {
         do {
             let value = try await loader(requested)
             guard generation == owner, catalogRead == read, setupIsCurrent, !Task.isCancelled else { return }
-            guard Self.sameCapture(value.target, requested), value.attemptID == preparation?.id,
+            guard Self.sameCapture(value.target, requested), value.attemptID == preparationID,
                   value.branches.count <= 25_000, value.worktrees.count <= 25_000 else { throw RemoteWorkspaceFailure(.invalidTarget) }
             catalog = value
             if !localBranches.contains(where: { Data($0.name.utf8) == existingBranch }) { existingBranch = Data() }
@@ -146,15 +166,15 @@ final class RemoteWorktreeStore {
         return await execute(captured, using: command)
     }
     func retry() async {
-        guard canRetry, let target, let attempt = preparation?.id, let command else { return }
+        guard canRetry, let target, let attempt = preparationID, let command else { return }
         _ = await execute(.retryWorktree(target: target, attemptID: attempt), using: command)
     }
     func cancel() async {
-        guard canCancel, let target, let attempt = preparation?.id, let command else { return }
+        guard canCancel, let target, let attempt = preparationID, let command else { return }
         _ = await execute(.cancelWorktree(target: target, attemptID: attempt), using: command)
     }
     func inspect() async {
-        guard canInspect, let target, let attempt = preparation?.id, let command else { return }
+        guard canInspect, let target, let attempt = preparationID, let command else { return }
         _ = await execute(.inspectWorktree(target: target, attemptID: attempt), using: command)
     }
     private func execute(_ captured: RemoteEnvironmentCommand, using command: Command) async -> Bool {

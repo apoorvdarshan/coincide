@@ -31,6 +31,7 @@ public actor RemoteEnvironmentService {
     private var attachmentService: RemoteAttachmentService?
     private var pullRequestService: RemotePullRequestService?
     private var checkpointService: RemoteCheckpointService?
+    private var projectionService: RemoteProjectionService?
     private var initializing: Task<WorkspaceEngine, any Error>?
     private var subscriptions: [UUID: Task<Void, Never>] = [:]
     private var closing = false
@@ -65,7 +66,7 @@ public actor RemoteEnvironmentService {
         self.dataDirectory = dataDirectory; self.label = label; self.options = options; self.providerFactory = providerFactory; self.driverFactory = driverFactory
     }
     public func descriptor() -> RemoteEnvironmentDescriptor {
-        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil))
+        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true))
     }
     private func require(_ id: UUID) throws {
         guard id == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
@@ -188,6 +189,63 @@ public actor RemoteEnvironmentService {
         let service = try RemoteAttachmentService(environmentID: environmentID, engine: engine, dataDirectory: dataDirectory)
         attachmentService = service; return service
     }
+    private func projections() async throws -> RemoteProjectionService {
+        let engine = try await workspace()
+        guard !closing else { throw RemoteProjectionFailure(.unavailable) }
+        if let projectionService { return projectionService }
+        let service = RemoteProjectionService(environmentID: environmentID, engine: engine)
+        projectionService = service; return service
+    }
+    public func openProjection(_ request: RemoteProjectionOpenRequest) async throws -> RemoteProjectionOpenResult {
+        try require(request.environmentID)
+        return try await (try await projections()).open(request)
+    }
+    public func projectionCatalog(_ request: RemoteProjectionCatalogRequest) async throws -> RemoteProjectionCatalogResult {
+        try require(request.binding.environmentID)
+        return try await (try await projections()).catalog(request)
+    }
+    public func projectionThread(_ request: RemoteProjectionThreadRequest) async throws -> RemoteProjectionThreadResult {
+        try require(request.binding.environmentID)
+        return try await (try await projections()).thread(request)
+    }
+    public func projectionMessages(_ request: RemoteProjectionMessagesRequest) async throws -> RemoteProjectionMessagesResult {
+        try require(request.binding.environmentID)
+        return try await (try await projections()).messages(request)
+    }
+    public func projectionRuns(_ request: RemoteProjectionRunsRequest) async throws -> RemoteProjectionRunsResult {
+        try require(request.binding.environmentID)
+        return try await (try await projections()).runs(request)
+    }
+    public func projectionOperations(_ request: RemoteProjectionOperationsRequest) async throws -> RemoteProjectionOperationsResult {
+        try require(request.binding.environmentID)
+        return try await (try await projections()).operations(request)
+    }
+    public func projectionContent(_ request: RemoteProjectionContentRequest) async throws -> RemoteProjectionContentResult {
+        try require(request.binding.environmentID)
+        return try await (try await projections()).content(request)
+    }
+    public func projectionRelease(_ request: RemoteProjectionReleaseRequest) async throws -> RemoteProjectionReleaseResult {
+        try require(request.binding.environmentID)
+        return try await (try await projections()).release(request)
+    }
+    public func projectionUpdates(hostID: UUID) async throws -> AsyncStream<RemoteProjectionInvalidation> {
+        let engine = try await workspace(), id = UUID()
+        let pair = AsyncStream<RemoteProjectionInvalidation>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let stream = await engine.updates()
+        let environmentID = environmentID
+        let task = Task { [weak self] in
+            for await update in stream {
+                guard !Task.isCancelled, let self, await self.projectionConnectionOpen(), update.error == nil else { break }
+                pair.continuation.yield(.init(environmentID: environmentID, hostID: hostID, sequence: update.sequence))
+            }
+            pair.continuation.finish()
+            await self?.removeSubscription(id)
+        }
+        subscriptions[id] = task
+        pair.continuation.onTermination = { _ in task.cancel() }
+        return pair.stream
+    }
+    private func projectionConnectionOpen() -> Bool { !closing }
     private func checkpoints() async throws -> RemoteCheckpointService {
         let engine = try await workspace()
         guard !closing else { throw RemoteCheckpointFailure(.unavailable) }
@@ -451,10 +509,11 @@ public actor RemoteEnvironmentService {
         closing = true
         let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
         for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
-        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService, checkpointService = checkpointService
+        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService, checkpointService = checkpointService, projectionService = projectionService
         for task in subscriptions { task.cancel() }
         let task = Task {
             await terminalService?.close()
+            await projectionService?.close()
             await checkpointService?.close()
             await pullRequestService?.close()
             await workspaceService?.close()

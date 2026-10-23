@@ -51,12 +51,16 @@ struct RemoteRunCheckpointHistoryContent: View {
             if let model {
                 if let message = model.errorMessage ?? model.unavailableMessage { Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).padding(.horizontal, 16) }
                 if model.isLoading { ProgressView("Reading remote checkpoint inventory…").controlSize(.small).padding(.horizontal, 16) }
+                if model.projection != nil {
+                    RemoteProjectedCheckpointHistory(model: model, showDiff: showWorkspaceChanges, restore: restore)
+                } else {
                 RunHistoryContent(thread: model.thread, showWorkspaceChanges: showWorkspaceChanges,
                     historyAction: nil, historyUnavailableReason: nil,
                     restoreAction: restore,
                     restoreUnavailableReason: { model.restoreUnavailableReason(runID: $0, stage: $1, attemptID: $2) },
                     restoreOperations: model.operations,
                     restoreOperationView: { AnyView(RemoteCheckpointRestoreOperationView(model: model, operation: $0)) })
+                }
             } else { ContentUnavailableView("Choose a Remote Conversation", systemImage: "clock") }
         }.frame(minWidth: 360, idealWidth: 620, maxWidth: 760)
     }
@@ -70,12 +74,12 @@ private struct RemoteCheckpointDiffPane: View {
     private var record: ThreadRunRecord? { model.thread?.runHistory?.first { $0.id == runID } }
     private var revision: String { (record?.checkpoints?.baseline.id.uuidString ?? "missing") + ":" + (record?.checkpoints?.postRun?.id.uuidString ?? "missing") }
     var body: some View {
-        RunCheckpointDiffContent(workspacePath: record?.configuration.workspacePath,
+        RunCheckpointDiffContent(workspacePath: record?.configuration.workspacePath ?? model.projectedRuns.first(where: { $0.id == runID })?.workspacePath,
             diff: model.diff.flatMap { $0.runID == runID ? .init(patch: $0.patch, truncated: $0.truncated) : nil },
             error: model.diffError, loading: model.isLoadingDiff, close: close,
             restoreTargets: record.map(RunCheckpointRestorePresentation.targets) ?? [], restoreAction: restore,
             restoreUnavailableReason: { model.restoreUnavailableReason(runID: runID, stage: $0, attemptID: $1) })
-            .task(id: revision) { await model.loadDiff(runID: runID) }
+            .task(id: revision) { await model.loadAttempts(runID: runID); await model.loadDiff(runID: runID) }
     }
 }
 
@@ -91,7 +95,7 @@ struct RemoteCheckpointRestorePane: View {
             confirm: { Task { await model.applyRestore() } }, close: close)
             .interactiveDismissDisabled(model.isActing)
             .task {
-                if model.inventory == nil { await model.refresh() }
+                if model.inventory == nil, model.projection == nil { await model.refresh() }
                 let owned = await model.prepareRestore(runID: runID, stage: stage, attemptID: attemptID)
                 guard !Task.isCancelled else { if let owned { model.clearReview(id: owned) }; return }
                 ownedReviewID = owned
@@ -129,6 +133,21 @@ struct RemoteRunCheckpointBanner: View {
     var body: some View {
         if let model = store.current {
             VStack(alignment: .leading, spacing: 8) {
+                if let banner = model.projectedBanner {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(banner.title).font(.caption.weight(.semibold))
+                        Text(banner.detail).font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            if banner.canRetry { Button("Retry Current Workspace") { Task { await model.retryPostRun(runID: banner.runID, attemptID: banner.attempt.id) } } }
+                            if banner.canContinue { Button("Continue Without Snapshot") { Task { await model.continuePostRun(runID: banner.runID, attemptID: banner.attempt.id) } } }
+                        }.disabled(!model.canRead || !model.writesAllowed || !model.mutationsAllowed || model.isActing)
+                    }
+                }
+                ForEach(model.projectedOperations.filter { !$0.acknowledged && $0.phase != "completed" }) { operation in
+                    RemoteProjectedOperationCard(operation: operation, enabled: model.canRead && model.writesAllowed && !model.isActing) { action in
+                        Task { await model.recover(operation.id, acknowledge: action == .acknowledgeRestore) }
+                    }
+                }
                 if let presentation = model.banner {
                     HStack(alignment: .top, spacing: 8) {
                         if presentation.attempt.phase.isRunning { ProgressView().controlSize(.small) }
@@ -188,5 +207,51 @@ struct RemoteCheckpointRestoreOperationView: View {
     @ViewBuilder private var recoveryButtons: some View {
         Button("Inspect Restore State") { Task { await model.recover(operation.id) } }
         Button("Keep Current Files…") { acknowledging = operation.id }
+    }
+}
+
+struct RemoteProjectedCheckpointHistory: View {
+    var model: RemoteCheckpointWorkspace
+    let showDiff: (UUID) -> Void
+    let restore: (UUID, RunCheckpointStage, UUID) -> Void
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                if let projection = model.projection {
+                    Text("Showing \(projection.runs.count) of \(projection.runCount) runs · \(projection.runsComplete ? "end of history reached" : "more history available")")
+                        .font(.caption).foregroundStyle(.secondary)
+                    ForEach(model.projectedOperations) { operation in
+                        RemoteProjectedOperationCard(operation: operation, enabled: model.canRead && model.writesAllowed && !model.isActing) { action in
+                            Task { await model.recover(operation.id, acknowledge: action == .acknowledgeRestore) }
+                        }
+                    }
+                    ForEach(model.projectedRuns) { run in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack { Text(run.startedAt, style: .date); Text(run.status.rawValue).foregroundStyle(.secondary); Spacer() }
+                            Text("\(run.providerName) · \(run.model.preview)").font(.caption).foregroundStyle(.secondary)
+                            Text(run.workspacePath).font(.caption).textSelection(.enabled)
+                            if run.checkpointDiff.allowed { Button("Show Workspace Changes") { showDiff(run.id) } }
+                            ForEach(model.attempts(runID: run.id)) { attempt in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text("\(attempt.stage.rawValue) · \(attempt.phase.rawValue)").font(.caption.weight(.medium))
+                                        Spacer()
+                                        Button("Review Restore…") { restore(run.id, attempt.stage, attempt.id) }
+                                            .disabled(model.restoreUnavailableReason(runID: run.id, stage: attempt.stage, attemptID: attempt.id) != nil)
+                                    }
+                                    if let error = attempt.error { RemoteProjectionPreview(text: error).font(.caption) }
+                                    if let reason = attempt.restore.reason { Text(reason).font(.caption).foregroundStyle(.secondary) }
+                                }
+                            }
+                            if !run.checkpointAttemptsComplete, model.attempts(runID: run.id).count < run.checkpointAttemptCount {
+                                Button("Load All \(run.checkpointAttemptCount) Observations") { Task { await model.loadAttempts(runID: run.id) } }
+                            }
+                        }.padding(12).coincideSurface()
+                    }
+                    if projection.canLoadRuns { Button("Load More Runs") { Task { await projection.loadMore(.runs) } } }
+                    if projection.hasNewerContent || !projection.followsLatest { Button("Follow Latest") { Task { await projection.followLatest() } } }
+                }
+            }.padding(16)
+        }
     }
 }

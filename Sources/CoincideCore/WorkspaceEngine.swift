@@ -4897,6 +4897,11 @@ extension WorkspaceEngine {
 }
 
 extension WorkspaceEngine {
+    func captureRemoteProjection() async throws -> WorkspaceUpdate {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil else { throw RemoteProjectionFailure(.unavailable) }
+        return .init(snapshot: revision.snapshot, sequence: revision.sequence)
+    }
     private func beginRemoteCheckpointOperation() throws {
         guard !remoteCheckpointsClosing else { throw RemoteCheckpointFailure(.unavailable) }
         remoteCheckpointOperations += 1

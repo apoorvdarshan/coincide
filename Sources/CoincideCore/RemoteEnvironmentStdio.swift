@@ -18,7 +18,7 @@ public enum RemoteEnvironmentStdio {
                 let source = DispatchSource.makeSignalSource(signal: number, queue: .global(qos: .userInitiated))
                 source.setEventHandler { input.stop() }; source.resume(); return source
             }
-            var subscription: Task<Void, Never>?
+            let subscriptions = RemoteEnvironmentSubscriptions()
             var status: Int32 = 0
             do {
                 requestLoop: for try await received in input.frames {
@@ -52,9 +52,7 @@ public enum RemoteEnvironmentStdio {
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentSnapshotRequest.self, from: params)
                             let snapshot = try await current.snapshot(request)
                             let updates = try await current.updates()
-                            subscription?.cancel()
-                            if let subscription { await subscription.value }
-                            subscription = Task {
+                            try await subscriptions.replace {
                                 await forwardSubscription(updates, send: { value in
                                     try await writer.send(.object(["jsonrpc": .string("2.0"),
                                         "method": .string(RemoteEnvironmentProtocol.snapshotNotification),
@@ -62,6 +60,74 @@ public enum RemoteEnvironmentStdio {
                                 }, disconnect: { input.stop() })
                             }
                             result = try RemoteEnvironmentProtocol.encode(snapshot)
+                        case RemoteProjectionProtocol.subscribeMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionOpenRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                let binding = try await current.openProjection(request)
+                                try await subscriptions.replace {
+                                    do {
+                                        try Task.checkCancellation()
+                                        let updates = try await current.projectionUpdates(hostID: binding.hostID)
+                                        for await value in updates {
+                                            try Task.checkCancellation()
+                                            try await writer.send(.object(["jsonrpc": .string("2.0"),
+                                                "method": .string(RemoteProjectionProtocol.changedNotification),
+                                                "params": try RemoteEnvironmentProtocol.encode(value)]))
+                                        }
+                                    } catch { }
+                                    if !Task.isCancelled { input.stop() }
+                                }
+                                return try RemoteEnvironmentProtocol.encode(binding)
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectionProtocol.openMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionOpenRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.openProjection(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectionProtocol.catalogMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionCatalogRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectionCatalog(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectionProtocol.threadMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionThreadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectionThread(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectionProtocol.messagesMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionMessagesRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectionMessages(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectionProtocol.runsMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionRunsRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectionRuns(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectionProtocol.operationsMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionOperationsRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectionOperations(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectionProtocol.contentMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionContentRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectionContent(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectionProtocol.releaseMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectionReleaseRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectionRelease(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
                         case RemoteEnvironmentProtocol.commandMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
                             if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand {
@@ -242,9 +308,7 @@ public enum RemoteEnvironmentStdio {
                         case RemoteEnvironmentProtocol.closeMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentSnapshotRequest.self, from: params)
                             guard request.environmentID == current.environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
-                            subscription?.cancel()
-                            if let subscription { await subscription.value }
-                            subscription = nil
+                            await subscriptions.close()
                             async let serviceClose: Void = current.close()
                             await workspaceReads.close()
                             await serviceClose
@@ -259,12 +323,11 @@ public enum RemoteEnvironmentStdio {
                     }
                 }
             } catch { status = 1 }
-            subscription?.cancel()
+            await subscriptions.close()
             input.stop(); await input.join()
             async let serviceClose: Void = current.close()
             await workspaceReads.close()
             await serviceClose
-            if let subscription { await subscription.value }
             for source in signals { source.cancel() }
             return status
         } catch {
@@ -299,7 +362,8 @@ public enum RemoteEnvironmentStdio {
     }
     fileprivate static func errorResponse(id: JSONValue, error: any Error) -> JSONValue {
         let code: Int, kind: String, message: String
-        if let safe = error as? RemoteCheckpointFailure { code = -32_005; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        if let safe = error as? RemoteProjectionFailure { code = -32_006; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        else if let safe = error as? RemoteCheckpointFailure { code = -32_005; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemotePullRequestFailure { code = -32_004; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteAttachmentFailure { code = -32_003; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteTerminalFailure { code = -32_002; kind = safe.kind.rawValue; message = safe.localizedDescription }
@@ -458,5 +522,26 @@ private actor RemoteEnvironmentStdioWriter {
             else if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) { try await Task.sleep(for: .milliseconds(2)) }
             else { throw RemoteEnvironmentError(.unavailable) }
         }
+    }
+}
+
+/// Subscription replacement is owned separately from the stdin loop. A slow
+/// projected view cannot hold Stop/close behind snapshot construction.
+private actor RemoteEnvironmentSubscriptions {
+    private var task: Task<Void, Never>?
+    private var generation = UUID()
+    private var closed = false
+    func replace(_ operation: @escaping @Sendable () async -> Void) async throws {
+        guard !closed else { throw CancellationError() }
+        let token = UUID(); generation = token
+        let previous = task; task = nil; previous?.cancel()
+        await previous?.value
+        guard !closed, generation == token else { throw CancellationError() }
+        task = Task { await operation() }
+    }
+    func close() async {
+        closed = true; generation = UUID()
+        let previous = task; task = nil; previous?.cancel()
+        await previous?.value
     }
 }

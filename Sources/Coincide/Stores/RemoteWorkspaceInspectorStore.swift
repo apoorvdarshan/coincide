@@ -23,7 +23,7 @@ final class RemoteWorkspaceInspectorStore {
     @ObservationIgnored private var closed = false
     @ObservationIgnored private var recoveryClients: [UUID: RemoteEnvironmentClient] = [:]
     @ObservationIgnored private var currentKey: RemoteWorkspaceInspectorKey?
-    @ObservationIgnored private var currentInput: (environmentID: UUID, thread: CodingThread, client: RemoteEnvironmentClient?, canMutate: Bool)?
+    @ObservationIgnored private var currentInput: (target: RemoteWorkspaceTarget, client: RemoteEnvironmentClient?, canMutate: Bool)?
 
     init(pendingStore: RemoteWorkspacePendingStore) { self.pendingStore = pendingStore }
 
@@ -33,12 +33,17 @@ final class RemoteWorkspaceInspectorStore {
     }
 
     func select(environmentID: UUID, thread: CodingThread, client: RemoteEnvironmentClient?, canMutate: Bool) async {
+        await select(target: .init(environmentID: environmentID, projectID: thread.projectID, threadID: thread.id,
+            configuration: .init(thread: thread)), client: client, canMutate: canMutate)
+    }
+    func select(target: RemoteWorkspaceTarget, client: RemoteEnvironmentClient?, canMutate: Bool) async {
+        let environmentID = target.environmentID
         guard !closed else { return }
         let owner = UUID(); selection = owner
         if let client { recoveryClients[environmentID] = client }
-        let key = RemoteWorkspaceInspectorKey(environmentID: environmentID, threadID: thread.id, path: Data(thread.workspacePath.utf8))
+        let key = RemoteWorkspaceInspectorKey(environmentID: environmentID, threadID: target.threadID, path: Data(target.workspacePath.utf8))
         let sameCurrentWorkspace = currentKey == key
-        currentKey = key; currentInput = (environmentID, thread, client, canMutate)
+        currentKey = key; currentInput = (target, client, canMutate)
         if isShowingRetained, sameCurrentWorkspace {
             if let selected, let client, selected.session.target.environmentID == environmentID {
                 await selected.session.connectForRecovery(client: client)
@@ -55,8 +60,7 @@ final class RemoteWorkspaceInspectorStore {
                 }
                 unused.value.session.disconnect(); models.removeValue(forKey: unused.key)
             }
-            model = RemoteWorkspaceInspectorModel(target: .init(environmentID: environmentID, projectID: thread.projectID,
-                threadID: thread.id, configuration: .init(thread: thread)), pendingStore: pendingStore)
+            model = RemoteWorkspaceInspectorModel(target: target, pendingStore: pendingStore)
             models[key] = model
         }
         if selected !== model { selected?.session.disconnect() }
@@ -74,7 +78,7 @@ final class RemoteWorkspaceInspectorStore {
     func returnToCurrent() async {
         guard let input = currentInput else { return }
         isShowingRetained = false
-        await select(environmentID: input.environmentID, thread: input.thread, client: input.client, canMutate: input.canMutate)
+        await select(target: input.target, client: input.client, canMutate: input.canMutate)
     }
 
     func showRetained(_ model: RemoteWorkspaceInspectorModel) {

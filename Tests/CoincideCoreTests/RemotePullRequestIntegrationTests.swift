@@ -37,6 +37,10 @@ private struct RemotePRFixture: Sendable {
             }
             let ghPeer = try #require(Bundle.module.url(forResource: "remote_pull_request_gh", withExtension: "py", subdirectory: "Fixtures"))
             let gitPeer = try #require(Bundle.module.url(forResource: "remote_pull_request_git", withExtension: "py", subdirectory: "Fixtures"))
+            let gitRouter = try #require(Bundle.module.url(forResource: "remote_pull_request_git", withExtension: "sh", subdirectory: "Fixtures"))
+            let gitRouterSource = try String(contentsOf: gitRouter, encoding: .utf8)
+                .replacingOccurrences(of: "__FIXTURE_ROOT__", with: quote(root.path))
+                .replacingOccurrences(of: "__PYTHON_PEER__", with: quote(gitPeer.path))
             let proxy = try #require(Bundle.module.url(forResource: "remote_pull_request_proxy", withExtension: "py", subdirectory: "Fixtures"))
             #if DEBUG
             let configuration = "debug"
@@ -50,7 +54,7 @@ private struct RemotePRFixture: Sendable {
             for (path, contents) in [
                 (host, "#!/bin/sh\numask 077\nprintf '%s\\n' \"$$\" >> \(quote(root.appendingPathComponent("host-pids.txt").path))\nexec \(quote(helper.path)) \"$@\"\n"),
                 (github, "#!/bin/sh\nexec /usr/bin/python3 \(quote(ghPeer.path)) \(quote(root.path)) \"$@\"\n"),
-                (root.appendingPathComponent("bin/git"), "#!/bin/sh\nphase=other\nfor argument do\ncase \"$argument\" in rev-parse|config|status|for-each-ref|worktree|fetch|checkout|update-ref|show-ref|cat-file|symbolic-ref|show|diff|ls-files) phase=\"$argument\"; break;; esac\ndone\nprintf '{\"phase\":\"%s\",\"pid\":%s}\\n' \"$phase\" \"$$\" >> \(quote(root.appendingPathComponent("git-phases.jsonl").path))\nexec /usr/bin/python3 \(quote(gitPeer.path)) \(quote(root.path)) \"$@\"\n"),
+                (root.appendingPathComponent("bin/git"), gitRouterSource),
                 (root.appendingPathComponent("provider-must-never-run"), "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \(quote(root.appendingPathComponent("unexpected-provider-pids.txt").path))\nexit 73\n")
             ] {
                 try contents.write(to: path, atomically: false, encoding: .utf8)

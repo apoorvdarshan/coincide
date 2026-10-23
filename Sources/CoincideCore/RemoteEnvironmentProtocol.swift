@@ -64,7 +64,8 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsRemoteAttachments: Bool
     public let supportsRemotePullRequests: Bool
     public let supportsRemoteCheckpoints: Bool
-    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false) {
+    public let supportsBoundedProjections: Bool
+    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
@@ -74,10 +75,11 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRemoteAttachments = true
         supportsRemotePullRequests = true
         supportsRemoteCheckpoints = true
+        self.supportsBoundedProjections = supportsBoundedProjections
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -95,6 +97,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRemoteAttachments = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteAttachments) ?? false
         supportsRemotePullRequests = try values.decodeIfPresent(Bool.self, forKey: .supportsRemotePullRequests) ?? false
         supportsRemoteCheckpoints = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteCheckpoints) ?? false
+        supportsBoundedProjections = try values.decodeIfPresent(Bool.self, forKey: .supportsBoundedProjections) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {

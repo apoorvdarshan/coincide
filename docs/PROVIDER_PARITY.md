@@ -22,6 +22,12 @@ These controls are provider-independent file workflows; they do not add remote
 provider-history fork/rewind or establish installed-provider/SSH acceptance.
 See [the remote checkpoint boundaries](REMOTE_ENVIRONMENTS.md#remote-run-checkpoints).
 
+Updated remote helpers also negotiate bounded catalog/control/transcript/run/
+operation views. Current controls hydrate exact typed documents separately from
+pinned history pages; complete provider-history evidence remains host-owned.
+This removes the full-native-snapshot frame dependency for browsing and does not
+add remote provider-history mutations. See [bounded views](REMOTE_ENVIRONMENTS.md#bounded-remote-views).
+
 The separate default Liquid Glass requirement also remains mandatory. Provider
 integration work does not satisfy the native chrome, control, accessibility,
 older-macOS fallback, or actual visual-verification requirements.

@@ -4,7 +4,22 @@ import SwiftUI
 struct RemoteWorktreeBanner: View {
     var store: RemoteWorktreeStore
     var body: some View {
-        if let preparation = store.preparation {
+        if let preparation = store.projectedPreparation {
+            if preparation.phase != .completed || !preparation.warnings.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text("Remote worktree · \(preparation.phase.rawValue)").font(.caption.weight(.semibold))
+                        Spacer()
+                        if preparation.canCancel { Button("Cancel") { Task { await store.cancel() } }.disabled(!store.canCancel) }
+                        if preparation.canInspect { Button("Inspect Result") { Task { await store.inspect() } }.disabled(!store.canInspect) }
+                        if preparation.canRetry { Button("Retry") { Task { await store.retry() } }.disabled(!store.canRetry) }
+                    }
+                    Text(preparation.destinationPath).font(.caption).textSelection(.enabled)
+                    if let error = preparation.error { RemoteProjectionPreview(text: error).font(.caption) }
+                    ForEach(Array(preparation.warnings.enumerated()), id: \.offset) { _, text in RemoteProjectionPreview(text: text).font(.caption) }
+                }.padding(12).coincideSurface()
+            }
+        } else if let preparation = store.preparation {
             if preparation.isReady {
                 if let warning = preparation.result?.submoduleWarning {
                     Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)

@@ -90,6 +90,62 @@ history/fork/rewind, checkpoint range diffs, portable history/merge-back and
 large-history pagination remain unfinished. Offline peers and local Git fixtures
 do not establish real SSH, installed-provider or remote sign-in acceptance.
 
+## Bounded remote views
+
+Updated helpers advertise `supportsBoundedProjections`. The remote window then
+uses typed catalog, current-control, transcript, run and operation pages instead
+of transmitting a complete native workspace. Older helpers retain the existing
+fully validated snapshot path. A projected connection never silently falls back
+to that legacy snapshot transport.
+
+Each projected response reserves its JSON-RPC envelope within 256 KiB. Large
+text and complete configuration, draft, attachment-reference and question
+objects use SHA-256-bound content references with 128 KiB byte chunks. Controls
+hydrate their complete typed documents before use; clipped previews never
+become provider input or approval choices. Action-document hydration has a
+32 MiB client limit and fails explicitly above it. The local draft limit remains
+120,000 UTF-16 units: an oversized imported host draft is marked host-only until
+the user explicitly copies/replaces it locally, and cannot create a pending
+submit while local preservation would fail.
+
+Catalog, thread and current-control views have separate immutable bindings.
+Bindings pin environment, owned-host generation, view, sequence and a projected
+manifest fingerprint. Pages/cursors also bind their query, position and total;
+content binds its exact reference and byte offset. Duplicate reads are stable.
+An older thread view stays coherent while current controls refresh at a newer
+sequence. Small coalesced sequence notifications invalidate latest state; they
+are hints, not a lossless journal replay. A fresh open enforces the previously
+observed sequence floor, including catalog-only sessions and command receipts.
+
+The host cache retains at most eight views and 128 MiB of encoded display data
+and content. Release, LRU/byte-budget eviction, close and host restart invalidate
+old views explicitly. A stale cursor requires refresh; it never restarts a
+provider or replays input. Projection responses exclude complete native provider-history inventories,
+persisted operation reviews and sealed restore manifests. Existing explicit
+review endpoints still return their bounded review values; only host-cached
+proof and native admission authorize writes. Projection summaries are not
+converted into native workspace/thread/history evidence.
+
+The UI retains 512 rows per collection and shows loaded ranges/incomplete
+history. Catalog Refresh returns to the first window. Load Earlier pauses
+following; Follow Latest opens a current transcript view. A message can load
+beyond one page through a UTF-8-safe 1 MiB display window; earlier text can be
+restarted and full-content verification is shown only after the final hash.
+Only loaded text is displayed/copied. Operation audit pages are read-only;
+current recovery heads retain their existing exact-command actions.
+
+Current control availability is computed from the complete host state, never
+from absence in a partially loaded catalog. It is an eligibility hint, not a
+writer lease. Existing host file/Git/PTY admission remains authoritative, and the
+client rechecks retained buffers and terminals before mutations. Exact captured
+run/runtime/request identities remain usable during streaming invalidations;
+older-history browsing does not freeze Stop, questions or queue controls.
+
+This is bounded display transport and browsing. Remote provider-history
+fork/rewind and provider-specific recovery commands still need implementation;
+portable transfers, broader history/checkpoint ranges, durable paged journal
+catch-up and persistent-host transport remain separate unfinished parity work.
+
 ## Remote Files and Changes
 
 The inspector browses directories, searches paths or text (including regular
@@ -283,8 +339,9 @@ older helpers. Terminal byte polling is separate from workspace snapshots.
 Subscription delivery coalesces complete snapshots with a monotonic
 sequence; it is not a lossless event/delta replay stream. A sequence floor is
 retained across reconnects within the running client/store. It is not a durable
-cross-app-restart rollback attestation. Oversized workspaces require a future
-paginated projection protocol.
+cross-app-restart rollback attestation. Updated helpers also support the
+bounded projection route described above; legacy snapshots keep their 16 MiB
+frame limit and do not silently omit history.
 
 Graceful disconnect asks the exact trusted host to drain its Engine before
 joining the owned SSH process. EOF/signals also trigger host shutdown. Neither
@@ -338,15 +395,13 @@ The reference is T3 Code
    receipt-capacity management and crash recovery for unsaved editor buffers.
    Preserve the current separation between local and remote paths/services.
 3. Add persistent-host ownership, signed helper provisioning/update and bounded
-   paginated projections with explicit incomplete-history state. Ordered journal
+   durable paginated catch-up beyond the current display views. Ordered journal
    catch-up needs a gap-free handoff and explicit resynchronization; coalesced
    complete snapshots must never be reinterpreted as a lossless delta stream.
-   Complete native provider-history proofs can already exceed the 16 MiB remote
-   frame limit. Broad remote history therefore needs a negotiated bounded
-   projection with paged transcript/operation summaries and host-owned complete
-   proofs; paging just the review RPC cannot fix the following full snapshot.
-   Removing mandatory evidence from a value called `WorkspaceSnapshot` is not a
-   valid projection migration.
+   Complete native provider-history proofs remain host-owned behind the bounded
+   projection. Broad remote history must preserve this separation and expose
+   reviewed opaque intents/recovery; paging just a review RPC and returning a
+   full native snapshot afterward would reintroduce the old frame limit.
 4. Add native HTTPS/LAN transport, pairing, scoped authorization, revocation,
    Keychain-backed client credentials and saved route/environment controls on the
    same service boundary. Proposed files: `EnvironmentHTTPServer.swift`,

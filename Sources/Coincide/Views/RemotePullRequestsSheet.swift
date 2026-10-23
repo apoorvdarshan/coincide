@@ -28,7 +28,7 @@ struct RemotePullRequestsSheet: View {
             if let error = store.errorMessage { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(12) }
             if let model = captured {
                 if mode != .list { Button("Back to Pull Requests") { mode = .list }.disabled(model.isActing).padding(12) }
-                if model.operation != nil || !model.checkoutOperations.isEmpty {
+                if !model.projectedOperations.isEmpty || model.operation != nil || !model.checkoutOperations.isEmpty {
                     ScrollView { RemotePullRequestOperations(model: model, viewResult: { mode = .detail }).padding(12) }.frame(maxHeight: 200)
                 }
                 content(model).frame(maxWidth: .infinity, minHeight: 220, maxHeight: .infinity)

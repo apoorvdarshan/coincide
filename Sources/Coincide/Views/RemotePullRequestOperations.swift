@@ -12,6 +12,11 @@ struct RemotePullRequestOperations: View {
     @State private var confirming: RemotePullRequestAcknowledgement?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            ForEach(model.projectedOperations) { operation in
+                RemoteProjectedOperationCard(operation: operation, enabled: model.canRead && model.writesAllowed && !model.isActing) { action in
+                    Task { await model.actProjected(action, operationID: operation.id) }
+                }
+            }
             if let operation = model.operation {
                 PullRequestOperationContent(operation: operation, inspecting: model.isActing,
                     inspect: { Task { await model.recoverCreation(id: operation.id) } },
@@ -48,7 +53,7 @@ struct RemotePullRequestOperations: View {
 struct RemotePullRequestBanner: View {
     var store: RemotePullRequestStore
     var body: some View {
-        if let model = store.current, model.operation?.locksSource == true || model.checkoutOperations.contains(where: \.retainsProject) {
+        if let model = store.current, model.hasProjectedHold || model.operation?.locksSource == true || model.checkoutOperations.contains(where: \.retainsProject) {
             ScrollView { RemotePullRequestOperations(model: model).padding(12) }.frame(maxHeight: 200)
         }
     }

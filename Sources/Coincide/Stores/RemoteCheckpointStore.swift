@@ -46,6 +46,18 @@ final class RemoteCheckpointStore {
         model.update(target: target, thread: thread, snapshot: snapshot, transport: transport, supported: supported,
             canWrite: canWrite, canMutate: canMutate, perform: perform, canRestore: canRestore)
     }
+    func selectProjected(target: RemoteWorkspaceTarget?, projection: RemoteProjectionStore, client: RemoteEnvironmentClient?,
+                         supported: Bool, canWrite: Bool, canMutate: Bool, perform: @escaping Perform,
+                         canRestore: @escaping CanRestore) async {
+        let identity = client.map(ObjectIdentifier.init)
+        if identity != clientIdentity { disconnect(); clientIdentity = identity }
+        guard !closed, let target else { clearSelection(); return }
+        let key = RemoteCheckpointKey(environmentID: target.environmentID, threadID: target.threadID, path: Data(target.workspacePath.utf8))
+        let model = models[key] ?? RemoteCheckpointWorkspace(target: target); models[key] = model
+        if current !== model { current?.disconnect() }; current = model
+        model.updateProjected(target: target, projection: projection, transport: client.map(RemoteCheckpointTransport.live),
+            supported: supported, canWrite: canWrite, canMutate: canMutate, perform: perform, canRestore: canRestore)
+    }
     func clearSelection() { current?.disconnect(); current = nil }
     func disconnect() { clientIdentity = nil; for model in models.values { model.disconnect() } }
     func shutdown() async { closed = true; disconnect(); for model in models.values { await model.drainReads() } }
@@ -56,6 +68,7 @@ final class RemoteCheckpointStore {
 final class RemoteCheckpointWorkspace {
     private(set) var target: RemoteWorkspaceTarget
     private(set) var thread: CodingThread?
+    private(set) var projection: RemoteProjectionStore?
     private(set) var inventory: RemoteCheckpointInventory?
     private(set) var diff: RemoteCheckpointDiff?
     private(set) var restoreReview: RemoteCheckpointReview?
@@ -87,11 +100,12 @@ final class RemoteCheckpointWorkspace {
     @ObservationIgnored private var reviewWaiters: [CheckedContinuation<Void, Never>] = []
     init(target: RemoteWorkspaceTarget) { self.target = target }
     var canRead: Bool { connected && supported && transport != nil }
-    var policy: RunCheckpointPolicy { thread?.effectiveCheckpointPolicy ?? inventory?.policy ?? .disabled }
+    var policy: RunCheckpointPolicy { projection?.control?.detail.checkpointPolicy ?? thread?.effectiveCheckpointPolicy ?? inventory?.policy ?? .disabled }
     var banner: RunCheckpointBannerPresentation? { thread.flatMap(RunCheckpointPresentation.banner) }
     var canApply: Bool {
         guard canRead, writesAllowed, mutationsAllowed, !isActing, !isReviewing, let review = restoreReview,
-              !operations.contains(where: { $0.id == review.id }), preflight(review.value) else { return false }
+              !operations.contains(where: { $0.id == review.id }), !projectedOperations.contains(where: { $0.id == review.id }), preflight(review.value) else { return false }
+        if projection != nil { return projectedAttempt(runID: review.value.runID, stage: review.value.stage, id: review.value.attemptID).map { Self.matches($0, native: review.value.checkpoint) && $0.restore.allowed } == true }
         return exactAttempt(runID: review.value.runID, stage: review.value.stage, id: review.value.attemptID).map { Self.same($0, review.value.checkpoint) } == true
     }
     var unavailableMessage: String? {
@@ -104,6 +118,7 @@ final class RemoteCheckpointWorkspace {
     func update(target: RemoteWorkspaceTarget, thread: CodingThread, snapshot: WorkspaceSnapshot, transport: RemoteCheckpointTransport?,
                 supported: Bool, canWrite: Bool, canMutate: Bool, perform: @escaping RemoteCheckpointStore.Perform,
                 canRestore: @escaping RemoteCheckpointStore.CanRestore) {
+        projection = nil
         let unchanged = Self.sameCapture(self.target, target)
         if !unchanged { disconnect(); inventory = nil; diff = nil }
         let policyChanged = self.thread.map { $0.effectiveCheckpointPolicy != thread.effectiveCheckpointPolicy } ?? false
@@ -118,8 +133,57 @@ final class RemoteCheckpointWorkspace {
         }
         if let diff, !matchesDiff(diff) || diffSource != currentDiffSource(runID: diff.runID) { self.diff = nil; diffSource = nil; diffRead = UUID(); isLoadingDiff = false }
     }
+    var projectedOperations: [RemoteOperationSummary] { projection?.currentOperations.filter { $0.kind == .checkpointRestore } ?? [] }
+    var projectedRuns: [RemoteRunSummary] { projection?.runs ?? [] }
+    var projectedBanner: RemoteCheckpointBannerSummary? { projection?.control?.detail.checkpointBanner }
+    func updateProjected(target: RemoteWorkspaceTarget, projection: RemoteProjectionStore, transport: RemoteCheckpointTransport?,
+                         supported: Bool, canWrite: Bool, canMutate: Bool, perform: @escaping RemoteCheckpointStore.Perform,
+                         canRestore: @escaping RemoteCheckpointStore.CanRestore) {
+        let unchanged = Self.sameCapture(self.target, target)
+        if !unchanged { disconnect(); diff = nil }
+        let oldPolicy = projectedPolicy
+        if attemptsViewID != projection.browseBinding?.viewID { loadedAttempts = [:]; attemptsViewID = projection.browseBinding?.viewID }
+        projectedPolicy = projection.control?.detail.checkpointPolicy
+        self.target = .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID,
+            configuration: target.configuration, rootID: target.rootID ?? (unchanged ? self.target.rootID : nil))
+        thread = nil; inventory = nil; operations = []; self.projection = projection; self.transport = transport
+        connected = transport != nil; self.supported = supported; writesAllowed = canWrite; mutationsAllowed = canMutate
+        self.perform = perform; preflight = canRestore
+        if let review = restoreReview, oldPolicy != projection.control?.detail.checkpointPolicy ||
+            projectedAttempt(runID: review.value.runID, stage: review.value.stage, id: review.value.attemptID).map({ Self.matches($0, native: review.value.checkpoint) }) != true { clearReview() }
+    }
+    private func projectedAttempt(runID: UUID, stage: RunCheckpointStage, id: UUID) -> RemoteCheckpointAttemptSummary? {
+        let run = projection?.runs.first { $0.id == runID }
+        return (loadedAttempts[runID] ?? run?.checkpointAttempts ?? []).first { $0.id == id && $0.stage == stage }
+    }
+    private var loadedAttempts: [UUID: [RemoteCheckpointAttemptSummary]] = [:]
+    @ObservationIgnored private var attemptsViewID: UUID?
+    @ObservationIgnored private var projectedPolicy: RunCheckpointPolicy?
+    func loadAttempts(runID: UUID) async {
+        guard let projection, let binding = projection.browseBinding,
+              let run = projection.runs.first(where: { $0.id == runID }), let reference = run.checkpointAttemptsContent,
+              reference.kind == .checkpointAttempts else { return }
+        let owner = generation
+        do {
+            let data = try await projection.document(reference, binding: binding)
+            let values = try JSONDecoder().decode([RemoteCheckpointAttemptSummary].self, from: data)
+            guard owner == generation, projection.browseBinding == binding, values.count == run.checkpointAttemptCount,
+                  Set(values.map(\.id)).count == values.count else { return }
+            loadedAttempts = [runID: values]
+        } catch { if owner == generation { errorMessage = error.localizedDescription } }
+    }
+    func attempts(runID: UUID) -> [RemoteCheckpointAttemptSummary] {
+        loadedAttempts[runID] ?? projection?.runs.first(where: { $0.id == runID })?.checkpointAttempts ?? []
+    }
+    private static func matches(_ summary: RemoteCheckpointAttemptSummary, native: ThreadRunCheckpointAttempt) -> Bool {
+        summary.id == native.id && summary.digest == (try? RemoteProjectionProtocol.digest(RemoteProjectionProtocol.payload(native)))
+    }
     func restoreUnavailableReason(runID: UUID, stage: RunCheckpointStage, attemptID: UUID) -> String? {
         if let reason = unavailableMessage { return reason }
+        if projection != nil {
+            guard let attempt = projectedAttempt(runID: runID, stage: stage, id: attemptID) else { return "Load this run's saved observations before reviewing a restore." }
+            return attempt.restore.allowed ? nil : attempt.restore.reason ?? "This observation cannot be restored."
+        }
         guard let run = inventory?.runs.first(where: { $0.id == runID }), let attempt = exactAttempt(runID: runID, stage: stage, id: attemptID),
               attempt.phase == .ready, attempt.receipt != nil,
               ([run.baseline] + run.previousPostRunAttempts + (run.postRun.map { [$0] } ?? [])).contains(where: { $0.id == attemptID && Self.same($0, attempt) }) else {
@@ -128,6 +192,7 @@ final class RemoteCheckpointWorkspace {
         return run.restoreUnavailableReasons[attemptID]
     }
     func refresh() async {
+        if let projection { await projection.refreshControl(); return }
         guard canRead, let transport else { return }
         let owner = generation, token = UUID(), captured = target; inventoryRead = token; isLoading = true; errorMessage = nil
         defer { if inventoryRead == token { isLoading = false } }
@@ -151,6 +216,7 @@ final class RemoteCheckpointWorkspace {
         catch { if owner == generation, inventoryRead == token { errorMessage = Self.message(error) } }
     }
     func loadDiff(runID: UUID) async {
+        if projection != nil { await loadProjectedDiff(runID: runID); return }
         guard canRead, let transport, let checkpoints = thread?.runHistory?.first(where: { $0.id == runID })?.checkpoints,
               RunCheckpointPresentation.canShowDiff(checkpoints), let post = checkpoints.postRun else { return }
         let owner = generation, token = UUID(), captured = target, source = currentDiffSource(runID: runID)
@@ -170,10 +236,43 @@ final class RemoteCheckpointWorkspace {
         } catch is CancellationError { }
         catch { if owner == generation, diffRead == token { diffError = Self.message(error) } }
     }
+    private func loadProjectedDiff(runID: UUID) async {
+        guard canRead, let transport, let binding = projection?.browseBinding,
+              let run = projection?.runs.first(where: { $0.id == runID }), run.checkpointDiff.allowed,
+              let baseline = attempts(runID: runID).last(where: { $0.stage == .baseline }),
+              let post = attempts(runID: runID).last(where: { $0.stage == .postRun }) else { return }
+        let owner = generation, captured = target; isLoadingDiff = true; diffError = nil
+        defer { if generation == owner { isLoadingDiff = false } }
+        do {
+            let bound = try await read { try await transport.bind(captured) }
+            guard owner == generation, projection?.browseBinding == binding, Self.sameCapture(bound, captured), bound.rootID != nil else { return }
+            let result = try await read { try await transport.read(.init(target: bound, query: .runDiff(runID: runID,
+                baselineAttemptID: baseline.id, postRunAttemptID: post.id, maxBytes: 262_144))) }
+            guard owner == generation, projection?.browseBinding == binding,
+                  projection?.runs.first(where: { $0.id == runID })?.checkpointDiff.allowed == true,
+                  attempts(runID: runID).last(where: { $0.stage == .baseline })?.id == baseline.id,
+                  attempts(runID: runID).last(where: { $0.stage == .postRun })?.id == post.id else { return }
+            guard Self.same(result.target, bound), case .diff(let value) = result.value,
+                  value.runID == runID, value.baselineAttemptID == baseline.id, value.postRunAttemptID == post.id,
+                  value.patch.utf8.count <= 262_144 else { throw RemoteCheckpointFailure(.invalidTarget) }
+            target = bound; diff = value
+        } catch { if owner == generation { diffError = Self.message(error) } }
+    }
     @discardableResult func prepareRestore(runID: UUID, stage: RunCheckpointStage, attemptID: UUID) async -> UUID? {
         guard !Task.isCancelled, canRead, writesAllowed, mutationsAllowed, !isActing, !isReviewing,
               restoreUnavailableReason(runID: runID, stage: stage, attemptID: attemptID) == nil,
-              let transport, let attempt = exactAttempt(runID: runID, stage: stage, id: attemptID) else { return nil }
+              let transport else { return nil }
+        let nativeAttempt = exactAttempt(runID: runID, stage: stage, id: attemptID)
+        let projected = projectedAttempt(runID: runID, stage: stage, id: attemptID)
+        guard nativeAttempt != nil || projected != nil else { return nil }
+        if target.rootID == nil {
+            let captured = target, owner = generation
+            do {
+                let bound = try await read { try await transport.bind(captured) }
+                guard generation == owner, Self.sameCapture(bound, captured), bound.rootID != nil else { return nil }
+                target = bound
+            } catch { restoreError = Self.message(error); return nil }
+        }
         clearReview()
         let owner = generation, token = UUID(), captured = target; reviewRead = token; isReviewing = true; restoreError = nil
         activeReviewCalls += 1
@@ -189,9 +288,10 @@ final class RemoteCheckpointWorkspace {
                   result.digest == (try RemoteCheckpointProtocol.digest(target: captured, value: result.value)),
                   result.value.threadID == captured.threadID, result.value.projectID == captured.projectID,
                   result.value.runID == runID, result.value.stage == stage, result.value.attemptID == attemptID,
-                  Self.same(result.value.checkpoint, attempt), result.value.workspacePath.utf8.elementsEqual(captured.workspacePath.utf8) else { throw RemoteCheckpointFailure(.staleReview) }
+                  (nativeAttempt.map { Self.same(result.value.checkpoint, $0) } ?? projected.map { Self.matches($0, native: result.value.checkpoint) } ?? false), result.value.workspacePath.utf8.elementsEqual(captured.workspacePath.utf8) else { throw RemoteCheckpointFailure(.staleReview) }
             guard !Task.isCancelled, owner == generation, reviewRead == token, mutationsAllowed, preflight(result.value),
-                  exactAttempt(runID: runID, stage: stage, id: attemptID).map({ Self.same($0, attempt) }) == true else { await discard(result, transport: transport); return nil }
+                  (nativeAttempt.map { old in exactAttempt(runID: runID, stage: stage, id: attemptID).map { Self.same($0, old) } == true } ??
+                    projected.map { old in projectedAttempt(runID: runID, stage: stage, id: attemptID) == old } ?? false) else { await discard(result, transport: transport); return nil }
             restoreReview = result
             return result.id
         } catch is CancellationError { }
@@ -206,16 +306,29 @@ final class RemoteCheckpointWorkspace {
         if await execute(.beginRestore(reviewID: review.id, digest: review.digest), target: review.target), restoreReview?.id == review.id { restoreReview = nil }
     }
     func retryPostRun(runID: UUID, attemptID: UUID) async {
+        if let banner = projectedBanner {
+            guard mutationsAllowed, banner.runID == runID, banner.attempt.id == attemptID, banner.canRetry else { return }
+            _ = await execute(.retryPostRun(runID: runID, attemptID: attemptID)); return
+        }
         guard mutationsAllowed, let held = thread?.heldPostRunCheckpoint, held.runID == runID,
               held.attempt.id == attemptID, held.attempt.canRetryPostRun, thread?.isArchived == false else { return }
         _ = await execute(.retryPostRun(runID: runID, attemptID: attemptID))
     }
     func continuePostRun(runID: UUID, attemptID: UUID) async {
+        if let banner = projectedBanner {
+            guard mutationsAllowed, banner.runID == runID, banner.attempt.id == attemptID, banner.canContinue else { return }
+            _ = await execute(.continuePostRun(runID: runID, attemptID: attemptID)); return
+        }
         guard mutationsAllowed, let held = thread?.heldPostRunCheckpoint, held.runID == runID,
               held.attempt.id == attemptID, held.attempt.canContinuePostRun, thread?.isArchived == false else { return }
         _ = await execute(.continuePostRun(runID: runID, attemptID: attemptID))
     }
     func recover(_ operationID: UUID, acknowledge: Bool = false) async {
+        if projection != nil {
+            let key: RemoteOperationAction = acknowledge ? .acknowledgeRestore : .inspectRestore
+            guard projectedOperations.contains(where: { $0.id == operationID && $0.actions[key.rawValue]?.allowed == true }) else { return }
+            _ = await execute(acknowledge ? .acknowledgeRestore(operationID: operationID) : .inspectRestore(operationID: operationID)); return
+        }
         guard operations.contains(where: { $0.id == operationID && $0.phase == .unconfirmed && $0.acknowledgedAt == nil }) else { return }
         _ = await execute(acknowledge ? .acknowledgeRestore(operationID: operationID) : .inspectRestore(operationID: operationID))
     }

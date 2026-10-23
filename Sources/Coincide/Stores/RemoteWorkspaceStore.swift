@@ -39,6 +39,8 @@ final class RemoteWorkspaceStore {
     let attachments: RemoteAttachmentsStore
     let pullRequests: RemotePullRequestStore
     let checkpoints = RemoteCheckpointStore()
+    let projection = RemoteProjectionStore()
+    private(set) var usesProjection = false
     private(set) var isPreparingSubmission = false
     var inspectorVisible = true
     var terminalsVisible = false
@@ -73,7 +75,15 @@ final class RemoteWorkspaceStore {
     var threads: [CodingThread] { snapshot?.workspace.threads.filter { !$0.isArchived } ?? [] }
     var selectedThread: CodingThread? { threads.first { $0.id == selectedThreadID } }
     var canWrite: Bool { isConnected && !isWorking && !isPreparingSubmission && pending == nil && !stopping }
-    var draft: String { selectedThread.map { drafts[$0.id] ?? $0.draft } ?? "" }
+    var draft: String { selectedThreadID.map { drafts[$0] ?? (usesProjection ? projection.control?.draft : selectedThread?.draft) ?? "" } ?? "" }
+    var selectedConfiguration: ProviderConfiguration? {
+        if usesProjection { return projection.control?.detail.summary.id == selectedThreadID ? projection.control?.configuration : nil }
+        return selectedThread.map(ProviderConfiguration.init(thread:))
+    }
+    var selectedThreadExists: Bool { usesProjection ? projection.control?.detail.summary.id == selectedThreadID : selectedThread != nil }
+    var selectedSequence: Int64? { usesProjection ? projection.control?.binding.sequence : snapshot?.sequence }
+    var selectedWorkspacePath: String { selectedConfiguration?.workspacePath ?? "" }
+    var hostDraftAttachments: [ChatAttachment] { usesProjection ? (projection.control?.detail.summary.id == selectedThreadID ? projection.control?.attachments ?? [] : []) : selectedThread?.draftAttachments ?? [] }
     var hasUnsavedDrafts: Bool { draftsSaving || draftPersistenceFailed || attachments.hasUnsavedDrafts || pullRequests.hasUnsavedDrafts }
     var hasUnsavedWorkspaceEdits: Bool { inspector.hasUnsavedEdits }
     struct PullRequestSelection: Hashable {
@@ -83,12 +93,13 @@ final class RemoteWorkspaceStore {
         let connected: Bool, supported: Bool, canWrite: Bool, canMutate: Bool
     }
     var pullRequestTarget: RemoteWorkspaceTarget? {
+        if usesProjection { return projection.control?.detail.summary.id == selectedThreadID ? projection.control?.target : nil }
         guard let environmentID = connection?.environmentID, let thread = selectedThread else { return nil }
         return .init(environmentID: environmentID, projectID: thread.projectID, threadID: thread.id, configuration: .init(thread: thread))
     }
     var pullRequestSelection: PullRequestSelection {
-        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: snapshot?.sequence,
-            configuration: selectedThread.flatMap { try? RemotePullRequestProtocol.payload(ProviderConfiguration(thread: $0)) } ?? Data(),
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: selectedSequence,
+            configuration: selectedConfiguration.flatMap { try? RemotePullRequestProtocol.payload($0) } ?? Data(),
             generation: generation, connected: isConnected, supported: descriptor?.capabilities.supportsRemotePullRequests == true,
             canWrite: canWrite, canMutate: inspectorSelection.canMutate && !hasDirtyPullRequestSource)
     }
@@ -100,6 +111,13 @@ final class RemoteWorkspaceStore {
     }
     func updatePullRequests() async {
         guard !stopping else { pullRequests.disconnect(); checkpoints.disconnect(); return }
+        if usesProjection {
+            await pullRequests.selectProjected(target: pullRequestTarget, client: isConnected ? client : nil,
+                operations: projection.currentOperations, supported: descriptor?.capabilities.supportsRemotePullRequests == true,
+                canWrite: canWrite, canMutate: pullRequestSelection.canMutate,
+                perform: { [weak self] in await self?.perform($0) ?? false }, openConversation: { [weak self] in self?.selectThread($0) })
+            return
+        }
         await pullRequests.select(target: pullRequestTarget, client: isConnected ? client : nil,
             snapshot: snapshot?.workspace ?? .init(), supported: descriptor?.capabilities.supportsRemotePullRequests == true,
             canWrite: canWrite, canMutate: pullRequestSelection.canMutate,
@@ -107,13 +125,20 @@ final class RemoteWorkspaceStore {
             openConversation: { [weak self] id in self?.selectThread(id) })
     }
     var checkpointSelection: PullRequestSelection {
-        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: snapshot?.sequence,
-            configuration: selectedThread.flatMap { try? RemoteCheckpointProtocol.payload(ProviderConfiguration(thread: $0)) } ?? Data(),
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: selectedSequence,
+            configuration: selectedConfiguration.flatMap { try? RemoteCheckpointProtocol.payload($0) } ?? Data(),
             generation: generation, connected: isConnected, supported: descriptor?.capabilities.supportsRemoteCheckpoints == true,
             canWrite: canWrite, canMutate: inspectorSelection.canMutate && !hasDirtyPullRequestSource)
     }
     func updateCheckpoints() async {
         guard !stopping else { checkpoints.disconnect(); return }
+        if usesProjection {
+            await checkpoints.selectProjected(target: pullRequestTarget, projection: projection, client: isConnected ? client : nil,
+                supported: descriptor?.capabilities.supportsRemoteCheckpoints == true, canWrite: canWrite,
+                canMutate: checkpointSelection.canMutate, perform: { [weak self] in await self?.perform($0) ?? false },
+                canRestore: { [weak self] in self?.checkpointFilesStillAllowed(paths: [$0.gitReview.currentPlan.repositoryPath, $0.gitReview.currentPlan.commonDirectoryPath]) ?? false })
+            return
+        }
         await checkpoints.select(target: pullRequestTarget, thread: selectedThread, snapshot: snapshot?.workspace ?? .init(),
             client: isConnected ? client : nil, supported: descriptor?.capabilities.supportsRemoteCheckpoints == true,
             canWrite: canWrite, canMutate: checkpointSelection.canMutate,
@@ -153,8 +178,8 @@ final class RemoteWorkspaceStore {
         inspector.selected?.tab = "Changes"
     }
     var attachmentTarget: RemoteAttachmentTarget? {
-        guard let environmentID = connection?.environmentID, let thread = selectedThread else { return nil }
-        return .init(environmentID: environmentID, projectID: thread.projectID, threadID: thread.id)
+        guard let target = pullRequestTarget else { return nil }
+        return .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID)
     }
     struct AttachmentSelection: Hashable {
         let environmentID: UUID?, threadID: UUID?, sequence: Int64?
@@ -162,17 +187,19 @@ final class RemoteWorkspaceStore {
         let connected: Bool, supported: Bool
     }
     var attachmentSelection: AttachmentSelection {
-        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: snapshot?.sequence,
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: selectedSequence,
             generation: generation, connected: isConnected, supported: descriptor?.capabilities.supportsRemoteAttachments == true)
     }
     func updateAttachments() async {
         guard !stopping else { attachments.disconnect(); return }
         await attachments.select(target: attachmentTarget, client: isConnected ? client : nil,
-            hostDraftAttachments: selectedThread?.draftAttachments ?? [], supported: descriptor?.capabilities.supportsRemoteAttachments == true)
+            hostDraftAttachments: hostDraftAttachments, supported: descriptor?.capabilities.supportsRemoteAttachments == true)
     }
+    var draftExceedsLocalLimit: Bool { draft.utf16.count > 120_000 }
+    func replaceOversizedDraft() { if let id = selectedThreadID, draftExceedsLocalLimit { setDraft("", threadID: id) } }
     var canSubmit: Bool {
-        canWrite && !attachments.isLoading && !attachments.isImporting && !attachments.isUploading &&
-            (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachments.hasAttachments || selectedThread?.draftAttachments.isEmpty == false)
+        !draftExceedsLocalLimit && canWrite && (!usesProjection || (selectedThreadExists && projection.control?.detail.submit.allowed == true)) && !attachments.isLoading && !attachments.isImporting && !attachments.isUploading &&
+            (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachments.hasAttachments || !hostDraftAttachments.isEmpty)
     }
     struct InspectorSelection: Hashable {
         let environmentID: UUID?, threadID: UUID?, path: Data
@@ -180,6 +207,12 @@ final class RemoteWorkspaceStore {
         let connected: Bool, canMutate: Bool
     }
     var inspectorSelection: InspectorSelection {
+        if usesProjection {
+            let target = pullRequestTarget
+            return .init(environmentID: connection?.environmentID, threadID: selectedThreadID, path: Data(selectedWorkspacePath.utf8),
+                generation: generation, connected: isConnected,
+                canMutate: canWrite && projection.control?.detail.mutateFiles.allowed == true && target.map { !terminals.hasLiveTerminals(in: $0) } == true)
+        }
         let thread = selectedThread
         let available = thread.map { snapshot?.workspace.workspaceReady(for: $0) == true } ?? false
         let busy = thread.map { selected in threads.contains {
@@ -197,10 +230,8 @@ final class RemoteWorkspaceStore {
             connected: isConnected, canMutate: canWrite && available && !busy && !terminalBusy)
     }
     func updateInspector() async {
-        guard !stopping, let environmentID = connection?.environmentID, let thread = selectedThread else {
-            inspector.clearSelection(); return
-        }
-        await inspector.select(environmentID: environmentID, thread: thread,
+        guard !stopping, let target = pullRequestTarget else { inspector.clearSelection(); return }
+        await inspector.select(target: target,
             client: isConnected ? client : nil, canMutate: inspectorSelection.canMutate)
     }
     struct TerminalSelection: Hashable {
@@ -210,16 +241,12 @@ final class RemoteWorkspaceStore {
     }
     var terminalSelection: TerminalSelection {
         .init(environmentID: connection?.environmentID, threadID: selectedThreadID,
-            path: Data((selectedThread?.workspacePath ?? "").utf8), generation: generation,
+            path: Data(selectedWorkspacePath.utf8), generation: generation,
             connected: isConnected,
-            ready: selectedThread.map { snapshot?.workspace.workspaceReady(for: $0) == true } ?? false)
+            ready: usesProjection ? projection.control?.detail.openTerminal.allowed == true : selectedThread.map { snapshot?.workspace.workspaceReady(for: $0) == true } ?? false)
     }
     func updateTerminals() async {
-        guard !stopping, let environmentID = connection?.environmentID, let thread = selectedThread else {
-            terminals.clearSelection(); return
-        }
-        let target = RemoteWorkspaceTarget(environmentID: environmentID, projectID: thread.projectID,
-            threadID: thread.id, configuration: .init(thread: thread))
+        guard !stopping, let target = pullRequestTarget else { terminals.clearSelection(); return }
         // Selecting a workspace still being prepared disables new opens there,
         // while other threads keep their existing terminal transport and tabs.
         let supported = descriptor?.capabilities.supportsRemoteTerminal == true
@@ -231,32 +258,36 @@ final class RemoteWorkspaceStore {
         let connected: Bool, supported: Bool, canWrite: Bool, canChange: Bool
     }
     var canChangeRemoteWorkspace: Bool {
-        guard canWrite,
-              let environmentID = connection?.environmentID, let thread = selectedThread else { return false }
-        let current = RemoteWorkspaceTarget(environmentID: environmentID, projectID: thread.projectID,
-            threadID: thread.id, configuration: .init(thread: thread))
+        guard canWrite, let current = pullRequestTarget else { return false }
         return workspaceChangeStillAllowed(current)
     }
     private func workspaceChangeStillAllowed(_ current: RemoteWorkspaceTarget) -> Bool {
         guard isConnected, !stopping, !inspector.hasUnsavedEdits,
               connection?.environmentID == current.environmentID,
-              let thread = selectedThread, thread.id == current.threadID, thread.projectID == current.projectID,
-              ProviderConfiguration(thread: thread) == current.configuration,
-              thread.workspacePath.utf8.elementsEqual(current.workspacePath.utf8) else { return false }
+              let selected = pullRequestTarget, selected.threadID == current.threadID, selected.projectID == current.projectID,
+              selected.configuration == current.configuration,
+              selected.workspacePath.utf8.elementsEqual(current.workspacePath.utf8) else { return false }
         if terminals.hasLiveTerminals(in: current) { return false }
-        if let preparation = thread.workspacePreparation, preparation.canRetry {
-            var source = current.configuration; source.workspacePath = preparation.request.sourcePath
-            if terminals.hasLiveTerminals(in: .init(environmentID: current.environmentID, projectID: thread.projectID,
-                threadID: thread.id, configuration: source)) { return false }
+        let sourcePath = usesProjection ? projection.control?.detail.preparation.flatMap { $0.canRetry ? $0.sourcePath : nil } : selectedThread?.workspacePreparation.flatMap { $0.canRetry ? $0.request.sourcePath : nil }
+        if let sourcePath {
+            var source = current.configuration; source.workspacePath = sourcePath
+            if terminals.hasLiveTerminals(in: .init(environmentID: current.environmentID, projectID: current.projectID,
+                threadID: current.threadID, configuration: source)) { return false }
         }
         return true
     }
     var worktreeSelection: WorktreeSelection {
-        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: snapshot?.sequence,
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: selectedSequence,
             generation: generation, connected: isConnected, supported: descriptor?.capabilities.supportsRemoteWorktrees == true,
             canWrite: canWrite, canChange: canChangeRemoteWorkspace)
     }
     func updateWorktrees() {
+        if usesProjection {
+            worktrees.updateProjected(target: pullRequestTarget, detail: projection.control?.detail, client: isConnected ? client : nil,
+                supported: descriptor?.capabilities.supportsRemoteWorktrees == true, canWrite: canWrite,
+                canChangeWorkspace: canChangeRemoteWorkspace, perform: { [weak self] in await self?.perform($0) ?? false })
+            return
+        }
         worktrees.update(environmentID: connection?.environmentID, thread: selectedThread, client: isConnected ? client : nil,
             supported: descriptor?.capabilities.supportsRemoteWorktrees == true, canWrite: canWrite,
             canChangeWorkspace: canChangeRemoteWorkspace, perform: { [weak self] command in
@@ -283,7 +314,7 @@ final class RemoteWorkspaceStore {
         generation += 1; let owner = generation
         await disconnectTransport(owner: owner)
         guard generation == owner, !stopping, !draftPersistenceFailed else { return }
-        connection = selected; descriptor = nil; snapshot = nil; drafts = [:]
+        connection = selected; descriptor = nil; snapshot = nil; usesProjection = false; drafts = [:]
         let retained = Set(connections.map(\.environmentID) + [selected.environmentID].compactMap { $0 })
         minimumSequences = minimumSequences.filter { retained.contains($0.key) }
         selectedThreadID = nil; selectedProjectID = nil
@@ -338,11 +369,21 @@ final class RemoteWorkspaceStore {
         }
         if let floor = minimumSequences[environmentID] { try await next.requireMinimumSequence(floor, environmentID: environmentID) }
         guard generation == owner, !stopping else { return }
-        let value = try await next.connect()
-        guard generation == owner, !stopping else { return }
         drafts = savedDrafts; pending = savedPending
         draftPersistenceFailed = false; needsTrust = false
-        isConnected = true; accept(value)
+        if descriptor?.capabilities.supportsBoundedProjections == true {
+            let binding = try await next.connectProjection()
+            guard generation == owner, !stopping else { return }
+            usesProjection = true; isConnected = true
+            try await projection.connect(client: next, binding: binding, changed: { [weak self] in self?.projectionChanged() })
+            guard generation == owner, !stopping, isConnected else { return }
+            selectedProjectID = projection.projects.first?.id
+            selectThread(projection.threads.first?.id)
+        } else {
+            let value = try await next.connect()
+            guard generation == owner, !stopping else { return }
+            isConnected = true; accept(value)
+        }
         if savedPending != nil { notice = "A previous request has no confirmed result. Check its result before sending more work." }
     }
 
@@ -358,6 +399,7 @@ final class RemoteWorkspaceStore {
 
     private func disconnectTransport(owner: Int) async {
         isConnected = false; needsTrust = false
+        projection.disconnect()
         inspector.disconnect()
         terminals.disconnect()
         worktrees.disconnect()
@@ -402,12 +444,20 @@ final class RemoteWorkspaceStore {
     func selectThread(_ id: UUID?) {
         if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection() }
         selectedThreadID = id
+        if usesProjection {
+            projection.beginSelection(id)
+            Task { [weak self] in guard let self, self.selectedThreadID == id else { return }; await self.projection.select(id) }
+        }
         if let thread = selectedThread { selectedProjectID = thread.projectID }
         updateWorktrees()
     }
 
     func setDraft(_ text: String, threadID: UUID) {
-        guard !stopping, text.utf16.count <= 120_000, snapshot?.workspace.threads.contains(where: { $0.id == threadID }) == true else { return }
+        guard !stopping, (usesProjection ? projection.control?.detail.summary.id == threadID : snapshot?.workspace.threads.contains(where: { $0.id == threadID }) == true) else { return }
+        guard text.utf16.count <= 120_000 else {
+            errorMessage = "The draft exceeds the local limit of 120,000 UTF-16 characters. Your previous text was kept. Copy the larger text and replace it with a shorter local draft before sending."
+            return
+        }
         drafts[threadID] = text
         saveDrafts()
     }
@@ -512,7 +562,7 @@ final class RemoteWorkspaceStore {
             let result = try await client.command(command, id: request.id)
             guard generation == owner else { return false }
             try await finish(request, receipt: result.receipt)
-            if let value = try? await client.snapshot(), generation == owner { accept(value) }
+            await refreshAfterCommand(client: client, owner: owner)
             return result.receipt.rejection == nil
         } catch {
             guard generation == owner else { return false }
@@ -524,10 +574,9 @@ final class RemoteWorkspaceStore {
 
     private func attachmentSubmissionStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
         guard case .submitWithAttachments(let target, _, let configuration, let expected, _) = command else { return true }
-        guard isConnected, !stopping, attachmentTarget == target, let thread = selectedThread,
-              ProviderConfiguration(thread: thread) == configuration else { return false }
+        guard isConnected, !stopping, attachmentTarget == target, selectedConfiguration == configuration else { return false }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        return (try? encoder.encode(thread.draftAttachments)) == (try? encoder.encode(expected))
+        return (try? encoder.encode(hostDraftAttachments)) == (try? encoder.encode(expected))
     }
     private func pullRequestCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
         guard case .pullRequest(let target, let action) = command else { return true }
@@ -569,7 +618,7 @@ final class RemoteWorkspaceStore {
             guard generation == owner else { return }
             if let receipt = result.receipt {
                 try await finish(pending, receipt: receipt)
-                if let value = try? await client.snapshot(), generation == owner { accept(value) }
+                await refreshAfterCommand(client: client, owner: owner)
             } else { notice = "No committed receipt is available. Inspect the remote conversation before dismissing this request; it has not been repeated." }
         } catch { if generation == owner { errorMessage = error.localizedDescription } }
     }
@@ -608,25 +657,26 @@ final class RemoteWorkspaceStore {
     }
 
     func submit() async {
-        guard canSubmit, let thread = selectedThread, let target = attachmentTarget else { return }
+        guard canSubmit, let configuration = selectedConfiguration, let target = attachmentTarget else { return }
+        let threadID = target.threadID
         // Materialize a server-provided draft locally before recording the send.
-        let text = draft; setDraft(text, threadID: thread.id)
-        let configuration = ProviderConfiguration(thread: thread), owner = generation
+        let text = draft; setDraft(text, threadID: threadID)
+        let owner = generation
         if descriptor?.capabilities.supportsRemoteAttachments == true {
             isPreparingSubmission = true
             defer { isPreparingSubmission = false }
             await updateAttachments()
             guard let prepared = await attachments.prepareSubmission(), generation == owner, !stopping,
                   attachmentTarget == target, prepared.target == target,
-                  selectedThread.map({ ProviderConfiguration(thread: $0) == configuration }) == true else { return }
+                  selectedConfiguration == configuration else { return }
             isPreparingSubmission = false
             _ = await perform(.submitWithAttachments(target: target, text: text, expectedConfiguration: configuration,
                 expectedDraftAttachments: prepared.expectedDraftAttachments, uploadedAttachmentIDs: prepared.uploadedAttachmentIDs))
         } else {
-            guard thread.draftAttachments.isEmpty, !attachments.hasAttachments else {
+            guard hostDraftAttachments.isEmpty, !attachments.hasAttachments else {
                 errorMessage = "Update the remote helper before sending this conversation's attachments."; return
             }
-            _ = await perform(.submit(threadID: thread.id, text: text, expectedConfiguration: configuration))
+            _ = await perform(.submit(threadID: threadID, text: text, expectedConfiguration: configuration))
         }
     }
 
@@ -644,12 +694,13 @@ final class RemoteWorkspaceStore {
     private func receive(_ event: RemoteEnvironmentClientEvent) {
         switch event {
         case .descriptor(let value): descriptor = value
-        case .snapshot(let value): if isConnected { accept(value) }
+        case .snapshot(let value): if isConnected, !usesProjection { accept(value) }
+        case .projectionChanged(let value): if isConnected, usesProjection { projection.invalidate(value) }
         case .disconnected(let message):
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); notice = message.localizedDescription
+            isConnected = false; projection.disconnect(); inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -671,4 +722,32 @@ final class RemoteWorkspaceStore {
         }
         updateWorktrees()
     }
+    private func projectionChanged() {
+        guard usesProjection, isConnected else { return }
+        if let environment = connection?.environmentID {
+            let observed = [projection.catalogBinding, projection.control?.binding, projection.browseBinding].compactMap { $0 }
+                .filter { $0.environmentID == environment }.map(\.sequence).max() ?? 0
+            minimumSequences[environment] = max(minimumSequences[environment] ?? 0, observed)
+        }
+        if let control = projection.control, control.detail.summary.id == selectedThreadID {
+            selectedProjectID = control.detail.summary.projectID
+        }
+        updateWorktrees()
+    }
+    private func refreshAfterCommand(client: RemoteEnvironmentClient, owner: Int) async {
+        guard generation == owner, !stopping, isConnected else { return }
+        if usesProjection { await projection.refreshLatest() }
+        else if let value = try? await client.snapshot(), generation == owner { accept(value) }
+    }
+    func stopProjected() async {
+        guard let control = projection.control, let run = control.detail.activeRun, let runtimeID = control.detail.runtimeID else { return }
+        _ = await perform(.stop(threadID: control.detail.summary.id, runID: run.id, runtimeID: runtimeID))
+    }
+    func respondProjected(_ request: ApprovalRequest, response: ProviderApprovalResponse) async {
+        guard let control = projection.control, let runtimeID = control.detail.runtimeID,
+              control.requests.contains(where: { $0.request == request }) else { return }
+        _ = await perform(.respond(threadID: control.detail.summary.id, runID: control.detail.activeRun?.id,
+            runtimeID: runtimeID, request: request, response: response))
+    }
+
 }

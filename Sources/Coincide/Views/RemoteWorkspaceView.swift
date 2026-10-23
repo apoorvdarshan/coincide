@@ -64,6 +64,32 @@ struct RemoteWorkspaceView: View {
                     Button("Add SSH Connection…", systemImage: "plus") { addingConnection = true }
                         .accessibilityIdentifier("remote-add-connection").disabled(store.isWorking)
                 }
+                if store.usesProjection {
+                    Section("Remote Projects") {
+                        if store.projection.catalogOutdated { Text("Updated catalog available · Refresh to return to the first page").font(.caption).foregroundStyle(.secondary) }
+                        HStack {
+                            Text("Projects \(store.projection.projectWindowStart + (store.projection.projects.isEmpty ? 0 : 1))–\(store.projection.projectWindowStart + store.projection.projects.count) of \(store.projection.projectCount)").font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.projection.refreshLatest() } }.labelStyle(.iconOnly).disabled(!store.isConnected || store.projection.isLoading)
+                        }
+                        ForEach(store.projection.projects) { project in
+                            VStack(alignment: .leading, spacing: 5) {
+                                RemoteProjectionPreview(text: project.name).font(.headline)
+                                Button("New Conversation…", systemImage: "square.and.pencil") { store.selectedProjectID = project.id; addingThread = true }.disabled(!store.canWrite)
+                            }
+                        }
+                        if store.projection.canLoadProjects { Button("Load More Projects") { Task { await store.projection.loadProjects() } } }
+                    }
+                    Section("Remote Conversations") {
+                        Text("Conversations \(store.projection.threadWindowStart + (store.projection.threads.isEmpty ? 0 : 1))–\(store.projection.threadWindowStart + store.projection.threads.count) of \(store.projection.threadCount)").font(.caption).foregroundStyle(.secondary)
+                        ForEach(store.projection.threads) { thread in
+                            Button { store.selectThread(thread.id) } label: {
+                                HStack { Text(thread.title.preview).lineLimit(2); Spacer(); if store.selectedThreadID == thread.id { Image(systemName: "checkmark") } }
+                            }.accessibilityIdentifier("remote-thread-\(thread.id.uuidString)")
+                        }
+                        if store.projection.canLoadThreads { Button("Load More Conversations") { Task { await store.projection.loadThreads() } } }
+                    }
+                } else {
                 ForEach(store.projects) { project in
                     Section(project.name) {
                         ForEach(store.threads.filter { $0.projectID == project.id }) { thread in
@@ -82,12 +108,13 @@ struct RemoteWorkspaceView: View {
                         }.disabled(!store.canWrite)
                     }
                 }
+                }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
             VStack(spacing: 0) {
                 connectionStatus
-                if let error = store.errorMessage {
+                if let error = store.errorMessage ?? (store.usesProjection ? store.projection.errorMessage : nil) {
                     HStack {
                         Label(error, systemImage: "exclamationmark.triangle").textSelection(.enabled)
                         Spacer(); Button("Dismiss") { store.errorMessage = nil }
@@ -98,7 +125,11 @@ struct RemoteWorkspaceView: View {
                     HSplitView {
                         VSplitView {
                             Group {
-                                if let thread = store.selectedThread { conversation(thread) }
+                                if store.usesProjection, store.selectedThreadID != nil {
+                                    RemoteProjectedConversationView(store: store, chooseWorktree: {
+                                        store.updateWorktrees(); if store.worktrees.beginSetup() { choosingWorktree = true }
+                                    })
+                                } else if let thread = store.selectedThread { conversation(thread) }
                                 else {
                                     ContentUnavailableView {
                                         Label(store.isConnected ? "Choose a remote project" : "Connect to another Mac", systemImage: "network")
@@ -135,14 +166,14 @@ struct RemoteWorkspaceView: View {
             ToolbarItem {
                 Button("Remote Checkpoints…", systemImage: "clock.arrow.circlepath") {
                     Task { await store.updateCheckpoints(); showingCheckpoints = true }
-                }.disabled(!store.isConnected || store.selectedThread == nil || store.descriptor?.capabilities.supportsRemoteCheckpoints != true)
+                }.disabled(!store.isConnected || !store.selectedThreadExists || store.descriptor?.capabilities.supportsRemoteCheckpoints != true)
                     .accessibilityIdentifier("remote-checkpoints")
             }
 
             ToolbarItem {
                 Button("Remote Pull Requests…", systemImage: "arrow.triangle.pull") {
                     Task { await store.updatePullRequests(); showingPullRequests = true }
-                }.disabled(!store.isConnected || store.selectedThread == nil || store.descriptor?.capabilities.supportsRemotePullRequests != true)
+                }.disabled(!store.isConnected || !store.selectedThreadExists || store.descriptor?.capabilities.supportsRemotePullRequests != true)
                     .accessibilityIdentifier("remote-pull-requests")
             }
             ToolbarItem {

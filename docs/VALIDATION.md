@@ -1,5 +1,77 @@
 # Validation record
 
+## 2026-10-23 — Bounded remote state and paged native browsing
+
+- The final complete serial suite passes 1975 of 1988 declarations, with
+  thirteen optional installed/live checks skipped and pinned Pi package
+  acceptance enabled. Core covers 1661 declarations in 456.603 seconds; Store/
+  view 297 in 75.817 seconds; terminal seventeen in 10.327 seconds; Markdown
+  thirteen in 0.132 seconds. The process exits zero. No production source
+  changes follow this full run.
+- Final focused verification passes all 36 declarations: thirteen Store/view
+  declarations in 3.084 seconds and 23 Core/client/native/previous-PR declarations
+  in 49.419 seconds, after a 20.40-second build. This adds 29 projection
+  declarations (63 expanded cases) and rechecks all seven existing native PR
+  declarations. All providers, homes, Git repositories and transports are private
+  offline fixtures; no installed-provider turn, account login or SSH runs.
+- Two actual-helper projection declarations verify a structurally valid SQLite
+  workspace larger than the legacy 16 MiB frame cap, all 607 message identities
+  and exact content, a single giant escaped Unicode/NUL body, attachment/draft
+  documents, complete SHA/byte offsets, current sequence hints while old pages
+  remain pinned, and reconnect with sole original-command receipt ownership.
+  A fully validated unconfirmed native history operation retains its complete
+  private proof and host action holds while projected responses omit that proof.
+  LRU/release/stale-host behavior and zero provider launches/PID cleanup pass.
+- Nine client declarations cover 43 expanded cases: wrong environment/host/view,
+  scope/sequence/fingerprint, bounded and complete metadata, duplicate/empty/
+  overlapping/gapped pages, changed totals, looping/foreign cursors, immutable
+  duplicate page/content replies, exact content bytes and final SHA, inherited
+  run provenance, old-helper zero-RPC refusal, racing sequence hints, sanitized
+  typed failures, busy read capacity without retiring the owned helper, and
+  disconnect without automatic command/input replay.
+- Five Core declarations verify encoded page bounds, idempotent cursors/content,
+  exact rows and giant text, raw-host query/reference/offset/release refusal,
+  immutable old views after updates, view eviction and restart identity, imported
+  clone summaries, and historical-workspace diff denial. A run with 200 prior
+  failed observations keeps baseline/current post-run in its bounded preview;
+  the referenced document preserves every previous attempt in order.
+- Thirteen native Store/view declarations verify projected transport without a
+  fabricated native snapshot, pinned old browsing/current controls, local drafts
+  across uncertain submit, 30 streaming hints with exact Stop/approval ownership,
+  catalog-only sequence floors, deleted selections with usable global actions,
+  stale diff publication, oversized host-draft copy/replacement with no pending
+  submit, and a 1.44 MiB Unicode content stream with an exact final hash and
+  UTF-8-safe rolling window. Controlled T-before-S and stale-continuation gates
+  verify catalog publication ownership and exact unused lease disposal. Light/
+  dark 480x560 and 640x680 offscreen layouts create no window or implicit actions.
+- The previous checkpoint head's hosted run `39916636967` completed all 1959
+  declarations in 1195.199 seconds with exactly three PR checkout deadline
+  failures. Its new diagnostics prove each was still dispatching/running at the
+  unchanged twelve-second bound, with one live helper, one effect attempt, no
+  effect/operation error, and hundreds of metadata Git invocations. The private
+  wrapper launched Python for every metadata command. A fixture-only shell
+  router now directly executes the same native Git/argv for allowlisted metadata
+  with transport disabled; controlled fetch, held mutations and forbidden
+  push/clone/ls-remote still use the original Python rules. Exact production
+  prefixes include --no-lazy-fetch and --no-replace-objects. Missing/malformed
+  fixture-state, spaces/apostrophes, protocol, mapping, hold and refusal smokes
+  pass; all children join. Two local actual-prefix 30-call samples improve from
+  .7576/.7584 to .2933/.2995 seconds. The three native checkout cases improve
+  from 43.422 to 16.482 seconds. No product timeout, test deadline, retry or
+  assertion was relaxed. A new hosted result is still required.
+- Build-only packaging and strict deep signature verification pass. Compiled and
+  packaged app UUID `52C1C5E7-86AF-3ED6-93ED-25AECDAE7A5A` match; helper UUID is
+  `89282BF4-97EC-378D-98C8-571FBDC4856E`. The ABI guard checks 1027 objects,
+  including 725 Core and 297 app objects, and finds zero weak async default
+  contexts. All 74 Python checks pass in 2.762 seconds. Native GUI runner
+  compilation and offline launch envelopes pass without opening a GUI app or
+  changing the installed app.
+
+This establishes bounded remote display transport and paged native browsing,
+with explicit documented cache/document/window limits. It does not establish
+remote provider-history mutations/recovery, durable journal catch-up, real
+SSH/provider acceptance, persistent hosts, or complete T3 parity.
+
 ## 2026-10-23 — Remote run checkpoint controls
 
 - The complete serial run executes 1959 declarations: 1945 pass, thirteen

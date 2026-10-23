@@ -41,7 +41,7 @@ final class RemotePullRequestStore {
         await select(target: target, transport: client.map(RemotePullRequestTransport.live), snapshot: snapshot,
             supported: supported, canWrite: canWrite, canMutate: canMutate, perform: perform, openConversation: openConversation)
     }
-    func select(target: RemoteWorkspaceTarget?, transport: RemotePullRequestTransport?, snapshot: WorkspaceSnapshot, supported: Bool,
+    func select(target: RemoteWorkspaceTarget?, transport: RemotePullRequestTransport?, snapshot: WorkspaceSnapshot?, projectedOperations: [RemoteOperationSummary]? = nil, supported: Bool,
                 canWrite: Bool, canMutate: Bool, perform: @escaping Perform, openConversation: @escaping @MainActor (UUID) -> Void) async {
         guard !closed else { return }
         let owner = UUID(); selection = owner
@@ -63,8 +63,21 @@ final class RemotePullRequestStore {
         }
         if current !== model { current?.disconnect() }
         current = model
-        model.update(target: target, transport: transport, snapshot: snapshot, supported: supported,
+        model.update(target: target, transport: transport, snapshot: snapshot, projectedOperations: projectedOperations, supported: supported,
             canWrite: canWrite && !persistenceFailed, canMutate: canMutate && !persistenceFailed, perform: perform, openConversation: openConversation)
+    }
+    func select(target: RemoteWorkspaceTarget?, transport: RemotePullRequestTransport?, snapshot: WorkspaceSnapshot, supported: Bool,
+                canWrite: Bool, canMutate: Bool, perform: @escaping Perform, openConversation: @escaping @MainActor (UUID) -> Void) async {
+        await select(target: target, transport: transport, snapshot: Optional(snapshot), supported: supported,
+            canWrite: canWrite, canMutate: canMutate, perform: perform, openConversation: openConversation)
+    }
+    func selectProjected(target: RemoteWorkspaceTarget?, client: RemoteEnvironmentClient?, operations: [RemoteOperationSummary],
+                         supported: Bool, canWrite: Bool, canMutate: Bool, perform: @escaping Perform,
+                         openConversation: @escaping @MainActor (UUID) -> Void) async {
+        let identity = client.map(ObjectIdentifier.init)
+        if identity != clientIdentity { disconnect(); clientIdentity = identity }
+        await select(target: target, transport: client.map(RemotePullRequestTransport.live), snapshot: nil, projectedOperations: operations,
+            supported: supported, canWrite: canWrite, canMutate: canMutate, perform: perform, openConversation: openConversation)
     }
     private func save(_ model: RemotePullRequestWorkspace) {
         let target = model.target, fields = model.draft.fields, previous = writes
@@ -100,6 +113,7 @@ final class RemotePullRequestWorkspace: Identifiable {
     private(set) var selected: GitHubPullRequestReference?
     private(set) var creation: RemotePullRequestReview?
     private(set) var checkout: RemotePullRequestReview?
+    private(set) var projectedOperations: [RemoteOperationSummary] = []
     private(set) var operation: PullRequestCreationOperation?
     private(set) var checkoutOperations: [PullRequestCheckoutOperation] = []
     private(set) var isLoading = false
@@ -135,7 +149,8 @@ final class RemotePullRequestWorkspace: Identifiable {
     }
     var creationReview: GitHubPullRequestCreateReview? { if case .creation(let value) = creation?.value { value } else { nil } }
     var checkoutReview: PullRequestCheckoutReview? { if case .checkout(let value) = checkout?.value { value } else { nil } }
-    var isBusy: Bool { isActing || isPreparing || operation?.isWorking == true || checkoutOperations.contains(where: \.isWorking) }
+    var hasProjectedHold: Bool { projectedOperations.contains { !$0.acknowledged && ($0.phase == "unconfirmed" || ["accepted", "dispatching"].contains($0.phase)) } }
+    var isBusy: Bool { hasProjectedHold || isActing || isPreparing || operation?.isWorking == true || checkoutOperations.contains(where: \.isWorking) }
     var canRead: Bool { connected && supported && transport != nil }
     var canCreate: Bool {
         canRead && writesAllowed && mutationsAllowed && !isBusy && operation?.locksSource != true &&
@@ -157,7 +172,7 @@ final class RemotePullRequestWorkspace: Identifiable {
         if !mutationsAllowed { return "Finish work that owns this checkout before creating a pull request or switching its files. Separate worktree review remains available." }
         return nil
     }
-    func update(target: RemoteWorkspaceTarget, transport: RemotePullRequestTransport?, snapshot: WorkspaceSnapshot,
+    func update(target: RemoteWorkspaceTarget, transport: RemotePullRequestTransport?, snapshot: WorkspaceSnapshot?, projectedOperations: [RemoteOperationSummary]? = nil,
                 supported: Bool, canWrite: Bool, canMutate: Bool, perform: @escaping RemotePullRequestStore.Perform,
                 openConversation: @escaping @MainActor (UUID) -> Void) {
         if !Self.sameCapture(self.target, target) { disconnect(); context = nil; page = nil; detail = nil }
@@ -166,8 +181,9 @@ final class RemotePullRequestWorkspace: Identifiable {
             configuration: target.configuration, rootID: rootID)
         self.transport = transport; connected = transport != nil; self.supported = supported
         writesAllowed = canWrite; mutationsAllowed = canMutate; command = perform; open = openConversation
-        operation = snapshot.pullRequestCreations?.last { $0.projectID == target.projectID && Self.samePath($0.registeredWorkspacePath, target.workspacePath) }
-        checkoutOperations = snapshot.pullRequestCheckouts?.filter { $0.projectID == target.projectID && Self.samePath($0.review.registeredWorkspacePath, target.workspacePath) } ?? []
+        self.projectedOperations = projectedOperations?.filter { $0.kind == .pullRequestCreation || $0.kind == .pullRequestCheckout } ?? []
+        operation = snapshot?.pullRequestCreations?.last { $0.projectID == target.projectID && Self.samePath($0.registeredWorkspacePath, target.workspacePath) }
+        checkoutOperations = snapshot?.pullRequestCheckouts?.filter { $0.projectID == target.projectID && Self.samePath($0.review.registeredWorkspacePath, target.workspacePath) } ?? []
     }
 
     func refresh() async {
@@ -266,6 +282,18 @@ final class RemotePullRequestWorkspace: Identifiable {
     func beginCheckout() async {
         guard canAcceptCheckout, let review = checkout else { return }
         if await execute(.begin(reviewID: review.id, digest: review.digest), target: review.target), checkout?.id == review.id { checkout = nil }
+    }
+    func actProjected(_ action: RemoteOperationAction, operationID: UUID) async {
+        guard let operation = projectedOperations.first(where: { $0.id == operationID }), operation.actions[action.rawValue]?.allowed == true else { return }
+        switch action {
+        case .inspectCreation: _ = await execute(.inspectCreation(operationID: operationID))
+        case .acknowledgeCreation: _ = await execute(.acknowledgeCreation(operationID: operationID))
+        case .inspectCheckout: _ = await execute(.inspectCheckout(operationID: operationID))
+        case .acknowledgeCheckout: _ = await execute(.acknowledgeCheckout(operationID: operationID))
+        case .cancelCheckout: _ = await execute(.cancelCheckout(operationID: operationID))
+        case .openConversation: if let id = operation.targetThreadID { open?(id) }
+        default: break
+        }
     }
     func recoverCreation(id: UUID? = nil, acknowledge: Bool = false) async {
         guard let operation, id == nil || id == operation.id, operation.phase == .unconfirmed, operation.acknowledgedAt == nil else { return }
