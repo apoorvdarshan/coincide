@@ -5253,3 +5253,64 @@ hosted/native GUI success claim for this keyboard merge. No installed app was
 replaced/opened, authentication migrated, provider model request sent, live SSH
 host changed or shell configuration edited. Remaining command surfaces and
 complete installed/remote/provider/T3 acceptance remain unfinished.
+
+
+## 2026-10-24: Git workflows and durable pull request actions
+
+Integrated immutable Git-actions commit `bf43f7dd80cd3d6a7c70cac4ac9a308903585603`
+with the current keyboard, terminal and provider ownership controls. The batch adds
+structured diffs, branch selection, reviewed commit/push/create workflows,
+source-control settings and scoped background synchronization. A clean default
+branch that is ahead uses pure Push without creating an empty commit.
+
+PR state actions now consume their original review UUID in the workspace journal
+before dispatch. Exact duplicate admissions return the original receipt; changed
+payloads cannot reuse that UUID. Accepted-but-undispatched work fails after restart;
+dispatched work with no confirmed result remains unconfirmed and is never replayed.
+Inspection records current GitHub state without attributing it to this attempt;
+explicit acknowledgement permits a new review. Native repository identity and
+original conversation ownership are checked before dispatch. Provider input and
+ordinary drafts remain available while remote PR state work runs. Reviews also
+pin the base commit and byte-exact base/head branch names, including NFC/NFD cases.
+
+Local verification on Apple Swift 6.4:
+
+- Final `swift build --build-tests` passes in **24.32 seconds**. The ABI guard
+  reports **1378 Mach-O objects**, module coverage counters of 982 Core and 435 App,
+  **zero weak async-default records** and six local records.
+- The complete **432-declaration UI/store suite passes in 109.408 seconds**.
+  The final focused **36 Core declarations pass in 19.811 seconds**, including
+  native GitHub-action fixture commands, original-receipt deduplication,
+  lost-response/interrupted-process restart recovery and exact child drainage.
+  An earlier broader **172 Core declarations passed in 175.468 seconds** before
+  the final generic command-runner drainage change.
+- Both generic and streaming command runners await their exact owned process and
+  readers on success, cancellation, timeout, output overflow and input failure.
+  Four private TERM-held process modes verify that completion cannot publish
+  before explicit release and that the exact PID is gone afterward. This does
+  not claim descendant termination. The background-fetch fixture explicitly
+  releases its separate upload-pack helper and verifies its cleanup.
+- The initial UI run exposed two incorrect test expectations: treating the
+  upload helper as the directly owned process, and matching old warning wording.
+  Final assertions retain lease ownership, durable unknown-state and no-replay
+  checks; no deadlines or existing declarations were removed.
+- Hosted terminal run `40001722482` isolated its one timeout to laying out the
+  complete 5001-line command in a selectable SwiftUI Text (about 79/77 seconds
+  for light/dark sheet sizing). The bounded native text viewport retains the full
+  exact command, selection/copy and approval gates. Its existing offscreen test
+  now passes locally in **0.058 seconds**, including complete-byte checks. Hosted
+  acceptance of this fix remains pending.
+- Native UI runner build-for-testing and offline launcher verification pass;
+  no native GUI tests were run locally. Build-only packaging, strict deep code
+  signatures and native math-resource rendering pass. Compiled/package UUIDs
+  match: Coincide `92A6065F-07F2-301B-9A34-A37E6131019B`, CoincideEnvironment
+  `0AF32C96-20E6-38C1-82F9-FDE5D30E09BB`, CoincideScriptHelper
+  `9773A341-554E-38AE-8FF2-66DE44F21CEC`.
+
+Logs use `/tmp/coincide-git-actions-*-20261024.log`. Staged secret scanning passes.
+The preceding keyboard CI run passed compilation at its last check; this Git
+integration has no exact-commit hosted/native GUI success claim yet. No installed
+app was replaced/opened, live GitHub mutation or model request sent, authentication
+migrated, live SSH host changed or shell configuration edited. Complete T3 parity,
+remaining desktop/script/transcript work and installed/provider/remote acceptance
+remain unfinished. See [source-control behavior and limits](SOURCE_CONTROL.md).

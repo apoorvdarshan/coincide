@@ -129,7 +129,7 @@ final class CoincideDesktopUITests: XCTestCase {
         reviewButton.click()
         let review = app.sheets.containing(.button, identifier: "remote-settle-script-approve").element
         XCTAssertTrue(review.waitForExistence(timeout: 10))
-        let fullCommand = review.staticTexts["remote-settle-script-review-command"]
+        let fullCommand = review.textViews["remote-settle-script-review-command"]
         XCTAssertTrue(fullCommand.waitForExistence(timeout: 5))
         let commandValue = (fullCommand.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? fullCommand.label
         XCTAssertEqual(commandValue, command, "The native review must contain the complete verified command, including its omitted preview tail.")

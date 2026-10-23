@@ -5,6 +5,8 @@ struct GitHubPullRequestCommand: Sendable {
     let environment: [String: String]?
     let executable: URL?
     let timeout: Duration
+    /// A token saved in Settings; nil for injected test environments.
+    var credentials: GitHubCredentialOverrides? = nil
 
     func run(_ arguments: [String], directory: GitWorktreeDirectory, host: String, input: Data? = nil,
              maximumOutput: Int = 2_097_152) async throws -> GitWorktreeCommandResult {
@@ -12,11 +14,14 @@ struct GitHubPullRequestCommand: Sendable {
         guard let gh = executable else { throw GitHubPullRequestError(.missingCLI) }
         let inputFD = try input.map(Self.inputFile)
         defer { if let inputFD { Darwin.close(inputFD) } }
+        var childEnvironment = Self.sanitizedEnvironment(environment ?? ProcessChannel.environment(), host: host)
+        credentials?.apply(to: &childEnvironment, host: host)
+        let launchEnvironment = childEnvironment
         let process: GitWorktreeProcess
         do {
             process = try ProcessChannel.withChildLaunch {
                 try .init(executable: gh, arguments: arguments, cwdFD: directory.fd,
-                    environment: Self.sanitizedEnvironment(environment ?? ProcessChannel.environment(), host: host),
+                    environment: launchEnvironment,
                     maxBytes: maximumOutput, trustedInputFD: inputFD)
             }
         } catch { throw GitHubPullRequestError(.commandFailed) }

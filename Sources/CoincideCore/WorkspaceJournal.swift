@@ -10,6 +10,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case sidebarPreferencesChanged(SidebarPreferences?)
     case conversationHistoryOperationsReplaced([ConversationHistoryOperation]?)
     case pullRequestCreationsReplaced([PullRequestCreationOperation]?)
+    case pullRequestActionsReplaced([PullRequestActionOperation]?)
     case pullRequestCheckoutsReplaced([PullRequestCheckoutOperation]?)
     case promptSteeringsReplaced([PromptSteeringOperation]?)
     case checkpointRestoreOperationsReplaced([RunCheckpointRestoreOperation]?)
@@ -36,6 +37,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .contextTransfersReplaced(let values): snapshot.contextTransfers = values
         case .conversationHistoryOperationsReplaced(let operations): snapshot.conversationHistoryOperations = operations
         case .pullRequestCreationsReplaced(let operations): snapshot.pullRequestCreations = operations
+        case .pullRequestActionsReplaced(let operations): snapshot.pullRequestActions = operations
         case .pullRequestCheckoutsReplaced(let operations): snapshot.pullRequestCheckouts = operations
         case .promptSteeringsReplaced(let operations): snapshot.promptSteerings = operations
         case .checkpointRestoreOperationsReplaced(let operations): snapshot.checkpointRestoreOperations = operations
@@ -116,6 +118,7 @@ public enum WorkspaceJournal {
         try snapshot.validateContextTransfers()
         try snapshot.validatePullRequestCheckouts()
         try snapshot.validatePullRequestCreations()
+        try snapshot.validatePullRequestActions()
         try snapshot.validateConversationHistory()
         try snapshot.validateConversationHistoryFilesLedger()
         try snapshot.validateCheckpointRestores()
@@ -216,6 +219,7 @@ public enum WorkspaceJournal {
         if previous.contextTransfers != next.contextTransfers { events.append(.contextTransfersReplaced(next.contextTransfers)) }
         if previous.conversationHistoryOperations != next.conversationHistoryOperations { events.append(.conversationHistoryOperationsReplaced(next.conversationHistoryOperations)) }
         if previous.pullRequestCreations != next.pullRequestCreations { events.append(.pullRequestCreationsReplaced(next.pullRequestCreations)) }
+        if previous.pullRequestActions != next.pullRequestActions { events.append(.pullRequestActionsReplaced(next.pullRequestActions)) }
         if previous.pullRequestCheckouts != next.pullRequestCheckouts { events.append(.pullRequestCheckoutsReplaced(next.pullRequestCheckouts)) }
         if previous.promptSteerings != next.promptSteerings { events.append(.promptSteeringsReplaced(next.promptSteerings)) }
         if previous.checkpointRestoreOperations != next.checkpointRestoreOperations { events.append(.checkpointRestoreOperationsReplaced(next.checkpointRestoreOperations)) }

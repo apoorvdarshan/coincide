@@ -223,6 +223,13 @@ func remoteProjectScriptOldHelperDoesNotReadOrPollAndOffscreenViewsDoNotApproveC
     trace(.hydration, .begin)
     await store.beginReview()
     let loaded = try #require(store.review), reads = await peer.reads
+    let commandViewport = RemoteProjectScriptCommandText.makeScrollView(command: loaded.command)
+    let commandDocument = try #require(commandViewport.documentView as? NSTextView)
+    #expect(commandDocument.string.utf8.elementsEqual(f.command.utf8))
+    #expect(!commandDocument.isEditable && commandDocument.isSelectable)
+    #expect(commandDocument.layoutManager?.allowsNonContiguousLayout == true)
+    #expect(commandViewport.hasHorizontalScroller && commandViewport.hasVerticalScroller)
+    #expect(commandDocument.accessibilityIdentifier() == "remote-settle-script-review-command")
     trace(.hydration, .end)
     updateScriptStore(store, fixture: f, peer: peer, supported: false)
     for scheme in [ColorScheme.light, .dark] {

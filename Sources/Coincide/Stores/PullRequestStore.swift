@@ -6,6 +6,33 @@ import Observation
 /// Reads are replaceable; creation belongs to the durable workspace engine.
 @MainActor @Observable
 final class PullRequestStore {
+    @MainActor struct ActionSupport {
+        let prepare: (GitHubPullRequestAction, GitHubPullRequestReference, Bool) async throws -> GitHubPullRequestActionReview
+        let begin: (GitHubPullRequestActionReview) async throws -> WorkspaceCommandReceipt
+        let inspect: (UUID) async throws -> WorkspaceCommandReceipt
+        let acknowledge: (UUID) async throws -> WorkspaceCommandReceipt
+        let discard: (UUID) async -> Void
+    }
+    var actionSupport: ActionSupport? {
+        guard let engine else { return nil }
+        return .init(prepare: { [weak self] action, reference, credits in
+            guard let self, self.canReadActions, let projectID = self.owner() else { throw CancellationError() }
+            return try await engine.preparePullRequestAction(projectID: projectID, workspacePath: self.path,
+                action: action, reference: reference, removeAgentCredits: credits, sourceThreadID: self.sourceThreadID())
+        }, begin: { [weak self] review in
+            guard let self, self.canReadActions, let projectID = self.owner() else { throw CancellationError() }
+            let receipt = try await engine.beginPullRequestAction(projectID: projectID, review: review)
+            self.updateWorkspace(await engine.current()); return receipt
+        }, inspect: { [weak self] id in
+            guard let self, !self.closed else { throw CancellationError() }
+            let receipt = try await engine.inspectPullRequestAction(operationID: id)
+            self.updateWorkspace(await engine.current()); return receipt
+        }, acknowledge: { [weak self] id in
+            guard let self, !self.closed else { throw CancellationError() }
+            let receipt = try await engine.acknowledgePullRequestAction(operationID: id)
+            self.updateWorkspace(await engine.current()); return receipt
+        }, discard: { id in await engine.discardPullRequestActionReview(reviewID: id) })
+    }
     struct CheckoutSupport {
         let configuration: @MainActor () -> (ProviderConfiguration, RunCheckpointPolicy?)?
         let canPrepare: @MainActor (GitHubPullRequestCheckoutMode, GitHubPullRequestCheckoutPlan?, UUID?) -> Bool
@@ -22,6 +49,7 @@ final class PullRequestStore {
     private(set) var operation: PullRequestCreationOperation?
     private(set) var checkoutOperation: PullRequestCheckoutOperation?
     private(set) var checkoutOperations: [PullRequestCheckoutOperation] = []
+    private(set) var actionOperations: [PullRequestActionOperation] = []
     private(set) var contextError: String?
     private(set) var listError: String?
     private(set) var detailError: String?
@@ -49,10 +77,11 @@ final class PullRequestStore {
     func checkoutAdmissionMessage(mode: GitHubPullRequestCheckoutMode) -> String? {
         checkoutSupport?.unavailableReason?(mode, nil, nil)
     }
-    var isMutating: Bool { isAccepting || operation?.isWorking == true || checkoutOperations.contains(where: \.isWorking) }
+    var isMutating: Bool { isAccepting || operation?.isWorking == true || checkoutOperations.contains(where: \.isWorking) || actionOperations.contains(where: \.isWorking) }
     var acceptingCheckoutID: UUID? { acceptingCheckoutReview?.id }
     var mutationPaths: [String] {
         var paths = checkoutOperations.filter(\.isWorking).flatMap(\.scopePaths)
+        paths += actionOperations.filter(\.isWorking).flatMap(\.scopePaths)
         if let acceptingCheckoutReview { paths += acceptingCheckoutReview.plan.affectedWorkspacePaths }
         if let acceptingReview { paths += [acceptingReview.context.repositoryPath, acceptingReview.context.commonDirectoryPath] }
         if let operation, operation.isWorking { paths += operation.scopePaths }
@@ -60,6 +89,9 @@ final class PullRequestStore {
     }
 
     private let session: any GitHubPullRequestSession
+    /// Merge and state actions; derived from the live gh session, injectable for fixtures.
+    var actionSession: (any GitHubPullRequestActionSession)?
+    var canReadActions: Bool { !closed && !readsSuspended && canRead() }
     private let engine: WorkspaceEngine?
     private let owner: @MainActor () -> UUID?
     private let canRead: @MainActor () -> Bool
@@ -100,9 +132,11 @@ final class PullRequestStore {
         self.owner = owner; self.canRead = canRead; self.canMutate = canMutate; self.updateWorkspace = updateWorkspace
         self.checkoutSupport = checkoutSupport
         self.sourceThreadID = sourceThreadID
+        if let native = session as? GitHubPullRequestService { actionSession = GitHubPullRequestActionService(base: native) }
     }
 
     func apply(_ snapshot: WorkspaceSnapshot) {
+        actionOperations = snapshot.pullRequestActions ?? []
         let previous = operation
         let previousCheckout = checkoutOperation
         let projectID = owner()

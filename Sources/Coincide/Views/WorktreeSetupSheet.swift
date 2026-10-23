@@ -32,6 +32,12 @@ struct WorktreeSetupSheet: View {
     @State private var options: WorktreeSetupOptions?
     @State private var loadError: String?
     @State private var loading = true
+    @State private var catalog: GitBranchCatalog?
+    @State private var basePicker = false
+    @State private var startFromRemote = false
+    @State private var fetching = false
+    @State private var fetchError: String?
+    private var remoteBase: GitBranchCatalogEntry? { WorktreeBaseResolution.remote(for: baseRef, in: catalog) }
     private var selection: GitWorktreeSelection? {
         switch mode {
         case .newBranch:
@@ -60,10 +66,27 @@ struct WorktreeSetupSheet: View {
                     case .newBranch:
                         TextField("New branch name", text: $branchName)
                             .accessibilityIdentifier("worktree-new-branch")
-                        TextField("Local base ref or commit", text: $baseRef)
-                            .accessibilityIdentifier("worktree-base-ref")
-                        Text("The base must already be available locally. This does not fetch from a remote.")
-                            .font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            TextField("Base branch or commit", text: $baseRef)
+                                .accessibilityIdentifier("worktree-base-ref")
+                            Button { basePicker = true } label: { Image(systemName: "list.bullet") }
+                                .help("Choose a base branch").accessibilityLabel("Choose base branch").accessibilityIdentifier("worktree-base-picker")
+                                .popover(isPresented: $basePicker, arrowEdge: .bottom) {
+                                    BranchPickerView(catalog: catalog, loading: catalog == nil && loading, error: nil, title: String(localized: "Choose Base"), baseMode: true) { choice in
+                                        if case .base(let name) = choice { baseRef = name }
+                                        basePicker = false
+                                    }
+                                }
+                        }
+                        if let remote = remoteBase {
+                            Toggle("Start from remote (fetch \(remote.name) first)", isOn: $startFromRemote)
+                                .accessibilityIdentifier("worktree-start-from-remote")
+                        }
+                        Text(startFromRemote && remoteBase != nil
+                             ? String(localized: "Before preparing, Coincide fetches only \(remoteBase?.name ?? "") and starts from its latest commit. Nothing else is fetched or changed.")
+                             : String(localized: "The base must already be available locally. This does not fetch from a remote."))
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if let fetchError { Text(fetchError).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
                     case .existingBranch:
                         Picker("Local branch", selection: $existingBranch) {
                             Text("Choose a branch").tag("")
@@ -113,17 +136,34 @@ struct WorktreeSetupSheet: View {
                 Button("Refresh") { Task { await loadOptions() } }.disabled(loading)
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                Button(mode == .registeredWorktree ? "Use Worktree" : "Prepare Worktree") {
-                    if let selection { choose(selection, mode == .registeredWorktree ? .none : submodules, reviewSetup) }
-                }.keyboardShortcut(.defaultAction).disabled(selection == nil || loading)
+                if fetching { ProgressView().controlSize(.small) }
+                Button(mode == .registeredWorktree ? "Use Worktree" : startFromRemote && remoteBase != nil && mode == .newBranch ? "Fetch & Prepare Worktree" : "Prepare Worktree") {
+                    guard let selection else { return }
+                    if mode == .newBranch, startFromRemote, let remote = remoteBase { prepareFromRemote(remote) }
+                    else { choose(selection, mode == .registeredWorktree ? .none : submodules, reviewSetup) }
+                }.keyboardShortcut(.defaultAction).disabled(selection == nil || loading || fetching)
             }
         }
         .padding(24).frame(width: 520)
         .task { await loadOptions() }
     }
+    /// The explicit fetch is its own visible step; the worktree then starts from the fetched commit.
+    private func prepareFromRemote(_ remote: GitBranchCatalogEntry) {
+        guard let path = store.thread(threadID)?.workspacePath, let remoteName = remote.remote else { return }
+        fetching = true; fetchError = nil
+        let name = branchName, module = submodules, setup = reviewSetup
+        Task {
+            defer { fetching = false }
+            do {
+                try await GitService(root: URL(fileURLWithPath: path)).fetch(remote: remoteName, branch: remote.localName)
+                choose(.createBranch(name: name, baseRef: remote.ref), module, setup)
+            } catch { fetchError = error.localizedDescription }
+        }
+    }
     private func loadOptions() async {
         loading = true; loadError = nil
         defer { loading = false }
+        if let path = store.thread(threadID)?.workspacePath { catalog = try? await GitService(root: URL(fileURLWithPath: path)).branchCatalog() }
         do {
             let result = try await store.worktreeSetupOptions(for: threadID)
             try Task.checkCancellation()
@@ -132,5 +172,18 @@ struct WorktreeSetupSheet: View {
             if !result.worktrees.contains(where: { $0.path == worktreePath }) { worktreePath = "" }
         } catch is CancellationError { }
         catch { if !Task.isCancelled { loadError = error.localizedDescription } }
+    }
+}
+
+/// Maps a typed or picked base onto the remote-tracking branch "Start from remote" would fetch.
+enum WorktreeBaseResolution {
+    static func remote(for base: String, in catalog: GitBranchCatalog?) -> GitBranchCatalogEntry? {
+        guard let catalog else { return nil }
+        let value = base.trimmingCharacters(in: .whitespaces)
+        if let entry = catalog.remotes.first(where: { $0.name == value || $0.ref == value }), entry.remote != nil { return entry }
+        if let local = catalog.locals.first(where: { $0.name == value || $0.ref == value }), let upstream = local.upstream {
+            return catalog.remotes.first { $0.name == upstream && $0.remote != nil }
+        }
+        return nil
     }
 }

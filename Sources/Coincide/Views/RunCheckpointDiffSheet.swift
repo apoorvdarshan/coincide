@@ -72,11 +72,8 @@ struct RunCheckpointDiffContent: View {
                                                description: Text("These saved observations have the same file contents."))
                             .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        ScrollView([.horizontal, .vertical]) {
-                            Text(diff.patch).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                                .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading).padding(16)
-                                .accessibilityIdentifier("run-checkpoint-diff-patch")
-                        }
+                        DiffView(diff: UnifiedDiff.parse(diff.patch, truncated: diff.truncated), workspacePath: workspacePath, showsTruncationNotice: false)
+                            .accessibilityIdentifier("run-checkpoint-diff-patch")
                     }
                 }
             }.frame(minHeight: 160, idealHeight: 340, maxHeight: 440)

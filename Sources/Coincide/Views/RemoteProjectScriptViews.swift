@@ -1,3 +1,4 @@
+import AppKit
 import CoincideCore
 import SwiftUI
 
@@ -90,11 +91,8 @@ struct RemoteProjectScriptReviewSheet: View {
             LabeledContent("Shell") { Text(value.review.shellPath).font(.caption.monospaced()).textSelection(.enabled) }
             LabeledContent("Working directory") { Text(value.review.workspacePath).font(.caption.monospaced()).textSelection(.enabled) }
             LabeledContent("Project root") { Text(value.review.projectRoot).font(.caption.monospaced()).textSelection(.enabled) }
-            ScrollView {
-                Text(value.command).font(.body.monospaced()).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                    .accessibilityIdentifier("remote-settle-script-review-command")
-            }.frame(minHeight: 90, maxHeight: 220).background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            RemoteProjectScriptCommandText(command: value.command)
+                .frame(height: 220).background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
             Text("The conversation remains settled when this command exits. Background jobs remain owned until stopped or the conversation resumes.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !store.canApprove { Text("This exact review is no longer current. Close it and review the latest attempt.").font(.caption).foregroundStyle(.secondary) }
@@ -109,6 +107,47 @@ struct RemoteProjectScriptReviewSheet: View {
                     .accessibilityIdentifier("remote-settle-script-approve")
             }
         }.padding(24).frame(width: 520).interactiveDismissDisabled(store.isActing)
+    }
+}
+
+/// A complete, read-only command with a bounded viewport. SwiftUI must not measure a
+/// selectable Text's entire multi-thousand-line document to size the review sheet.
+struct RemoteProjectScriptCommandText: NSViewRepresentable {
+    let command: String
+
+    func makeNSView(context: Context) -> NSScrollView { Self.makeScrollView(command: command) }
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let editor = scroll.documentView as? NSTextView,
+              !editor.string.utf8.elementsEqual(command.utf8) else { return }
+        editor.string = command
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 472, height: 220)
+    }
+
+    static func makeScrollView(command: String) -> NSScrollView {
+        let storage = NSTextStorage()
+        let layout = NSLayoutManager()
+        layout.allowsNonContiguousLayout = true
+        storage.addLayoutManager(layout)
+        let container = NSTextContainer(containerSize: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = false
+        layout.addTextContainer(container)
+        let editor = NSTextView(frame: NSRect(x: 0, y: 0, width: 472, height: 220), textContainer: container)
+        editor.isEditable = false; editor.isSelectable = true; editor.isRichText = false
+        editor.isVerticallyResizable = true; editor.isHorizontallyResizable = true
+        editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        editor.textContainerInset = NSSize(width: 10, height: 10)
+        editor.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        editor.textColor = .labelColor; editor.drawsBackground = false
+        editor.setAccessibilityLabel("Complete remote settle script command")
+        editor.setAccessibilityIdentifier("remote-settle-script-review-command")
+        editor.string = command
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 472, height: 220))
+        scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
+        scroll.autohidesScrollers = true; scroll.drawsBackground = false
+        scroll.documentView = editor
+        return scroll
     }
 }
 

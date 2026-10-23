@@ -44,7 +44,7 @@ public actor WorkspaceDatabase {
         let versionStatus = sqlite3_step(version)
         let storageVersion = sqlite3_column_int(version, 0)
         sqlite3_finalize(version)
-        guard versionStatus == SQLITE_ROW, (0...42).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
+        guard versionStatus == SQLITE_ROW, (0...43).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
         let setup = """
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=FULL;
@@ -56,7 +56,7 @@ public actor WorkspaceDatabase {
         CREATE TABLE IF NOT EXISTS workspace_effects (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, command_id TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, payload BLOB NOT NULL);
         CREATE INDEX IF NOT EXISTS workspace_effects_pending ON workspace_effects(status,sequence);
         CREATE TABLE IF NOT EXISTS remote_attachment_refs (id TEXT PRIMARY KEY, upload_id TEXT NOT NULL UNIQUE, byte_count INTEGER NOT NULL, claimed INTEGER NOT NULL, cancelled INTEGER NOT NULL, payload BLOB NOT NULL);
-        PRAGMA user_version=42;
+        PRAGMA user_version=43;
         """
         guard sqlite3_exec(connection, setup, nil, nil, nil) == SQLITE_OK else { throw CoincideError("Could not initialize the workspace database.") }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -105,6 +105,9 @@ public actor WorkspaceDatabase {
                   }
                   if case .pullRequestCreation(let id, let operationID, let effectID) = effect.request {
                       return snapshot.pullRequestCreation(operationID).map { $0.phase == .accepted && $0.projectID == id && $0.effectID == effectID && effect.id == effectID } ?? false
+                  }
+                  if case .pullRequestAction(let id, let operationID, let effectID) = effect.request {
+                      return snapshot.pullRequestAction(operationID).map { $0.phase == .accepted && $0.projectID == id && $0.effectID == effectID && effect.id == effectID } ?? false
                   }
                   if case .conversationHistory(let id, let operationID) = effect.request {
                       return snapshot.conversationHistoryOperation(operationID).map { $0.phase == .accepted && $0.review.sourceThreadID == id && effect.id == operationID } ?? false

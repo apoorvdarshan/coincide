@@ -77,6 +77,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "cpu") }
+            SourceControlSettingsView(store: store).tabItem { Label("Source Control", systemImage: "arrow.triangle.branch") }
             Form {
                 Picker("Appearance", selection: $appearance) { Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark") }
                 Toggle("Render Math in Messages", isOn: $renderMathInMarkdown)

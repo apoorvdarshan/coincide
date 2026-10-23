@@ -313,31 +313,42 @@ public enum CommandRunner {
         guard let url = ProcessChannel.findExecutable(executable) else { throw CoincideError("\(executable) is not installed or executable.") }
         let channel = try ProcessChannel(executable: url, arguments: arguments, cwd: cwd, environment: environment)
         return try await withTaskCancellationHandler {
-            try await withThrowingTaskGroup(of: CommandResult.self) { group in
-                group.addTask {
-                    var out = Data(), err = Data()
-                    for await event in channel.events {
-                        try Task.checkCancellation()
-                        switch event {
-                        case .stdout(let data): out.append(data)
-                        case .stderr(let data): err.append(data)
-                        case .exited(let status): return CommandResult(output: out, error: err, status: status)
+            do {
+                let result = try await withThrowingTaskGroup(of: CommandResult.self) { group in
+                    group.addTask {
+                        var out = Data(), err = Data()
+                        for await event in channel.events {
+                            try Task.checkCancellation()
+                            switch event {
+                            case .stdout(let data): out.append(data)
+                            case .stderr(let data): err.append(data)
+                            case .exited(let status): return CommandResult(output: out, error: err, status: status)
+                            }
+                            if out.count + err.count > limit { channel.stop(); throw CoincideError("Command output exceeded the limit.") }
                         }
-                        if out.count + err.count > limit { channel.stop(); throw CoincideError("Command output exceeded the limit.") }
+                        try Task.checkCancellation()
+                        throw CoincideError("Command ended without an exit status.")
                     }
-                    try Task.checkCancellation()
-                    throw CoincideError("Command ended without an exit status.")
+                    group.addTask {
+                        try await Task.sleep(for: timeout)
+                        channel.stop(); throw CoincideError("Command timed out.")
+                    }
+                    do {
+                        if let input { try await channel.write(input) }
+                        channel.finishInput()
+                        let result = try await group.next()!
+                        group.cancelAll(); return result
+                    } catch { channel.stop(); group.cancelAll(); try Task.checkCancellation(); throw error }
                 }
-                group.addTask {
-                    try await Task.sleep(for: timeout)
-                    channel.stop(); throw CoincideError("Command timed out.")
-                }
-                do {
-                    if let input { try await channel.write(input) }
-                    channel.finishInput()
-                    let result = try await group.next()!
-                    group.cancelAll(); return result
-                } catch { channel.stop(); group.cancelAll(); try Task.checkCancellation(); throw error }
+                _ = await channel.stopAndDrain()
+                try Task.checkCancellation()
+                return result
+            } catch {
+                // Cancellation changes the returned result, never ownership of
+                // the exact child and its pipe/input readers until they drain.
+                _ = await channel.stopAndDrain()
+                try Task.checkCancellation()
+                throw error
             }
         } onCancel: { channel.stop() }
     }

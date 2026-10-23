@@ -4,6 +4,8 @@ import SwiftUI
 struct PullRequestsSheet: View {
     let model: PullRequestStore
     var initialSelection: GitHubPullRequestReference?
+    /// A typed `#number` or URL, e.g. from the branch picker, opened in detail for checkout.
+    var initialReference: String? = nil
     let requestPush: () -> Void
     var reportGeometry: ((String, CGRect) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
@@ -11,6 +13,7 @@ struct PullRequestsSheet: View {
     @State private var listState = GitHubPullRequestListState.open
     @State private var query = ""
     @State private var reference = ""
+    @State private var actions: PullRequestActionStore?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -35,7 +38,7 @@ struct PullRequestsSheet: View {
                 ScrollView { operationContent.padding(20) }.frame(minHeight: 0, maxHeight: .infinity)
                     .accessibilityIdentifier("pull-request-operation-scroll")
             } else {
-                if !mode.isForm, model.operation != nil || !model.checkoutOperations.isEmpty {
+                if !mode.isForm, model.operation != nil || !model.checkoutOperations.isEmpty || actions?.allOperations.contains(where: { $0.phase != .succeeded }) == true {
                     ScrollView { operationContent.padding(.horizontal, 20).padding(.vertical, 12) }.frame(minHeight: 0, maxHeight: 180)
                         .accessibilityIdentifier("pull-request-operation-scroll")
                 }
@@ -54,9 +57,12 @@ struct PullRequestsSheet: View {
             .coordinateSpace(name: "pull-requests-layout")
             .interactiveDismissDisabled(model.isAccepting)
             .onExitCommand { if !model.isAccepting { dismiss() } }
+            .onAppear { if actions == nil { actions = PullRequestActionStore(pullRequests: model, session: model.actionSession) } }
+            .onDisappear { actions?.close(); actions = nil }
             .task {
                 await model.refresh()
                 if let initialSelection { mode = .detail; await model.select(initialSelection) }
+                else if let initialReference { reference = initialReference; mode = .detail; await model.resolve(initialReference) }
             }
     }
     private func geometry(_ region: String) -> some View {
@@ -83,6 +89,14 @@ struct PullRequestsSheet: View {
     }
     @ViewBuilder private var operationContent: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
+            if let actions {
+                ForEach(actions.allOperations.filter { $0.phase != .succeeded }.prefix(8)) { operation in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("#\(operation.review.state.reference.number) · \(operation.review.action.title)").font(.caption.weight(.medium))
+                        PullRequestActionOperationStatus(actions: actions, operation: operation)
+                    }
+                }
+            }
             ForEach(model.checkoutOperations.reversed()) { operation in
                 PullRequestCheckoutOperationView(model: model, operationID: operation.id)
             }
@@ -140,7 +154,7 @@ struct PullRequestsSheet: View {
         if model.isLoadingDetail { VStack { Spacer(); ProgressView("Reading pull request…"); Spacer() }.frame(maxWidth: .infinity) }
         else if let detail = model.detail {
             PullRequestDetailContent(detail: detail, canCheckout: model.canCheckout && !model.isBusy,
-                                     checkout: { mode = .checkout(detail.summary.reference) })
+                                     checkout: { mode = .checkout(detail.summary.reference) }, actions: actions)
         }
         else if let error = model.detailError { ScrollView { Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled).padding(20) }.frame(maxWidth: .infinity, alignment: .leading) }
         else { ContentUnavailableView("Choose a Pull Request", systemImage: "arrow.triangle.branch", description: Text("Return to the list or enter an exact URL or number.")) }

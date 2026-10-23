@@ -8,15 +8,16 @@ public struct GitHubPullRequestService: GitHubPullRequestSession, Sendable {
     let gitExecutable: URL?
     let githubExecutable: URL?
     let timeout: Duration
+    let credentials: GitHubCredentialOverrides?
     public init(root: URL, timeout: Duration = .seconds(30)) {
-        self.root = root; self.timeout = timeout; environment = nil; gitExecutable = nil
+        self.root = root; self.timeout = timeout; environment = nil; gitExecutable = nil; credentials = .shared
         githubExecutable = ProcessChannel.findExecutable("gh")?.resolvingSymlinksInPath()
     }
-    init(root: URL, environment: [String: String], gitExecutable: URL? = nil, githubExecutable: URL?, timeout: Duration = .seconds(30)) {
+    init(root: URL, environment: [String: String], gitExecutable: URL? = nil, githubExecutable: URL?, timeout: Duration = .seconds(30), credentials: GitHubCredentialOverrides? = nil) {
         self.root = root; self.environment = environment; self.gitExecutable = gitExecutable
-        self.githubExecutable = githubExecutable; self.timeout = timeout
+        self.githubExecutable = githubExecutable; self.timeout = timeout; self.credentials = credentials
     }
-    private var command: GitHubPullRequestCommand { .init(environment: environment, executable: githubExecutable, timeout: timeout) }
+    var command: GitHubPullRequestCommand { .init(environment: environment, executable: githubExecutable, timeout: timeout, credentials: credentials) }
 
     public func context() async throws -> GitHubPullRequestContext {
         let local = try await localContext(), base = try local.baseRepository()
@@ -233,18 +234,18 @@ public struct GitHubPullRequestService: GitHubPullRequestSession, Sendable {
     private func api(_ endpoint: String, repository: GitHubRepository, local: GitHubPullRequestLocal) async throws -> Data {
         try await run(["api", "--hostname=" + repository.host, "--method=GET", endpoint], local: local, repository: repository).output
     }
-    private func run(_ arguments: [String], local: GitHubPullRequestLocal, repository: GitHubRepository, allowFailure: Bool = false) async throws -> GitWorktreeCommandResult {
+    func run(_ arguments: [String], local: GitHubPullRequestLocal, repository: GitHubRepository, allowFailure: Bool = false) async throws -> GitWorktreeCommandResult {
         try local.validate()
         let result = try await command.run(arguments, directory: local.workspace, host: repository.host)
         try local.validate()
         if !allowFailure, result.status != 0 { throw Self.failure(result) }
         return result
     }
-    private static func isAuthenticationFailure(_ result: GitWorktreeCommandResult) -> Bool {
+    static func isAuthenticationFailure(_ result: GitWorktreeCommandResult) -> Bool {
         let text = String(decoding: result.errorOutput, as: UTF8.self).lowercased()
         return result.status == 4 || text.contains("http 401") || text.contains("not logged") || text.contains("authentication required") || text.contains("not authenticated")
     }
-    private static func failure(_ result: GitWorktreeCommandResult) -> GitHubPullRequestError {
+    static func failure(_ result: GitWorktreeCommandResult) -> GitHubPullRequestError {
         let text = String(decoding: result.errorOutput, as: UTF8.self).lowercased()
         if text.contains("rate limit") || text.contains("http 429") { return .init(.rateLimited) }
         if isAuthenticationFailure(result) { return .init(.unauthenticated) }

@@ -40,6 +40,7 @@ struct ChatView: View {
                     ProviderMenu(store: store, thread: thread)
                         .disabled(actionsLocked)
                     Spacer()
+                    ConversationBranchChip(store: store, thread: thread)
                     Menu {
                         Text(thread.workspacePath)
                         Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }

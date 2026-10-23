@@ -200,6 +200,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var sidebarPreferences: SidebarPreferences?
     public var conversationHistoryOperations: [ConversationHistoryOperation]?
     public var pullRequestCreations: [PullRequestCreationOperation]?
+    public var pullRequestActions: [PullRequestActionOperation]?
     public var pullRequestCheckouts: [PullRequestCheckoutOperation]?
     public var promptSteerings: [PromptSteeringOperation]?
     public var checkpointRestoreOperations: [RunCheckpointRestoreOperation]?
@@ -210,7 +211,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var agentSessionImports: [AgentSessionImportRecord]?
     public var workspaceLifecyclePolicy: WorkspaceLifecyclePolicy?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestActions, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -220,6 +221,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         sidebarPreferences = try values.decodeIfPresent(SidebarPreferences.self, forKey: .sidebarPreferences)
         conversationHistoryOperations = try values.decodeIfPresent([ConversationHistoryOperation].self, forKey: .conversationHistoryOperations)
         pullRequestCreations = try values.decodeIfPresent([PullRequestCreationOperation].self, forKey: .pullRequestCreations)
+        pullRequestActions = try values.decodeIfPresent([PullRequestActionOperation].self, forKey: .pullRequestActions)
         pullRequestCheckouts = try values.decodeIfPresent([PullRequestCheckoutOperation].self, forKey: .pullRequestCheckouts)
         promptSteerings = try values.decodeIfPresent([PromptSteeringOperation].self, forKey: .promptSteerings)
         checkpointRestoreOperations = try values.decodeIfPresent([RunCheckpointRestoreOperation].self, forKey: .checkpointRestoreOperations)
@@ -270,6 +272,12 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             pullRequestCreations?[i].phase = phase == .accepted ? .failed : .unconfirmed
             pullRequestCreations?[i].error = phase == .accepted ? PullRequestCreationOperation.failureMessage : PullRequestCreationOperation.unconfirmedMessage
             pullRequestCreations?[i].updatedAt = Date()
+        }
+        for i in (pullRequestActions ?? []).indices {
+            guard let phase = pullRequestActions?[i].phase, phase == .accepted || phase == .dispatching else { continue }
+            pullRequestActions?[i].phase = phase == .accepted ? .failed : .unconfirmed
+            pullRequestActions?[i].error = phase == .accepted ? PullRequestActionOperation.failureMessage : PullRequestActionOperation.unconfirmedMessage
+            pullRequestActions?[i].updatedAt = Date()
         }
         for i in (checkpointRestoreOperations ?? []).indices {
             guard let phase = checkpointRestoreOperations?[i].phase, phase == .accepted || phase == .dispatching else { continue }

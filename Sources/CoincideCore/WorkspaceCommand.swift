@@ -210,6 +210,11 @@ indirect enum EngineCommand: Codable, Sendable {
     case pullRequestCreationDispatching(projectID: UUID, operationID: UUID, incarnation: UUID)
     case pullRequestCreationEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case pullRequestCreationReconciled(operationID: UUID, incarnation: UUID, result: GitHubPullRequestCreateReconciliation)
+    case pullRequestActionAccepted(PullRequestActionOperation)
+    case pullRequestActionDispatching(projectID: UUID, operationID: UUID, incarnation: UUID)
+    case pullRequestActionEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
+    case pullRequestActionInspected(operationID: UUID, incarnation: UUID, state: GitHubPullRequestActionState)
+    case pullRequestActionAcknowledged(operationID: UUID)
     case pullRequestCheckoutAccepted(PullRequestCheckoutOperation)
     case pullRequestCheckoutDispatching(projectID: UUID, operationID: UUID, incarnation: UUID)
     case pullRequestCheckoutEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
@@ -230,6 +235,7 @@ enum EffectResult: Codable, Sendable {
     case conversationHistoryMaintenanceConfirmed(OpenCodeV2HistorySnapshot)
     case checkpointRestoreConfirmed(GitCheckpointRestoreReceipt), checkpointRestoreUnconfirmed
     case pullRequestCreationConfirmed(GitHubPullRequestCreateOutcome), pullRequestCreationUnconfirmed
+    case pullRequestActionConfirmed(GitHubPullRequestActionOutcome), pullRequestActionUnconfirmed
     case pullRequestCheckoutCompleted(GitHubPullRequestCheckoutResult), pullRequestCheckoutUnconfirmed
     case promptSteeringDelivered(ProviderSteeringReceipt), promptSteeringUnconfirmed, promptSteeringUnsentCompleted
 }
@@ -272,6 +278,7 @@ struct WorkspaceDecision: Sendable {
     /// run after the general mutation switch releases its temporary buffers.
     @inline(never)
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date, validatingLedger: Bool = true) throws -> Self {
+        try guardPullRequestActionPhysicalTransitions(command, snapshot: snapshot)
         let reduced: GeneralReduction
         switch command {
         case .client(.workspaceLifecycle(let action)):
@@ -321,6 +328,9 @@ struct WorkspaceDecision: Sendable {
         case .pullRequestCheckoutAccepted, .pullRequestCheckoutDispatching, .pullRequestCheckoutEffectResult,
              .pullRequestCheckoutInspected, .pullRequestCheckoutCancel, .client(.acknowledgePullRequestCheckout):
             reduced = .init(decision: try reducePullRequestCheckout(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .pullRequestActionAccepted, .pullRequestActionDispatching, .pullRequestActionEffectResult,
+             .pullRequestActionInspected, .pullRequestActionAcknowledged:
+            reduced = .init(decision: try reducePullRequestAction(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.addProjectWithThread), .client(.startProjectClone):
             reduced = .init(decision: try reduceProjectRegistration(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi):
@@ -345,6 +355,50 @@ struct WorkspaceDecision: Sendable {
     /// Only the host's closed remote command adapter uses deferred validation;
     /// every native reducer still checks its own action admission normally.
     static func finalizedRemoteBatch(_ decision: Self) throws -> Self { try finalized(decision) }
+
+    /// A live owned gh child holds its physical directories against transitions
+    /// that may rebind them. Provider streaming and ordinary edits remain free.
+    @inline(never)
+    private static func guardPullRequestActionPhysicalTransitions(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
+        guard snapshot.pullRequestActions?.contains(where: \.isWorking) == true else { return }
+        func requireAvailable(_ paths: [String]) throws {
+            guard !paths.contains(where: { snapshot.isPullRequestActionWorking(path: $0) }) else {
+                throw WorkspaceCommandError("Wait for the pull request action to stop before changing its checkout.")
+            }
+        }
+        switch command {
+        case .client(.workspaceLifecycle(let action)):
+            try Self(snapshot: snapshot).guardPullRequestActions(.workspaceLifecycle(action))
+        case .beginWorktreePreparation(let id, let request, let source, _, _, _, _, _):
+            try requireAvailable([request.sourcePath, request.destinationPath, source] + snapshot.threads.filter { $0.id == id }.map(\.workspacePath))
+        case .pullRequestCheckoutAccepted(let operation):
+            try requireAvailable(operation.scopePaths + operation.coordinationPaths)
+        case .pullRequestCreationAccepted(let operation):
+            try requireAvailable(operation.scopePaths)
+        case .checkpointRestoreAccepted(let review):
+            try requireAvailable([review.workspacePath, review.gitReview.currentPlan.repositoryPath, review.gitReview.currentPlan.commonDirectoryPath])
+        default: break
+        }
+    }
+
+    @inline(never)
+    private static func reducePullRequestAction(_ command: EngineCommand, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        switch command {
+        case .pullRequestActionAccepted(let operation):
+            try decision.acceptPullRequestAction(operation)
+        case .pullRequestActionDispatching(let projectID, let operationID, let incarnation):
+            try decision.dispatchPullRequestAction(projectID: projectID, operationID: operationID, incarnation: incarnation, now: now)
+        case .pullRequestActionEffectResult(let request, let result, let incarnation):
+            decision.finishPullRequestAction(request, result: result, incarnation: incarnation, now: now)
+        case .pullRequestActionInspected(let operationID, _, let state):
+            try decision.inspectPullRequestAction(operationID: operationID, state: state, now: now)
+        case .pullRequestActionAcknowledged(let operationID):
+            try decision.acknowledgePullRequestAction(operationID: operationID, now: now)
+        default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
+        }
+        return decision
+    }
 
     /// Provider events have their own frame: the broad admission switch owns
     /// many large captured values that must not stay on the stack while a
@@ -594,6 +648,8 @@ struct WorkspaceDecision: Sendable {
              .checkpointRestoreInspected, .client(.acknowledgeCheckpointRestore),
              .pullRequestCheckoutAccepted, .pullRequestCheckoutDispatching, .pullRequestCheckoutEffectResult,
              .pullRequestCheckoutInspected, .pullRequestCheckoutCancel, .client(.acknowledgePullRequestCheckout),
+             .pullRequestActionAccepted, .pullRequestActionDispatching, .pullRequestActionEffectResult,
+             .pullRequestActionInspected, .pullRequestActionAcknowledged,
              .client(.addProjectWithThread), .client(.startProjectClone),
              .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi), .appMCP, .appMCPTargetGuard, .appMCPRequestGuard, .remoteEnvironment,
              .codexAuthenticationPreparing, .codexAccountConfigured,
@@ -1400,6 +1456,7 @@ struct WorkspaceDecision: Sendable {
         try validateCheckpointRestoreLocks(action)
         try validatePullRequestCreationLocks(action)
         try validatePullRequestCheckoutLocks(action)
+        try guardPullRequestActions(action)
     }
     /// Compound registration shares the same insertion rules without entering
     /// the complete reducer a second time on the same task stack.
@@ -1686,7 +1743,7 @@ struct WorkspaceDecision: Sendable {
         snapshot.threads[index] = thread
     }
     private mutating func finished(_ request: WorkspaceEffectRequest, result: EffectResult, now: Date) {
-        if request.promptSteeringOperationID != nil || request.conversationHistoryOperationID != nil || request.conversationHistoryMaintenanceOperationID != nil || request.checkpointRestoreOperationID != nil || request.conversationHistoryFilesOperationID != nil || request.pullRequestCreationOperationID != nil || request.pullRequestCheckoutOperationID != nil { return }
+        if request.promptSteeringOperationID != nil || request.conversationHistoryOperationID != nil || request.conversationHistoryMaintenanceOperationID != nil || request.checkpointRestoreOperationID != nil || request.conversationHistoryFilesOperationID != nil || request.pullRequestCreationOperationID != nil || request.pullRequestActionOperationID != nil || request.pullRequestCheckoutOperationID != nil { return }
         if request.checkpointOwner != nil { finishCheckpoint(request, result: result, now: now); return }
         if case .projectClone(let projectID, let plan) = request {
             guard let i = snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = snapshot.projects[i].clone,
@@ -1695,7 +1752,7 @@ struct WorkspaceDecision: Sendable {
             case .succeeded:
                 clone.phase = .completed; clone.error = nil; clone.progress = .init(stage: .checkout, percent: 100, detail: nil, stalled: false)
             case .failed(let message): clone.phase = .failed; clone.error = String(GitService.redactURLs(message).prefix(4_000))
-            case .promptSteeringDelivered, .promptSteeringUnconfirmed, .promptSteeringUnsentCompleted, .pullRequestCheckoutCompleted, .pullRequestCheckoutUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .conversationHistoryMaintenanceConfirmed, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: return
+            case .promptSteeringDelivered, .promptSteeringUnconfirmed, .promptSteeringUnsentCompleted, .pullRequestCheckoutCompleted, .pullRequestCheckoutUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed, .pullRequestActionConfirmed, .pullRequestActionUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .conversationHistoryMaintenanceConfirmed, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: return
             case .cancelled, .stopped:
                 clone.phase = clone.cancelRequested ? .cancelled : .interrupted; clone.error = nil
             }
@@ -1758,7 +1815,7 @@ struct WorkspaceDecision: Sendable {
             snapshot.threads[index] = thread; return
         }
         switch request {
-        case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
+        case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
             if case .succeeded = result {

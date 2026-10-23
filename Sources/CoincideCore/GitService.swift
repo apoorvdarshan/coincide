@@ -52,6 +52,7 @@ public struct GitBranch: Codable, Sendable, Identifiable, Equatable {
     public var id: String { ref }
     public var isRemote: Bool { ref.hasPrefix("refs/remotes/") }
     public var name: String { String(ref.dropFirst(isRemote ? "refs/remotes/".count : "refs/heads/".count)) }
+    public init(ref: String, upstream: String? = nil) { self.ref = ref; self.upstream = upstream }
 }
 
 public struct GitUpstream: Sendable, Equatable {
@@ -155,7 +156,7 @@ public struct GitService: Sendable {
         return files
     }
 
-    public func diff(file: ChangedFile? = nil, staged: Bool = false) async throws -> String {
+    public func diff(file: ChangedFile? = nil, staged: Bool = false, ignoreWhitespace: Bool = false) async throws -> String {
         let repository = try await repositoryRoot()
         if let file, file.isUntracked {
             let files = WorkspaceFileService(root: repository)
@@ -170,8 +171,9 @@ public struct GitService: Sendable {
                 throw error
             }
         }
-        var args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color"]
+        var args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--src-prefix=a/", "--dst-prefix=b/"]
         if staged { args.append("--cached") }
+        if ignoreWhitespace { args.append("--ignore-all-space") }
         args.append("--")
         if let file { try Self.validatePaths([file.path] + (file.previousPath.map { [$0] } ?? [])); args.append(file.path); if let previous = file.previousPath { args.append(previous) } }
         return String(decoding: try await command(args, at: repository), as: UTF8.self)
@@ -280,30 +282,30 @@ public struct GitService: Sendable {
         try await mutate { repository in _ = try await command(["worktree", "add", "-b", branch, "--", path.path, base], at: repository) }
     }
 
-    private func mutate<T: Sendable>(_ operation: @Sendable (URL) async throws -> T) async throws -> T {
+    func mutate<T: Sendable>(_ operation: @Sendable (URL) async throws -> T) async throws -> T {
         let repository = try await repositoryRoot()
         let common = try await line(["rev-parse", "--path-format=absolute", "--git-common-dir"], at: repository)
         let key = URL(fileURLWithPath: common).standardizedFileURL.resolvingSymlinksInPath().path
         return try await GitOperationGate.shared.perform(key: key) { try await operation(repository) }
     }
-    private func validateBranch(_ branch: String) async throws {
+    func validateBranch(_ branch: String) async throws {
         guard !branch.isEmpty, !branch.hasPrefix("-"), !branch.contains("\0"),
               try await line(["check-ref-format", "--branch", branch]) == branch else { throw CoincideError("Enter a valid branch name.") }
     }
-    private func validateRemote(_ remote: String) async throws {
+    func validateRemote(_ remote: String) async throws {
         guard !remote.isEmpty, !remote.hasPrefix("-"), try await remotes().contains(remote) else { throw CoincideError("Choose a configured remote.") }
     }
-    private static func validatePaths(_ paths: [String]) throws {
+    static func validatePaths(_ paths: [String]) throws {
         guard paths.allSatisfy({ !$0.isEmpty && !$0.hasPrefix("/") && !$0.contains("\0") && !$0.split(separator: "/").contains("..") }) else { throw CoincideError("Choose paths inside the repository.") }
     }
-    private static func pathInput(_ paths: [String]) -> Data { Data((paths.joined(separator: "\0") + "\0").utf8) }
-    private static func withoutFinalNewline(_ text: String) -> String { text.hasSuffix("\n") ? String(text.dropLast()) : text }
-    private func line(_ args: [String], at directory: URL? = nil) async throws -> String {
+    static func pathInput(_ paths: [String]) -> Data { Data((paths.joined(separator: "\0") + "\0").utf8) }
+    static func withoutFinalNewline(_ text: String) -> String { text.hasSuffix("\n") ? String(text.dropLast()) : text }
+    func line(_ args: [String], at directory: URL? = nil) async throws -> String {
         let data = try await command(args, at: directory)
         guard let value = String(data: data, encoding: .utf8) else { throw CoincideError("Git returned an unsupported path encoding.") }
         return Self.withoutFinalNewline(value)
     }
-    @discardableResult private func command(_ args: [String], at directory: URL? = nil, input: Data? = nil, timeout: Duration = .seconds(30), configuration: [String: String] = [:]) async throws -> Data {
+    @discardableResult func command(_ args: [String], at directory: URL? = nil, input: Data? = nil, timeout: Duration = .seconds(30), configuration: [String: String] = [:]) async throws -> Data {
         let result = try await run(args, at: directory, input: input, timeout: timeout, configuration: configuration)
         try Task.checkCancellation()
         guard result.status == 0 else {
@@ -312,7 +314,11 @@ public struct GitService: Sendable {
         }
         return result.output
     }
-    private func run(_ args: [String], at directory: URL? = nil, input: Data? = nil, timeout: Duration = .seconds(30), configuration: [String: String] = [:]) async throws -> CommandResult {
+    func run(_ args: [String], at directory: URL? = nil, input: Data? = nil, timeout: Duration = .seconds(30), configuration: [String: String] = [:]) async throws -> CommandResult {
+        let invocation = invocation(args, at: directory, configuration: configuration)
+        return try await CommandRunner.run("git", invocation.arguments, input: input, timeout: timeout, environment: invocation.environment)
+    }
+    func invocation(_ args: [String], at directory: URL? = nil, configuration: [String: String] = [:]) -> (arguments: [String], environment: [String: String]) {
         var environment = ProcessChannel.environment()
         // Shell Git context must not redirect an operation away from its selected workspace.
         for key in ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX"] { environment.removeValue(forKey: key) }
@@ -325,8 +331,7 @@ public struct GitService: Sendable {
             // --config-env splits at the last '=', so remote names containing '=' remain literal.
             overrides.append("--config-env=\(key)=\(variable)")
         }
-        return try await CommandRunner.run("git", overrides + ["--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "color.ui=false", "-C", (directory ?? root).path] + args,
-                                           input: input, timeout: timeout, environment: environment)
+        return (overrides + ["--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "color.ui=false", "-C", (directory ?? root).path] + args, environment)
     }
     /// Remotes may predate Coincide and contain credentials. Never copy their userinfo or query into UI errors.
     public static func redactURLs(_ text: String) -> String {
