@@ -37,6 +37,7 @@ final class RemoteWorkspaceStore {
     let terminals = RemoteTerminalStore()
     let worktrees = RemoteWorktreeStore()
     let attachments: RemoteAttachmentsStore
+    let pullRequests: RemotePullRequestStore
     private(set) var isPreparingSubmission = false
     var inspectorVisible = true
     var terminalsVisible = false
@@ -64,6 +65,7 @@ final class RemoteWorkspaceStore {
         draftStore = .init(root: root.appendingPathComponent("Drafts", isDirectory: true))
         inspector = .init(pendingStore: .init(root: root.appendingPathComponent("WorkspaceOperations", isDirectory: true)))
         attachments = .init(root: root.appendingPathComponent("Attachments", isDirectory: true))
+        pullRequests = .init(root: root.appendingPathComponent("PullRequestDrafts", isDirectory: true))
     }
 
     var projects: [WorkspaceProject] { snapshot?.workspace.projects ?? [] }
@@ -71,8 +73,44 @@ final class RemoteWorkspaceStore {
     var selectedThread: CodingThread? { threads.first { $0.id == selectedThreadID } }
     var canWrite: Bool { isConnected && !isWorking && !isPreparingSubmission && pending == nil && !stopping }
     var draft: String { selectedThread.map { drafts[$0.id] ?? $0.draft } ?? "" }
-    var hasUnsavedDrafts: Bool { draftsSaving || draftPersistenceFailed || attachments.hasUnsavedDrafts }
+    var hasUnsavedDrafts: Bool { draftsSaving || draftPersistenceFailed || attachments.hasUnsavedDrafts || pullRequests.hasUnsavedDrafts }
     var hasUnsavedWorkspaceEdits: Bool { inspector.hasUnsavedEdits }
+    struct PullRequestSelection: Hashable {
+        let environmentID: UUID?, threadID: UUID?, sequence: Int64?
+        let configuration: Data
+        let generation: Int
+        let connected: Bool, supported: Bool, canWrite: Bool, canMutate: Bool
+    }
+    var pullRequestTarget: RemoteWorkspaceTarget? {
+        guard let environmentID = connection?.environmentID, let thread = selectedThread else { return nil }
+        return .init(environmentID: environmentID, projectID: thread.projectID, threadID: thread.id, configuration: .init(thread: thread))
+    }
+    var pullRequestSelection: PullRequestSelection {
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: snapshot?.sequence,
+            configuration: selectedThread.flatMap { try? RemotePullRequestProtocol.payload(ProviderConfiguration(thread: $0)) } ?? Data(),
+            generation: generation, connected: isConnected, supported: descriptor?.capabilities.supportsRemotePullRequests == true,
+            canWrite: canWrite, canMutate: inspectorSelection.canMutate && !hasDirtyPullRequestSource)
+    }
+    private var hasDirtyPullRequestSource: Bool {
+        guard let target = pullRequestTarget else { return true }
+        return inspector.retainedEditors.contains { model in
+            model.session.target.environmentID == target.environmentID && Self.remotePathsOverlap(model.session.target.workspacePath, target.workspacePath)
+        }
+    }
+    func updatePullRequests() async {
+        guard !stopping else { pullRequests.disconnect(); return }
+        await pullRequests.select(target: pullRequestTarget, client: isConnected ? client : nil,
+            snapshot: snapshot?.workspace ?? .init(), supported: descriptor?.capabilities.supportsRemotePullRequests == true,
+            canWrite: canWrite, canMutate: pullRequestSelection.canMutate,
+            perform: { [weak self] command in await self?.perform(command) ?? false },
+            openConversation: { [weak self] id in self?.selectThread(id) })
+    }
+    func showPullRequestChanges() async {
+        inspectorVisible = true
+        if inspector.canReturnToCurrent { await inspector.returnToCurrent() }
+        else { await updateInspector() }
+        inspector.selected?.tab = "Changes"
+    }
     var attachmentTarget: RemoteAttachmentTarget? {
         guard let environmentID = connection?.environmentID, let thread = selectedThread else { return nil }
         return .init(environmentID: environmentID, projectID: thread.projectID, threadID: thread.id)
@@ -283,6 +321,7 @@ final class RemoteWorkspaceStore {
         terminals.disconnect()
         worktrees.disconnect()
         attachments.disconnect()
+        pullRequests.disconnect()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -296,9 +335,10 @@ final class RemoteWorkspaceStore {
         await terminals.shutdown()
         await worktrees.shutdown()
         await attachments.shutdown()
+        await pullRequests.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown() }
+    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -318,7 +358,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
-        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection() }
+        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection() }
         selectedThreadID = id
         if let thread = selectedThread { selectedProjectID = thread.projectID }
         updateWorktrees()
@@ -372,6 +412,9 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Review the draft before sending again."; return false
         }
+        guard pullRequestCommandStillAllowed(command) else {
+            errorMessage = "The pull request review or its affected checkout changed. Save edits, close affected terminals, and review it again."; return false
+        }
         let changingWorkspace: RemoteWorkspaceTarget?
         switch command {
         case .prepareWorktree(let target, _, _, _, _), .retryWorktree(let target, _):
@@ -390,6 +433,9 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Your draft was kept."; return false
         }
+        guard pullRequestCommandStillAllowed(command) else {
+            errorMessage = "The pull request review or its affected checkout changed. Your draft was kept."; return false
+        }
         if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
             errorMessage = "The workspace or its retained edits changed. Review them before choosing the checkout again."
             return false
@@ -400,6 +446,12 @@ final class RemoteWorkspaceStore {
             try await pendingStore.save(request)
             guard generation == owner, !stopping else { return false }
             pending = request
+            if !pullRequestCommandStillAllowed(command) {
+                try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
+                pending = nil
+                errorMessage = "The pull request review or its affected checkout changed. Your draft was kept."
+                return false
+            }
             if !attachmentSubmissionStillAllowed(command) {
                 try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
                 pending = nil
@@ -434,6 +486,36 @@ final class RemoteWorkspaceStore {
               ProviderConfiguration(thread: thread) == configuration else { return false }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return (try? encoder.encode(thread.draftAttachments)) == (try? encoder.encode(expected))
+    }
+    private func pullRequestCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        guard case .pullRequest(let target, let action) = command else { return true }
+        guard isConnected, !stopping, let current = pullRequestTarget, target.rootID != nil || !action.requiresBoundRoot,
+              current.environmentID == target.environmentID, current.projectID == target.projectID, current.threadID == target.threadID,
+              (try? RemotePullRequestProtocol.payload(current.configuration)) == (try? RemotePullRequestProtocol.payload(target.configuration)) else { return false }
+        guard case .begin(let id, let digest) = action else { return true }
+        guard let review = pullRequests.review(id: id), review.digest == digest,
+              (try? RemotePullRequestProtocol.payload(review.target)) == (try? RemotePullRequestProtocol.payload(target)) else { return false }
+        let paths: [String]
+        switch review.value {
+        case .creation(let creation): paths = [creation.context.repositoryPath, creation.context.commonDirectoryPath]
+        case .checkout(let checkout): paths = checkout.plan.affectedWorkspacePaths
+        }
+        guard !inspector.retainedEditors.contains(where: { model in
+            model.session.target.environmentID == target.environmentID && paths.contains { Self.remotePathsOverlap(model.session.target.workspacePath, $0) }
+        }) else { return false }
+        return !terminals.workspaces.contains { workspace in
+            workspace.target.environmentID == target.environmentID && paths.contains { Self.remotePathsOverlap(workspace.target.workspacePath, $0) } &&
+                terminals.hasLiveTerminals(in: workspace.target)
+        }
+    }
+    private static func remotePathsOverlap(_ first: String, _ second: String) -> Bool {
+        func bytes(_ value: String) -> [UInt8] {
+            var result = Array(value.utf8)
+            while result.count > 1, result.last == 47 { result.removeLast() }
+            return result
+        }
+        let a = bytes(first), b = bytes(second)
+        return a == b || a == [47] || b == [47] || a.starts(with: b + [47]) || b.starts(with: a + [47])
     }
 
     func checkPendingResult() async {
@@ -525,7 +607,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); notice = message.localizedDescription
+            isConnected = false; inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -543,6 +625,7 @@ final class RemoteWorkspaceStore {
         if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path {
             inspector.clearSelection(); terminals.clearSelection()
             if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID { attachments.clearSelection() }
+            pullRequests.clearSelection()
         }
         updateWorktrees()
     }

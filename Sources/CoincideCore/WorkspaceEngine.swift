@@ -2266,6 +2266,7 @@ public actor WorkspaceEngine {
     private var acceptingPullRequestCreations: Set<UUID> = []
     private struct PullRequestRead: Sendable { let projectID: UUID; let drain: Task<Void, Never>; let cancel: @Sendable () -> Void }
     private var pullRequestReads: [UUID: PullRequestRead] = [:]
+    private var remotePullRequestReviews: [UUID: RemotePullRequestReview] = [:]
     public typealias ProviderFactory = @Sendable (CodingThread) throws -> any ProviderSession
     public typealias WorktreeFactory = @Sendable (GitWorktreeRequest) throws -> any WorkspaceWorktreeSession
     public typealias CloneFactory = @Sendable (GitClonePlan) throws -> any ProjectCloneSession
@@ -2630,6 +2631,9 @@ public actor WorkspaceEngine {
                         try AppMCPAdmission.validate(authority: authority, snapshot: base.snapshot, commands: commands)
                         admissionCommands = commands
                     } else if case .remoteEnvironment(let request, let preparation) = envelope.command {
+                        if case .pullRequest(let captured) = preparation {
+                            try validateRemotePullRequestPreparation(captured)
+                        }
                         if case .worktree(let captured) = preparation,
                            threadIncarnations[captured.threadID] != captured.incarnation { throw RemoteEnvironmentAdmission.stale() }
                         if case .attachments(let captured) = preparation {
@@ -2707,6 +2711,17 @@ public actor WorkspaceEngine {
                         expectedSequence: base.sequence, effects: decision.effects, deduplicationPayload: payload, attachmentClaims: attachmentClaims)
                     let receipt = outcome.receipt
                     revision = .init(snapshot: decision.snapshot, sequence: receipt.sequence)
+                    if case .remoteEnvironment(_, .pullRequest(let captured)) = envelope.command {
+                        let reviewID: UUID?
+                        switch captured.action {
+                        case .creation(let operation, _): reviewID = operation.id
+                        case .checkout(let operation, _): reviewID = operation.id
+                        default: reviewID = nil
+                        }
+                        if let reviewID, let review = remotePullRequestReviews[reviewID] {
+                            _ = discardRemotePullRequestReview(.init(target: review.target, reviewID: reviewID, digest: review.digest))
+                        }
+                    }
                     if let attemptID = decision.cancelCloneAttempt {
                         for (effectID, request) in effectRequests {
                             if case .projectClone(_, let plan) = request, plan.id == attemptID { effects[effectID]?.cancel() }
@@ -2714,6 +2729,9 @@ public actor WorkspaceEngine {
                     }
                     if let attemptID = decision.cancelWorktreeAttempt {
                         for (effectID, request) in effectRequests where request.worktreeAttemptID == attemptID { effects[effectID]?.cancel() }
+                    }
+                    if let operationID = decision.cancelPullRequestCheckoutOperation {
+                        for (effectID, request) in effectRequests where request.pullRequestCheckoutOperationID == operationID { effects[effectID]?.cancel() }
                     }
                     codexDefaultReviews = codexDefaultReviews.filter { id, reviewed in
                         decision.snapshot.threads.contains { $0.id == id && $0.projectID == reviewed.projectID }
@@ -4650,8 +4668,204 @@ extension WorkspaceEngine {
         guard !stoppingEffects else { throw CancellationError() }
         return try await enqueue(.remoteEnvironment(request, preparation: preparation), id: request.id)
     }
+    func awaitRemotePullRequestCancellation(_ preparation: RemoteEnvironmentPreparation) async {
+        if case .pullRequest(let captured) = preparation, case .cancelCheckout(let operation) = captured.action,
+           let task = effects[operation.effectID] {
+            // Both command queues are free before joining; the effect can
+            // commit terminal evidence while unrelated Stop remains available.
+            await task.value
+        }
+    }
+    func awaitRemotePullRequestCancellation(_ request: RemoteEnvironmentCommandRequest) async {
+        guard case .pullRequest(let target, .cancelCheckout(let operationID)) = request.command,
+              let operation = revision.snapshot.pullRequestCheckout(operationID), operation.projectID == target.projectID,
+              operation.review.registeredWorkspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+              let task = effects[operation.effectID] else { return }
+        // Call only after the original payload has matched its durable receipt.
+        // This path never recaptures a review, dispatches, or launches a job.
+        await task.value
+    }
     func remoteEnvironmentReceipt(_ request: RemoteEnvironmentCommandRequest) async throws -> WorkspaceCommandReceipt? {
         _ = try await load()
         return try await database.receipt(request.id, matching: RemoteEnvironmentProtocol.payload(request))
+    }
+}
+
+extension WorkspaceEngine {
+    private func remotePullRequestThread(_ target: RemoteWorkspaceTarget, requireBound: Bool = true) throws -> CodingThread {
+        guard !closing, !stoppingEffects, fatalError == nil, !requireBound || target.rootID != nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              !thread.isArchived, thread.workspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+              try RemotePullRequestProtocol.payload(ProviderConfiguration(thread: thread)) == RemotePullRequestProtocol.payload(target.configuration),
+              revision.snapshot.ownsPullRequestWorkspace(projectID: target.projectID, workspacePath: target.workspacePath) else {
+            throw RemotePullRequestFailure(.invalidTarget)
+        }
+        return thread
+    }
+    func readRemotePullRequest(_ request: RemotePullRequestReadRequest) async throws -> RemotePullRequestValue {
+        _ = try await load(); _ = try remotePullRequestThread(request.target)
+        guard let incarnation = projectIncarnations[request.target.projectID] else { throw RemotePullRequestFailure(.invalidTarget) }
+        switch request.query {
+        case .context: break
+        case .list(let query): try query.validate()
+        case .detail(let reference): try reference.validate()
+        case .resolve(let reference):
+            guard !reference.isEmpty, reference.utf8.count <= 8_192, !reference.contains("\0") else { throw RemotePullRequestFailure(.invalidRequest) }
+        }
+        let session = try pullRequestFactory(URL(fileURLWithPath: request.target.workspacePath))
+        let result: RemotePullRequestValue = try await readPullRequest(projectID: request.target.projectID, incarnation: incarnation) {
+            let context = try await session.context()
+            try context.validate()
+            guard context.workspacePath.utf8.elementsEqual(request.target.workspacePath.utf8) else { throw RemotePullRequestFailure(.invalidTarget) }
+            switch request.query {
+            case .context: return .context(context)
+            case .list(let query):
+                let page = try await session.list(query: query)
+                guard page.items.count <= query.limit, Set(page.items.map(\.reference)).count == page.items.count,
+                      page.items.allSatisfy({ $0.reference.repository == context.repository }) else { throw RemotePullRequestFailure(.invalidRequest) }
+                for item in page.items { try item.validate() }
+                return .page(page)
+            case .detail(let reference):
+                guard reference.repository == context.repository else { throw RemotePullRequestFailure(.invalidRequest) }
+                let detail = try await session.detail(reference); try detail.validate()
+                guard detail.summary.reference == reference else { throw RemotePullRequestFailure(.invalidRequest) }
+                return .detail(detail)
+            case .resolve(let reference):
+                let normalized = reference.trimmingCharacters(in: .whitespacesAndNewlines)
+                if normalized.hasPrefix("https://") {
+                    guard let url = URLComponents(string: normalized), let host = url.host, url.user == nil, url.password == nil,
+                          url.query == nil, url.fragment == nil, url.port == nil else { throw RemotePullRequestFailure(.invalidRequest) }
+                    let parts = url.path.split(separator: "/")
+                    guard parts.count == 4, parts[2] == "pull", let number = Int(parts[3]), number > 0,
+                          try GitHubRepository(host: host, owner: String(parts[0]), name: String(parts[1])) == context.repository else { throw RemotePullRequestFailure(.invalidRequest) }
+                }
+                let detail = try await session.resolve(normalized); try detail.validate()
+                guard detail.summary.reference.repository == context.repository else { throw RemotePullRequestFailure(.invalidRequest) }
+                return .detail(detail)
+            }
+        }
+        _ = try remotePullRequestThread(request.target)
+        return result
+    }
+    func reviewRemotePullRequest(_ request: RemotePullRequestReviewRequest, busyWorktreePaths: [String]) async throws -> RemotePullRequestReview {
+        _ = try await load(); let thread = try remotePullRequestThread(request.target)
+        guard remotePullRequestReviews.count < 64 else { throw RemotePullRequestFailure(.limitExceeded) }
+        let value: RemotePullRequestReviewValue
+        switch request.intent {
+        case .create(let title, let body, let base, let draft):
+            value = .creation(try await reviewPullRequestCreation(projectID: thread.projectID, workspacePath: thread.workspacePath,
+                title: title, body: body, baseBranch: base, isDraft: draft))
+        case .checkout(let reference, let mode, let submodules, let title):
+            guard case .context(let context) = try await readRemotePullRequest(.init(target: request.target, query: .context)),
+                  context.repository == reference.repository else { throw RemotePullRequestFailure(.invalidRequest) }
+            value = .checkout(try await reviewPullRequestCheckout(projectID: thread.projectID, workspacePath: thread.workspacePath,
+                reference: reference, mode: mode, configuration: request.target.configuration, checkpointPolicy: thread.checkpointPolicy,
+                title: title, submodules: submodules, reviewSetup: false, busyWorktreePaths: busyWorktreePaths))
+        }
+        do {
+            _ = try remotePullRequestThread(request.target)
+            guard remotePullRequestReviews.count < 64, remotePullRequestReviews[value.id] == nil else { throw RemotePullRequestFailure(.limitExceeded) }
+            let result = try RemotePullRequestReview(target: request.target, value: value)
+            remotePullRequestReviews[result.id] = result
+            return result
+        } catch {
+            switch value {
+            case .creation(let review): discardPullRequestCreationReview(reviewID: review.id)
+            case .checkout(let review): discardPullRequestCheckoutReview(reviewID: review.id)
+            }
+            throw error
+        }
+    }
+    func discardRemotePullRequestReview(_ request: RemotePullRequestDiscardRequest) -> Bool {
+        guard let saved = remotePullRequestReviews[request.reviewID], saved.digest == request.digest,
+              (try? RemotePullRequestProtocol.payload(saved.target)) == (try? RemotePullRequestProtocol.payload(request.target)) else { return false }
+        remotePullRequestReviews.removeValue(forKey: request.reviewID)
+        switch saved.value {
+        case .creation: discardPullRequestCreationReview(reviewID: saved.id)
+        case .checkout: discardPullRequestCheckoutReview(reviewID: saved.id)
+        }
+        return true
+    }
+    func discardAllRemotePullRequestReviews() {
+        for review in remotePullRequestReviews.values {
+            switch review.value {
+            case .creation: discardPullRequestCreationReview(reviewID: review.id)
+            case .checkout: discardPullRequestCheckoutReview(reviewID: review.id)
+            }
+        }
+        remotePullRequestReviews.removeAll()
+    }
+    func closeRemotePullRequests() async {
+        let reads = Array(pullRequestReads.values)
+        for read in reads { read.cancel() }
+        for read in reads { await read.drain.value }
+        discardAllRemotePullRequestReviews()
+    }
+    func prepareRemotePullRequest(_ command: RemoteEnvironmentCommand) async throws -> RemoteEnvironmentPreparation {
+        _ = try await load()
+        guard case .pullRequest(let target, let action) = command else { throw RemotePullRequestFailure(.invalidRequest) }
+        _ = try remotePullRequestThread(target, requireBound: action.requiresBoundRoot)
+        guard let incarnation = projectIncarnations[target.projectID] else { throw RemotePullRequestFailure(.invalidTarget) }
+        let prepared: RemotePullRequestPreparation.Action
+        switch action {
+        case .begin(let id, let digest):
+            guard let saved = remotePullRequestReviews[id], saved.digest == digest,
+                  try RemotePullRequestProtocol.payload(saved.target) == RemotePullRequestProtocol.payload(target) else { throw RemotePullRequestFailure(.staleReview) }
+            switch saved.value {
+            case .creation(let review):
+                guard let cached = pullRequestCreationReviews[id], try RemotePullRequestProtocol.payload(cached.operation.review) == RemotePullRequestProtocol.payload(review) else { throw RemotePullRequestFailure(.staleReview) }
+                prepared = .creation(cached.operation, digest: digest)
+            case .checkout(let review):
+                guard let cached = pullRequestCheckoutReviews[id], try RemotePullRequestProtocol.payload(cached.operation.review) == RemotePullRequestProtocol.payload(review) else { throw RemotePullRequestFailure(.staleReview) }
+                prepared = .checkout(cached.operation, digest: digest)
+            }
+        case .inspectCreation(let id), .acknowledgeCreation(let id):
+            guard let operation = revision.snapshot.pullRequestCreation(id), operation.projectID == target.projectID,
+                  operation.registeredWorkspacePath.utf8.elementsEqual(target.workspacePath.utf8), operation.phase == .unconfirmed,
+                  operation.acknowledgedAt == nil else { throw RemotePullRequestFailure(.invalidTarget) }
+            if case .inspectCreation = action {
+                try revision.snapshot.validatePullRequestCreationSource(operation)
+                let session = try pullRequestFactory(URL(fileURLWithPath: operation.workspacePath))
+                let result = try await readPullRequest(projectID: operation.projectID, incarnation: incarnation) { try await session.reconcileCreate(operation.review) }
+                prepared = .inspectCreation(operation, result)
+            } else { prepared = .acknowledgeCreation(operation) }
+        case .inspectCheckout(let id), .acknowledgeCheckout(let id), .cancelCheckout(let id):
+            guard let operation = revision.snapshot.pullRequestCheckout(id), operation.projectID == target.projectID,
+                  operation.review.registeredWorkspacePath.utf8.elementsEqual(target.workspacePath.utf8) else { throw RemotePullRequestFailure(.invalidTarget) }
+            if case .cancelCheckout = action {
+                guard operation.isWorking else { throw RemotePullRequestFailure(.invalidTarget) }
+                prepared = .cancelCheckout(operation)
+            } else {
+                guard operation.phase == .unconfirmed, operation.acknowledgedAt == nil else { throw RemotePullRequestFailure(.invalidTarget) }
+                if case .inspectCheckout = action {
+                    try revision.snapshot.validatePullRequestCheckoutSource(operation)
+                    let session = try pullRequestCheckoutFactory(operation.review.plan.request)
+                    let result = try await readPullRequest(projectID: operation.projectID, incarnation: incarnation) { try await session.inspectCompletion(operation.review.plan) }
+                    prepared = .inspectCheckout(operation, result)
+                } else { prepared = .acknowledgeCheckout(operation) }
+            }
+        }
+        _ = try remotePullRequestThread(target, requireBound: action.requiresBoundRoot)
+        let result = RemotePullRequestPreparation(target: target, incarnation: incarnation, action: prepared)
+        try validateRemotePullRequestPreparation(result)
+        return .pullRequest(result)
+    }
+    private func validateRemotePullRequestPreparation(_ prepared: RemotePullRequestPreparation) throws {
+        guard projectIncarnations[prepared.target.projectID] == prepared.incarnation else { throw RemoteEnvironmentAdmission.stale() }
+        switch prepared.action {
+        case .creation(let operation, let digest):
+            guard operation.sourceIncarnation == prepared.incarnation, let review = remotePullRequestReviews[operation.id], review.digest == digest,
+                  try RemotePullRequestProtocol.payload(review.target) == RemotePullRequestProtocol.payload(prepared.target),
+                  try RemotePullRequestProtocol.payload(review.value) == RemotePullRequestProtocol.payload(RemotePullRequestReviewValue.creation(operation.review)),
+                  pullRequestCreationReviews[operation.id]?.operation.effectID == operation.effectID,
+                  pullRequestRuntimeScopeAvailable(operation) else { throw RemoteEnvironmentAdmission.stale() }
+        case .checkout(let operation, let digest):
+            guard operation.review.sourceIncarnation == prepared.incarnation, let review = remotePullRequestReviews[operation.id], review.digest == digest,
+                  try RemotePullRequestProtocol.payload(review.target) == RemotePullRequestProtocol.payload(prepared.target),
+                  try RemotePullRequestProtocol.payload(review.value) == RemotePullRequestProtocol.payload(RemotePullRequestReviewValue.checkout(operation.review)),
+                  pullRequestCheckoutReviews[operation.id]?.operation.effectID == operation.effectID,
+                  pullRequestCheckoutRuntimeScopeAvailable(operation) else { throw RemoteEnvironmentAdmission.stale() }
+        default: break
+        }
     }
 }

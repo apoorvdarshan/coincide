@@ -179,6 +179,54 @@ attachment already claimed by a message. Automatic reference-aware cleanup of
 retained client copies and transfer identities remains unfinished; reaching a
 limit refuses new work rather than silently deleting drafts or history.
 
+## Remote GitHub pull requests
+
+The remote toolbar opens a repository browser for the selected conversation.
+It reads context, searches open/closed/merged PRs, resolves an exact URL/number,
+and shows descriptions, checks and review summaries. Metadata uses the remote
+Mac's installed, already signed-in GitHub CLI; browsing or selecting a
+conversation never signs in, installs tools or starts a provider.
+
+Creation keeps a private local title/body/base/draft selection. Review captures
+the published head, base and exact text on the host. Acceptance sends only its
+host-issued review UUID and digest under the original durable command UUID.
+Creation does not push or fork. The Push action opens the current remote Changes
+inspector for a separate explicit Git push. A lost creation reply is recovered by
+its saved receipt or Inspect; missing GitHub evidence never automatically repeats
+creation. Explicit acknowledgment releases an unconfirmed operation's hold without
+claiming it did not happen. There is no create-cancel primitive.
+
+Open in Conversation reviews either switching the existing remote checkout or
+using a separate managed/reused worktree, with explicit submodule choices. The
+host selects the destination, captures provider/runtime/settings and publishes one
+blank conversation only after proving completion. A busy reused worktree can be
+inspected read-only, preserving local commits/edits and showing the actual head.
+Separate worktrees preserve source conversation/file/terminal activity. Affected
+PTY/file writers and shared Git mutations prevent conflicting mutations, and
+retained local editor/commit drafts are checked again immediately before send.
+Setup scripts are not run by remote PR checkout.
+
+Checkout cancellation commits first, then drains the exact owned effect outside
+the short command lane. Cancel receipt recovery likewise never blocks the serial
+stdio request reader. PR recovery binds the exact registered checkout even while
+its own operation holds it. Explicit acknowledgment and cancellation can use
+metadata alone if that folder is missing. Inspect and acknowledgment operate on saved identities and
+never fetch/checkout again automatically. Unaccepted reviews are private host
+memory, capped at 64, and require fresh review after reconnect/restart; accepted
+operations and original receipts remain durable. Client validation checks exact
+scope, authored bytes, review digest and captured settings without resolving
+remote paths on this Mac.
+
+Only the helper's local launch accepts optional absolute `--github-executable`
+and `--github-configuration-directory` arguments. These are not wire commands;
+remote requests cannot choose executables, environments or credential stores.
+CLI prompts, browser/editor launches and debug output remain disabled. No live
+GitHub account or network mutation is exercised by the private acceptance tests.
+
+Reviews/comments/replies, merge, labels/reviewers, reactions, rich diffs/viewed
+files, PR stacks, other hosting providers and complete upstream PR parity remain
+unfinished. Real two-Mac and hosted window acceptance are separate verification.
+
 ## Native service boundary
 
 `CoincideEnvironment` owns a normal `WorkspaceEngine`, SQLite journal and runtime
@@ -194,7 +242,7 @@ Conversation requests are bounded to 1 MiB. Workspace requests allow 14 MiB to
 carry JSON-escaped 2 MB files; aggregate queued requests are bounded to 32 MiB.
 Response frames are bounded to 16 MiB and in-flight requests to 32, with at most
 eight owned read/cancel replies and eight mutation jobs. The descriptor's
-optional Files/Git, attachment and remote-terminal capabilities default to unsupported for
+optional Files/Git, pull-request, attachment and remote-terminal capabilities default to unsupported for
 older helpers. Terminal byte polling is separate from workspace snapshots.
 Subscription delivery coalesces complete snapshots with a monotonic
 sequence; it is not a lossless event/delta replay stream. A sequence floor is
@@ -249,7 +297,7 @@ The reference is T3 Code
 1. Verify a real SSH connection between two Macs, including installed-provider
    execution, interruption, disconnect and reconnect. Controlled local-process
    acceptance does not establish remote network or provider authentication.
-2. Complete remote worktree setup/removal and PR controls, media files,
+2. Complete remote worktree setup/removal, remaining PR controls and media files,
    checkpoints/history and provider setup/authentication; add workspace
    receipt-capacity management and crash recovery for unsaved editor buffers.
    Preserve the current separation between local and remote paths/services.

@@ -62,6 +62,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsRemoteTerminal: Bool
     public let supportsRemoteWorktrees: Bool
     public let supportsRemoteAttachments: Bool
+    public let supportsRemotePullRequests: Bool
     public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
@@ -70,10 +71,11 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         self.supportsRemoteTerminal = supportsRemoteTerminal
         supportsRemoteWorktrees = true
         supportsRemoteAttachments = true
+        supportsRemotePullRequests = true
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -89,6 +91,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRemoteTerminal = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteTerminal) ?? false
         supportsRemoteWorktrees = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteWorktrees) ?? false
         supportsRemoteAttachments = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteAttachments) ?? false
+        supportsRemotePullRequests = try values.decodeIfPresent(Bool.self, forKey: .supportsRemotePullRequests) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
@@ -126,6 +129,7 @@ public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
     case editThread(threadID: UUID, edit: RemoteEnvironmentThreadEdit, expectedConfiguration: ProviderConfiguration)
     case submit(threadID: UUID, text: String, expectedConfiguration: ProviderConfiguration)
     case submitWithAttachments(target: RemoteAttachmentTarget, text: String, expectedConfiguration: ProviderConfiguration, expectedDraftAttachments: [ChatAttachment], uploadedAttachmentIDs: [UUID])
+    case pullRequest(target: RemoteWorkspaceTarget, action: RemotePullRequestAction)
     case stop(threadID: UUID, runID: UUID, runtimeID: UUID)
     case respond(threadID: UUID, runID: UUID?, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case resumeQueue(threadID: UUID, expectedConfiguration: ProviderConfiguration)

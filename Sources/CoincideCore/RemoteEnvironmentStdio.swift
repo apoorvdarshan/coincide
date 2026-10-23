@@ -34,7 +34,7 @@ public enum RemoteEnvironmentStdio {
                         id = supplied
                         let workspaceMethod = [RemoteEnvironmentProtocol.workspaceBindMethod, RemoteEnvironmentProtocol.workspaceReadMethod,
                             RemoteEnvironmentProtocol.workspaceBeginMethod, RemoteEnvironmentProtocol.workspaceOperationMethod,
-                            RemoteEnvironmentProtocol.workspaceCancelMethod].contains(method)
+                            RemoteEnvironmentProtocol.workspaceCancelMethod, RemotePullRequestProtocol.reviewMethod].contains(method)
                         guard received.byteCount <= (workspaceMethod ? RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes : RemoteEnvironmentProtocol.maximumRequestBytes) else {
                             throw RemoteEnvironmentError(.limitExceeded)
                         }
@@ -64,7 +64,7 @@ public enum RemoteEnvironmentStdio {
                             result = try RemoteEnvironmentProtocol.encode(snapshot)
                         case RemoteEnvironmentProtocol.commandMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
-                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments {
+                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand {
                                 try await workspaceReads.submit(id: id, operation: {
                                     try RemoteEnvironmentProtocol.encode(try await current.command(request))
                                 }, writer: writer, disconnect: { input.stop() })
@@ -73,6 +73,12 @@ public enum RemoteEnvironmentStdio {
                             result = try RemoteEnvironmentProtocol.encode(try await current.command(request))
                         case RemoteEnvironmentProtocol.receiptMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
+                            if request.command.isPullRequestCommand {
+                                try await workspaceReads.submit(id: id, operation: {
+                                    try RemoteEnvironmentProtocol.encode(try await current.receipt(request))
+                                }, writer: writer, disconnect: { input.stop() })
+                                continue requestLoop
+                            }
                             result = try RemoteEnvironmentProtocol.encode(try await current.receipt(request))
                         case RemoteEnvironmentProtocol.workspaceBindMethod:
                             let target = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceTarget.self, from: params)
@@ -99,6 +105,30 @@ public enum RemoteEnvironmentStdio {
                             let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceMutationRequest.self, from: params)
                             try await workspaceReads.submit(id: id, operation: {
                                 try RemoteEnvironmentProtocol.encode(try await current.cancelWorkspaceOperation(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemotePullRequestProtocol.bindMethod:
+                            let target = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceTarget.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.bindPullRequestWorkspace(target))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemotePullRequestProtocol.readMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemotePullRequestReadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.readPullRequests(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemotePullRequestProtocol.reviewMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemotePullRequestReviewRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.reviewPullRequest(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemotePullRequestProtocol.discardMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemotePullRequestDiscardRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.discardPullRequestReview(request))
                             }, writer: writer, disconnect: { input.stop() })
                             continue requestLoop
                         case RemoteAttachmentProtocol.beginMethod:
@@ -245,7 +275,8 @@ public enum RemoteEnvironmentStdio {
     }
     fileprivate static func errorResponse(id: JSONValue, error: any Error) -> JSONValue {
         let code: Int, kind: String, message: String
-        if let safe = error as? RemoteAttachmentFailure { code = -32_003; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        if let safe = error as? RemotePullRequestFailure { code = -32_004; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        else if let safe = error as? RemoteAttachmentFailure { code = -32_003; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteTerminalFailure { code = -32_002; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteWorkspaceFailure { code = -32_001; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else { let safe = error as? RemoteEnvironmentError ?? .init(.unavailable); code = -32_000; kind = safe.kind.rawValue; message = safe.localizedDescription }
@@ -259,7 +290,7 @@ public enum RemoteEnvironmentStdio {
         let options: RemoteEnvironmentOptions
         init(_ values: [String]) throws {
             var fields: [String: String] = [:], index = 1
-            let allowed = Set(["--data-directory", "--expected-environment-id", "--label", "--codex-executable", "--codex-home", "--claude-executable", "--claude-configuration-directory"])
+            let allowed = Set(["--data-directory", "--expected-environment-id", "--label", "--codex-executable", "--codex-home", "--claude-executable", "--claude-configuration-directory", "--github-executable", "--github-configuration-directory"])
             var stdio = false
             while index < values.count {
                 let name = values[index]; index += 1
@@ -271,7 +302,7 @@ public enum RemoteEnvironmentStdio {
                 fields[name] = value
             }
             guard stdio, let path = fields["--data-directory"], path.hasPrefix("/") else { throw RemoteEnvironmentError(.invalidRequest) }
-            for name in ["--codex-executable", "--codex-home", "--claude-executable", "--claude-configuration-directory"] {
+            for name in ["--codex-executable", "--codex-home", "--claude-executable", "--claude-configuration-directory", "--github-executable", "--github-configuration-directory"] {
                 if let value = fields[name], !value.hasPrefix("/") { throw RemoteEnvironmentError(.invalidRequest) }
             }
             if let raw = fields["--expected-environment-id"] {
@@ -280,7 +311,8 @@ public enum RemoteEnvironmentStdio {
             directory = URL(fileURLWithPath: path).standardizedFileURL
             label = fields["--label"] ?? ProcessInfo.processInfo.hostName
             options = .init(codexExecutable: fields["--codex-executable"] ?? "codex", codexHome: fields["--codex-home"],
-                            claudeExecutable: fields["--claude-executable"] ?? "claude", claudeConfigurationDirectory: fields["--claude-configuration-directory"])
+                            claudeExecutable: fields["--claude-executable"] ?? "claude", claudeConfigurationDirectory: fields["--claude-configuration-directory"],
+                            githubExecutable: fields["--github-executable"], githubConfigurationDirectory: fields["--github-configuration-directory"])
         }
     }
 }

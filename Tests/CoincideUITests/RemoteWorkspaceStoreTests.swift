@@ -348,3 +348,94 @@ func remoteStoreRejectsStaleHostAttachmentCaptureBeforePersistingOrSending() asy
         await store.shutdown()
     } catch { await store.shutdown(); throw error }
 }
+
+private func remoteStorePRContext(_ target: RemoteWorkspaceTarget) throws -> GitHubPullRequestContext {
+    let repository = try GitHubRepository(owner: "fixture", name: "root-pr")
+    return try .init(workspacePath: target.workspacePath, repository: repository, headRepository: repository, branch: "topic",
+        headCommit: String(repeating: "a", count: 40), upstream: .init(remoteName: "origin", branch: "topic", commit: String(repeating: "a", count: 40)),
+        defaultBranch: "main", baseBranches: ["main"], readiness: .ready, sourceFingerprint: String(repeating: "c", count: 64))
+}
+private func remoteStorePRTransport() -> RemotePullRequestTransport {
+    let rootID = UUID()
+    return .init(bind: { .init(environmentID: $0.environmentID, projectID: $0.projectID, threadID: $0.threadID, configuration: $0.configuration, rootID: rootID) },
+        read: { request in
+            switch request.query {
+            case .context: return .init(target: request.target, value: .context(try remoteStorePRContext(request.target)))
+            case .list: return .init(target: request.target, value: .page(.init(items: [], truncated: false)))
+            default: throw RemotePullRequestFailure(.invalidRequest)
+            }
+        }, review: { request in
+            guard case .create(let title, let body, let base, let draft) = request.intent else { throw RemotePullRequestFailure(.invalidRequest) }
+            return try .init(target: request.target, value: .creation(.init(context: remoteStorePRContext(request.target), title: title, body: body,
+                baseBranch: base ?? "main", baseCommit: String(repeating: "b", count: 40), isDraft: draft)))
+        }, discard: { .init(request: $0, discarded: true) })
+}
+@MainActor private func remoteStorePreparedPR(_ store: RemoteWorkspaceStore) async throws -> (RemotePullRequestWorkspace, RemotePullRequestReview) {
+    await store.pullRequests.select(target: store.pullRequestTarget, transport: remoteStorePRTransport(), snapshot: try #require(store.snapshot).workspace,
+        supported: true, canWrite: true, canMutate: true, perform: { await store.perform($0) }, openConversation: { store.selectThread($0) })
+    let model = try #require(store.pullRequests.current)
+    await model.refresh(); model.draft.title = "Captured private PR title"; model.draft.body = "Captured private PR body"
+    await model.prepareCreation()
+    return (model, try #require(model.creation))
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func remoteStorePullRequestLostBeginRecoversOriginalOpaqueReceiptAndPreservesNewerDraftAfterRestart() async throws {
+    let f = try RemoteStoreFixture(); defer { f.remove() }
+    let store = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) })
+    var reopened: RemoteWorkspaceStore?
+    do {
+        await store.load(); await store.connect(f.connection)
+        let (model, review) = try await remoteStorePreparedPR(store)
+        try f.update(mode: "drop-command"); await model.create()
+        let pending = try #require(store.pending)
+        guard case .pullRequest(let target, .begin(let id, let digest)) = pending.command else {
+            Issue.record("The reviewed PR did not use its closed opaque command"); await store.shutdown(); return
+        }
+        #expect(id == review.id && digest == review.digest && target.rootID != nil)
+        model.draft.body = "Newer private PR draft after the uncertain result"
+        await store.shutdown(); #expect(!store.hasUnsavedDrafts)
+        try f.update(mode: "normal")
+        let next = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) }); reopened = next
+        await next.load(); await next.connect(f.connection); await next.updatePullRequests()
+        #expect(next.pending == pending && !next.canWrite)
+        #expect(next.pullRequests.current?.draft.body == "Newer private PR draft after the uncertain result")
+        await next.checkPendingResult()
+        #expect(next.pending == nil && next.canWrite)
+        #expect(next.pullRequests.current?.draft.body == "Newer private PR draft after the uncertain result")
+        #expect(try f.commands().count == 1)
+        await next.shutdown()
+    } catch { await store.shutdown(); await reopened?.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func remoteStorePullRequestRechecksNewRetainedEditsAfterDraftDrainBeforeOpaqueBeginReachesWire() async throws {
+    let f = try RemoteStoreFixture(); defer { f.remove() }
+    let store = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) })
+    var lockDescriptor: Int32 = -1
+    var sending: Task<Bool, Never>?
+    func releaseDraftLock() {
+        if lockDescriptor >= 0 { _ = flock(lockDescriptor, LOCK_UN); _ = close(lockDescriptor); lockDescriptor = -1 }
+    }
+    defer { releaseDraftLock() }
+    do {
+        await store.load(); await store.connect(f.connection)
+        let (model, review) = try await remoteStorePreparedPR(store), thread = try #require(store.selectedThread)
+        store.setDraft("Establish private text draft", threadID: thread.id)
+        try await remoteStoreEventually { !store.draftsSaving }
+        lockDescriptor = open(f.root.appendingPathComponent("Drafts/.remote-data.lock").path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+        guard lockDescriptor >= 0, flock(lockDescriptor, LOCK_EX | LOCK_NB) == 0 else { throw CoincideError("The owned PR draft boundary could not be held.") }
+        store.setDraft("Retain newer composer text during PR admission", threadID: thread.id)
+        sending = Task { await store.perform(.pullRequest(target: review.target, action: .begin(reviewID: review.id, digest: review.digest))) }
+        try await remoteStoreEventually { store.isWorking }
+        await store.inspector.select(environmentID: f.connection.environmentID, thread: thread, client: nil, canMutate: false)
+        let editor = try #require(store.inspector.selected)
+        editor.git.commitMessage = "New retained source Git draft"
+        releaseDraftLock()
+        #expect(await sending?.value == false)
+        #expect(store.pending == nil && store.canWrite && !store.isWorking)
+        #expect(editor.git.commitMessage == "New retained source Git draft" && model.draft.body == "Captured private PR body")
+        #expect(try f.commands().isEmpty)
+        await store.shutdown()
+    } catch { releaseDraftLock(); _ = await sending?.value; await store.shutdown(); throw error }
+}

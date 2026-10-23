@@ -1,5 +1,71 @@
 # Validation record
 
+## 2026-10-23 — Remote GitHub pull request workflows
+
+- The final complete serial suite passes 1920 of 1933 declarations, with thirteen
+  optional installed/live checks skipped and pinned Pi package acceptance enabled.
+  Core covers 1629 declarations in 475.555 seconds; native view/store 274 in
+  72.565 seconds; terminal seventeen in 10.371 seconds; Markdown thirteen in
+  0.127 seconds. The final process exits zero. No production source changes
+  follow this full run.
+- Seven native-helper declarations with thirteen cases verify bound context,
+  list/detail/resolve and discard; one external create under the original SQLite
+  command receipt/outbox despite a lost reply; uncertain external creation
+  inspection and explicit acknowledgment; local/worktree/off-head reuse into
+  exactly one blank conversation; stale digest/config/root/owner refusal; held
+  file-job exclusion; and cancel/inspect/ack without fetch replay. All gh, Git
+  transports and homes are private fixtures; no real account, installed provider,
+  external GitHub mutation or SSH connection runs.
+- Eight malformed-client declarations with 27 cases verify exact target/root/path
+  bytes, repository/type/URL/ref validation, authored Unicode title/body bytes,
+  host review identity/digest, captured reasoning/model and target configuration,
+  disabled setup execution, discard binding, old-helper zero-RPC refusal and
+  sanitized authentication failures. Two capacity cases prove a typed busy
+  command/receipt rejection preserves the owned helper, snapshot and pending
+  UUID without permitting automatic replay.
+- Six Core declarations with ten cases verify sole original-command receipt
+  ownership, exact host-cache admission, stale/discard/foreign review refusal,
+  foreign repository read refusal, cancellation drain, missing-folder metadata
+  acknowledgment and cancellation, and fake-driver PTY exclusion through the
+  awaited close. Inspections and cancellation waits stay outside both command
+  lanes; PR receipt waits use bounded owned response tasks too.
+- Ten Store/view declarations cover retained private PR drafts and per-scope
+  persistence failures, byte-exact compare-and-swap, no reads on selection,
+  bound-root preservation, stale configuration/draft refusal, consumed successful
+  reviews, cold recovery, rejected late edits, and read-only reused worktrees.
+  Offscreen AppKit rendering fits light/dark 480x560 and 640x680 presentations
+  without creating a window or invoking native actions. Two parent Store cases
+  preserve a newer PR draft across a dropped begin/restart and recheck dirty
+  editors after a held real draft fsync before any wire command.
+- A first full run exposed an exit-log race in the existing private Codex peer:
+  EOF set its recorded flag before writing, and SIGTERM could abort that write.
+  A controlled extracted-function signal probe reproduced a zero-row clean exit.
+  The fixture now masks SIGTERM across check/write/flag publication. Two Python
+  regressions cover EOF/TERM orderings with exact child joins; all 74 supporting
+  Python checks pass in 2.643 seconds. Product shutdown and existing assertions
+  and deadlines were preserved.
+- Build-only packaging, deep strict signatures and native math-resource rendering
+  pass. App/helper Mach-O UUIDs match compiled products. Signed discovery exposes
+  all five remote capabilities without opening SQLite or GitHub configuration,
+  exits on EOF and rejects relative GitHub launch paths before creating data.
+  The installed app is not replaced or launched. The ABI guard covers 1017
+  objects (706 Core, 288 app), with zero weak async default contexts. Native GUI
+  runner compilation and offline launch-envelope checks pass without local GUI
+  execution.
+- The preceding attachment commit b6c972f is fully green in hosted run
+  39907450582: Core/package, all four native GUI shards, all 27 workflows and the
+  aggregate gate pass. This includes the previously stalled Claude context
+  workflow; one successful run does not establish its earlier sporadic cause.
+  These hosted results predate the PR changes and do not replace their CI gate.
+- Final read-only inventory finds no live exact fixture PIDs or open files.
+  Twelve historical diagnostic directories from the first failed Core/UI/native
+  runs remain preserved, including the two synthetic Git repositories. Passing
+  final-run fixtures drain and remove their own files.
+
+Remote history/checkpoint controls, setup/removal, real two-Mac acceptance and
+broader PR review/comment/merge/stack capabilities remain open. This batch does
+not establish full T3 feature parity or release signing/notarization.
+
 ## 2026-10-23 — Remote attachment transfer and retained drafts
 
 - The final complete serial suite passes 1887 of 1900 declarations, with thirteen

@@ -60,6 +60,7 @@ public actor RemoteEnvironmentClient {
     private var terminalInputAttempts: [UUID: Int64] = [:]
     private var terminalInputInFlight: Set<UUID> = []
     private var haltedTerminalInputs: Set<UUID> = []
+    private var pullRequestRepositories: [Data: GitHubRepository] = [:]
 
     public init(factory: @escaping ConnectionFactory, expectedEnvironmentID: UUID? = nil) {
         (events, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(8))
@@ -155,6 +156,13 @@ public actor RemoteEnvironmentClient {
         if command.preparesAttachments, descriptor?.capabilities.supportsRemoteAttachments != true {
             throw RemoteEnvironmentClientError(.unsupported)
         }
+        if command.isPullRequestCommand, descriptor?.capabilities.supportsRemotePullRequests != true {
+            throw RemoteEnvironmentClientError(.unsupported)
+        }
+        if case .pullRequest(let target, let action) = command {
+            guard target.environmentID == environment, target.rootID != nil || !action.requiresBoundRoot else { throw RemotePullRequestFailure(.invalidTarget) }
+            if case .begin(_, let digest) = action, !Self.isTerminalDigest(digest) { throw RemotePullRequestFailure(.invalidRequest) }
+        }
         guard !attemptedCommands.contains(id) else { throw RemoteEnvironmentClientError(.commandAlreadyAttempted, commandID: id) }
         guard attemptedCommands.count < 4_096, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests else {
             throw RemoteEnvironmentClientError(.limitExceeded)
@@ -165,7 +173,7 @@ public actor RemoteEnvironmentClient {
         attemptedCommands.insert(id); activeRequests += 1
         defer { activeRequests -= 1 }
         do {
-            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds(45))
+            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds(command.isPullRequestCommand ? 120 : 45))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             try validateReceipt(result.receipt, environmentID: result.environmentID, commandID: id)
@@ -173,7 +181,9 @@ public actor RemoteEnvironmentClient {
         } catch {
             // Even a transport timeout/cancellation can follow a durable commit.
             // The caller's private pending journal owns exact receipt recovery.
-            if generation == owned, nativeRejection(error) == nil { retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected)) }
+            if generation == owned, nativeRejection(error) == nil, workspaceRejection(error) == nil {
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
             throw RemoteEnvironmentClientError(.commandUncertain, commandID: id)
         }
     }
@@ -187,17 +197,167 @@ public actor RemoteEnvironmentClient {
         activeRequests += 1; defer { activeRequests -= 1 }
         do {
             let raw = try await connection.request(RemoteEnvironmentProtocol.receiptMethod,
-                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(30))
+                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(command.isPullRequestCommand ? 120 : 30))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentReceiptResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             guard result.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
             if let receipt = result.receipt { try validateReceipt(receipt, environmentID: result.environmentID, commandID: id) }
             return result
         } catch {
+            if let rejection = workspaceRejection(error), generation == owned { throw rejection }
             if let rejection = nativeRejection(error), generation == owned { throw rejection }
             let safe = error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
             if generation == owned { retire(safe) }
             throw safe
+        }
+    }
+    public func bindPullRequestWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        let owned = generation
+        let result: RemoteWorkspaceTarget = try await pullRequestRequest(RemotePullRequestProtocol.bindMethod, request: target, target: target, requiresBoundRoot: false)
+        try validateWorkspaceResponse(generation: owned) {
+            let expected = RemoteWorkspaceTarget(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID,
+                configuration: target.configuration, rootID: result.rootID)
+            guard result.rootID != nil, target.rootID == nil || result.rootID == target.rootID,
+                  try Self.samePullRequestTarget(result, expected) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    public func readPullRequests(_ request: RemotePullRequestReadRequest) async throws -> RemotePullRequestReadResult {
+        do {
+            switch request.query {
+            case .context: break
+            case .list(let query): try query.validate()
+            case .detail(let reference): try reference.validate()
+            case .resolve(let text): guard GitHubValidation.text(text, maximum: 2_048) else { throw RemotePullRequestFailure(.invalidRequest) }
+            }
+        } catch { throw RemotePullRequestFailure(.invalidRequest) }
+        let owned = generation, key = try Self.pullRequestKey(request.target), expected = pullRequestRepositories[try Self.pullRequestKey(request.target)]
+        let result: RemotePullRequestReadResult = try await pullRequestRequest(RemotePullRequestProtocol.readMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) {
+            guard try Self.samePullRequestTarget(result.target, request.target) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            switch (request.query, result.value) {
+            case (.context, .context(let context)):
+                try context.validate()
+                guard context.workspacePath.utf8.elementsEqual(request.target.workspacePath.utf8) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            case (.list(let query), .page(let page)):
+                guard page.items.count <= query.limit, Set(page.items.map(\.reference)).count == page.items.count,
+                      Set(page.items.map(\.reference.repository)).count <= 1,
+                      expected == nil || page.items.allSatisfy({ $0.reference.repository == expected }) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                for item in page.items { try item.validate() }
+            case (.detail(let reference), .detail(let detail)):
+                try Self.validatePullRequestDetail(detail)
+                guard detail.summary.reference == reference, expected == nil || reference.repository == expected else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            case (.resolve, .detail(let detail)):
+                try Self.validatePullRequestDetail(detail)
+                guard expected == nil || detail.summary.reference.repository == expected else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            default: throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+        }
+        if case .context(let context) = result.value {
+            if pullRequestRepositories.count >= 128 { pullRequestRepositories.removeValue(forKey: pullRequestRepositories.keys.first!) }
+            pullRequestRepositories[key] = context.repository
+        }
+        return result
+    }
+    public func reviewPullRequest(_ request: RemotePullRequestReviewRequest) async throws -> RemotePullRequestReview {
+        try Self.validatePullRequestIntent(request.intent)
+        let owned = generation
+        let result: RemotePullRequestReview = try await pullRequestRequest(RemotePullRequestProtocol.reviewMethod, request: request,
+            target: request.target, maximum: RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes)
+        try validateWorkspaceResponse(generation: owned) {
+            guard try Self.samePullRequestTarget(result.target, request.target), result.id == result.value.id,
+                  Self.isTerminalDigest(result.digest), result.digest == (try RemotePullRequestProtocol.digest(target: result.target, value: result.value)) else {
+                throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+            switch (request.intent, result.value) {
+            case (.create(let title, let body, let base, let draft), .creation(let review)):
+                try review.validate()
+                guard review.context.workspacePath.utf8.elementsEqual(request.target.workspacePath.utf8),
+                      review.title.utf8.elementsEqual(title.utf8), review.body.utf8.elementsEqual(body.utf8),
+                      base == nil || review.baseBranch.utf8.elementsEqual(base!.utf8), review.isDraft == draft else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            case (.checkout(let reference, let mode, let submodules, let title), .checkout(let review)):
+                try review.validate()
+                let configuration = request.target.configuration, actual = review.targetConfiguration
+                var expected = configuration
+                expected.workspacePath = review.plan.destinationPath; expected.nativeThreadID = nil; expected.claudeLaunchSelection = nil
+                if let source = configuration.claudeRuntimeConfiguration, let replacement = actual.claudeRuntimeConfiguration {
+                    // The host supplies physical spelling. Passing it explicitly
+                    // keeps this validation lexical; no remote path is resolved here.
+                    expected.claudeRuntimeConfiguration = try source.replacingWorkspace(review.plan.destinationPath, physicalPath: replacement.workspacePath)
+                }
+                if let source = configuration.piConfiguration, let runtime = source.runtime, let replacement = actual.piConfiguration?.runtime {
+                    expected.piConfiguration = .init(instanceID: source.instanceID, executable: source.executable, model: source.model,
+                        thinkingLevel: source.thinkingLevel, runtime: try runtime.replacingWorkspace(review.plan.destinationPath, physicalPath: replacement.workspacePath))
+                }
+                guard review.projectID == request.target.projectID,
+                      review.registeredWorkspacePath.utf8.elementsEqual(request.target.workspacePath.utf8),
+                      review.plan.request.sourcePath.utf8.elementsEqual(request.target.workspacePath.utf8),
+                      review.plan.request.reference == reference, review.plan.request.mode == mode, review.plan.request.submodules == submodules,
+                      title == nil || review.title.utf8.elementsEqual(title!.utf8), !review.reviewSetup,
+                      try RemotePullRequestProtocol.payload(actual) == RemotePullRequestProtocol.payload(expected) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            default: throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+        }
+        return result
+    }
+    public func discardPullRequestReview(_ request: RemotePullRequestDiscardRequest) async throws -> RemotePullRequestDiscardResult {
+        guard Self.isTerminalDigest(request.digest) else { throw RemotePullRequestFailure(.invalidRequest) }
+        let owned = generation
+        let result: RemotePullRequestDiscardResult = try await pullRequestRequest(RemotePullRequestProtocol.discardMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) {
+            guard try RemotePullRequestProtocol.payload(result.request) == RemotePullRequestProtocol.payload(request) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    private func pullRequestRequest<Request: Encodable & Sendable, Response: Decodable & Sendable>(
+        _ method: String, request: Request, target: RemoteWorkspaceTarget, maximum: Int = RemoteEnvironmentProtocol.maximumRequestBytes,
+        requiresBoundRoot: Bool = true
+    ) async throws -> Response {
+        let (connection, owned, environment) = try context()
+        guard target.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
+        guard target.rootID != nil || !requiresBoundRoot else { throw RemotePullRequestFailure(.invalidTarget) }
+        guard descriptor?.capabilities.supportsRemotePullRequests == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        let bytes = try RemotePullRequestProtocol.payload(request)
+        guard bytes.count <= maximum, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(120))
+            guard generation == owned, rpc != nil else { throw CancellationError() }
+            do { return try RemoteEnvironmentProtocol.decode(Response.self, from: raw) }
+            catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+        } catch {
+            if generation == owned {
+                if let failure = error as? JSONRPCRemoteError, failure.code == -32_004,
+                   let value = failure.data["kind"].string, let kind = RemotePullRequestFailure.Kind(rawValue: value) { throw RemotePullRequestFailure(kind) }
+                if let failure = workspaceRejection(error) { throw failure }
+                if let failure = nativeRejection(error) { throw failure }
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
+            throw error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
+        }
+    }
+    private static func pullRequestKey(_ target: RemoteWorkspaceTarget) throws -> Data { Data(SHA256.hash(data: try RemotePullRequestProtocol.payload(target))) }
+    private static func samePullRequestTarget(_ a: RemoteWorkspaceTarget, _ b: RemoteWorkspaceTarget) throws -> Bool {
+        try RemotePullRequestProtocol.payload(a) == RemotePullRequestProtocol.payload(b)
+    }
+    private static func validatePullRequestIntent(_ intent: RemotePullRequestIntent) throws {
+        do {
+            switch intent {
+            case .create(let title, let body, let base, _):
+                guard GitHubValidation.text(title, maximum: 4_096), GitHubValidation.text(body, maximum: 1_048_576, allowEmpty: true, multiline: true),
+                      base.map(GitHubValidation.branch) ?? true else { throw RemotePullRequestFailure(.invalidRequest) }
+            case .checkout(let reference, _, _, let title):
+                try reference.validate()
+                guard title.map({ GitHubValidation.text($0, maximum: 4_096) }) ?? true else { throw RemotePullRequestFailure(.invalidRequest) }
+            }
+        } catch { throw RemotePullRequestFailure(.invalidRequest) }
+    }
+    private static func validatePullRequestDetail(_ detail: GitHubPullRequestDetail) throws {
+        try detail.validate()
+        for check in detail.checks {
+            guard GitHubValidation.text(check.name, maximum: 4_096), check.url.map(GitHubValidation.safeWebURL) ?? true else { throw RemoteEnvironmentClientError(.invalidResponse) }
         }
     }
     public func beginAttachmentUpload(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload {
@@ -829,6 +989,7 @@ public actor RemoteEnvironmentClient {
         }
     }
     private func retire(_ error: RemoteEnvironmentClientError, notify: Bool = true, graceful: Bool = false) {
+        pullRequestRepositories.removeAll()
         let gracefulEnvironment = graceful && connected && descriptor?.environmentID == expectedID ? expectedID : nil
         generation = UUID(); connected = false; subscribing = false
         descriptor = nil; discovery?.cancel(); discovery = nil

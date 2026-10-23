@@ -8,6 +8,7 @@ enum RemoteEnvironmentPreparation: Codable, Sendable {
     case thread(CodingThread)
     case worktree(RemoteWorktreePreparation)
     case attachments(RemoteAttachmentSubmission)
+    case pullRequest(RemotePullRequestPreparation)
 }
 
 enum RemoteEnvironmentAdmission {
@@ -55,12 +56,15 @@ enum RemoteEnvironmentAdmission {
             guard thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
                   thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw stale() }
             return .respond(threadID: id, requestID: request.id, response: response)
-        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments:
+        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest:
             throw stale()
         }
     }
     static func commands(_ request: RemoteEnvironmentCommandRequest, preparation: RemoteEnvironmentPreparation,
                          snapshot: WorkspaceSnapshot) throws -> [EngineCommand] {
+        if case .pullRequest = request.command {
+            return try pullRequestCommands(request, preparation: preparation, snapshot: snapshot)
+        }
         if case .submitWithAttachments(let owner, let text, let configuration, let expectedDraft, let ids) = request.command {
             guard case .attachments(let captured) = preparation, captured.target == owner,
                   owner.environmentID == request.environmentID, let thread = snapshot.threads.first(where: { $0.id == owner.threadID }),
@@ -155,6 +159,10 @@ extension WorkspaceDecision {
                 if let cancel = next.cancelWorktreeAttempt {
                     guard combined.cancelWorktreeAttempt == nil || combined.cancelWorktreeAttempt == cancel else { throw RemoteEnvironmentAdmission.stale() }
                     combined.cancelWorktreeAttempt = cancel
+                }
+                if let cancel = next.cancelPullRequestCheckoutOperation {
+                    guard combined.cancelPullRequestCheckoutOperation == nil || combined.cancelPullRequestCheckoutOperation == cancel else { throw RemoteEnvironmentAdmission.stale() }
+                    combined.cancelPullRequestCheckoutOperation = cancel
                 }
             }
             guard Set(combined.effects.map(\.id)).count == combined.effects.count else { throw RemoteEnvironmentAdmission.stale() }

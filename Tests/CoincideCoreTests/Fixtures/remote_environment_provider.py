@@ -40,9 +40,15 @@ exit_recorded = False
 
 def record_exit(reason):
     global exit_recorded
-    if not exit_recorded:
-        exit_recorded = True
-        record("exit", reason=reason)
+    # EOF and the owned SIGTERM may arrive together. Publish the exit evidence
+    # before allowing the signal handler to reenter or terminate this frame.
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    try:
+        if not exit_recorded:
+            record("exit", reason=reason)
+            exit_recorded = True
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
 def terminated(_signal, _frame):

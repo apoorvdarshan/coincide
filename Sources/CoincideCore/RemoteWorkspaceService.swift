@@ -20,6 +20,7 @@ actor RemoteWorkspaceService {
     private var revisions: [UUID: Revision] = [:]
     private var jobs: [UUID: Task<Void, Never>] = [:]
     private var busyRoots: [UUID: UUID] = [:]
+    private var busyGitRoots: Set<UUID> = []
     private var terminalRoots: [UUID: UUID] = [:]
     private var closing = false
     private var journalFailed = false
@@ -53,6 +54,56 @@ actor RemoteWorkspaceService {
     func bind(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
         do { return try await bindRoot(target) }
         catch { throw safe(error) }
+    }
+    /// PR recovery may inspect a checkout held by its own durable operation.
+    /// It still requires the same registered thread, configuration and inode.
+    func validatePullRequestTarget(_ target: RemoteWorkspaceTarget, allowLocked: Bool, requireRoot: Bool = true) async throws {
+        guard !closing, !journalFailed, target.environmentID == environmentID else {
+            throw RemoteWorkspaceFailure(.invalidTarget)
+        }
+        let update = await engine.current()
+        guard !closing, !journalFailed, update.error == nil,
+              let thread = update.snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              !thread.isArchived, update.snapshot.projects.contains(where: { $0.id == target.projectID }),
+              try RemotePullRequestProtocol.payload(ProviderConfiguration(thread: thread)) == RemotePullRequestProtocol.payload(target.configuration),
+              samePath(thread.workspacePath, target.workspacePath), update.snapshot.workspaceReady(for: thread),
+              !hasRunningWorktree(at: target.workspacePath, snapshot: update.snapshot),
+              !update.snapshot.isCheckpointRestoreLocked(path: target.workspacePath),
+              !update.snapshot.isConversationHistoryLocked(threadID: thread.id),
+              allowLocked || (!update.snapshot.isPullRequestCreationLocked(path: target.workspacePath) && !update.snapshot.isPullRequestCheckoutLocked(path: target.workspacePath)) else {
+            throw RemoteWorkspaceFailure(.invalidTarget)
+        }
+        if requireRoot {
+            guard let id = target.rootID, let root = roots[id], samePath(root.path, target.workspacePath) else { throw RemoteWorkspaceFailure(.staleRoot) }
+            do { try root.anchor.validate() } catch { throw RemoteWorkspaceFailure(.staleRoot) }
+        }
+    }
+    func bindPullRequestTarget(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        try await validatePullRequestTarget(target, allowLocked: true, requireRoot: false)
+        let id = try bindPhysicalRoot(path: target.workspacePath, expectedID: target.rootID)
+        let bound = RemoteWorkspaceTarget(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID,
+            configuration: target.configuration, rootID: id)
+        try await validatePullRequestTarget(bound, allowLocked: true)
+        return bound
+    }
+    func busyPullRequestPaths() async -> [String] {
+        Set(busyRoots.keys).union(terminalRoots.values).compactMap { roots[$0]?.path }
+    }
+    /// Called under the same host admission gate as file jobs and PTY opens.
+    /// The paths come from native prepared operations, never from the client.
+    func admitPullRequestScope(_ scope: RemotePullRequestScope) throws {
+        guard !closing, !journalFailed else { throw RemoteWorkspaceFailure(.unavailable) }
+        func overlap(_ a: String, _ b: String) -> Bool { WorkspaceSnapshot.checkpointRestorePathsOverlap(a, b) }
+        let mutations = scope.mutatingPaths, coordination = scope.coordinationPaths
+        for id in Set(busyRoots.keys).union(terminalRoots.values) {
+            guard let root = roots[id] else { continue }
+            try root.anchor.validate()
+            guard !mutations.contains(where: { overlap(root.path, $0) }) else { throw RemoteWorkspaceFailure(.busy) }
+            if busyGitRoots.contains(id) {
+                let paths = [root.path] + (root.gitDirectories?.map(\.path) ?? [])
+                guard !paths.contains(where: { path in coordination.contains { overlap(path, $0) } }) else { throw RemoteWorkspaceFailure(.busy) }
+            }
+        }
     }
     private func bindRoot(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
         try await authorize(target)
@@ -195,10 +246,19 @@ actor RemoteWorkspaceService {
             root = try await self.root(request.target)
             try await authorize(request.target, mutating: true)
             try validate(request.mutation)
+            switch request.mutation {
+            case .createFile, .saveFile, .gitInitialize: break
+            default:
+                _ = try await git(root)
+                let snapshot = await engine.current().snapshot
+                let paths = [root.path] + (root.gitDirectories?.map(\.path) ?? [])
+                guard !paths.contains(where: { snapshot.isPullRequestCheckoutCoordinating(path: $0) }) else { throw RemoteWorkspaceFailure(.busy) }
+            }
             guard busyRoots[root.id] == nil, !terminalRoots.values.contains(root.id), jobs.count < 8 else { throw RemoteWorkspaceFailure(.busy) }
         } catch { return try journal.insert(request, failure: safe(error)) }
         let accepted = try journal.insert(request)
         busyRoots[root.id] = request.id
+        switch request.mutation { case .createFile, .saveFile: break; default: busyGitRoots.insert(root.id) }
         jobs[request.id] = Task { await self.execute(request, root: root) }
         return accepted
     }
@@ -221,7 +281,7 @@ actor RemoteWorkspaceService {
         }
     }
     private func execute(_ request: RemoteWorkspaceMutationRequest, root: Root) async {
-        defer { jobs.removeValue(forKey: request.id); if busyRoots[root.id] == request.id { busyRoots.removeValue(forKey: root.id) } }
+        defer { jobs.removeValue(forKey: request.id); if busyRoots[root.id] == request.id { busyRoots.removeValue(forKey: root.id); busyGitRoots.remove(root.id) } }
         var entered = false
         do {
             try Task.checkCancellation(); try await authorize(request.target, mutating: true); try root.anchor.validate()

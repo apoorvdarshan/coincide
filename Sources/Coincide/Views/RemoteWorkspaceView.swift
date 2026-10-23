@@ -37,6 +37,7 @@ struct RemoteWorkspaceView: View {
     @State private var addingThread = false
     @State private var choosingWorktree = false
     @State private var dismissingRequest = false
+    @State private var showingPullRequests = false
 
     var body: some View {
         NavigationSplitView {
@@ -131,6 +132,12 @@ struct RemoteWorkspaceView: View {
         .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject, inspectorVisible: $store.inspectorVisible))
         .toolbar {
             ToolbarItem {
+                Button("Remote Pull Requests…", systemImage: "arrow.triangle.pull") {
+                    Task { await store.updatePullRequests(); showingPullRequests = true }
+                }.disabled(!store.isConnected || store.selectedThread == nil || store.descriptor?.capabilities.supportsRemotePullRequests != true)
+                    .accessibilityIdentifier("remote-pull-requests")
+            }
+            ToolbarItem {
                 Button("Toggle Remote Terminal", systemImage: "terminal") { store.terminalsVisible.toggle() }
                     .accessibilityIdentifier("remote-toggle-terminal")
             }
@@ -150,6 +157,7 @@ struct RemoteWorkspaceView: View {
         .task { await store.load() }
         .task(id: store.inspectorSelection) { await store.updateInspector() }
         .task(id: store.attachmentSelection) { await store.updateAttachments() }
+        .task(id: store.pullRequestSelection) { await store.updatePullRequests() }
         .task(id: store.terminalSelection) { await store.updateTerminals() }
         .task(id: store.worktreeSelection) { store.updateWorktrees() }
         .onDisappear { Task { await store.disconnect() } }
@@ -159,6 +167,11 @@ struct RemoteWorkspaceView: View {
         .sheet(isPresented: $addingThread) { RemoteThreadSheet(store: store) }
         .sheet(isPresented: $choosingWorktree) {
             RemoteWorktreeSheet(store: store.worktrees, onPrepared: { choosingWorktree = false })
+        }
+        .sheet(isPresented: $showingPullRequests) {
+            RemotePullRequestsSheet(store: store.pullRequests, requestPush: {
+                showingPullRequests = false; Task { await store.showPullRequestChanges() }
+            })
         }
         .confirmationDialog("Dismiss the unconfirmed request?", isPresented: $dismissingRequest) {
             Button("Keep Draft and Dismiss") { Task { await store.dismissPending() } }
@@ -218,6 +231,7 @@ struct RemoteWorkspaceView: View {
                 Spacer()
             }.padding(.horizontal, 14).padding(.bottom, 8)
             RemoteWorktreeBanner(store: store.worktrees)
+            RemotePullRequestBanner(store: store.pullRequests)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 24) {

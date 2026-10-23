@@ -197,6 +197,7 @@ struct WorkspaceDecision: Sendable {
     var closeRuntime: UUID? { closeRuntimes.first }
     var cancelCloneAttempt: UUID?
     var cancelWorktreeAttempt: UUID?
+    var cancelPullRequestCheckoutOperation: UUID?
 
     private struct GeneralReduction {
         let decision: WorkspaceDecision
@@ -490,7 +491,9 @@ struct WorkspaceDecision: Sendable {
         case .pullRequestCheckoutDispatching(let project, let operation, let incarnation): try decision.dispatchPullRequestCheckout(projectID: project, operationID: operation, incarnation: incarnation, now: now)
         case .pullRequestCheckoutEffectResult(let request, let result, let incarnation): try decision.finishPullRequestCheckout(request, result: result, incarnation: incarnation, now: now)
         case .pullRequestCheckoutInspected(let operation, _, let result): try decision.inspectPullRequestCheckout(operationID: operation, result: result, now: now)
-        case .pullRequestCheckoutCancel(let operation): try decision.cancelPullRequestCheckout(operationID: operation, now: now)
+        case .pullRequestCheckoutCancel(let operation):
+            try decision.cancelPullRequestCheckout(operationID: operation, now: now)
+            decision.cancelPullRequestCheckoutOperation = operation
         case .client(.acknowledgePullRequestCheckout(let operation)): try decision.acknowledgePullRequestCheckout(operationID: operation, now: now)
         case .pullRequestCreationAccepted(let operation):
             try decision.acceptPullRequestCreation(operation)

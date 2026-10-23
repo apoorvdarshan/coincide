@@ -5,10 +5,14 @@ public struct RemoteEnvironmentOptions: Sendable {
     public let codexHome: String?
     public let claudeExecutable: String
     public let claudeConfigurationDirectory: String?
+    public let githubExecutable: String?
+    public let githubConfigurationDirectory: String?
     public init(codexExecutable: String = "codex", codexHome: String? = nil,
-                claudeExecutable: String = "claude", claudeConfigurationDirectory: String? = nil) {
+                claudeExecutable: String = "claude", claudeConfigurationDirectory: String? = nil,
+                githubExecutable: String? = nil, githubConfigurationDirectory: String? = nil) {
         self.codexExecutable = codexExecutable; self.codexHome = codexHome
         self.claudeExecutable = claudeExecutable; self.claudeConfigurationDirectory = claudeConfigurationDirectory
+        self.githubExecutable = githubExecutable; self.githubConfigurationDirectory = githubConfigurationDirectory
     }
 }
 
@@ -25,6 +29,7 @@ public actor RemoteEnvironmentService {
     private var workspaceService: RemoteWorkspaceService?
     private var terminalService: RemoteTerminalService?
     private var attachmentService: RemoteAttachmentService?
+    private var pullRequestService: RemotePullRequestService?
     private var initializing: Task<WorkspaceEngine, any Error>?
     private var subscriptions: [UUID: Task<Void, Never>] = [:]
     private var closing = false
@@ -69,9 +74,15 @@ public actor RemoteEnvironmentService {
         guard !closing else { throw RemoteEnvironmentError(.unavailable) }
         if let engine { return engine }
         if let initializing { return try await initializing.value }
-        let url = dataDirectory.appendingPathComponent("workspace.sqlite"), factory = providerFactory
+        let url = dataDirectory.appendingPathComponent("workspace.sqlite"), factory = providerFactory, options = options
         let task = Task {
-            let value = try WorkspaceEngine(url: url, appMCPEnabled: false, providerFactory: factory)
+            var githubEnvironment = ProcessChannel.environment()
+            if let directory = options.githubConfigurationDirectory { githubEnvironment["GH_CONFIG_DIR"] = directory }
+            let githubExecutable = options.githubExecutable.flatMap(ProcessChannel.findExecutable) ?? (options.githubExecutable == nil ? ProcessChannel.findExecutable("gh") : nil)
+            let inherited = githubEnvironment
+            let value = try WorkspaceEngine(url: url, appMCPEnabled: false, providerFactory: factory,
+                pullRequestFactory: { GitHubPullRequestService(root: $0, environment: inherited, githubExecutable: githubExecutable) },
+                pullRequestCheckoutFactory: { GitHubPullRequestCheckoutService(request: $0, environment: inherited, githubExecutable: githubExecutable) })
             do { _ = try await value.load(); return value }
             catch { await value.shutdown(); throw error }
         }
@@ -99,7 +110,9 @@ public actor RemoteEnvironmentService {
     public func receipt(_ request: RemoteEnvironmentCommandRequest) async throws -> RemoteEnvironmentReceiptResult {
         try require(request.environmentID)
         do {
-            return .init(environmentID: environmentID, receipt: try await (try await workspace()).remoteEnvironmentReceipt(request))
+            let engine = try await workspace(), receipt = try await engine.remoteEnvironmentReceipt(request)
+            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request) }
+            return .init(environmentID: environmentID, receipt: receipt)
         } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
     }
     public func command(_ request: RemoteEnvironmentCommandRequest) async throws -> RemoteEnvironmentCommandResult {
@@ -107,9 +120,12 @@ public actor RemoteEnvironmentService {
         _ = try RemoteEnvironmentProtocol.payload(request)
         let engine = try await workspace()
         var inspected: RemoteEnvironmentPreparation?
-        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments {
+        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand {
             do {
-                if let receipt = try await engine.remoteEnvironmentReceipt(request) { return .init(environmentID: environmentID, receipt: receipt) }
+                if let receipt = try await engine.remoteEnvironmentReceipt(request) {
+                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request) }
+                    return .init(environmentID: environmentID, receipt: receipt)
+                }
             } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
             // Saved-plan inspection can wait for native Git. It owns a bounded
             // task in Engine, outside the short command/mutation admission lane.
@@ -117,6 +133,12 @@ public actor RemoteEnvironmentService {
             catch is CancellationError { throw CancellationError() }
             catch { inspected = .refused }
         }
+        let result = try await commitCommand(request, engine: engine, inspected: inspected)
+        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request) }
+        return result
+    }
+    private func commitCommand(_ request: RemoteEnvironmentCommandRequest, engine: WorkspaceEngine,
+                               inspected: RemoteEnvironmentPreparation?) async throws -> RemoteEnvironmentCommandResult {
         try await acquireWorkspaceAdmission()
         defer { releaseWorkspaceAdmission() }
         try Task.checkCancellation()
@@ -126,12 +148,19 @@ public actor RemoteEnvironmentService {
             // A durable original receipt wins before native runtime recapture or
             // filesystem preparation, even when the host has since changed.
             if let receipt = try await engine.remoteEnvironmentReceipt(request) { return .init(environmentID: environmentID, receipt: receipt) }
-            let preparation: RemoteEnvironmentPreparation
+            var preparation: RemoteEnvironmentPreparation = .none
             do {
                 try await workspaceService?.admitConversationCommand(request.command)
                 try validate(request.command)
                 if let inspected { preparation = inspected }
                 else { preparation = try await prepare(request.command, engine: engine) }
+                if case .pullRequest(let prepared) = preparation {
+                    let workspace = try await workspaceOperations()
+                    let requiresRoot: Bool
+                    if case .pullRequest(_, let action) = request.command { requiresRoot = action.requiresBoundRoot } else { requiresRoot = true }
+                    try await workspace.validatePullRequestTarget(prepared.target, allowLocked: prepared.allowsLockedTarget, requireRoot: requiresRoot)
+                    try await workspace.admitPullRequestScope(prepared.scope)
+                }
             } catch is CancellationError { throw CancellationError() }
             catch { preparation = .refused }
             try require(request.environmentID)
@@ -152,6 +181,29 @@ public actor RemoteEnvironmentService {
         if let attachmentService { return attachmentService }
         let service = try RemoteAttachmentService(environmentID: environmentID, engine: engine, dataDirectory: dataDirectory)
         attachmentService = service; return service
+    }
+    private func pullRequests() async throws -> RemotePullRequestService {
+        let engine = try await workspace(), workspace = try await workspaceOperations()
+        guard !closing else { throw RemotePullRequestFailure(.unavailable) }
+        if let pullRequestService { return pullRequestService }
+        let service = RemotePullRequestService(environmentID: environmentID, engine: engine, workspace: workspace)
+        pullRequestService = service; return service
+    }
+    public func readPullRequests(_ request: RemotePullRequestReadRequest) async throws -> RemotePullRequestReadResult {
+        try require(request.target.environmentID)
+        return try await (try await pullRequests()).read(request)
+    }
+    public func bindPullRequestWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        try require(target.environmentID)
+        return try await (try await workspaceOperations()).bindPullRequestTarget(target)
+    }
+    public func reviewPullRequest(_ request: RemotePullRequestReviewRequest) async throws -> RemotePullRequestReview {
+        try require(request.target.environmentID)
+        return try await (try await pullRequests()).review(request)
+    }
+    public func discardPullRequestReview(_ request: RemotePullRequestDiscardRequest) async throws -> RemotePullRequestDiscardResult {
+        try require(request.target.environmentID)
+        return try await (try await pullRequests()).discard(request)
     }
     public func beginAttachmentUpload(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload {
         try require(request.target.environmentID)
@@ -298,6 +350,8 @@ public actor RemoteEnvironmentService {
             return try await engine.prepareRemoteWorktree(command)
         case .submitWithAttachments:
             return try await engine.prepareRemoteAttachmentSubmission(command)
+        case .pullRequest:
+            return try await (try await pullRequests()).prepare(command)
         default: return .none
         }
     }
@@ -325,6 +379,10 @@ public actor RemoteEnvironmentService {
             try AttachmentLimits.validate(draft)
             guard draft.count + uploaded.count <= AttachmentLimits.count,
                   Set(uploaded).count == uploaded.count else { throw RemoteEnvironmentError(.invalidRequest) }
+        case .pullRequest(let target, let action):
+            guard target.environmentID == environmentID, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteEnvironmentError(.invalidRequest) }
+            try ProviderHistoryValidation.path(target.workspacePath)
+            if case .begin(_, let digest) = action, !CheckpointValidation.digest(digest) { throw RemoteEnvironmentError(.invalidRequest) }
         case .prepareWorktree(let target, _, _, let selection, let submodules):
             guard target.environmentID == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
             try GitWorktreeRequest(sourcePath: target.workspacePath, destinationRoot: dataDirectory.appendingPathComponent("Worktrees").path,
@@ -358,10 +416,11 @@ public actor RemoteEnvironmentService {
         closing = true
         let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
         for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
-        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService
+        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService
         for task in subscriptions { task.cancel() }
         let task = Task {
             await terminalService?.close()
+            await pullRequestService?.close()
             await workspaceService?.close()
             await attachmentService?.close()
             if let engine { await engine.shutdown() }
@@ -374,6 +433,10 @@ public actor RemoteEnvironmentService {
 }
 
 extension RemoteEnvironmentCommand {
+    var isPullRequestCommand: Bool {
+        if case .pullRequest = self { return true }
+        return false
+    }
     var preparesAttachments: Bool {
         if case .submitWithAttachments = self { return true }
         return false
