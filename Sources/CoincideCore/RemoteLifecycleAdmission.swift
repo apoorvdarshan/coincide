@@ -23,9 +23,9 @@ enum RemoteLifecycleAdmission {
                   thread.settlement?.id == native.settlementID, thread.settlement?.phase == native.settlementPhase,
                   !action.requiresBoundRoot || native.target.rootID != nil else { throw RemoteLifecycleFailure(.staleCapture) }
             switch action {
-            case .settleWithoutScript:
+            case .settleReviewingScript, .settleWithoutScript:
                 guard snapshot.canSettle(threadID: thread.id) else { throw RemoteLifecycleFailure(.busy) }
-                return [.client(.settleThread(threadID: thread.id, expectedWorkspacePath: native.target.workspacePath, reviewScript: false))]
+                return [.client(.settleThread(threadID: thread.id, expectedWorkspacePath: native.target.workspacePath, reviewScript: action == .settleReviewingScript))]
             case .resume(let id):
                 guard thread.settlement?.id == id, thread.settlement?.phase == .settled else { throw RemoteLifecycleFailure(.staleCapture) }
                 return [.client(.resumeThread(threadID: thread.id, generationID: id))]

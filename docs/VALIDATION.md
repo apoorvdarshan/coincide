@@ -4904,8 +4904,10 @@ SIL symbol `$sSbScA_pSgIeAghyg_SbIeAghn_TR` demangles to an isolated, Sendable B
 setter reabstraction thunk. The two direct actor-isolated method references in
 the section's Binding setters are replaced with explicit closures, preserving
 the same settings actions. No toolchain, workflow, test assertion or deadline is
-changed. This narrow workaround requires verification in the next hosted build;
-the failed run never executed tests or native UI shards.
+changed. The [next hosted build, 39984676572](https://github.com/apoorvdarshan/coincide/actions/runs/39984676572),
+passes on Apple Swift **6.3.3** (`swiftlang-6.3.3.1.3`) in **835.14 seconds**.
+Its complete test job is still running at this check. The earlier failed run
+never executed tests or native UI shards.
 
 ### Provider usage and remote lifecycle controls (2026-10-23)
 
@@ -4947,3 +4949,61 @@ model turn sent, or live SSH host mutated. These local checks do not establish
 installed-provider usage acceptance, hosted GUI acceptance, a new complete Core
 suite result or the Swift 6.3.3 compiler-workaround result. The next hosted run
 must verify those applicable checks; full T3 parity remains unfinished.
+
+### Reviewed remote cleanup scripts (2026-10-23)
+
+The normal remote Settle path now requests native cleanup discovery without
+execution. Separate script capability negotiation exposes a complete-command
+review, opaque approval, Stop/Skip/Retry and bounded output. CoincideEnvironment
+serves as its own managed helper through the existing FD/process-group protocol.
+File, Git, terminal, worktree, checkpoint and history admission observes retained
+native job leases, including shared Git directories and descendants after parent
+exit. Stop/Resume acknowledgements join exact cleanup outside host admission.
+Rootless recovery permits Stop/Skip/output while refusing Approve/Retry. An
+asynchronous setup job still permits its own conversation's native input path;
+foreign conversations remain excluded until drain.
+
+Verification on local Apple Swift 6.4:
+
+- Final `swift build --build-tests` passes. The ABI guard inspects **1252 objects**
+  (896 Core, 369 App), with **zero weak async-default records** and three local
+  records.
+- The complete **374-declaration UI unit suite passes in 80.523 seconds**,
+  including complete-command/SHA approval gates, stale host/attempt/root replies,
+  explicit output polling, accepted-control joins and offscreen light/dark views.
+- Final affected-Core selection passes **157 declarations in 89.336 seconds**,
+  including expanded parameter cases. It covers native embedded-helper execution,
+  prepare-before-start, one-shot start, stale configuration refusal, UTF-8 output,
+  live descendant cleanup, approved remote discovery/run/output, original receipt
+  recovery after lost replies, interruption without replay, fresh Retry review,
+  missing-folder recovery and private-incarnation refusal. Existing setup,
+  settlement, managed helper, remote file/Git/PTY/worktree/checkpoint/history/PR
+  controls run in the same selection.
+- The new real-helper lease regression refuses workspace file saves and Git
+  writes in both the target and source sibling worktrees sharing a common Git
+  directory; metadata, output and Stop remain reachable. The exact two recorded
+  process IDs are gone after Stop, and fresh file/Git writes then succeed. The
+  asynchronous-setup broker regression separately proves owner input admission,
+  foreign input refusal and admission after exact drain.
+- The initial selected run had four issues in three fixture declarations.
+  Corrections compare full command bytes to the immutable native normalized
+  plan, select exact thread IDs after inserting a sibling, and wait for host
+  native-thread/turn adoption before capturing checkpoint configuration. Original
+  assertions/deadlines remain; all affected Core declarations pass in the final
+  selection. The UI suite predates only the final Core input-scope adjustment,
+  which has the additional broker regression. A new single full aggregate is
+  not claimed.
+- Build-only packaging, strict deep code signing and native math-resource
+  rendering pass. Compiled and bundled UUIDs match: Coincide
+  `155647EF-1B56-3BB9-A5E1-FB28F0964256`, CoincideEnvironment
+  `9ACAEFD8-6258-3E5D-B64B-F3ED9E7FA541`, CoincideScriptHelper
+  `62062C43-BEB1-3209-94AC-EF7416E2F854`.
+
+Logs use `/tmp/coincide-reviewed-remote-scripts-*-20261023.log`; final test build
+is `build-final`, final Core run `core-recheck`, and whole UI evidence `focused`.
+The previous push's hosted Swift 6.3.3 build passes; its complete test job is
+still running at this check. This batch has no new hosted interaction result.
+No installed app was replaced/opened, actual provider turn sent, authentication
+changed or real SSH host modified. Remote setup/standalone scripts, persistent
+host behavior, native GUI interaction for this new workflow, installed-provider
+acceptance and broader T3 parity remain unfinished.

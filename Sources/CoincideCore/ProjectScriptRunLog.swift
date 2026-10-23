@@ -10,6 +10,7 @@ actor ProjectScriptRunLog {
     private var listeners: [UUID: AsyncStream<ProjectScriptOutputSnapshot>.Continuation] = [:]
     private var publishTask: Task<Void, Never>?
     init(id: UUID) { self.id = id }
+    func currentSnapshot() -> ProjectScriptOutputSnapshot { snapshot() }
     func stream() -> AsyncStream<ProjectScriptOutputSnapshot> {
         let pair = AsyncStream<ProjectScriptOutputSnapshot>.makeStream(bufferingPolicy: .bufferingNewest(1))
         pair.continuation.yield(snapshot())

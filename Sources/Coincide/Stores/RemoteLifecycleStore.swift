@@ -78,6 +78,7 @@ final class RemoteLifecycleStore {
         catch { if generation == owner && readID == id && !closed { errorMessage = error.localizedDescription } }
     }
     func settleWithoutScript(capture: RemoteLifecycleCapture) async -> Bool { await act(.settleWithoutScript, capture: capture) }
+    func settleReviewingScript(capture: RemoteLifecycleCapture) async -> Bool { await act(.settleReviewingScript, capture: capture) }
     func resume(capture: RemoteLifecycleCapture) async -> Bool {
         guard let id = state?.settlementID else { return false }
         return await act(.resume(generationID: id), capture: capture)
@@ -95,7 +96,7 @@ final class RemoteLifecycleStore {
         guard canAct, let state, RemoteLifecycleProtocol.same(state.capture, capture) else { return false }
         let allowed: Bool
         switch action {
-        case .settleWithoutScript: allowed = state.settle.allowed
+        case .settleReviewingScript, .settleWithoutScript: allowed = state.settle.allowed
         case .resume: allowed = state.resume.allowed
         case .snooze(let until): allowed = state.snooze.allowed && until.timeIntervalSince1970.isFinite && until > Date()
         case .wake: allowed = state.wake.allowed

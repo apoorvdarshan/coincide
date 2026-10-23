@@ -4,12 +4,13 @@ import Foundation
 /// Native helper entrypoint. Stdio carries only bounded JSON-RPC frames; all
 /// diagnostics use fixed text on stderr. There is no listener or login flow.
 public enum RemoteEnvironmentStdio {
-    public static func run(arguments: [String], driverFactory: RemotePTYDriverFactory? = nil) async -> Int32 {
+    public static func run(arguments: [String], driverFactory: RemotePTYDriverFactory? = nil,
+                           projectScriptFactory: WorkspaceEngine.ProjectScriptFactory? = nil) async -> Int32 {
         var service: RemoteEnvironmentService?
         do {
             let parsed = try Arguments(arguments)
             let current = try RemoteEnvironmentService(dataDirectory: parsed.directory, label: parsed.label,
-                expectedEnvironmentID: parsed.expected, options: parsed.options, driverFactory: driverFactory)
+                expectedEnvironmentID: parsed.expected, options: parsed.options, driverFactory: driverFactory, projectScriptFactory: projectScriptFactory)
             service = current
             let input = try RemoteEnvironmentStdioInput(), writer = try RemoteEnvironmentStdioWriter()
             let workspaceReads = RemoteWorkspaceReadResponses()
@@ -130,7 +131,7 @@ public enum RemoteEnvironmentStdio {
                             continue requestLoop
                         case RemoteEnvironmentProtocol.commandMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
-                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isLifecycleCommand {
+                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isProjectScriptCommand || request.command.isLifecycleCommand || request.command.isLifecycleCommand {
                                 try await workspaceReads.submit(id: id, operation: {
                                     try RemoteEnvironmentProtocol.encode(try await current.command(request))
                                 }, writer: writer, disconnect: { input.stop() })
@@ -139,7 +140,7 @@ public enum RemoteEnvironmentStdio {
                             result = try RemoteEnvironmentProtocol.encode(try await current.command(request))
                         case RemoteEnvironmentProtocol.receiptMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
-                            if request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand {
+                            if request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isProjectScriptCommand || request.command.isLifecycleCommand {
                                 try await workspaceReads.submit(id: id, operation: {
                                     try RemoteEnvironmentProtocol.encode(try await current.receipt(request))
                                 }, writer: writer, disconnect: { input.stop() })
@@ -153,6 +154,24 @@ public enum RemoteEnvironmentStdio {
                             let request = try RemoteEnvironmentProtocol.decode(RemoteLifecycleReadRequest.self, from: params)
                             try await workspaceReads.submit(id: id, operation: {
                                 try RemoteEnvironmentProtocol.encode(try await current.readLifecycle(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectScriptProtocol.readMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectScriptReadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.readProjectScript(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectScriptProtocol.contentMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectScriptContentRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectScriptContent(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteProjectScriptProtocol.outputMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteProjectScriptOutputRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.projectScriptOutput(request))
                             }, writer: writer, disconnect: { input.stop() })
                             continue requestLoop
                         case RemoteEnvironmentProtocol.worktreeCatalogMethod:
@@ -416,7 +435,8 @@ public enum RemoteEnvironmentStdio {
     }
     fileprivate static func errorResponse(id: JSONValue, error: any Error) -> JSONValue {
         let code: Int, kind: String, message: String
-        if let safe = error as? RemoteLifecycleFailure { code = -32_009; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        if let safe = error as? RemoteProjectScriptFailure { code = -32_010; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        else if let safe = error as? RemoteLifecycleFailure { code = -32_009; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteProjectionFailure { code = -32_006; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteContextFailure { code = -32_008; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteHistoryFailure { code = -32_007; kind = safe.kind.rawValue; message = safe.localizedDescription }

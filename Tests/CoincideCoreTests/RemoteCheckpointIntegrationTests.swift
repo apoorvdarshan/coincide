@@ -222,6 +222,13 @@ func remoteCheckpointNativeFailedPostCaptureHoldsFIFOUntilExactExplicitRetryOrCo
         let initial = try await f.register(client)
         #expect(try await client.command(.submit(threadID: initial.threadID, text: "Capture private files", expectedConfiguration: initial.configuration)).receipt.rejection == nil)
         try await remoteCheckpointEventually { try f.rows("files-written").count == 1 }
+        // The peer can record its file writes before the host has consumed
+        // its native thread/turn notifications. Capture configuration only
+        // after that authoritative adoption, preserving the bind CAS guard.
+        try await remoteCheckpointEventually {
+            let owner = try await remoteCheckpointThread(client, initial.threadID)
+            return owner.providerThreadID != nil && owner.activeRun?.nativeTurnID != nil
+        }
         let activeTarget = try await f.refreshed(client, thread: initial.threadID)
         #expect(try await client.command(.editThread(threadID: initial.threadID, edit: .checkpointPolicy(.disabled, expected: .automatic), expectedConfiguration: activeTarget.configuration)).receipt.rejection == nil)
         let target = try await f.refreshed(client, thread: initial.threadID)

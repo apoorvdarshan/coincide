@@ -183,10 +183,18 @@ public actor RemoteEnvironmentClient {
     }
     public func command(_ command: RemoteEnvironmentCommand, id: UUID = UUID()) async throws -> RemoteEnvironmentCommandResult {
         let (connection, owned, environment) = try context()
+        if case .projectScript(let target, let action) = command {
+            guard descriptor?.capabilities.supportsReviewedSettleScripts == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            guard target.environmentID == environment, !action.requiresBoundRoot || target.rootID != nil else { throw RemoteProjectScriptFailure(.invalidTarget) }
+            if case .approve(let claim) = action {
+                guard RemoteLifecycleProtocol.same(claim.target, target), RemoteLifecycleProtocol.validDigest(claim.digest) else { throw RemoteProjectScriptFailure(.staleReview) }
+            }
+        }
         if command.isLifecycleCommand {
             guard descriptor?.capabilities.supportsWorkspaceLifecycleControls == true else { throw RemoteEnvironmentClientError(.unsupported) }
             switch command {
             case .lifecycle(let capture, let action):
+                if action == .settleReviewingScript, descriptor?.capabilities.supportsReviewedSettleScripts != true { throw RemoteEnvironmentClientError(.unsupported) }
                 guard capture.target.environmentID == environment, RemoteLifecycleProtocol.validDigest(capture.digest),
                       !action.requiresBoundRoot || capture.target.rootID != nil else { throw RemoteLifecycleFailure(.invalidTarget) }
                 if case .snooze(let until) = action, !until.timeIntervalSince1970.isFinite || until <= Date() { throw RemoteLifecycleFailure(.invalidRequest) }
@@ -250,7 +258,7 @@ public actor RemoteEnvironmentClient {
         attemptedCommands.insert(id); activeRequests += 1
         defer { activeRequests -= 1 }
         do {
-            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand || command.isHistoryCommand || command.isContextTransferCommand) ? 120 : 45))
+            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand || command.isHistoryCommand || command.isContextTransferCommand || command.isProjectScriptCommand) ? 120 : 45))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             try validateReceipt(result.receipt, environmentID: result.environmentID, commandID: id)
@@ -286,6 +294,95 @@ public actor RemoteEnvironmentClient {
             let safe = error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
             if generation == owned { retire(safe) }
             throw safe
+        }
+    }
+    public func readProjectScript(_ request: RemoteProjectScriptReadRequest) async throws -> RemoteProjectScriptReadResult {
+        let owner = generation
+        let value: RemoteProjectScriptReadResult = try await projectScriptRequest(RemoteProjectScriptProtocol.readMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owner) {
+            let expected = RemoteWorkspaceTarget(environmentID: request.target.environmentID, projectID: request.target.projectID,
+                threadID: request.target.threadID, configuration: request.target.configuration, rootID: value.target.rootID)
+            guard RemoteLifecycleProtocol.same(value.target, expected), value.generationID == request.generationID,
+                  request.target.rootID == nil || value.target.rootID == nil || request.target.rootID == value.target.rootID else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            guard let script = value.script else { return }
+            if let exit = script.commandExit {
+                switch exit {
+                case .exited(let code): guard (0...255).contains(code) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                case .signaled(let code): guard (1...127).contains(code) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                }
+            }
+            guard script.output.hostID == value.hostID, script.output.runID == script.runID,
+                  script.output.generationID == value.generationID, RemoteLifecycleProtocol.same(script.output.target, value.target),
+                  script.startedAt.map({ $0.timeIntervalSince1970.isFinite }) ?? true,
+                  script.endedAt.map({ $0.timeIntervalSince1970.isFinite }) ?? true,
+                  script.error.map({ $0.utf8.count <= 2_048 && !$0.contains("\0") }) ?? true,
+                  !script.canApprove || (script.phase == .awaitingApproval && script.review != nil && value.target.rootID != nil),
+                  !script.canRetry || value.target.rootID != nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            if let review = script.review {
+                guard review.claim.hostID == value.hostID, review.claim.generationID == value.generationID,
+                      review.claim.runID == script.runID, RemoteLifecycleProtocol.same(review.claim.target, value.target),
+                      RemoteLifecycleProtocol.validDigest(review.claim.digest), review.workspacePath.utf8.elementsEqual(value.target.workspacePath.utf8) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                for path in [review.projectRoot, review.workspacePath, review.shellPath] { try ProviderHistoryValidation.path(path) }
+                for (text, kind) in [(review.name, RemoteProjectScriptContentReference.Kind.name), (review.command, .command)] {
+                    guard text.preview.utf8.count <= RemoteProjectScriptProtocol.maximumResultBytes, !text.preview.contains("\0") else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                    if let reference = text.content {
+                        guard reference.kind == kind, (1...262_144).contains(reference.totalBytes), RemoteLifecycleProtocol.validDigest(reference.digest) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                    }
+                }
+            }
+        }
+        return value
+    }
+    public func projectScriptContent(_ request: RemoteProjectScriptContentRequest) async throws -> RemoteProjectScriptContentResult {
+        guard request.offset >= 0, request.offset < request.reference.totalBytes,
+              (1...RemoteProjectScriptProtocol.maximumContentBytes).contains(request.maximumBytes),
+              (1...262_144).contains(request.reference.totalBytes), RemoteLifecycleProtocol.validDigest(request.reference.digest) else { throw RemoteProjectScriptFailure(.invalidRequest) }
+        let owner = generation
+        let value: RemoteProjectScriptContentResult = try await projectScriptRequest(RemoteProjectScriptProtocol.contentMethod, request: request, target: request.claim.target)
+        try validateWorkspaceResponse(generation: owner) {
+            let end = request.offset + value.data.count
+            guard RemoteLifecycleProtocol.same(value.claim, request.claim), value.reference == request.reference, value.offset == request.offset,
+                  !value.data.isEmpty, value.data.count <= request.maximumBytes, end <= request.reference.totalBytes,
+                  value.complete == (end == request.reference.totalBytes), value.nextOffset == (value.complete ? nil : end) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return value
+    }
+    public func projectScriptOutput(_ request: RemoteProjectScriptOutputRequest) async throws -> RemoteProjectScriptOutputResult {
+        let owner = generation
+        let value: RemoteProjectScriptOutputResult = try await projectScriptRequest(RemoteProjectScriptProtocol.outputMethod, request: request, target: request.reference.target)
+        try validateWorkspaceResponse(generation: owner) {
+            guard RemoteLifecycleProtocol.same(value.reference, request.reference), value.text.utf8.count <= 65_536,
+                  !value.text.contains("\0"), value.retention != .retained || (request.afterSequence.map({ value.sequence >= $0 }) ?? true),
+                  value.retention == .retained || value.text.isEmpty,
+                  value.retention != .notRetained || value.isClosed else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return value
+    }
+    private func projectScriptRequest<Request: Encodable & Sendable, Response: Decodable & Encodable & Sendable>(
+        _ method: String, request: Request, target: RemoteWorkspaceTarget) async throws -> Response {
+        let (connection, owned, environment) = try context()
+        guard descriptor?.capabilities.supportsReviewedSettleScripts == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        guard target.environmentID == environment else { throw RemoteProjectScriptFailure(.invalidTarget) }
+        let bytes = try RemoteProjectScriptProtocol.payload(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumRequestBytes, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(30))
+            guard generation == owned, rpc != nil else { throw CancellationError() }
+            let result = try RemoteEnvironmentProtocol.decode(Response.self, from: raw)
+            guard try RemoteProjectScriptProtocol.payload(result).count <= RemoteProjectScriptProtocol.maximumResultBytes else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            return result
+        } catch {
+            if generation == owned {
+                if let failure = error as? JSONRPCRemoteError, failure.code == -32_010,
+                   let raw = failure.data["kind"].string, let kind = RemoteProjectScriptFailure.Kind(rawValue: raw) { throw RemoteProjectScriptFailure(kind) }
+                if let failure = workspaceRejection(error) { throw failure }
+                if let failure = nativeRejection(error) { throw failure }
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
+            throw error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
         }
     }
     public func readLifecycle(_ request: RemoteLifecycleReadRequest) async throws -> RemoteLifecycleReadResult {

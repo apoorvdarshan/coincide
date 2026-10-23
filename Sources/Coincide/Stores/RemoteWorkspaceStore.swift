@@ -43,6 +43,7 @@ final class RemoteWorkspaceStore {
     let contextTransfers = RemoteContextTransferStore()
     let projection = RemoteProjectionStore()
     let lifecycle = RemoteLifecycleStore()
+    let projectScripts = RemoteProjectScriptStore()
     private(set) var usesProjection = false
     private(set) var isPreparingSubmission = false
     var inspectorVisible = true
@@ -109,7 +110,8 @@ final class RemoteWorkspaceStore {
             canWrite: canWrite, canMutate: true)
     }
     func updateLifecycle() async {
-        guard !stopping else { lifecycle.disconnect(); return }
+        guard !stopping else { lifecycle.disconnect(); projectScripts.disconnect(); return }
+        updateProjectScripts()
         let owner = generation, environmentID = connection?.environmentID
         lifecycle.update(environmentID: environmentID, target: pullRequestTarget,
             transport: isConnected ? client.map(RemoteLifecycleTransport.live) : nil,
@@ -120,6 +122,18 @@ final class RemoteWorkspaceStore {
                 return await self.perform(command)
             })
         if lifecycle.canRead && !lifecycle.isActing { await lifecycle.refresh() }
+    }
+    func updateProjectScripts() {
+        let owner = generation, environmentID = connection?.environmentID
+        let settlementID = usesProjection ? projection.control?.detail.settlementID : selectedThread?.settlement?.id
+        projectScripts.update(environmentID: environmentID, target: pullRequestTarget, generationID: settlementID,
+            transport: isConnected ? client.map(RemoteProjectScriptTransport.live) : nil,
+            supported: descriptor?.capabilities.supportsReviewedSettleScripts == true,
+            canWrite: canWrite, perform: { [weak self] command in
+                guard let self, self.generation == owner,
+                      self.connection?.environmentID == environmentID else { return false }
+                return await self.perform(command)
+            })
     }
     var draft: String { selectedThreadID.map { drafts[$0] ?? (usesProjection ? projection.control?.draft : selectedThread?.draft) ?? "" } ?? "" }
     var selectedConfiguration: ProviderConfiguration? {
@@ -509,6 +523,7 @@ final class RemoteWorkspaceStore {
     private func disconnectTransport(owner: Int) async {
         isConnected = false; needsTrust = false
         lifecycle.disconnect()
+        projectScripts.disconnect()
         projection.disconnect()
         inspector.disconnect()
         terminals.disconnect()
@@ -524,6 +539,7 @@ final class RemoteWorkspaceStore {
     func shutdown() async {
         stopping = true
         await lifecycle.shutdown()
+        await projectScripts.shutdown()
         await disconnect()
         await inspector.shutdown()
         await terminals.shutdown()
@@ -535,7 +551,7 @@ final class RemoteWorkspaceStore {
         await contextTransfers.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; lifecycle.cancelShutdown(); inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown(); history.cancelShutdown(); contextTransfers.cancelShutdown() }
+    func cancelShutdown() { stopping = false; lifecycle.cancelShutdown(); projectScripts.cancelShutdown(); inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown(); history.cancelShutdown(); contextTransfers.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -555,7 +571,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
-        if selectedThreadID != id { lifecycle.disconnect(); inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection(); contextTransfers.clearSelection() }
+        if selectedThreadID != id { lifecycle.disconnect(); projectScripts.disconnect(); inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection(); contextTransfers.clearSelection() }
         selectedThreadID = id
         if usesProjection {
             projection.beginSelection(id)
@@ -618,7 +634,7 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Review the draft before sending again."; return false
         }
-        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command), lifecycleCommandStillAllowed(command) else {
+        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command), lifecycleCommandStillAllowed(command), projectScriptCommandStillAllowed(command) else {
             errorMessage = "The remote review or its affected checkout changed. Save edits, close affected terminals, and review it again."; return false
         }
         let changingWorkspace: RemoteWorkspaceTarget?
@@ -643,7 +659,7 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Your draft was kept."; return false
         }
-        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command), lifecycleCommandStillAllowed(command) else {
+        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command), lifecycleCommandStillAllowed(command), projectScriptCommandStillAllowed(command) else {
             errorMessage = "The remote review or its affected checkout changed. Your draft was kept."; return false
         }
         if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
@@ -656,7 +672,7 @@ final class RemoteWorkspaceStore {
             try await pendingStore.save(request)
             guard generation == owner, !stopping else { return false }
             pending = request
-            if !pullRequestCommandStillAllowed(command) || !checkpointCommandStillAllowed(command) || !historyCommandStillAllowed(command) || !contextCommandStillAllowed(command) || !lifecycleCommandStillAllowed(command) {
+            if !pullRequestCommandStillAllowed(command) || !checkpointCommandStillAllowed(command) || !historyCommandStillAllowed(command) || !contextCommandStillAllowed(command) || !lifecycleCommandStillAllowed(command) || !projectScriptCommandStillAllowed(command) {
                 try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
                 pending = nil
                 errorMessage = "The remote review or its affected checkout changed. Your draft was kept."
@@ -690,9 +706,30 @@ final class RemoteWorkspaceStore {
         }
     }
 
+    private func projectScriptCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        guard case .projectScript(let target, let action) = command else { return true }
+        guard descriptor?.capabilities.supportsReviewedSettleScripts == true,
+              target.environmentID == connection?.environmentID, target.threadID == selectedThreadID,
+              let current = pullRequestTarget, let state = projectScripts.state,
+              target.projectID == current.projectID,
+              target.workspacePath.utf8.elementsEqual(current.workspacePath.utf8),
+              RemoteLifecycleProtocol.same(target.configuration, current.configuration),
+              RemoteLifecycleProtocol.same(state.output.target, target),
+              projectScripts.generationID == action.generationID, state.runID == action.runID else { return false }
+        switch action {
+        case .approve(let claim):
+            return state.canApprove &&
+                state.review.map { RemoteLifecycleProtocol.same($0.claim, claim) } == true &&
+                projectScripts.review.map { RemoteLifecycleProtocol.same($0.review.claim, claim) } == true
+        case .stop: return state.canStop
+        case .skip: return state.canSkip
+        case .retry: return state.canRetry
+        }
+    }
     private func lifecycleCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
         switch command {
-        case .lifecycle(let capture, _):
+        case .lifecycle(let capture, let action):
+            if action == .settleReviewingScript, descriptor?.capabilities.supportsReviewedSettleScripts != true { return false }
             guard descriptor?.capabilities.supportsWorkspaceLifecycleControls == true,
                   connection?.environmentID == capture.target.environmentID,
                   selectedThreadID == capture.target.threadID,
@@ -892,7 +929,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; lifecycle.disconnect(); projection.disconnect(); inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); contextTransfers.disconnect(); notice = message.localizedDescription
+            isConnected = false; lifecycle.disconnect(); projectScripts.disconnect(); projection.disconnect(); inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); contextTransfers.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }

@@ -68,8 +68,9 @@ authored queued messages.
 
 **Settle without Cleanup Script…** is an explicit opt-out from cleanup-script
 review and execution. It retains history, drafts, files and terminal tabs.
-Normal remote cleanup-script review, execution, stop and output remain pending;
-this choice is not a substitute claim for those controls.
+Updated helpers separately advertise `supportsReviewedSettleScripts` for the
+normal reviewed cleanup workflow below. Older lifecycle-only helpers continue to
+offer the explicit skip choice without claiming script execution support.
 
 The helper initially keeps automatic sweeps disabled. A compatible client first
 negotiates lifecycle controls on its snapshot/subscription or projection-open
@@ -92,6 +93,47 @@ reply uses the existing Check Result receipt workflow and never resends the
 action. Fresh control metadata can update while an older transcript view stays
 pinned. Installed-provider, live SSH and hosted native interaction acceptance for
 these controls remain unverified.
+
+### Reviewed remote cleanup scripts
+
+**Settle… → Settle and Review Script** requests native cleanup discovery. It
+never approves execution. The native rules select the declared settle role only
+for a ready, separate conversation worktree; a shared checkout does not gain a
+cleanup command. **Review Settle Script…** loads the full name and command from
+the captured `t3.json` before enabling **Run Settle Script**. The review also shows the
+remote shell, working directory, project root and background behavior.
+
+The helper retains the complete native plan and private conversation/project
+incarnations. The client sends only an opaque claim, digest and exact generation
+and run IDs. Commands larger than the 8 KiB preview use immutable content pages
+of at most 128 KiB, with a 256 KiB response bound; full UTF-8 and digest checks
+precede approval. File revisions, shell/workspace identities and current scope
+are checked again by native execution. The client cannot supply an executable,
+environment or replacement native plan.
+
+Approval and Retry exclude conflicting file/Git/terminal work. The managed job
+continues to hold its workspace, project root and Git coordination scope while
+its command or managed descendants remain alive, including after the command's
+parent exits. **Stop Settle Script**, **Stop Background Jobs**, **Skip Settle
+Script** and explicit Resume retain their original command receipt and join the
+exact native drain outside the short host admission lane. Stop/Skip and output
+remain available when the checkout disappears; Approve/Retry require its bound
+physical root. Manual terminal tabs are not closed automatically.
+
+Output is read only after its disclosure opens. It uses bounded complete text
+replacements from the native 64 KiB/500-line tail, with monotonic sequence,
+truncation and closed markers. The UI distinguishes not started, retained and
+not retained. An owned helper restart interrupts the old attempt, invalidates
+its host-bound claims/output references and never replays approval. Historical
+output is not persisted across helpers; Retry requires a newly discovered,
+reviewed command. Closing a presentation cancels and joins reads/polls while
+accepted commands remain owned by the environment's pending journal.
+
+The environment binary also serves as its own managed script helper using the
+existing native helper protocol and process-group cleanup. No extra executable
+needs provisioning. Remote setup-script and arbitrary project-script controls,
+persistent hosts and installed/live SSH acceptance remain separate parity work.
+See VALIDATION.md for the exact local and hosted checks performed.
 
 ## Remote run checkpoints
 
@@ -379,7 +421,7 @@ New Terminal is the explicit way to launch another shell.
 The private host journal stores open identities and lifecycle metadata only,
 with a limit of 1,024 records or 8 MiB. At capacity it refuses new opens; identity
 pruning remains future work. Terminal output and input are not persisted by this
-remote feature. Persistent process reattachment, remote project-script controls,
+remote feature. Persistent process reattachment, remote setup/standalone project-script controls,
 styled cold restoration and real two-Mac acceptance remain unfinished.
 
 ## Remote attachments
@@ -558,7 +600,7 @@ The reference is T3 Code
    existing private MCP listener is loopback-only and closes each response; it
    is not a remote listener. General bounded HTTP client machinery may be shared
    without weakening provider-specific origin or credential rules.
-5. Complete persistent terminal reattachment, remote script controls, styled cold
+5. Complete persistent terminal reattachment, remote setup/standalone script controls, styled cold
    restoration and terminal-identity capacity management. Preserve the existing
    separation between the headless SwiftTerm `LocalProcess` driver and the
    display-only `TerminalView` adapter, bounded byte polling and inert replay.

@@ -404,6 +404,53 @@ func setupAsyncReleasesOnlyAfterActualStartedAndLaterFailurePreservesFIFO() asyn
 }
 
 @Test(.timeLimit(.minutes(1)))
+func setupAsyncRemoteBrokerAllowsOnlyItsOwnConversationInputWhileNativeJobIsOwned() async throws {
+    let script = try ProjectScript(name: "Owned async setup", command: "printf owned", runOnWorktreeCreate: true)
+    try await withSetupEngine(scripts: [script]) { f in
+        try await f.completeCheckout(); let run = try await f.awaitingApproval(), peer = try await f.approve(run)
+        peer.acknowledgeStart()
+        try await waitSetup { try await f.currentSetup().phase == .running }
+        let source = CodingThread(project: f.project)
+        try await f.engine.dispatch(.createThread(source))
+        let directory = f.root.appendingPathComponent("Private remote broker")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let environment = UUID(), broker = try RemoteWorkspaceService(environmentID: environment, engine: f.engine, dataDirectory: directory)
+        do {
+            let own = try await f.currentThread(), ownConfiguration = ProviderConfiguration(thread: own)
+            #expect(own.settlement == nil && own.workspacePreparation?.setup?.providerReleased == true && !peer.isClosed)
+            let ownAttachmentTarget = RemoteAttachmentTarget(environmentID: environment, projectID: own.projectID, threadID: own.id)
+            let ownCommands: [RemoteEnvironmentCommand] = [
+                .submit(threadID: own.id, text: "Owner input", expectedConfiguration: ownConfiguration),
+                .resumeQueue(threadID: own.id, expectedConfiguration: ownConfiguration),
+                .submitWithAttachments(target: ownAttachmentTarget, text: "Owner attachment input", expectedConfiguration: ownConfiguration,
+                    expectedDraftAttachments: [], uploadedAttachmentIDs: [])
+            ]
+            for command in ownCommands { try await broker.admitConversationCommand(command) }
+            let foreignConfiguration = ProviderConfiguration(thread: source)
+            let foreignTarget = RemoteAttachmentTarget(environmentID: environment, projectID: source.projectID, threadID: source.id)
+            let foreignCommands: [RemoteEnvironmentCommand] = [
+                .submit(threadID: source.id, text: "Foreign input", expectedConfiguration: foreignConfiguration),
+                .resumeQueue(threadID: source.id, expectedConfiguration: foreignConfiguration),
+                .submitWithAttachments(target: foreignTarget, text: "Foreign attachment input", expectedConfiguration: foreignConfiguration,
+                    expectedDraftAttachments: [], uploadedAttachmentIDs: [])
+            ]
+            for command in foreignCommands {
+                await #expect(throws: RemoteWorkspaceFailure(.busy)) { try await broker.admitConversationCommand(command) }
+            }
+            try await f.engine.dispatch(.submit(threadID: own.id, text: "Exactly one released owner turn"))
+            try await waitSetup { await f.harness.providerSessions(own.id).first?.turns.count == 1 }
+            #expect(!peer.isClosed && f.harness.providerSessions(source.id).isEmpty)
+            try await f.engine.stopProjectScript(threadID: own.id, runID: run.id)
+            await f.engine.awaitProjectScriptCleanup(threadID: own.id, runID: run.id)
+            #expect(peer.isClosed)
+            for command in foreignCommands { try await broker.admitConversationCommand(command) }
+            await f.harness.providerSessions(own.id).first?.finish()
+        } catch { await broker.close(); throw error }
+        await broker.close()
+    }
+}
+
+@Test(.timeLimit(.minutes(1)))
 func setupBlockingRequiresExitZeroAndSkipWaitsForOwnedSessionClose() async throws {
     let script = try ProjectScript(name: "Blocking setup", command: "printf blocking", runOnWorktreeCreate: true, runsAsynchronously: false)
     try await withSetupEngine(scripts: [script]) { f in

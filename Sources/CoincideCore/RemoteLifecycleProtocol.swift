@@ -36,6 +36,8 @@ public struct RemoteLifecycleCapture: Codable, Sendable, Equatable, Identifiable
 }
 
 public enum RemoteLifecycleAction: Codable, Sendable, Equatable {
+    /// Discover the native settle role; execution still requires a later review approval.
+    case settleReviewingScript
     /// A deliberate opt-out from cleanup-script review, never the normal script path.
     case settleWithoutScript
     case resume(generationID: UUID)
@@ -43,7 +45,7 @@ public enum RemoteLifecycleAction: Codable, Sendable, Equatable {
     case wake
     case setAutoSettle(enabled: Bool)
     public var requiresBoundRoot: Bool {
-        switch self { case .settleWithoutScript, .resume: true; default: false }
+        switch self { case .settleReviewingScript, .settleWithoutScript, .resume: true; default: false }
     }
 }
 

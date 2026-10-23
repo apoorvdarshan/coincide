@@ -181,7 +181,10 @@ struct RemoteProjectedConversationView: View {
             VStack(spacing: 0) {
                 header(control)
                 if store.descriptor?.capabilities.supportsWorkspaceLifecycleControls == true {
-                    RemoteLifecycleControls(store: store.lifecycle).padding(.horizontal, 14).padding(.bottom, 8)
+                    RemoteLifecycleControls(store: store.lifecycle, supportsScriptReview: store.descriptor?.capabilities.supportsReviewedSettleScripts == true).padding(.horizontal, 14).padding(.bottom, 8)
+                }
+                if store.descriptor?.capabilities.supportsReviewedSettleScripts == true, control.detail.settlementID != nil {
+                    RemoteProjectScriptPanel(store: store.projectScripts).padding(.horizontal, 14).padding(.bottom, 8)
                 }
                 if control.detail.liveProviderUsage != nil || control.detail.liveProviderUsageContent != nil {
                     DisclosureGroup("Latest Provider Status") {

@@ -3,8 +3,10 @@ import SwiftUI
 
 struct RemoteLifecycleControls: View {
     @Bindable var store: RemoteLifecycleStore
+    var supportsScriptReview = false
     @State private var snoozing: RemoteLifecycleCapture?
     @State private var settling: RemoteLifecycleCapture?
+    @State private var reviewingSettle: RemoteLifecycleCapture?
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let value = store.state {
@@ -35,6 +37,12 @@ struct RemoteLifecycleControls: View {
                     Button("Snooze…") { snoozing = value.capture }.disabled(!store.canAct || !value.snooze.allowed)
                         .accessibilityIdentifier("remote-lifecycle-snooze")
                     if value.settlementID == nil {
+                        if supportsScriptReview {
+                            Button("Settle…") { reviewingSettle = value.capture }
+                                .disabled(!store.canAct || !value.settle.allowed)
+                                .help(value.settle.reason ?? "Settle and review the declared cleanup command before running it")
+                                .accessibilityIdentifier("remote-lifecycle-settle")
+                        }
                         Button("Settle without Cleanup Script…") { settling = value.capture }
                             .disabled(!store.canAct || !value.settle.allowed)
                             .help(value.settle.reason ?? "Explicitly skip cleanup-script review and settle this conversation")
@@ -72,6 +80,14 @@ struct RemoteLifecycleControls: View {
             Button("Cancel", role: .cancel) { settling = nil }
         } message: {
             Text("Keep this remote conversation for later and leave its files and terminal tabs in place. This explicit choice skips cleanup-script review and execution. Choose Resume to continue later.")
+        }
+        .confirmationDialog("Settle and Review Cleanup Script?", isPresented: Binding(get: { reviewingSettle != nil }, set: { if !$0 { reviewingSettle = nil } })) {
+            if let capture = reviewingSettle {
+                Button("Settle and Review Script") { reviewingSettle = nil; Task { _ = await store.settleReviewingScript(capture: capture) } }
+            }
+            Button("Cancel", role: .cancel) { reviewingSettle = nil }
+        } message: {
+            Text("Keep this conversation for later and stop its managed setup jobs. For a separate worktree with a declared cleanup script, review its exact command before approving execution. Your terminal tabs remain open. Settling alone never runs the cleanup command.")
         }
     }
 }

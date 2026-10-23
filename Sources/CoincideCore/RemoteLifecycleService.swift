@@ -117,7 +117,7 @@ actor RemoteLifecycleService {
         guard let claim = claims[capture.id], RemoteLifecycleProtocol.same(claim.capture, capture) else { throw RemoteLifecycleFailure(.staleCapture) }
         if action.requiresBoundRoot, capture.target.rootID == nil { throw RemoteLifecycleFailure(.invalidTarget) }
         switch action {
-        case .settleWithoutScript: guard claim.native.settle.allowed else { throw RemoteLifecycleFailure(.busy) }
+        case .settleReviewingScript, .settleWithoutScript: guard claim.native.settle.allowed else { throw RemoteLifecycleFailure(.busy) }
         case .resume(let id): guard id == claim.native.settlementID, claim.native.resume.allowed else { throw RemoteLifecycleFailure(.staleCapture) }
         case .snooze(let until):
             guard until.timeIntervalSince1970.isFinite, until > Date() else { throw RemoteLifecycleFailure(.invalidRequest) }

@@ -25,6 +25,7 @@ public actor RemoteEnvironmentService {
     private let options: RemoteEnvironmentOptions
     private let providerFactory: WorkspaceEngine.ProviderFactory
     private let driverFactory: RemotePTYDriverFactory?
+    private let projectScriptFactory: WorkspaceEngine.ProjectScriptFactory?
     private var engine: WorkspaceEngine?
     private var workspaceService: RemoteWorkspaceService?
     private var terminalService: RemoteTerminalService?
@@ -35,6 +36,7 @@ public actor RemoteEnvironmentService {
     private var contextService: RemoteContextService?
     private var projectionService: RemoteProjectionService?
     private var lifecycleService: RemoteLifecycleService?
+    private var projectScriptService: RemoteProjectScriptService?
     private var initializing: Task<WorkspaceEngine, any Error>?
     private var subscriptions: [UUID: Task<Void, Never>] = [:]
     private var closing = false
@@ -62,14 +64,16 @@ public actor RemoteEnvironmentService {
     public init(dataDirectory: URL, label: String = ProcessInfo.processInfo.hostName,
                 expectedEnvironmentID: UUID? = nil, options: RemoteEnvironmentOptions = .init(),
                 providerFactory: @escaping WorkspaceEngine.ProviderFactory = { try ProviderSessions.make(for: $0) },
-                driverFactory: RemotePTYDriverFactory? = nil) throws {
+                driverFactory: RemotePTYDriverFactory? = nil,
+                projectScriptFactory: WorkspaceEngine.ProjectScriptFactory? = nil) throws {
         guard !label.isEmpty, label.utf8.count <= 256,
               !label.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw RemoteEnvironmentError(.invalidRequest) }
         environmentID = try RemoteEnvironmentIdentity.load(dataDirectory: dataDirectory, expected: expectedEnvironmentID)
         self.dataDirectory = dataDirectory; self.label = label; self.options = options; self.providerFactory = providerFactory; self.driverFactory = driverFactory
+        self.projectScriptFactory = projectScriptFactory
     }
     public func descriptor() -> RemoteEnvironmentDescriptor {
-        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true, supportsRemoteHistory: true, supportsContextTransfers: true, supportsWorkspaceLifecycleControls: true))
+        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true, supportsRemoteHistory: true, supportsContextTransfers: true, supportsWorkspaceLifecycleControls: true, supportsReviewedSettleScripts: projectScriptFactory != nil))
     }
     private func require(_ id: UUID) throws {
         guard id == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
@@ -80,12 +84,14 @@ public actor RemoteEnvironmentService {
         if let engine { return engine }
         if let initializing { return try await initializing.value }
         let url = dataDirectory.appendingPathComponent("workspace.sqlite"), factory = providerFactory, options = options
+        let scripts = projectScriptFactory
         let task = Task {
             var githubEnvironment = ProcessChannel.environment()
             if let directory = options.githubConfigurationDirectory { githubEnvironment["GH_CONFIG_DIR"] = directory }
             let githubExecutable = options.githubExecutable.flatMap(ProcessChannel.findExecutable) ?? (options.githubExecutable == nil ? ProcessChannel.findExecutable("gh") : nil)
             let inherited = githubEnvironment
             let value = try WorkspaceEngine(url: url, appMCPEnabled: false, contextMCPEnabled: true, providerFactory: factory,
+                projectScriptFactory: scripts ?? { _ in throw ProjectScriptExecutionError(.helperUnavailable) },
                 pullRequestFactory: { GitHubPullRequestService(root: $0, environment: inherited, githubExecutable: githubExecutable) },
                 pullRequestCheckoutFactory: { GitHubPullRequestCheckoutService(request: $0, environment: inherited, githubExecutable: githubExecutable) })
             do { _ = try await value.load(); return value }
@@ -117,7 +123,7 @@ public actor RemoteEnvironmentService {
         try require(request.environmentID)
         do {
             let engine = try await workspace(), receipt = try await engine.remoteEnvironmentReceipt(request)
-            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request) }
+            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request) }
             return .init(environmentID: environmentID, receipt: receipt)
         } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
     }
@@ -126,10 +132,10 @@ public actor RemoteEnvironmentService {
         _ = try RemoteEnvironmentProtocol.payload(request)
         let engine = try await workspace()
         var inspected: RemoteEnvironmentPreparation?
-        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isLifecycleCommand {
+        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isLifecycleCommand || request.command.isProjectScriptCommand {
             do {
                 if let receipt = try await engine.remoteEnvironmentReceipt(request) {
-                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request) }
+                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request) }
                     return .init(environmentID: environmentID, receipt: receipt)
                 }
             } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
@@ -140,7 +146,7 @@ public actor RemoteEnvironmentService {
             catch { inspected = .refused }
         }
         let result = try await commitCommand(request, engine: engine, inspected: inspected)
-        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request) }
+        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request) }
         return result
     }
     private func commitCommand(_ request: RemoteEnvironmentCommandRequest, engine: WorkspaceEngine,
@@ -166,6 +172,13 @@ public actor RemoteEnvironmentService {
                     // Like Submit/ResumeQueue, this is conversation control:
                     // file/Git holds exclude it, ordinary terminal tabs stay.
                     try await workspace.admitConversationCommand(.resumeQueue(threadID: target.threadID, expectedConfiguration: target.configuration))
+                }
+                if case .projectScript(let prepared) = preparation, prepared.requiresBoundRoot {
+                    let workspace = try await workspaceOperations()
+                    try await workspace.validateCheckpointTarget(prepared.target, allowLocked: false)
+                    let excluding: UUID?
+                    if case .projectScript(_, .retry) = request.command { excluding = prepared.target.threadID } else { excluding = nil }
+                    try await workspace.admitProjectScriptScope(target: prepared.target, scope: prepared.scope, excludingManagedScriptThreadID: excluding)
                 }
                 if case .contextTransfer(let prepared) = preparation { try await (try await contexts()).validatePreparation(prepared) }
                 if case .history(let prepared) = preparation {
@@ -219,6 +232,32 @@ public actor RemoteEnvironmentService {
         if let lifecycleService { return lifecycleService }
         let service = RemoteLifecycleService(environmentID: environmentID, engine: engine, workspace: operations)
         lifecycleService = service; return service
+    }
+    private func projectScripts() async throws -> RemoteProjectScriptService {
+        guard !closing, projectScriptFactory != nil else { throw RemoteProjectScriptFailure(.unavailable) }
+        let engine = try await workspace()
+        guard !closing else { throw RemoteProjectScriptFailure(.unavailable) }
+        if let projectScriptService { return projectScriptService }
+        let service = RemoteProjectScriptService(environmentID: environmentID, engine: engine)
+        projectScriptService = service; return service
+    }
+    public func readProjectScript(_ request: RemoteProjectScriptReadRequest) async throws -> RemoteProjectScriptReadResult {
+        try require(request.target.environmentID)
+        let service = try await projectScripts(), workspace = try await workspaceOperations()
+        let target: RemoteWorkspaceTarget
+        do { target = try await workspace.bindCheckpointTarget(request.target) }
+        catch is CancellationError { throw CancellationError() }
+        catch { target = .init(environmentID: request.target.environmentID, projectID: request.target.projectID,
+            threadID: request.target.threadID, configuration: request.target.configuration) }
+        return try await service.read(.init(target: target, generationID: request.generationID))
+    }
+    public func projectScriptContent(_ request: RemoteProjectScriptContentRequest) async throws -> RemoteProjectScriptContentResult {
+        try require(request.claim.target.environmentID)
+        return try await (try await projectScripts()).content(request)
+    }
+    public func projectScriptOutput(_ request: RemoteProjectScriptOutputRequest) async throws -> RemoteProjectScriptOutputResult {
+        try require(request.reference.target.environmentID)
+        return try await (try await projectScripts()).output(request)
     }
     public func readLifecycle(_ request: RemoteLifecycleReadRequest) async throws -> RemoteLifecycleReadResult {
         try require(request.environmentID)
@@ -607,6 +646,8 @@ public actor RemoteEnvironmentService {
             return .lifecycle(try await (try await lifecycles()).prepare(capture, action: action))
         case .lifecyclePolicy(let policy, let expected):
             return .lifecycle(try await (try await lifecycles()).preparePolicy(policy, expected: expected))
+        case .projectScript:
+            return try await (try await projectScripts()).prepare(command)
         default: return .none
         }
     }
@@ -629,12 +670,20 @@ public actor RemoteEnvironmentService {
             case .permission, .checkpointPolicy: break }
         case .submit(_, let value, _): try text(value, maximum: 120_000)
         case .lifecycle(let capture, let action):
+            if action == .settleReviewingScript, projectScriptFactory == nil { throw RemoteEnvironmentError(.unsupported) }
             guard capture.target.environmentID == environmentID, RemoteLifecycleProtocol.validDigest(capture.digest),
                   !action.requiresBoundRoot || capture.target.rootID != nil else { throw RemoteLifecycleFailure(.invalidTarget) }
             try ProviderHistoryValidation.path(capture.target.workspacePath)
             if case .snooze(let until) = action, !until.timeIntervalSince1970.isFinite || until <= Date() { throw RemoteLifecycleFailure(.invalidRequest) }
         case .lifecyclePolicy(let policy, let expected):
             do { try policy.validate(); try expected.validate() } catch { throw RemoteLifecycleFailure(.invalidRequest) }
+        case .projectScript(let target, let action):
+            guard projectScriptFactory != nil else { throw RemoteEnvironmentError(.unsupported) }
+            guard target.environmentID == environmentID, !action.requiresBoundRoot || target.rootID != nil else { throw RemoteProjectScriptFailure(.invalidTarget) }
+            try ProviderHistoryValidation.path(target.workspacePath)
+            if case .approve(let claim) = action {
+                guard RemoteLifecycleProtocol.same(claim.target, target), RemoteLifecycleProtocol.validDigest(claim.digest) else { throw RemoteProjectScriptFailure(.staleReview) }
+            }
         case .submitWithAttachments(let target, let value, _, let draft, let uploaded):
             guard target.environmentID == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
             try text(value, maximum: 120_000, allowEmpty: !draft.isEmpty || !uploaded.isEmpty)
@@ -698,10 +747,11 @@ public actor RemoteEnvironmentService {
         let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
         for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
         let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService, checkpointService = checkpointService, historyService = historyService, contextService = contextService, projectionService = projectionService
-        let lifecycleService = lifecycleService
+        let lifecycleService = lifecycleService, projectScriptService = projectScriptService
         for task in subscriptions { task.cancel() }
         let task = Task {
             await lifecycleService?.close()
+            await projectScriptService?.close()
             await terminalService?.close()
             await projectionService?.close()
             await contextService?.close()
@@ -720,6 +770,7 @@ public actor RemoteEnvironmentService {
 }
 
 extension RemoteEnvironmentCommand {
+    var isProjectScriptCommand: Bool { if case .projectScript = self { true } else { false } }
     var isLifecycleCommand: Bool { switch self { case .lifecycle, .lifecyclePolicy: true; default: false } }
     var isContextTransferCommand: Bool { if case .contextTransfer = self { true } else { false } }
     var isHistoryCommand: Bool { if case .history = self { return true }; return false }

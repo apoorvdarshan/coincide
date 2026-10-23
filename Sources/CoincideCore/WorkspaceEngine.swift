@@ -2109,9 +2109,12 @@ extension WorkspaceEngine {
             let session: any ProjectScriptExecutionSession
             do { session = try projectScriptFactory(plan) }
             catch { await log.close(); throw CoincideError(ThreadProjectScriptRun.executionError(for: owner.role)) }
-            let output: Task<Void, Never> = Task {
+            let outputToken = UUID()
+            remoteProjectScriptPaths[runID] = .init(token: outputToken, threadID: threadID, paths: Array(Set([plan.workspacePath, plan.projectRoot])), drained: false)
+            let output: Task<Void, Never> = Task { [weak self] in
                 do { try await session.consumeOutput { chunk in await log.append(chunk.data) } } catch { }
                 await session.close(); await log.close()
+                await self?.remoteProjectScriptOutputDrained(runID, token: outputToken)
             }
             scriptRuntimes[runID] = .init(threadID: threadID, projectID: thread.projectID, path: plan.workspacePath, owner: owner,
                 incarnation: incarnation, session: session, output: output, monitor: nil)
@@ -2166,16 +2169,22 @@ extension WorkspaceEngine {
                 }
                 guard stopping || retired || settling, scriptClosures[run.id] == nil else { continue }
                 projectIDs.insert(old.projectID); threadIDs.insert(old.id)
+                if remoteProjectScriptPaths[run.id] == nil {
+                    let projectPath = previous.projects.first(where: { $0.id == old.projectID })?.path ?? old.workspacePath
+                    remoteProjectScriptPaths[run.id] = .init(token: UUID(), threadID: old.id,
+                        paths: Array(Set([run.plan?.workspacePath ?? old.workspacePath, run.plan?.projectRoot ?? projectPath])), drained: true)
+                }
                 let runtime = scriptRuntimes.removeValue(forKey: run.id), log = scriptLogs[run.id]
                 runtime?.monitor?.cancel(); runtime?.output.cancel()
                 let effectIDs = removedEffects.filter { $0.request.projectScriptRunID == run.id && $0.status == .running && $0.leaseOwner == workerID }.map(\.id)
                 let incarnation = threadIncarnations[old.id]
+                let leaseToken = remoteProjectScriptPaths[run.id]?.token
                 let task: Task<Void, Never> = Task.detached { [weak self] in
                     if let runtime { await runtime.session.close() }
                     for effect in effectIDs { await self?.awaitRetiringEffect(effect) }
                     await log?.close()
                     if let self, let incarnation { _ = try? await self.enqueue(.threadScriptStopped(threadID: old.id, owner: owner, runID: run.id, incarnation: incarnation)) }
-                    await self?.projectScriptCleanupFinished(run.id, threadID: old.id)
+                    await self?.projectScriptCleanupFinished(run.id, threadID: old.id, leaseToken: leaseToken)
                 }
                 scriptClosures[run.id] = task; jobs.append(task)
             }
@@ -2200,8 +2209,12 @@ extension WorkspaceEngine {
         return jobs
     }
     private func settlementCleanupFinished(_ id: UUID) { settlementClosures.removeValue(forKey: id); settlementPrerequisites.removeValue(forKey: id) }
-    private func projectScriptCleanupFinished(_ id: UUID, threadID: UUID) {
+    private func projectScriptCleanupFinished(_ id: UUID, threadID: UUID, leaseToken: UUID?) {
         scriptClosures.removeValue(forKey: id)
+        // The close/effect join above is authoritative even when the output
+        // consumer's final actor callback has not yet received its turn.
+        if let leaseToken, remoteProjectScriptPaths[id]?.token == leaseToken { remoteProjectScriptPaths[id]?.drained = true }
+        if remoteProjectScriptPaths[id]?.drained == true, scriptRuntimes[id] == nil { remoteProjectScriptPaths.removeValue(forKey: id) }
         if revision.snapshot.threads.first(where: { $0.id == threadID })?.projectScript(runID: id) == nil { scriptLogs.removeValue(forKey: id) }
     }
     private func closeAllProjectScripts() async {
@@ -2212,6 +2225,117 @@ extension WorkspaceEngine {
             await group.waitForAll()
         }
         for (id, log) in scriptLogs where scriptClosures[id] == nil { await log.close() }
+    }
+
+    /// Retained native jobs remain leases after their command exits and while
+    /// removed-thread cleanup drains. A closed retained log is not a lease.
+    func remoteProjectScriptBusyPaths(excludingThreadID: UUID? = nil) -> [String] {
+        var paths = Set<String>()
+        for (id, owner) in remoteProjectScriptPaths where owner.threadID != excludingThreadID {
+            if !owner.drained || scriptClosures[id] != nil { paths.formUnion(owner.paths) }
+        }
+        for thread in revision.snapshot.threads where thread.id != excludingThreadID {
+            for (_, run) in thread.projectScripts where [.starting, .running, .stopping].contains(run.phase) {
+                paths.insert(run.plan?.workspacePath ?? thread.workspacePath)
+                if let path = run.plan?.projectRoot ?? revision.snapshot.projects.first(where: { $0.id == thread.projectID })?.path { paths.insert(path) }
+            }
+        }
+        return paths.sorted()
+    }
+    private func remoteProjectScriptOutputDrained(_ runID: UUID, token: UUID) {
+        guard remoteProjectScriptPaths[runID]?.token == token else { return }
+        remoteProjectScriptPaths[runID]?.drained = true
+        if scriptRuntimes[runID] == nil, scriptClosures[runID] == nil { remoteProjectScriptPaths.removeValue(forKey: runID) }
+    }
+    private func remoteProjectScriptHasOwnedJob(_ runID: UUID) -> Bool {
+        scriptClosures[runID] != nil || remoteProjectScriptPaths[runID]?.drained == false
+    }
+    func readRemoteProjectScript(_ target: RemoteWorkspaceTarget, generationID: UUID) async throws -> RemoteProjectScriptNativeState {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil else { throw RemoteProjectScriptFailure(.unavailable) }
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              let project = revision.snapshot.projects.first(where: { $0.id == target.projectID }),
+              thread.workspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+              RemoteLifecycleProtocol.same(ProviderConfiguration(thread: thread), target.configuration),
+              let projectIncarnation = projectIncarnations[project.id], let threadIncarnation = threadIncarnations[thread.id],
+              thread.settlement?.id == generationID else { throw RemoteProjectScriptFailure(.invalidTarget) }
+        let run = thread.settlement?.script
+        return .init(target: target, projectPath: project.path, projectIncarnation: projectIncarnation,
+            threadIncarnation: threadIncarnation, generationID: generationID, run: run,
+            hasOwnedJob: run.map { remoteProjectScriptHasOwnedJob($0.id) } ?? false)
+    }
+    private func validateRemoteProjectScriptPreparation(_ prepared: RemoteProjectScriptPreparation, snapshot: WorkspaceSnapshot) throws {
+        guard !closing, !stoppingEffects, fatalError == nil else { throw RemoteProjectScriptFailure(.unavailable) }
+        let native = prepared.native, target = native.target, action = prepared.action
+        guard projectIncarnations[target.projectID] == native.projectIncarnation,
+              threadIncarnations[target.threadID] == native.threadIncarnation,
+              let project = snapshot.projects.first(where: { $0.id == target.projectID }),
+              project.path.utf8.elementsEqual(native.projectPath.utf8),
+              let thread = snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              thread.workspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+              RemoteLifecycleProtocol.same(ProviderConfiguration(thread: thread), target.configuration),
+              thread.settlement?.id == native.generationID, native.generationID == action.generationID,
+              thread.settlement?.phase == .settled, let run = thread.settlement?.script,
+              run.id == action.runID, run.id == native.run?.id,
+              !action.requiresBoundRoot || target.rootID != nil else { throw RemoteProjectScriptFailure(.invalidTarget) }
+        switch action {
+        case .approve:
+            guard run.canApprove, RemoteLifecycleProtocol.same(run.plan, native.run?.plan),
+                  snapshot.permitsScriptAction(owner: .settlement(generationID: native.generationID), thread: thread) else { throw RemoteProjectScriptFailure(.staleReview) }
+        case .retry:
+            guard run.canRetry, RemoteLifecycleProtocol.same(Optional(run), native.run), !thread.isBusy,
+                  snapshot.permitsScriptAction(owner: .settlement(generationID: native.generationID), thread: thread) else { throw RemoteProjectScriptFailure(.staleReview) }
+        case .skip:
+            guard run.canSkip else { throw RemoteProjectScriptFailure(.staleReview) }
+        case .stop:
+            guard run.phase != .stopping, remoteProjectScriptHasOwnedJob(run.id) || [.discovering, .starting, .running].contains(run.phase) else { throw RemoteProjectScriptFailure(.staleReview) }
+        }
+        if action.requiresBoundRoot {
+            let paths = [thread.workspacePath, project.path]
+            for other in snapshot.threads where other.id != thread.id {
+                let ownedPaths = [other.workspacePath] + (other.activeRun.map { [$0.configuration.workspacePath] } ?? []) + other.queuedTurns.map { $0.configuration.workspacePath }
+                guard !other.isBusy && other.queuedTurns.isEmpty && other.runtimeRequests.isEmpty ||
+                      !ownedPaths.contains(where: { path in paths.contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }) else { throw RemoteProjectScriptFailure(.busy) }
+            }
+        }
+    }
+    func readRemoteProjectScriptOutput(_ owner: RemoteProjectScriptOutputOwner) async throws -> RemoteProjectScriptNativeOutput {
+        _ = try await load(); try Task.checkCancellation()
+        try validateRemoteProjectScriptOutputOwner(owner)
+        if let log = scriptLogs[owner.runID] {
+            let value = await log.currentSnapshot()
+            try Task.checkCancellation(); try validateRemoteProjectScriptOutputOwner(owner)
+            return .init(value: value, retention: .retained)
+        }
+        if let thread = revision.snapshot.threads.first(where: { $0.id == owner.target.threadID }),
+           thread.settlement?.id == owner.generationID, let run = thread.settlement?.script, run.id == owner.runID,
+           run.startedAt == nil, [.waitingForCheckout, .discovering, .awaitingApproval, .skipped].contains(run.phase) {
+            let value: ProjectScriptOutputSnapshot? = run.phase == .skipped ? .init(runID: run.id, sequence: 0, text: "", truncated: false, isClosed: true) : nil
+            return .init(value: value, retention: .notStarted)
+        }
+        // Logs are host-lifetime state. Never synthesize a retained empty log
+        // for a completed or interrupted job loaded by a replacement helper.
+        return .init(value: nil, retention: .notRetained)
+    }
+    private func validateRemoteProjectScriptOutputOwner(_ owner: RemoteProjectScriptOutputOwner) throws {
+        guard !closing, !stoppingEffects, fatalError == nil else { throw RemoteProjectScriptFailure(.unavailable) }
+        guard projectIncarnations[owner.target.projectID] == owner.projectIncarnation,
+              threadIncarnations[owner.target.threadID] == owner.threadIncarnation,
+              revision.snapshot.projects.contains(where: { $0.id == owner.target.projectID }),
+              revision.snapshot.threads.contains(where: { $0.id == owner.target.threadID && $0.projectID == owner.target.projectID && $0.workspacePath.utf8.elementsEqual(owner.target.workspacePath.utf8) }) else { throw RemoteProjectScriptFailure(.invalidTarget) }
+    }
+    func awaitRemoteProjectScriptCompletion(_ request: RemoteEnvironmentCommandRequest) async {
+        switch request.command {
+        case .projectScript(_, let action):
+            switch action {
+            case .approve: return
+            case .stop, .skip, .retry:
+                while let task = scriptClosures[action.runID] { await task.value }
+            }
+        case .lifecycle(_, .resume(let generationID)):
+            while let task = settlementClosures[generationID] { await task.value }
+        default: break
+        }
     }
 }
 
@@ -2468,6 +2592,8 @@ public actor WorkspaceEngine {
     private var scriptRuntimes: [UUID: ScriptRuntime] = [:]
     private var scriptLogs: [UUID: ProjectScriptRunLog] = [:]
     private var scriptClosures: [UUID: Task<Void, Never>] = [:]
+    private struct RemoteOwnedScriptPaths: Sendable { let token: UUID; let threadID: UUID; let paths: [String]; var drained: Bool }
+    private var remoteProjectScriptPaths: [UUID: RemoteOwnedScriptPaths] = [:]
     private var settlementClosures: [UUID: Task<Void, Never>] = [:]
     private var settlementPrerequisites: [UUID: Task<Void, Never>] = [:]
     private var scriptCommitRuns: Set<UUID> = []
@@ -2866,6 +2992,7 @@ public actor WorkspaceEngine {
                             try validateRemoteCheckpointPreparation(captured, snapshot: base.snapshot)
                         }
                         if case .lifecycle(let captured) = preparation { try validateRemoteLifecyclePreparation(captured, snapshot: base.snapshot) }
+                        if case .projectScript(let captured) = preparation { try validateRemoteProjectScriptPreparation(captured, snapshot: base.snapshot) }
                         if case .history(let captured) = preparation {
                             try validateRemoteHistoryPreparation(captured, snapshot: base.snapshot)
                         }
@@ -2931,7 +3058,7 @@ public actor WorkspaceEngine {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
                 }
-                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError || error is RemoteLifecycleFailure {
+                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError || error is RemoteLifecycleFailure || error is RemoteProjectScriptFailure {
                     do {
                         let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? (error as? WorkspaceLifecycleError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)

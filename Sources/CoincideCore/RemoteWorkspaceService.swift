@@ -45,6 +45,7 @@ actor RemoteWorkspaceService {
               !snapshot.isPullRequestCreationLocked(path: target.workspacePath),
               !snapshot.isConversationHistoryLocked(threadID: thread.id) else { throw RemoteWorkspaceFailure(.invalidTarget) }
         if mutating {
+            try await admitManagedScriptScope([target.workspacePath])
             guard !hasRunningWorktree(at: target.workspacePath, snapshot: snapshot) else { throw RemoteWorkspaceFailure(.busy) }
             let owners = snapshot.threads.filter { samePath($0.workspacePath, target.workspacePath) }
             guard owners.allSatisfy({ !$0.isBusy && $0.activeRun == nil && $0.queuedTurns.isEmpty && $0.runtimeRequests.isEmpty
@@ -114,8 +115,8 @@ actor RemoteWorkspaceService {
         try await validateCheckpointTarget(bound, allowLocked: true)
         return bound
     }
-    func admitCheckpointScope(_ scope: RemoteCheckpointScope) throws {
-        try admitPullRequestScope(.init(mutatingPaths: scope.mutatingPaths, coordinationPaths: scope.coordinationPaths))
+    func admitCheckpointScope(_ scope: RemoteCheckpointScope) async throws {
+        try await admitPullRequestScope(.init(mutatingPaths: scope.mutatingPaths, coordinationPaths: scope.coordinationPaths))
     }
     /// History recovery may inspect its own durable hold. Other workflow holds
     /// still exclude it, and native inspections require the same physical root.
@@ -155,16 +156,18 @@ actor RemoteWorkspaceService {
         try await validateHistoryTarget(bound, allowLocked: true)
         return bound
     }
-    func admitHistoryScope(_ scope: RemoteHistoryScope) throws {
-        try admitPullRequestScope(.init(mutatingPaths: scope.mutatingPaths, coordinationPaths: scope.coordinationPaths))
+    func admitHistoryScope(_ scope: RemoteHistoryScope) async throws {
+        try await admitPullRequestScope(.init(mutatingPaths: scope.mutatingPaths, coordinationPaths: scope.coordinationPaths))
     }
     func busyPullRequestPaths() async -> [String] {
-        Set(busyRoots.keys).union(terminalRoots.values).compactMap { roots[$0]?.path }
+        let managed = await engine.remoteProjectScriptBusyPaths()
+        return Set(busyRoots.keys).union(terminalRoots.values).compactMap { roots[$0]?.path } + managed
     }
     /// Called under the same host admission gate as file jobs and PTY opens.
     /// The paths come from native prepared operations, never from the client.
-    func admitPullRequestScope(_ scope: RemotePullRequestScope) throws {
+    func admitPullRequestScope(_ scope: RemotePullRequestScope, excludingManagedScriptThreadID: UUID? = nil) async throws {
         guard !closing, !journalFailed else { throw RemoteWorkspaceFailure(.unavailable) }
+        try await admitManagedScriptScope(scope.mutatingPaths + scope.coordinationPaths, excludingThreadID: excludingManagedScriptThreadID)
         func overlap(_ a: String, _ b: String) -> Bool { WorkspaceSnapshot.checkpointRestorePathsOverlap(a, b) }
         let mutations = scope.mutatingPaths, coordination = scope.coordinationPaths
         for id in Set(busyRoots.keys).union(terminalRoots.values) {
@@ -173,9 +176,18 @@ actor RemoteWorkspaceService {
             guard !mutations.contains(where: { overlap(root.path, $0) }) else { throw RemoteWorkspaceFailure(.busy) }
             if busyGitRoots.contains(id) {
                 let paths = [root.path] + (root.gitDirectories?.map(\.path) ?? [])
-                guard !paths.contains(where: { path in coordination.contains { overlap(path, $0) } }) else { throw RemoteWorkspaceFailure(.busy) }
+                guard !paths.contains(where: { path in (coordination + mutations).contains { overlap(path, $0) } }) else { throw RemoteWorkspaceFailure(.busy) }
             }
         }
+    }
+    func admitProjectScriptScope(target: RemoteWorkspaceTarget, scope: RemotePullRequestScope, excludingManagedScriptThreadID: UUID?) async throws {
+        try await validateCheckpointTarget(target, allowLocked: false)
+        guard let id = target.rootID, let root = roots[id] else { throw RemoteWorkspaceFailure(.staleRoot) }
+        _ = try await git(root)
+        try root.anchor.validate()
+        let directories = root.gitDirectories?.map(\.path) ?? []
+        try await admitPullRequestScope(.init(mutatingPaths: scope.mutatingPaths + directories,
+            coordinationPaths: scope.coordinationPaths + directories), excludingManagedScriptThreadID: excludingManagedScriptThreadID)
     }
     private func bindRoot(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
         try await authorize(target)
@@ -324,6 +336,7 @@ actor RemoteWorkspaceService {
                 _ = try await git(root)
                 let snapshot = await engine.current().snapshot
                 let paths = [root.path] + (root.gitDirectories?.map(\.path) ?? [])
+                try await admitManagedScriptScope(paths)
                 guard !paths.contains(where: { snapshot.isPullRequestCheckoutCoordinating(path: $0) }) else { throw RemoteWorkspaceFailure(.busy) }
             }
             guard busyRoots[root.id] == nil, !terminalRoots.values.contains(root.id), jobs.count < 8 else { throw RemoteWorkspaceFailure(.busy) }
@@ -429,13 +442,16 @@ actor RemoteWorkspaceService {
         let snapshot = await engine.current().snapshot
         var paths: [String] = []
         var excludesTerminals = false
+        var inputOwnerID: UUID?
         switch command {
         case .submit(let id, _, _), .resumeQueue(let id, _):
             guard let thread = snapshot.threads.first(where: { $0.id == id }) else { return }
             paths = [thread.workspacePath]
+            inputOwnerID = id
         case .submitWithAttachments(let target, _, _, _, _):
             guard let thread = snapshot.threads.first(where: { $0.id == target.threadID }) else { return }
             paths = [thread.workspacePath]
+            inputOwnerID = thread.id
         case .prepareWorktree(let target, let sourceRootID, let attemptID, let selection, _):
             try await validateWorktreeSource(target, sourceRootID: sourceRootID, expectedAttemptID: attemptID)
             guard let source = roots[sourceRootID] else { throw RemoteWorkspaceFailure(.staleRoot) }
@@ -449,12 +465,19 @@ actor RemoteWorkspaceService {
             excludesTerminals = true
         default: return
         }
+        // Native readiness gates this conversation's own blocking setup, while
+        // asynchronous setup may release it and settlement Resume first drains
+        // cleanup. Foreign conversations cannot bypass the managed job lease.
+        try await admitManagedScriptScope(paths, excludingThreadID: inputOwnerID)
         let held = Set(busyRoots.keys).union(excludesTerminals ? Set(terminalRoots.values) : [])
         guard !held.contains(where: { id in roots[id].map { root in paths.contains { samePath(root.path, $0) } } == true }),
               !excludesTerminals || !paths.contains(where: { hasRunningWorktree(at: $0, snapshot: snapshot) }) else { throw RemoteWorkspaceFailure(.busy) }
     }
     func acquireTerminalRoot(_ target: RemoteWorkspaceTarget, owner: UUID) async throws {
         let root = try await self.root(target)
+        _ = try? await git(root)
+        try root.anchor.validate()
+        try await admitManagedScriptScope([root.path])
         let snapshot = await engine.current().snapshot
         guard !closing, busyRoots[root.id] == nil, !hasRunningWorktree(at: root.path, snapshot: snapshot) else { throw RemoteWorkspaceFailure(.busy) }
         terminalRoots[owner] = root.id
@@ -464,6 +487,15 @@ actor RemoteWorkspaceService {
         guard terminalRoots[owner] == root.id else { throw RemoteWorkspaceFailure(.invalidTarget) }
     }
     func releaseTerminalRoot(owner: UUID) { terminalRoots.removeValue(forKey: owner) }
+    private func admitManagedScriptScope(_ paths: [String], excludingThreadID: UUID? = nil) async throws {
+        let held = await engine.remoteProjectScriptBusyPaths(excludingThreadID: excludingThreadID)
+        guard !closing, !journalFailed else { throw RemoteWorkspaceFailure(.unavailable) }
+        let heldDirectories = roots.values.filter { root in held.contains { samePath($0, root.path) } }.flatMap { $0.gitDirectories?.map(\.path) ?? [] }
+        let requestedDirectories = roots.values.filter { root in paths.contains { samePath($0, root.path) } }.flatMap { $0.gitDirectories?.map(\.path) ?? [] }
+        guard !(paths + requestedDirectories).contains(where: { path in (held + heldDirectories).contains { WorkspaceSnapshot.checkpointRestorePathsOverlap(path, $0) } }) else {
+            throw RemoteWorkspaceFailure(.busy)
+        }
+    }
     private func safe(_ error: any Error) -> RemoteWorkspaceFailure {
         if let error = error as? RemoteWorkspaceFailure { return error }
         if error is CancellationError { return .init(.interrupted) }

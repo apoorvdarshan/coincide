@@ -68,7 +68,8 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsRemoteHistory: Bool
     public let supportsContextTransfers: Bool
     public let supportsWorkspaceLifecycleControls: Bool
-    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false, supportsWorkspaceLifecycleControls: Bool = false) {
+    public let supportsReviewedSettleScripts: Bool
+    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false, supportsWorkspaceLifecycleControls: Bool = false, supportsReviewedSettleScripts: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
@@ -82,10 +83,11 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         self.supportsRemoteHistory = supportsRemoteHistory
         self.supportsContextTransfers = supportsContextTransfers
         self.supportsWorkspaceLifecycleControls = supportsWorkspaceLifecycleControls
+        self.supportsReviewedSettleScripts = supportsReviewedSettleScripts
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers, supportsWorkspaceLifecycleControls
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers, supportsWorkspaceLifecycleControls, supportsReviewedSettleScripts
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -107,6 +109,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRemoteHistory = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteHistory) ?? false
         supportsContextTransfers = try values.decodeIfPresent(Bool.self, forKey: .supportsContextTransfers) ?? false
         supportsWorkspaceLifecycleControls = try values.decodeIfPresent(Bool.self, forKey: .supportsWorkspaceLifecycleControls) ?? false
+        supportsReviewedSettleScripts = try values.decodeIfPresent(Bool.self, forKey: .supportsReviewedSettleScripts) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
@@ -154,6 +157,7 @@ public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
     case contextTransfer(target: RemoteWorkspaceTarget, action: RemoteContextAction)
     case lifecycle(capture: RemoteLifecycleCapture, action: RemoteLifecycleAction)
     case lifecyclePolicy(policy: WorkspaceLifecyclePolicy, expected: WorkspaceLifecyclePolicy)
+    case projectScript(target: RemoteWorkspaceTarget, action: RemoteProjectScriptAction)
     case stop(threadID: UUID, runID: UUID, runtimeID: UUID)
     case respond(threadID: UUID, runID: UUID?, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case resumeQueue(threadID: UUID, expectedConfiguration: ProviderConfiguration)
