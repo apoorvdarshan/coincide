@@ -20,6 +20,9 @@
   pass. Its UI jobs and the later fixes' [exact implementation run](https://github.com/apoorvdarshan/coincide/actions/runs/39889928420)
   are separate pending acceptance. Local unit and runtime evidence does not
   establish a passing hosted GUI result.
+- At 02:52 UTC, that exact `4d1840d` implementation's hosted test/package job
+  and configuration checks also pass. Its four native GUI shards remain queued
+  behind earlier runs, so hosted window/control acceptance is still pending.
 - One restricted installed-Claude 2.1.308 turn observes a native multi-select
   question, accepts both labels plus an unguessable custom answer and notes, and
   completes with the draft and sentinel intact. The initial verifier fails its
