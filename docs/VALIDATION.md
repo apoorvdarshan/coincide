@@ -1,5 +1,23 @@
 # Validation record
 
+## 2026-10-23 — Installed OpenCode 2 MCP registration contract
+
+- An isolated probe of installed OpenCode **2.1.3** passes the native runtime
+  sequence: location-scoped `GET /api/mcp`, a collision-free
+  `PUT /api/experimental/mcp/coincide` returning 204, a matching `connected`
+  status, and `DELETE` returning 204 followed by absence from the catalogue.
+  The loopback MCP peer receives initialize, initialized and tools/list exactly
+  once. There are no session, prompt, model or tool-call requests. The owned
+  parent and both pipe readers join after stdin closes.
+- All XDG locations and the workspace are private scratch. A macOS sandbox
+  denies reads/writes in the user's home, security services and external
+  networking, while allowing loopback communication. Seven generated files have
+  no exact app-MCP header or token matches; the probe's size-bounded scan excludes
+  a 9660064-byte extracted Bun runtime library. This is native registration
+  evidence only: Coincide's OpenCode adapters still need app-MCP integration,
+  inbound redaction, lifecycle tests and model-driven acceptance. OpenCode 1's
+  different endpoints remain a separate integration.
+
 ## 2026-10-23 — Native Codex MCP approval and installed model acceptance
 
 - The first installed app-tool acceptance check passed on Claude **2.1.308** but
@@ -33,6 +51,13 @@
   Build-only packaging, deep strict signature verification and native-resource
   loading pass. The async-default ABI guard checks 899 objects, including 591 Core
   and 228 app objects, with zero weak records. Hosted UI verification is separate.
+- The preceding app-tool/window/history batch at `909c1df` passes the complete
+  hosted 1719-declaration Swift suite in 828.986 seconds in
+  [run 39883323528](https://github.com/apoorvdarshan/coincide/actions/runs/39883323528).
+  Both isolated Codex runtime inspections, the async-default ABI guard (794
+  objects, zero weak records), packaging, signature and resource checks pass.
+  This run does not reproduce the previous Pi history stack crash. Native UI
+  execution and the later `9bc5f7d` approval commit's hosted result are pending.
 
 ## 2026-10-23 — Codex/Claude app tools, window recovery and history stack lifetimes
 
