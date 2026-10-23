@@ -13,6 +13,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case pullRequestCheckoutsReplaced([PullRequestCheckoutOperation]?)
     case promptSteeringsReplaced([PromptSteeringOperation]?)
     case checkpointRestoreOperationsReplaced([RunCheckpointRestoreOperation]?)
+    case contextTransfersReplaced([ContextTransfer]?)
     case threadMetadataUpserted(CodingThread)
     case threadRemoved(UUID)
     case threadsOrdered([UUID])
@@ -22,6 +23,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
 
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
+        case .contextTransfersReplaced(let values): snapshot.contextTransfers = values
         case .conversationHistoryOperationsReplaced(let operations): snapshot.conversationHistoryOperations = operations
         case .pullRequestCreationsReplaced(let operations): snapshot.pullRequestCreations = operations
         case .pullRequestCheckoutsReplaced(let operations): snapshot.pullRequestCheckouts = operations
@@ -98,6 +100,7 @@ public enum WorkspaceJournal {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
         try snapshot.validatePromptSteerings()
+        try snapshot.validateContextTransfers()
         try snapshot.validatePullRequestCheckouts()
         try snapshot.validatePullRequestCreations()
         try snapshot.validateConversationHistory()
@@ -184,6 +187,7 @@ public enum WorkspaceJournal {
     public static func changes(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) throws -> [WorkspaceEvent] {
         try validate(previous); try validate(next)
         var events: [WorkspaceEvent] = []
+        if previous.contextTransfers != next.contextTransfers { events.append(.contextTransfersReplaced(next.contextTransfers)) }
         if previous.conversationHistoryOperations != next.conversationHistoryOperations { events.append(.conversationHistoryOperationsReplaced(next.conversationHistoryOperations)) }
         if previous.pullRequestCreations != next.pullRequestCreations { events.append(.pullRequestCreationsReplaced(next.pullRequestCreations)) }
         if previous.pullRequestCheckouts != next.pullRequestCheckouts { events.append(.pullRequestCheckoutsReplaced(next.pullRequestCheckouts)) }

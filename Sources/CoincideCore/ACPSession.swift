@@ -184,7 +184,7 @@ public actor ACPSession: ProviderSession {
             var blocks: [JSONValue] = input.images.map {
                 .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())])
             }
-            if !input.text.isEmpty { blocks.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+            blocks += try input.providerTextBlocks().map { .object(["type": .string("text"), "text": .string($0)]) }
             let dispatch = ACPDispatch(), rpc = rpc, grokID = grokPromptID
             promptTask = Task { [weak self] in
                 do {

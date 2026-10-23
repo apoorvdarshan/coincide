@@ -40,6 +40,7 @@ final class RemoteWorkspaceStore {
     let pullRequests: RemotePullRequestStore
     let checkpoints = RemoteCheckpointStore()
     let history = RemoteHistoryStore()
+    let contextTransfers = RemoteContextTransferStore()
     let projection = RemoteProjectionStore()
     private(set) var usesProjection = false
     private(set) var isPreparingSubmission = false
@@ -111,7 +112,7 @@ final class RemoteWorkspaceStore {
         }
     }
     func updatePullRequests() async {
-        guard !stopping else { pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); return }
+        guard !stopping else { pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); contextTransfers.disconnect(); return }
         if usesProjection {
             await pullRequests.selectProjected(target: pullRequestTarget, client: isConnected ? client : nil,
                 operations: projection.currentOperations, supported: descriptor?.capabilities.supportsRemotePullRequests == true,
@@ -154,12 +155,43 @@ final class RemoteWorkspaceStore {
             canWrite: canWrite, canMutate: checkpointSelection.canMutate)
     }
     func updateHistory() async {
-        guard !stopping else { history.disconnect(); return }
+        guard !stopping else { history.disconnect(); contextTransfers.disconnect(); return }
         await history.select(target: pullRequestTarget, projection: projection, client: isConnected ? client : nil,
             supported: usesProjection && descriptor?.capabilities.supportsRemoteHistory == true, canWrite: canWrite,
             canRestoreFiles: { [weak self] in self?.checkpointFilesStillAllowed(paths: $0) ?? false },
             perform: { [weak self] in await self?.perform($0) ?? false },
             openConversation: { [weak self] in self?.selectThread($0) })
+    }
+    var contextTransferSelection: PullRequestSelection {
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: selectedSequence,
+            configuration: selectedConfiguration.flatMap { try? RemoteContextProtocol.payload($0) } ?? Data(),
+            generation: generation, connected: isConnected,
+            supported: usesProjection && descriptor?.capabilities.supportsContextTransfers == true,
+            canWrite: canWrite, canMutate: true)
+    }
+    func updateContextTransfers() async {
+        guard !stopping else { contextTransfers.disconnect(); return }
+        await contextTransfers.select(target: pullRequestTarget, projection: projection, client: isConnected ? client : nil,
+            supported: usesProjection && descriptor?.capabilities.supportsContextTransfers == true,
+            providers: descriptor?.capabilities.providers ?? [], canWrite: canWrite,
+            perform: { [weak self] in await self?.perform($0) ?? false },
+            openConversation: { [weak self] in self?.selectThread($0) })
+    }
+    private func contextCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        guard case .contextTransfer(let target, let action) = command else { return true }
+        guard isConnected, !stopping, usesProjection, descriptor?.capabilities.supportsContextTransfers == true,
+              let current = pullRequestTarget, target.rootID != nil || !action.requiresBoundRoot,
+              current.environmentID == target.environmentID, current.projectID == target.projectID, current.threadID == target.threadID,
+              ContextTransferProtocol.same(current.configuration, target.configuration) else { return false }
+        switch action {
+        case .begin(let id, let digest, _):
+            guard let review = contextTransfers.review(id: id), review.digest == digest,
+                  ContextTransferProtocol.same(review.target, target) else { return false }
+            return true
+        case .useFreshContext(let id, let ids):
+            guard let control = contextTransfers.current?.inventory?.uncertain else { return false }
+            return control.canUseFreshContext && control.deliveryID == id && control.transferIDs == ids
+        }
     }
     private func historyCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
         guard case .history(let target, let action) = command else { return true }
@@ -437,7 +469,7 @@ final class RemoteWorkspaceStore {
         terminals.disconnect()
         worktrees.disconnect()
         attachments.disconnect()
-        pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect()
+        pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); contextTransfers.disconnect()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -454,9 +486,10 @@ final class RemoteWorkspaceStore {
         await pullRequests.shutdown()
         await checkpoints.shutdown()
         await history.shutdown()
+        await contextTransfers.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown(); history.cancelShutdown() }
+    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown(); history.cancelShutdown(); contextTransfers.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -476,7 +509,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
-        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection() }
+        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection(); contextTransfers.clearSelection() }
         selectedThreadID = id
         if usesProjection {
             projection.beginSelection(id)
@@ -539,7 +572,7 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Review the draft before sending again."; return false
         }
-        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command) else {
+        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command) else {
             errorMessage = "The remote review or its affected checkout changed. Save edits, close affected terminals, and review it again."; return false
         }
         let changingWorkspace: RemoteWorkspaceTarget?
@@ -564,7 +597,7 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Your draft was kept."; return false
         }
-        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command) else {
+        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command) else {
             errorMessage = "The remote review or its affected checkout changed. Your draft was kept."; return false
         }
         if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
@@ -577,7 +610,7 @@ final class RemoteWorkspaceStore {
             try await pendingStore.save(request)
             guard generation == owner, !stopping else { return false }
             pending = request
-            if !pullRequestCommandStillAllowed(command) || !checkpointCommandStillAllowed(command) || !historyCommandStillAllowed(command) {
+            if !pullRequestCommandStillAllowed(command) || !checkpointCommandStillAllowed(command) || !historyCommandStillAllowed(command) || !contextCommandStillAllowed(command) {
                 try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
                 pending = nil
                 errorMessage = "The remote review or its affected checkout changed. Your draft was kept."
@@ -793,7 +826,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; projection.disconnect(); inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); notice = message.localizedDescription
+            isConnected = false; projection.disconnect(); inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); contextTransfers.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -811,7 +844,7 @@ final class RemoteWorkspaceStore {
         if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path {
             inspector.clearSelection(); terminals.clearSelection()
             if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID { attachments.clearSelection() }
-            pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection()
+            pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection(); contextTransfers.clearSelection()
         }
         updateWorktrees()
     }

@@ -492,6 +492,7 @@ extension WorkspaceSnapshot {
         return thread.queuedTurns.contains { matches($0.configuration, nativeID: $0.configuration.nativeThreadID) }
     }
     public func canReviewConversationHistory(threadID: UUID, excludingOperationID: UUID? = nil) -> Bool {
+        guard !hasUnresolvedContextDelivery(threadID: threadID) else { return false }
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived, !thread.isBusy,
               thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty, thread.heldPostRunCheckpoint == nil,
               thread.claudeResumeConsumerRunID == nil, thread.piFreshSessionIntent == nil, thread.piFreshConsumerRunID == nil,
@@ -751,8 +752,11 @@ extension WorkspaceSnapshot {
                 }
             } else if thread.claudeResumeConsumerRunID != nil { throw CoincideError("A Claude context consumer has no pending selection.") }
             if let inherited = thread.claudeInheritedHead {
-                guard let forkID = thread.forkedFromHistoryOperationID, let fork = byID[forkID], fork.phase == .applied,
-                      fork.result?.claude?.inheritedHead == inherited,
+                let nativeHistoryOwner = thread.forkedFromHistoryOperationID.flatMap { byID[$0] }.map {
+                    $0.phase == .applied && $0.result?.claude?.inheritedHead == inherited
+                } ?? false
+                let contextOwner = try hasVerifiedContextClaudeFork(thread: thread, inherited: inherited)
+                guard nativeHistoryOwner || contextOwner,
                       thread.claudeRuntimeConfiguration?.runtimeIdentity == inherited.runtimeIdentity,
                       thread.providerThreadID == inherited.nativeSessionID else { throw CoincideError("The inherited Claude head lost its verified native fork lineage.") }
             }

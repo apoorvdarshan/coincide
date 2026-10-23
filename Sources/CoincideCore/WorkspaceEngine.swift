@@ -2383,6 +2383,18 @@ public actor WorkspaceEngine {
         var task: Task<RepositoryIdentity?, any Error>
     }
     private let appMCPEnabled: Bool
+    private let contextMCPEnabled: Bool
+    private var contextTransferReviews: [UUID: ContextTransferReview] = [:]
+    private var acceptingContextTransfers: [UUID: Int] = [:]
+    private var contextTransfersClosing = false
+    private var contextTransferOperations = 0
+    private var contextTransferWaiters: [CheckedContinuation<Void, Never>] = []
+    private struct ContextTransferRetirement {
+        let id: UUID
+        let threadID: UUID
+        let task: Task<Void, Never>
+    }
+    private var contextTransferRetirements: [UUID: ContextTransferRetirement] = [:]
     private let mcpRegistry = MCPSessionRegistry()
     private var mcpServer: MCPHTTPServer?
     private var mcpServerStart: Task<MCPHTTPServer, any Error>?
@@ -2439,7 +2451,7 @@ public actor WorkspaceEngine {
     private var cloneProgressTimes: [UUID: (ContinuousClock.Instant, GitCloneProgress)] = [:]
     private let encoder: JSONEncoder = { let value = JSONEncoder(); value.outputFormatting = [.sortedKeys]; return value }()
 
-    public init(url: URL, appMCPEnabled: Bool = false, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
+    public init(url: URL, appMCPEnabled: Bool = false, contextMCPEnabled: Bool = false, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
                 cloneFactory: @escaping CloneFactory = { GitCloneService(plan: $0) },
                 identityResolver: IdentityResolver? = nil,
                 worktreeFactory: @escaping WorktreeFactory = { GitWorktreeService(request: $0) },
@@ -2449,6 +2461,7 @@ public actor WorkspaceEngine {
                 pullRequestFactory: @escaping PullRequestFactory = { GitHubPullRequestService(root: $0) },
                 pullRequestCheckoutFactory: @escaping PullRequestCheckoutFactory = { GitHubPullRequestCheckoutService(request: $0) }) throws {
         self.appMCPEnabled = appMCPEnabled
+        self.contextMCPEnabled = contextMCPEnabled
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
@@ -2606,7 +2619,7 @@ public actor WorkspaceEngine {
         if let authority = AppMCPTaskContext.authority {
             try Task.checkCancellation()
             switch command {
-            case .client, .promptSteeringAccepted, .conversationHistoryAccepted, .beginWorktreePreparation:
+            case .client, .promptSteeringAccepted, .conversationHistoryAccepted, .contextTransferAccepted, .beginWorktreePreparation:
                 admitted = .appMCP(authority: authority, commands: [command])
             default: admitted = command
             }
@@ -2668,6 +2681,7 @@ public actor WorkspaceEngine {
                         admissionCommands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: base.snapshot)
                     } else { admissionCommands = [envelope.command] }
                     for command in admissionCommands {
+                        if case .contextTransferAccepted(let review, _) = command { try validateContextTransferAcceptance(review, snapshot: base.snapshot) }
                         try validateCodexDefaultCommand(command, snapshot: base.snapshot)
                         try validateAntigravityAdmission(command, snapshot: base.snapshot)
                         try validateCodexAuthenticationAdmission(command, snapshot: base.snapshot)
@@ -2707,9 +2721,9 @@ public actor WorkspaceEngine {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
                 }
-                catch where error is WorkspaceCommandError || error is AppMCPError {
+                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError {
                     do {
-                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
+                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)
                         envelope.continuation.resume(returning: receipt); return
                     } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
@@ -2759,6 +2773,7 @@ public actor WorkspaceEngine {
                         decision.snapshot.threads.contains { $0.id == id && $0.projectID == reviewed.projectID }
                     }
                     beginDecisionCleanup(decision, previous: base.snapshot, removedEffects: outcome.removedEffects)
+                    recordContextTransferRetirement(envelope.command)
                     committed = true
                     publish()
                     envelope.continuation.resume(returning: receipt)
@@ -3180,13 +3195,14 @@ public actor WorkspaceEngine {
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
         case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
-        case .providerStart(_, let runID, let configuration, let prompt, let references):
+        case .providerStart(_, let runID, let capturedConfiguration, let prompt, let references):
+            var configuration = capturedConfiguration
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false, !isCodexAuthenticationLocked(configuration) else { return .cancelled }
             guard !providerHistoryScopeLocked(configuration: configuration,
                 nativeThreadID: configuration.nativeThreadID ?? thread.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? thread.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
             await awaitCheckpointDrains(threadID: thread.id)
             guard checkpointProviderReleased(threadID: thread.id, runID: runID) else { return .cancelled }
-            let input = try await attachments.prepare(text: prompt, attachments: references ?? [])
+            var input = try await attachments.prepare(text: prompt, attachments: references ?? [])
             guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(configuration),
                   revision.snapshot.workspaceReady(for: thread),
                   revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
@@ -3197,7 +3213,7 @@ public actor WorkspaceEngine {
             configured.acpAgent = configuration.acpAgent; configured.openCodeConfiguration = configuration.openCodeConfiguration; configured.piConfiguration = configuration.piConfiguration; configured.museConfiguration = configuration.museConfiguration; configured.antigravityConfiguration = configuration.antigravityConfiguration; configured.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration; configured.claudeRuntimeConfiguration = configuration.claudeRuntimeConfiguration; configured.agentModeID = configuration.agentModeID
             configured.agentConfigValues = configuration.agentConfigValues
             configured.agentConfiguration = configuration.agentConfiguration
-            let runtime = try await runtime(for: configured, runID: runID)
+            var runtime = try await runtime(for: configured, runID: runID)
             if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { return .cancelled }
             guard !closing, !stoppingEffects, !isCodexAuthenticationLocked(configuration), revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.id == runID,
                   revision.snapshot.workspaceReady(for: thread),
@@ -3206,15 +3222,81 @@ public actor WorkspaceEngine {
             try Task.checkCancellation()
             guard !providerHistoryScopeLocked(configuration: configuration,
                 nativeThreadID: configuration.nativeThreadID ?? revision.snapshot.threads.first(where: { $0.id == thread.id })?.runHistory?.first(where: { $0.id == runID })?.providerThreadID ?? configured.providerThreadID) else { return .failed("This provider conversation is held by a pending history action.") }
+            var contextDelivery = thread.activeRun?.contextDelivery
+            if let delivery = contextDelivery {
+                let disposition = try await runtime.session.contextInputDisposition(input: input, thread: configured)
+                guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID),
+                      runtimes[thread.id]?.id == runtime.id,
+                      revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false else { throw CancellationError() }
+                if disposition == .nativeCommand {
+                    let nativeFork = delivery.transferIDs.contains { revision.snapshot.contextTransfer($0)?.review.strategy == .nativeFork }
+                    let refused = try await enqueue(.contextTransferDeferred(threadID: thread.id, runID: runID, deliveryID: delivery.id))
+                    guard refused.rejection == nil else { throw ContextTransferError.staleReview }
+                    contextDelivery = nil
+                    if let current = revision.snapshot.threads.first(where: { $0.id == thread.id }) {
+                        configured.activeRun = current.activeRun; configured.runHistory = current.runHistory
+                    }
+                    if nativeFork { throw WorkspaceCommandError("Send an ordinary message to complete the reviewed native fork before running a native command.") }
+                }
+            }
+            if let delivery = contextDelivery {
+                let retrieval = (appMCPEnabled || contextMCPEnabled) && runtime.session.supportsAppMCP && runtime.mcpScope?.capabilities.contains(.contextRead) == true
+                let selection = try revision.snapshot.contextSelection(for: delivery, retrievalAvailable: retrieval)
+                let prepared = try await enqueue(.contextTransferSelectionPrepared(threadID: thread.id, runID: runID, deliveryID: delivery.id, selection: selection))
+                guard prepared.rejection == nil,
+                      let saved = revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.contextDelivery,
+                      saved.id == delivery.id else { throw ContextTransferError.staleReview }
+                contextDelivery = saved
+            }
+            if let delivery = contextDelivery {
+                guard delivery.status == .reserved, delivery.runID == runID,
+                      delivery.authoredText?.utf8.elementsEqual(prompt.utf8) == true,
+                      ContextTransferProtocol.same(delivery.authoredAttachments ?? [], references ?? []) else { throw ContextTransferError.uncertain }
+                let marker = try await enqueue(.contextTransferDispatching(threadID: thread.id, runID: runID, deliveryID: delivery.id, runtimeID: runtime.id))
+                guard marker.rejection == nil else { throw ContextTransferError.uncertain }
+                do {
+                    let native = delivery.transferIDs.compactMap { revision.snapshot.contextTransfer($0)?.review.nativeReview }
+                    if let review = native.first {
+                        guard native.count == 1, delivery.transferIDs.count == 1 else { throw ContextTransferError.unavailable }
+                        let snapshot = try await ContextTransferNativeDelivery.apply(review: review, configuration: configuration, session: runtime.session) { [weak self] publication in
+                            guard let self else { throw CancellationError() }
+                            let receipt = try await self.enqueue(.contextTransferNativeReserved(threadID: thread.id, runID: runID, deliveryID: delivery.id, publication: publication))
+                            guard receipt.rejection == nil else { throw ContextTransferError.uncertain }
+                        }
+                        let receipt = try await enqueue(.contextTransferNativeReady(threadID: thread.id, runID: runID, deliveryID: delivery.id, snapshot: snapshot))
+                        guard receipt.rejection == nil,
+                              let current = revision.snapshot.threads.first(where: { $0.id == thread.id }), current.activeRun?.id == runID,
+                              current.activeRun?.stopRequested == false else { throw ContextTransferError.uncertain }
+                        configuration = current.activeRun!.configuration; configured.providerThreadID = snapshot.reference.nativeThreadID
+                        configured.activeRun = current.activeRun; configured.runHistory = current.runHistory
+                        configured.claudeResumeSelection = current.claudeResumeSelection; configured.claudeInheritedHead = current.claudeInheritedHead
+                        if [.codex, .claude].contains(configuration.provider) {
+                            let previous = runtime.id
+                            await closeRuntime(thread.id, matching: previous)
+                            guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID),
+                                  revision.snapshot.threads.first(where: { $0.id == thread.id })?.activeRun?.stopRequested == false else { throw CancellationError() }
+                            runtime = try await self.runtime(for: configured, runID: runID)
+                            let rebound = try await enqueue(.contextTransferRuntimeRebound(threadID: thread.id, runID: runID, deliveryID: delivery.id, previousRuntimeID: previous, runtimeID: runtime.id))
+                            guard rebound.rejection == nil else { throw ContextTransferError.uncertain }
+                        }
+                    } else {
+                        input.historicalContext = .init(deliveryID: delivery.id, transferIDs: delivery.transferIDs, selection: delivery.selection)
+                    }
+                } catch {
+                    _ = try? await enqueue(.contextTransferUncertain(threadID: thread.id, runID: runID, deliveryID: delivery.id))
+                    throw error
+                }
+            }
+            do {
             if configuration.provider == .pi, configuration.piConfiguration?.runtime != nil {
-                guard let incarnation = threadIncarnations[thread.id] else { return .cancelled }
+                guard let incarnation = threadIncarnations[thread.id] else { if contextDelivery != nil { throw CancellationError() }; return .cancelled }
                 let preparation = try await runtime.session.preparePiRun(input: input, thread: configured)
                 guard !closing, !stoppingEffects, fatalError == nil, !Task.isCancelled,
                       threadIncarnations[thread.id] == incarnation, runtimes[thread.id]?.id == runtime.id,
                       let current = revision.snapshot.threads.first(where: { $0.id == thread.id }),
                       current.activeRun?.id == runID, current.activeRun?.configuration == configuration,
                       current.activeRun?.stopRequested == false, current.runtimeID == runtime.id,
-                      revision.snapshot.workspaceReady(for: current) else { return .cancelled }
+                      revision.snapshot.workspaceReady(for: current) else { if contextDelivery != nil { throw CancellationError() }; return .cancelled }
                 guard preparation.runID == runID, preparation.runtimeIdentity == configuration.piConfiguration?.runtimeIdentity,
                       preparation.inputDigest == (try PiHistoryInputEvidence.digest(input)) else { throw PiHistoryGraphError(.invalidWindow) }
                 let saved = try await enqueue(.piRunHistoryPrepared(threadID: thread.id, runtimeID: runtime.id, preparation: preparation, incarnation: incarnation))
@@ -3225,11 +3307,19 @@ public actor WorkspaceEngine {
                       committed.activeRun?.id == runID, committed.activeRun?.configuration == configuration,
                       committed.activeRun?.stopRequested == false, committed.runtimeID == runtime.id,
                       committed.runHistory?.first(where: { $0.id == runID })?.pi?.preparation == preparation,
-                      revision.snapshot.workspaceReady(for: committed) else { return .cancelled }
+                      revision.snapshot.workspaceReady(for: committed) else { if contextDelivery != nil { throw CancellationError() }; return .cancelled }
                 configured.runHistory = committed.runHistory; configured.providerThreadID = preparation.nativeSessionFile
                 try await runtime.session.sendPreparedPi(input: input, thread: configured, preparation: preparation)
             } else { try await runtime.session.send(input: input, thread: configured) }
+            if let delivery = contextDelivery {
+                let receipt = try await enqueue(.contextTransferDelivered(threadID: thread.id, runID: runID, deliveryID: delivery.id))
+                guard receipt.rejection == nil else { throw ContextTransferError.uncertain }
+            }
             return .succeeded
+            } catch {
+                if let delivery = contextDelivery { _ = try? await enqueue(.contextTransferUncertain(threadID: thread.id, runID: runID, deliveryID: delivery.id)) }
+                throw error
+            }
         case .providerInterrupt(_, let runID):
             guard thread.activeRun?.id == runID else { return .cancelled }
             let expectedRuntimeID = runtimes[thread.id]?.id
@@ -3386,6 +3476,8 @@ public actor WorkspaceEngine {
         return recovered
     }
     private func runtime(for thread: CodingThread, runID: UUID) async throws -> Runtime {
+        let retired = contextTransferRetirements.values.filter { $0.threadID == thread.id }.map(\.task)
+        for task in retired { await task.value }
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID) else { throw CancellationError() }
@@ -3406,6 +3498,14 @@ public actor WorkspaceEngine {
             }
         }
         if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, existing.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeRuntimeMatches(existing, thread: thread) {
+            let needsContextScope = contextMCPEnabled && thread.activeRun?.contextTransferIDs?.isEmpty == false && existing.session.supportsAppMCP
+            if !appMCPEnabled, (existing.mcpScope != nil) != needsContextScope {
+                // Context-only tools belong to one explicitly contextual run.
+                // Resume the same captured native conversation without retaining
+                // an unusable app-tool registration on an ordinary successor.
+                await closeRuntime(thread.id, matching: existing.id)
+                return try await runtime(for: thread, runID: runID)
+            }
             if let scope = existing.mcpScope, scope.permission != configuration.permission {
                 // A session's authority is immutable. Reissue it when an explicit
                 // successor captures different permissions, preserving native history.
@@ -3762,6 +3862,7 @@ public actor WorkspaceEngine {
         for read in history { read.cancel() }
         let unusedHistoryReviews = Array(historyReviews.values)
         historyReviews = [:]
+        contextTransfersClosing = true; contextTransferReviews = [:]
         let unusedRestoreReviews = Array(checkpointRestoreReviews.values)
         checkpointRestoreReviews = [:]
         let inspections = Array(worktreeInspections.values); worktreeInspections = [:]
@@ -4521,7 +4622,10 @@ extension WorkspaceEngine {
         }, perform: { [weak self] action, context in
             guard let self else { throw AppMCPError(.staleCaller) }
             return try await self.performScopedAppMCP(action, context: context)
-        }))
+        }, contextRead: { [weak self] arguments, context in
+            guard let self else { throw AppMCPError(.staleCaller) }
+            return try await self.appMCPContextRead(arguments, context: context)
+        }), allowedToolNames: appMCPEnabled ? nil : ["t3_context_read"])
     }
     func performScopedAppMCP(_ action: AppMCPAction, context: AppMCPContext) async throws -> JSONValue {
         _ = try await appMCPView(context)
@@ -4535,7 +4639,7 @@ extension WorkspaceEngine {
         }
     }
     private func ensureAppMCPServer() async throws -> MCPHTTPServer {
-        guard appMCPEnabled, !closing, !stoppingEffects, fatalError == nil else { throw AppMCPError(.unavailable) }
+        guard appMCPEnabled || contextMCPEnabled, !closing, !stoppingEffects, fatalError == nil else { throw AppMCPError(.unavailable) }
         if let mcpServer { return mcpServer }
         let task: Task<MCPHTTPServer, any Error>
         if let pending = mcpServerStart { task = pending }
@@ -4559,18 +4663,20 @@ extension WorkspaceEngine {
     }
     private func configureAppMCP(thread: CodingThread, runID: UUID, runtimeID: UUID, session: any ProviderSession,
                                  configuration: ProviderConfiguration) async throws -> MCPInvocationScope? {
-        guard appMCPEnabled, session.supportsAppMCP else { return nil }
+        guard (appMCPEnabled || (contextMCPEnabled && thread.activeRun?.contextTransferIDs?.isEmpty == false)), session.supportsAppMCP else { return nil }
         let server = try await ensureAppMCPServer()
         guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID),
               runtimes[thread.id]?.id == runtimeID, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
         let scope = MCPInvocationScope(threadID: thread.id, projectID: thread.projectID, provider: configuration.provider,
             runtimeID: runtimeID, incarnation: incarnation, providerInstanceID: try AppMCPAdmission.instanceID(configuration: configuration),
-            workspacePath: configuration.workspacePath, permission: configuration.permission, capabilities: [.orchestration, .worktree])
+            workspacePath: configuration.workspacePath, permission: configuration.permission,
+            capabilities: appMCPEnabled ? [.orchestration, .worktree, .contextRead] : [.contextRead])
         runtimes[thread.id]?.mcpScope = scope
         let credential = try await mcpRegistry.issue(scope: scope)
         do {
             guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID), runtimes[thread.id]?.mcpScope?.sessionID == scope.sessionID else { throw CancellationError() }
-            try await session.configureAppMCP(AppMCPConnection(endpoint: server.endpoint, authorizationHeader: credential.authorizationHeader, scopeID: scope.sessionID))
+            try await session.configureAppMCP(AppMCPConnection(endpoint: server.endpoint, authorizationHeader: credential.authorizationHeader, scopeID: scope.sessionID,
+                requiredToolName: appMCPEnabled ? "t3_thread_read" : "t3_context_read"))
             guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID), runtimes[thread.id]?.mcpScope?.sessionID == scope.sessionID else { throw CancellationError() }
             return scope
         } catch { await mcpRegistry.revoke(sessionID: scope.sessionID); throw error }
@@ -4704,14 +4810,21 @@ extension WorkspaceEngine {
             historyFence = review; acceptingHistoryReviews.insert(review.id)
             remoteHistoryAcceptances[review.id, default: 0] += 1; remoteHistoryOperations += 1
         } else { historyFence = nil }
+        let contextFence: ContextTransferReview?
+        if case .contextTransfer(let captured) = preparation, case .review(let review, _) = captured.action,
+           let cached = contextTransferReviews[review.id], ContextTransferProtocol.same(cached, review), !contextTransfersClosing {
+            contextFence = review; acceptingContextTransfers[review.id, default: 0] += 1; contextTransferOperations += 1
+        } else { contextFence = nil }
         do {
             let receipt = try await enqueue(.remoteEnvironment(request, preparation: preparation), id: request.id)
             if let fenced { await finishRemoteCheckpointAcceptance(fenced) }
             if let historyFence { await finishRemoteHistoryAcceptance(historyFence) }
+            if let contextFence { await finishContextTransferAcceptance(contextFence) }
             return receipt
         } catch {
             if let fenced { await finishRemoteCheckpointAcceptance(fenced) }
             if let historyFence { await finishRemoteHistoryAcceptance(historyFence) }
+            if let contextFence { await finishContextTransferAcceptance(contextFence) }
             throw error
         }
     }
@@ -5468,5 +5581,187 @@ extension WorkspaceEngine {
               let current = revision.snapshot.conversationHistoryOperation(operation.id),
               try RemoteHistoryProtocol.payload(current) == RemoteHistoryProtocol.payload(operation) else { throw ProviderHistoryError(.historyChanged) }
         return result
+    }
+}
+
+extension WorkspaceEngine {
+    public func reviewContextTransfer(_ request: ContextTransferReviewRequest) async throws -> ContextTransferReview {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, !contextTransfersClosing, fatalError == nil,
+              let source = revision.snapshot.threads.first(where: { $0.id == request.sourceThreadID }),
+              let sourceIncarnation = threadIncarnations[source.id],
+              ContextTransferProtocol.same(ProviderConfiguration(thread: source), request.expectedConfiguration),
+              !source.isArchived, revision.snapshot.workspaceReady(for: source),
+              !revision.snapshot.isConversationHistoryLocked(threadID: source.id) else { throw ContextTransferError.unavailable }
+        contextTransferOperations += 1
+        defer { finishContextTransferOperation() }
+        let point = try revision.snapshot.contextTransferSource(threadID: source.id, point: request.sourcePoint)
+        let fingerprint = try revision.snapshot.contextTransferFingerprint(source, point: point)
+        let targetID: UUID, projectID: UUID, base: ContextTransferResolvedPoint?, strategy: ContextTransferStrategy
+        var target: ProviderConfiguration
+        switch request.intent {
+        case .fork(let destination): targetID = UUID(); projectID = source.projectID; base = nil; target = destination; strategy = .portableContext
+        case .providerHandoff(let destination):
+            guard !source.isBusy, source.queuedTurns.isEmpty, source.runtimeRequests.isEmpty,
+                  destination.workspacePath.utf8.elementsEqual(source.workspacePath.utf8),
+                  !WorkspaceSnapshot.sameContextProvider(destination, ProviderConfiguration(thread: source)) else { throw ContextTransferError.unavailable }
+            targetID = source.id; projectID = source.projectID; base = nil; target = destination; strategy = .portableContext
+        case .mergeBack(let expected):
+            guard let lineage = source.contextTransferLineage,
+                  let parent = revision.snapshot.threads.first(where: { $0.id == lineage.parentThreadID }),
+                  ContextTransferProtocol.same(ProviderConfiguration(thread: parent), expected),
+                  !parent.isArchived, revision.snapshot.workspaceReady(for: parent),
+                  !revision.snapshot.isConversationHistoryLocked(threadID: parent.id) else { throw ContextTransferError.unavailable }
+            targetID = parent.id; projectID = parent.projectID; base = lineage.basePoint; target = expected; strategy = .forkDeltaContext
+        }
+        target.nativeThreadID = nil; target.claudeLaunchSelection = nil; target.piFreshSessionIntent = nil
+        var targetBinding: ContextTransferProviderBinding?
+        if case .providerHandoff = request.intent {
+            targetBinding = source.contextProviderBindings?.last(where: { WorkspaceSnapshot.sameContextProvider($0.configuration, target) })
+            target.nativeThreadID = targetBinding?.configuration.nativeThreadID
+        }
+        var messages = try revision.snapshot.contextTransferMessages(thread: source, through: point, ownRunsOnly: base != nil)
+        var pendingReferences: [ContextTransferPendingReference] = []
+        if case .providerHandoff = request.intent {
+            let pending = revision.snapshot.pendingContextTransfers(threadID: source.id)
+            guard pending.count <= 32 else { throw ContextTransferError.limit }
+            pendingReferences = pending.map { .init(id: $0.id, digest: $0.review.digest) }
+            messages.append(contentsOf: pending.flatMap { $0.review.messages })
+            var seen = Set<Data>(); messages = messages.filter { seen.insert(Data($0.id.utf8)).inserted }
+        }
+        if let targetBinding { let known = Set(targetBinding.knownItemIDs); messages.removeAll { known.contains($0.id) } }
+        guard try ContextTransferProtocol.payload(messages).count <= ContextTransferProtocol.maximumArchiveBytes else { throw ContextTransferError.limit }
+        var native: ConversationHistoryReview?
+        // Review proves a native exact boundary, not just same-provider names.
+        // An active source can still transfer an earlier immutable portable point.
+        if case .fork = request.intent, !source.isBusy, source.queuedTurns.isEmpty, source.runtimeRequests.isEmpty,
+           [.codex, .claude].contains(source.provider), target.provider == source.provider,
+           target.workspacePath.utf8.elementsEqual(source.workspacePath.utf8),
+           target.codexRuntimeConfiguration == source.codexRuntimeConfiguration,
+           target.claudeRuntimeConfiguration == source.claudeRuntimeConfiguration,
+           source.activeHistoryRuns.first(where: { $0.id == point.runID })?.status == .completed {
+            do { native = try await reviewConversationHistory(threadID: source.id, runID: point.runID, kind: .forkAfterRun) }
+            catch is CancellationError { throw CancellationError() }
+            catch { native = nil }
+        }
+        guard !closing, !stoppingEffects, !contextTransfersClosing, fatalError == nil, !Task.isCancelled,
+              let fresh = revision.snapshot.threads.first(where: { $0.id == source.id }),
+              threadIncarnations[source.id] == sourceIncarnation,
+              try revision.snapshot.contextTransferFingerprint(fresh, point: point) == fingerprint else {
+            if let native { await discardConversationHistoryReview(reviewID: native.id) }
+            throw ContextTransferError.staleReview
+        }
+        var review = ContextTransferReview(id: native?.id ?? UUID(), digest: "", request: request,
+            sourcePoint: point, basePoint: base, targetThreadID: native?.targetThreadID ?? targetID, projectID: projectID,
+            sourceConfiguration: .init(thread: source), targetConfiguration: target, targetProviderBinding: targetBinding,
+            strategy: native == nil ? (targetBinding == nil ? strategy : .deltaContext) : .nativeFork, title: source.title + (base == nil ? " (fork)" : " context"),
+            messages: messages, nativeReview: native, sourceFingerprint: fingerprint,
+            sourceIncarnation: sourceIncarnation, targetIncarnation: threadIncarnations[targetID], reviewedAt: Date())
+        if case .providerHandoff = request.intent { review.pendingSourceTransfers = pendingReferences }
+        review.digest = try review.validatedDigest()
+        do {
+            try revision.snapshot.validateContextTransferReview(review)
+            let bytes = try ContextTransferProtocol.payload(review).count
+            let used = try contextTransferReviews.values.reduce(0) { try $0 + ContextTransferProtocol.payload($1).count }
+            guard contextTransferReviews.count < ContextTransferProtocol.maximumReviews,
+                  bytes <= ContextTransferProtocol.maximumReviewBytes - used else { throw ContextTransferError.limit }
+            contextTransferReviews[review.id] = review
+            return review
+        } catch { if let native { await discardConversationHistoryReview(reviewID: native.id) }; throw error }
+    }
+    public func prepareContextTransferAcceptance(reviewID: UUID, digest: String) async throws -> ContextTransferReview {
+        _ = try await load()
+        guard let review = contextTransferReviews[reviewID], review.digest == digest else { throw ContextTransferError.staleReview }
+        try validateContextTransferAcceptance(review, snapshot: revision.snapshot)
+        return review
+    }
+    func validateContextTransferAcceptance(_ review: ContextTransferReview, snapshot: WorkspaceSnapshot) throws {
+        guard !closing, !stoppingEffects, !contextTransfersClosing, fatalError == nil,
+              let cached = contextTransferReviews[review.id], ContextTransferProtocol.same(cached, review),
+              threadIncarnations[review.request.sourceThreadID] == review.sourceIncarnation,
+              review.kind == .fork || threadIncarnations[review.targetThreadID] == review.targetIncarnation,
+              try review.validatedDigest() == review.digest else { throw ContextTransferError.staleReview }
+        try snapshot.validateContextTransferReview(review)
+    }
+    public func discardContextTransferReview(id: UUID, digest: String) async {
+        guard acceptingContextTransfers[id, default: 0] == 0,
+              let review = contextTransferReviews[id], review.digest == digest else { return }
+        contextTransferReviews.removeValue(forKey: id)
+        if let native = review.nativeReview { await discardConversationHistoryReview(reviewID: native.id) }
+    }
+    @discardableResult public func acceptContextTransfer(reviewID: UUID, digest: String, title: String? = nil, commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
+        if let saved = revision.snapshot.contextTransfers?.first(where: { $0.commandID == commandID && $0.id == reviewID && $0.review.digest == digest }) {
+            return try await enqueue(.contextTransferAccepted(review: saved.review, title: title), id: commandID)
+        }
+        let review = try await prepareContextTransferAcceptance(reviewID: reviewID, digest: digest)
+        acceptingContextTransfers[review.id, default: 0] += 1
+        contextTransferOperations += 1
+        do {
+            let receipt = try await enqueue(.contextTransferAccepted(review: review, title: title), id: commandID)
+            await finishContextTransferAcceptance(review)
+            return receipt
+        } catch { await finishContextTransferAcceptance(review); throw error }
+    }
+    private func finishContextTransferAcceptance(_ review: ContextTransferReview) async {
+        defer { finishContextTransferOperation() }
+        let remaining = acceptingContextTransfers[review.id, default: 1] - 1
+        if remaining > 0 { acceptingContextTransfers[review.id] = remaining; return }
+        acceptingContextTransfers.removeValue(forKey: review.id)
+        contextTransferReviews.removeValue(forKey: review.id)
+        if let native = review.nativeReview { await discardConversationHistoryReview(reviewID: native.id) }
+    }
+    @discardableResult public func abandonContextTransfer(threadID: UUID, deliveryID: UUID, expectedTransferIDs: [UUID], commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
+        let result = try await dispatch(.abandonContextTransfer(threadID: threadID, deliveryID: deliveryID, expectedTransferIDs: expectedTransferIDs), id: commandID)
+        if result.rejection == nil { await awaitContextTransferRetirement(threadID: threadID, deliveryID: deliveryID) }
+        return result
+    }
+    public func reviewContextTransfer(request: ContextTransferReviewRequest) async throws -> ContextTransferReview { try await reviewContextTransfer(request) }
+    public func closeContextTransfers() async {
+        contextTransfersClosing = true
+        let unused = contextTransferReviews.values.filter { acceptingContextTransfers[$0.id, default: 0] == 0 }
+        for review in unused { contextTransferReviews.removeValue(forKey: review.id); if let native = review.nativeReview { await discardConversationHistoryReview(reviewID: native.id) } }
+        if contextTransferOperations > 0 { await withCheckedContinuation { contextTransferWaiters.append($0) } }
+    }
+    private func finishContextTransferOperation() {
+        contextTransferOperations -= 1
+        if contextTransferOperations == 0 { let waiters = contextTransferWaiters; contextTransferWaiters = []; for waiter in waiters { waiter.resume() } }
+    }
+    // Observation only: deterministic owned-writer contention tests can prove
+    // the acceptance fence without inserting timing sleeps or commit hooks.
+    func contextTransferAdmissionState(reviewID: UUID) -> (acceptances: Int, committing: Bool, closing: Bool) {
+        (acceptingContextTransfers[reviewID, default: 0], completedDuringCommit != nil, contextTransfersClosing)
+    }
+    func awaitRemoteContextCompletion(_ request: RemoteEnvironmentCommandRequest) async {
+        if case .contextTransfer(let target, .useFreshContext(let deliveryID, _)) = request.command {
+            await awaitContextTransferRetirement(threadID: target.threadID, deliveryID: deliveryID)
+        }
+    }
+    private func recordContextTransferRetirement(_ command: EngineCommand) {
+        let threadID: UUID, deliveryID: UUID
+        switch command {
+        case .client(.abandonContextTransfer(let thread, let delivery, _)): threadID = thread; deliveryID = delivery
+        case .remoteEnvironment(let request, _):
+            guard case .contextTransfer(let target, .useFreshContext(let delivery, _)) = request.command else { return }
+            threadID = target.threadID; deliveryID = delivery
+        default: return
+        }
+        guard contextTransferRetirements[deliveryID] == nil else { return }
+        // Capture only the cleanup owners present at this original commit.
+        // A later receipt lookup cannot discover or close a successor runtime.
+        let jobs = cleanupTasks.values.filter { $0.threadIDs.contains(threadID) }.map(\.task)
+        guard !jobs.isEmpty else { return }
+        let owner = UUID()
+        let task = Task { [weak self] in
+            for job in jobs { await job.value }
+            await self?.contextTransferRetirementFinished(deliveryID: deliveryID, owner: owner)
+        }
+        contextTransferRetirements[deliveryID] = .init(id: owner, threadID: threadID, task: task)
+    }
+    private func contextTransferRetirementFinished(deliveryID: UUID, owner: UUID) {
+        if contextTransferRetirements[deliveryID]?.id == owner { contextTransferRetirements.removeValue(forKey: deliveryID) }
+    }
+    private func awaitContextTransferRetirement(threadID: UUID, deliveryID: UUID) async {
+        guard let retired = contextTransferRetirements[deliveryID], retired.threadID == threadID else { return }
+        await retired.task.value
     }
 }

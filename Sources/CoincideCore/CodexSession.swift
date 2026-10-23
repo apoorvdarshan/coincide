@@ -55,7 +55,8 @@ public actor CodexSession: ProviderSession {
         guard !shuttingDown, !initialized, connectionTask == nil, eventTask == nil,
               !working, threadID == nil, appMCP == nil, !appMCPConfiguring else { throw Self.appMCPFailure() }
         let checked: AppMCPConnection
-        do { checked = try .init(endpoint: connection.endpoint, authorizationHeader: connection.authorizationHeader, scopeID: connection.scopeID) }
+        do { checked = try .init(endpoint: connection.endpoint, authorizationHeader: connection.authorizationHeader,
+            scopeID: connection.scopeID, requiredToolName: connection.requiredToolName) }
         catch { throw Self.appMCPFailure() }
         appMCPConfiguring = true
         defer { appMCPConfiguring = false }
@@ -428,7 +429,7 @@ public actor CodexSession: ProviderSession {
                 catch { try await failAppMCPPreparation(error) }
             }
             try requireSend(generation)
-            var items: [JSONValue] = input.text.isEmpty ? [] : [.object(["type": .string("text"), "text": .string(input.text)])]
+            var items: [JSONValue] = try input.providerTextBlocks().map { .object(["type": .string("text"), "text": .string($0)]) }
             items += input.images.map { .object(["type": .string("image"), "url": .string("data:\($0.mimeType);base64,\($0.data.base64EncodedString())")]) }
             var params: [String: JSONValue] = ["threadId": .string(threadID!), "cwd": .string(captured.workspacePath),
                 "input": .array(items),
@@ -492,7 +493,7 @@ public actor CodexSession: ProviderSession {
         let rows = try await appMCPStatuses(threadID: threadID)
         guard rows.count == 1, let row = rows.first, let tools = row["tools"].object,
               !tools.isEmpty, tools.count <= 256, row["toolsError"] == .null,
-              tools.values.contains(where: { $0["name"].string == "t3_thread_read" }) else { throw Self.appMCPFailure() }
+              tools.values.contains(where: { $0["name"].string == appMCP.requiredToolName }) else { throw Self.appMCPFailure() }
         // Older native catalog responses omit these newer observations. The
         // scoped initialized tool catalog remains required on every profile;
         // present status/identity fields must never contradict it.
@@ -516,6 +517,7 @@ public actor CodexSession: ProviderSession {
         return .init(supportsActiveSteering: true)
     }
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try input.requireNoHistoricalContextForSteering()
         try Task.checkCancellation()
         try ProviderSteeringValidation.id(expectedTurnID); try ProviderSteeringValidation.id(clientMessageID)
         try ProviderSteeringValidation.input(input)

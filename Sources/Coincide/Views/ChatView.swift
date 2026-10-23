@@ -10,6 +10,8 @@ struct ChatView: View {
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
     @State private var runHistorySheet = false
+    @State private var contextTransferSheet = false
+    @State private var contextTransferModel: ContextTransferStore?
     @State private var skillsModel: ProviderSkillsStore?
     @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode, reviewSetup: Bool)?
     private var thread: CodingThread? { store.thread(threadID) }
@@ -44,6 +46,8 @@ struct ChatView: View {
                         ExternalEditorMenu(store: store, workspacePath: thread.workspacePath, title: "Open Workspace in…")
                         Button("Run History…") { runHistorySheet = true }
                             .accessibilityIdentifier("conversation-run-history")
+                        Button("Fork Context…") { showContextTransfer(.fork) }
+                        Button("Switch Provider with Context…") { showContextTransfer(.providerHandoff) }
                         Toggle("Save Run Checkpoints", isOn: Binding(
                             get: { thread.effectiveCheckpointPolicy == .automatic },
                             set: { store.setCheckpointPolicy($0 ? .automatic : .disabled, id: threadID) }))
@@ -133,6 +137,7 @@ struct ChatView: View {
                     RunCheckpointRestoreBanner(store: store, threadID: threadID)
                     RunCheckpointBanner(store: store, threadID: threadID)
                     ConversationHistoryBanner(store: store, threadID: threadID)
+                    ContextTransferBanner(store: store, thread: thread, mergeBack: { showContextTransfer(.mergeBack) })
                     if store.isPullRequestCreationLocked(threadID: threadID) {
                         Label("Pull request creation is pending or unconfirmed. Open Changes → Pull Requests to inspect its state.", systemImage: "arrow.triangle.branch")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -188,6 +193,9 @@ struct ChatView: View {
             }
             .task(id: store.skillsScope(threadID: threadID)) { skillsModel = store.skillsStore(threadID: threadID) }
             .sheet(isPresented: $runHistorySheet) { RunHistorySheet(store: store, threadID: threadID) }
+            .sheet(isPresented: $contextTransferSheet) {
+                if let contextTransferModel { ContextTransferSheet(model: contextTransferModel, close: { contextTransferSheet = false }) }
+            }
             .sheet(isPresented: $referenceFileSheet) {
                 WorkspaceFilePicker(workspace: store, path: thread.workspacePath) { path in
                     referenceFileSheet = false
@@ -205,4 +213,9 @@ struct ChatView: View {
             }
         }
     }
+    private func showContextTransfer(_ kind: ContextTransferFormKind) {
+        let model = store.contextTransferStore(threadID: threadID)
+        model.kind = kind; model.sourceID = "latest"; contextTransferModel = model; contextTransferSheet = true
+    }
+
 }

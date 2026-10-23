@@ -1,6 +1,27 @@
 import CryptoKit
 import Foundation
 
+/// Authored and provider-facing input are distinct when a saved handoff is
+/// inline. Both digests are bound to the exact immutable consuming delivery.
+public struct PiContextInputEvidence: Codable, Sendable, Equatable {
+    public let deliveryID: UUID
+    public let transferIDs: [UUID]
+    public let selectionDigest: String
+    public let authoredDigest: String
+    public let nativeDigest: String
+    public static func capture(_ input: ProviderInput) throws -> Self? {
+        guard let context = input.historicalContext else { return nil }
+        try context.validate()
+        return .init(deliveryID: context.deliveryID, transferIDs: context.transferIDs,
+            selectionDigest: context.selection.digest, authoredDigest: try PiHistoryInputEvidence.digest(input),
+            nativeDigest: try PiHistoryInputEvidence.digest(.init(text: input.providerText(), images: input.images)))
+    }
+    func validate() throws {
+        guard !transferIDs.isEmpty, transferIDs.count <= 32, Set(transferIDs).count == transferIDs.count else { throw PiHistoryGraphError(.invalidWindow) }
+        try PiRunHistoryValidation.digest(selectionDigest); try PiRunHistoryValidation.digest(authoredDigest); try PiRunHistoryValidation.digest(nativeDigest)
+    }
+}
+
 public struct PiHistoryInputEvidence: Codable, Sendable, Equatable {
     public enum Kind: String, Codable, Sendable { case opening, steering, compact }
     public let clientMessageID: String
@@ -9,20 +30,24 @@ public struct PiHistoryInputEvidence: Codable, Sendable, Equatable {
     public var nativeUserEntryID: String?
     public let bridgeReservation: PiInputBridgeReservation?
     public var bridgeEvidence: PiInputBridgeEvidence?
-    public var nativeInputDigest: String { bridgeEvidence?.expandedDigest ?? inputDigest }
+    public let contextualInput: PiContextInputEvidence?
+    public var nativeInputDigest: String { bridgeEvidence?.expandedDigest ?? contextualInput?.nativeDigest ?? inputDigest }
     public init(clientMessageID: String, inputDigest: String, kind: Kind, nativeUserEntryID: String? = nil,
-                bridgeReservation: PiInputBridgeReservation? = nil, bridgeEvidence: PiInputBridgeEvidence? = nil) throws {
+                bridgeReservation: PiInputBridgeReservation? = nil, bridgeEvidence: PiInputBridgeEvidence? = nil,
+                contextualInput: PiContextInputEvidence? = nil) throws {
         self.clientMessageID = clientMessageID; self.inputDigest = inputDigest; self.kind = kind; self.nativeUserEntryID = nativeUserEntryID
         self.bridgeReservation = bridgeReservation; self.bridgeEvidence = bridgeEvidence
+        self.contextualInput = contextualInput
         try validate()
     }
     public func validate() throws {
         try ProviderSteeringValidation.id(clientMessageID); try PiRunHistoryValidation.digest(inputDigest)
+        if let contextualInput { try contextualInput.validate(); guard kind == .opening, contextualInput.authoredDigest == inputDigest else { throw PiHistoryGraphError(.invalidWindow) } }
         if let nativeUserEntryID { _ = try PiHistoryValidation.identifier(.string(nativeUserEntryID)) }
         guard kind != .compact || nativeUserEntryID == nil else { throw PiHistoryGraphError(.invalidWindow) }
         if let reservation = bridgeReservation {
             try reservation.validate()
-            guard kind != .compact, reservation.clientMessageID == clientMessageID, reservation.originalDigest == inputDigest else {
+            guard kind != .compact, reservation.clientMessageID == clientMessageID, reservation.originalDigest == (contextualInput?.nativeDigest ?? inputDigest) else {
                 throw PiHistoryGraphError(.invalidWindow)
             }
             if let proof = bridgeEvidence {
@@ -34,7 +59,7 @@ public struct PiHistoryInputEvidence: Codable, Sendable, Equatable {
         } else { guard bridgeEvidence == nil else { throw PiHistoryGraphError(.invalidWindow) } }
     }
     public func matchesAuthored(_ expected: Self) -> Bool {
-        clientMessageID == expected.clientMessageID && inputDigest == expected.inputDigest && kind == expected.kind
+        clientMessageID == expected.clientMessageID && inputDigest == expected.inputDigest && kind == expected.kind && contextualInput == expected.contextualInput
     }
     public static func digest(_ input: ProviderInput) throws -> String {
         try ProviderSteeringValidation.input(input)
@@ -235,7 +260,8 @@ public struct PiRunHistoryEvidence: Codable, Sendable, Equatable {
               inputs.first?.inputDigest == preparation.inputDigest, inputs.first?.kind == .opening,
               inputs.dropFirst().allSatisfy({ $0.kind != .opening }), Set(inputs.map(\.clientMessageID)).count == inputs.count else { throw PiHistoryGraphError(.invalidWindow) }
         for input in inputs { try input.validate() }
-        guard inputs.first?.bridgeReservation == preparation.openingInput.bridgeReservation else { throw PiHistoryGraphError(.invalidWindow) }
+        guard inputs.first?.bridgeReservation == preparation.openingInput.bridgeReservation,
+              inputs.first?.contextualInput == preparation.openingInput.contextualInput else { throw PiHistoryGraphError(.invalidWindow) }
         let userInputs = inputs.filter { $0.kind != .compact }
         if preparation.openingInput.bridgeReservation != nil {
             guard userInputs.allSatisfy({ input in
@@ -284,6 +310,7 @@ public struct PiRunHistoryEvidence: Codable, Sendable, Equatable {
         guard preparation == observed.preparation else { throw PiHistoryGraphError(.invalidWindow) }
         func sameOwner(_ old: PiHistoryInputEvidence, _ new: PiHistoryInputEvidence) -> Bool {
             old.clientMessageID == new.clientMessageID && old.inputDigest == new.inputDigest && old.kind == new.kind &&
+                old.contextualInput == new.contextualInput &&
                 old.bridgeReservation == new.bridgeReservation && (old.bridgeEvidence == nil || old.bridgeEvidence == new.bridgeEvidence) &&
                 (old.nativeUserEntryID == nil || old.nativeUserEntryID == new.nativeUserEntryID)
         }
@@ -293,7 +320,7 @@ public struct PiRunHistoryEvidence: Codable, Sendable, Equatable {
             // reservation. Preserve that owner without inventing consumption or
             // rejecting the real terminal. This run's history remains gated.
             let retained = try inputs.map { try PiHistoryInputEvidence(clientMessageID: $0.clientMessageID,
-                inputDigest: $0.inputDigest, kind: $0.kind, bridgeReservation: $0.bridgeReservation) }
+                inputDigest: $0.inputDigest, kind: $0.kind, bridgeReservation: $0.bridgeReservation, contextualInput: $0.contextualInput) }
             return try .init(preparation: preparation, inputs: retained, finalObservation: observed.finalObservation,
                 openingUserEntryID: nil, nativeUserEntryIDs: [], captureStatus: .unavailable, terminalStatus: observed.terminalStatus)
         }

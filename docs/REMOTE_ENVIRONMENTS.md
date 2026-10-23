@@ -139,9 +139,45 @@ data or unavailable storage fail explicitly and retain the pending recovery.
 
 Remote conversation creation still supports Codex and Claude. The closed
 recovery adapter also handles existing host-owned OpenCode/Pi histories; that
-does not add remote creation/authentication for those providers. Latest-stable
-and checkpoint-based fork sources, portable context transfer, merge-back, broader
+does not add remote creation/authentication for those providers. Broader
 checkpoint ranges and live two-Mac/provider acceptance remain separate gaps.
+
+## Reviewed context transfers
+
+Updated helpers advertise `supportsContextTransfers`. Fork and provider handoff
+accept a latest-stable run with a ready after-run checkpoint, an explicit recorded
+terminal run, or the exact current ready after-run checkpoint. The reviewed
+source prefix stays fixed. Creation saves an intent and its original command
+receipt without sending a provider turn. The next explicit target input owns
+delivery; its authored text, attachments and the private local draft remain
+separate from historical material.
+
+Compatible verified Codex/Claude sources use their native fork primitives.
+Other routes select whole archived items within a conservative byte budget,
+preserve chronology, and record included and omitted item identities. Provider
+handoff switches the provider on the same app conversation; returning to a saved
+provider session adds a delta. Merge Back requires the actual parent lineage and
+same project, and transfers child context rather than merging Git or files.
+Cross-provider remote destinations use host-captured Codex/Claude profiles;
+clients cannot supply executables, homes, credentials or native session IDs.
+Imported opaque model selections can be retained or cleared; a display string
+alone cannot select a different native OpenCode/Pi/Muse model remotely.
+
+Full native proof and the immutable archive remain host-owned. Independent
+eight-view/128 MiB leases expose bounded metadata, message pages and exact
+128 KiB content chunks within a 256 KiB response envelope. Full target identity,
+query-bound cursors and final SHA-256 verification apply. The provider context
+reader is limited to archives captured by its exact active input; a remote
+context-only MCP server exposes only that reader. Private reasoning, pending
+approvals, native session internals and attachment bytes are not replayed or
+available through it.
+
+A lost outer reply is reconciled through the original command UUID. Unknown
+delivery is retained as uncertain and blocks replay. Use Fresh Context requires
+the exact saved delivery and transfer identities, preserves the audit and draft,
+and permits a later explicit fresh input without resending the prior input or
+historical material. Disconnect discards unused review display leases and resets
+physical root bindings; it never repeats an accepted transfer or provider input.
 
 ## Bounded remote views
 
@@ -195,8 +231,8 @@ run/runtime/request identities remain usable during streaming invalidations;
 older-history browsing does not freeze Stop, questions or queue controls.
 
 This is bounded display transport and browsing. Provider-history actions use the
-separate reviewed workflow above. Portable transfers, broader history/checkpoint
-ranges, durable paged journal catch-up and persistent-host transport remain
+separate reviewed workflows above. Broader history/checkpoint ranges,
+durable paged journal catch-up and persistent-host transport remain
 separate unfinished parity work.
 
 ## Remote Files and Changes

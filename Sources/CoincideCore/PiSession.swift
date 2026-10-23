@@ -623,9 +623,11 @@ public actor PiSession: ProviderSession {
                   model == nil || after.model == model, thinking == nil || after.thinking == thinking,
                   preparing == token, !closing, !broken, ui.isEmpty else { throw CoincideError(PiProtocol.historyFailure) }
             let digest = try PiHistoryInputEvidence.digest(input)
+            let contextual = try PiContextInputEvidence.capture(input)
             try await requireSkillBridge(input)
-            let bridge = command.name == "prompt" ? try makeBridgeReservation(clientMessageID: openingID, digest: digest, preparationID: token, state: after) : nil
-            let opening = try PiHistoryInputEvidence(clientMessageID: openingID, inputDigest: digest, kind: .opening, bridgeReservation: bridge)
+            let bridge = command.name == "prompt" ? try makeBridgeReservation(clientMessageID: openingID, digest: contextual?.nativeDigest ?? digest, preparationID: token, state: after) : nil
+            let opening = try PiHistoryInputEvidence(clientMessageID: openingID, inputDigest: digest, kind: .opening,
+                bridgeReservation: bridge, contextualInput: contextual)
             let proof = try PiRunHistoryPreparation(id: token, runID: runID, runtimeIdentity: configuration.runtimeIdentity,
                 observedVersion: version, openingInput: opening, baseline: entries.observation, freshIntentID: intent?.id, freshEmptyObservation: freshEmpty)
             prepared = .init(proof: proof, configuration: captured, state: after, generation: generation)
@@ -644,6 +646,7 @@ public actor PiSession: ProviderSession {
         guard let owned = prepared, owned.proof == preparation, preparing == preparation.id,
               preparation.runID == thread.activeRun?.id, owned.configuration == captured,
               try PiHistoryInputEvidence.digest(input) == preparation.inputDigest,
+              try PiContextInputEvidence.capture(input) == preparation.openingInput.contextualInput,
               let durable = thread.runHistory?.first(where: { $0.id == preparation.runID })?.pi,
               durable.preparation == preparation, durable.captureStatus == .prepared,
               durable.inputs == [preparation.openingInput], active == nil, historyOperation == nil, generation == owned.generation,
@@ -672,6 +675,10 @@ public actor PiSession: ProviderSession {
         }
     }
     public func send(text: String, thread: CodingThread) async throws { try await send(input: .init(text: text), thread: thread) }
+    public func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition {
+        let literal = ProviderInput(text: input.text, images: input.images)
+        return try PiProtocol.inputCommand(literal).name == "prompt" ? .ordinary : .nativeCommand
+    }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         try ProviderSteeringValidation.input(input)
         let command = try PiProtocol.inputCommand(input)
@@ -765,6 +772,7 @@ public actor PiSession: ProviderSession {
     }
     public func preparePiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget,
                                  clientMessageID: String) async throws -> PiSteeringHistoryPreparation {
+        try input.requireNoHistoricalContextForSteering()
         try Task.checkCancellation(); try target.validate()
         guard configuration.runtime != nil, case .adapterRun(let runID) = target else { throw ProviderSteeringError(.unsupported) }
         try requireSteeringTarget(thread, runID: runID)
@@ -788,6 +796,7 @@ public actor PiSession: ProviderSession {
     }
     public func sendPreparedPiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget,
                                       clientMessageID: String, preparation: PiSteeringHistoryPreparation) async throws -> ProviderSteeringReceipt {
+        try input.requireNoHistoricalContextForSteering()
         try preparation.validate()
         defer { releaseSteeringPreparation(preparation.id) }
         guard steeringPreparation == preparation, target == .adapterRun(preparation.runID),
@@ -807,6 +816,7 @@ public actor PiSession: ProviderSession {
     }
     public func steer(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget,
                       clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try input.requireNoHistoricalContextForSteering()
         try Task.checkCancellation(); try target.validate()
         try ProviderSteeringValidation.id(clientMessageID); try ProviderSteeringValidation.input(input)
         guard case .adapterRun(let runID) = target else { throw ProviderSteeringError(.unsupported) }
@@ -1225,7 +1235,7 @@ public actor PiSession: ProviderSession {
             if mapped[index].bridgeReservation != nil {
                 guard bridged.indices.contains(ordinal - 1) else { throw PiHistoryGraphError(.invalidWindow) }
                 mapped[index].bridgeEvidence = bridged[ordinal - 1]
-            } else { guard try PiProtocol.inputDigest(entry) == mapped[index].inputDigest else { throw PiHistoryGraphError(.invalidWindow) } }
+            } else { guard try PiProtocol.inputDigest(entry) == mapped[index].nativeInputDigest else { throw PiHistoryGraphError(.invalidWindow) } }
             mapped[index].nativeUserEntryID = native
         }
         return try .init(preparation: before.preparation, inputs: mapped, finalObservation: entries.observation,

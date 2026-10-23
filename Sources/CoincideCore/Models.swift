@@ -99,6 +99,8 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var activeRun: ActiveRun?
     public var runHistory: [ThreadRunRecord]?
     public var checkpointPolicy: RunCheckpointPolicy?
+    public var contextTransferLineage: ContextTransferLineage?
+    public var contextProviderBindings: [ContextTransferProviderBinding]?
     public var forkedFromHistoryOperationID: UUID?
     public var createdByAppMCP: AppMCPThreadOrigin?
     public var pullRequestCheckoutOperationID: UUID?
@@ -117,7 +119,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, createdByAppMCP, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
+        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, contextTransferLineage, contextProviderBindings, forkedFromHistoryOperationID, createdByAppMCP, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
         case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
         case piFreshSessionIntent, piFreshConsumerRunID, piFreshContextResolutions
@@ -168,6 +170,8 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         activeRun = try values.decodeIfPresent(ActiveRun.self, forKey: .activeRun)
         runHistory = try values.decodeIfPresent([ThreadRunRecord].self, forKey: .runHistory)
         checkpointPolicy = try values.decodeIfPresent(RunCheckpointPolicy.self, forKey: .checkpointPolicy)
+        contextTransferLineage = try values.decodeIfPresent(ContextTransferLineage.self, forKey: .contextTransferLineage)
+        contextProviderBindings = try values.decodeIfPresent([ContextTransferProviderBinding].self, forKey: .contextProviderBindings)
         forkedFromHistoryOperationID = try values.decodeIfPresent(UUID.self, forKey: .forkedFromHistoryOperationID)
         createdByAppMCP = try values.decodeIfPresent(AppMCPThreadOrigin.self, forKey: .createdByAppMCP)
         pullRequestCheckoutOperationID = try values.decodeIfPresent(UUID.self, forKey: .pullRequestCheckoutOperationID)
@@ -194,8 +198,9 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var pullRequestCheckouts: [PullRequestCheckoutOperation]?
     public var promptSteerings: [PromptSteeringOperation]?
     public var checkpointRestoreOperations: [RunCheckpointRestoreOperation]?
+    public var contextTransfers: [ContextTransfer]?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings, contextTransfers }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -208,9 +213,19 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         pullRequestCheckouts = try values.decodeIfPresent([PullRequestCheckoutOperation].self, forKey: .pullRequestCheckouts)
         promptSteerings = try values.decodeIfPresent([PromptSteeringOperation].self, forKey: .promptSteerings)
         checkpointRestoreOperations = try values.decodeIfPresent([RunCheckpointRestoreOperation].self, forKey: .checkpointRestoreOperations)
+        contextTransfers = try values.decodeIfPresent([ContextTransfer].self, forKey: .contextTransfers)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        for i in (contextTransfers ?? []).indices {
+            guard var transfer = contextTransfers?[i], var delivery = transfer.delivery,
+                  delivery.status == .dispatching || delivery.status == .reserved else { continue }
+            // Even a reserved queued input may have crossed a provider boundary
+            // before its completion was journalled. Preserve the archived source.
+            delivery.status = .uncertain; delivery.error = ContextTransferError.uncertain.localizedDescription
+            transfer.delivery = delivery; transfer.status = .uncertain; transfer.error = delivery.error
+            contextTransfers?[i] = transfer
+        }
         for i in (promptSteerings ?? []).indices {
             guard var operation = promptSteerings?[i] else { continue }
             if operation.isWorking {

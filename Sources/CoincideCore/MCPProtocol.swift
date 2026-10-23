@@ -94,7 +94,7 @@ public struct MCPError: Error, Sendable, Equatable, LocalizedError, CustomString
 }
 
 public enum MCPCapability: String, Sendable, Hashable, CaseIterable {
-    case orchestration, worktree, pullRequests = "pull-requests", preview, device
+    case orchestration, worktree, pullRequests = "pull-requests", preview, device, contextRead = "context-read"
 }
 
 /// Provider-session authority, deliberately independent of any one turn. The

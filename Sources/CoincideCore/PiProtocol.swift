@@ -44,12 +44,12 @@ enum PiProtocol {
         if text.hasPrefix("/compact") {
             let rest = text.dropFirst("/compact".count)
             if rest.isEmpty || rest.first?.isWhitespace == true {
-                guard input.images.isEmpty else { throw ProviderSteeringError(.invalidRequest) }
+                guard input.images.isEmpty, input.historicalContext == nil else { throw ProviderSteeringError(.invalidRequest) }
                 let instructions = rest.trimmingCharacters(in: .whitespacesAndNewlines)
                 return ("compact", instructions.isEmpty ? [:] : ["customInstructions": .string(instructions)])
             }
         }
-        var fields: [String: JSONValue] = ["message": .string(input.text), "streamingBehavior": .string("steer")]
+        var fields: [String: JSONValue] = ["message": .string(try input.providerText()), "streamingBehavior": .string("steer")]
         if !input.images.isEmpty {
             fields["images"] = .array(input.images.map { .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())]) })
         }

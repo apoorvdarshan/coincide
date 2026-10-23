@@ -4,9 +4,58 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test(.timeLimit(.minutes(1)), arguments: [ProviderKind.codex, .claude])
+func contextHandoffNativeForkHelperUsesReservedExactHistoryWithoutSendingAPrompt(provider: ProviderKind) async throws {
+    let fixture = try await RemoteHistoryNativeFixture.make(provider: provider)
+    var privateEnvironment = fixture.environment
+    privateEnvironment["CODEX_HOME"] = fixture.root.appendingPathComponent("codex-home").path
+    let environment = privateEnvironment
+    let engine = try WorkspaceEngine(url: fixture.data.appendingPathComponent("workspace.sqlite"), providerFactory: { thread in
+        guard thread.provider == .codex else { throw CoincideError("Native Claude file history must not launch a provider.") }
+        return try CodexSession(executable: fixture.root.appendingPathComponent("private-codex"), cwd: fixture.workspace,
+            environment: environment, runtimeConfiguration: thread.codexRuntimeConfiguration)
+    }, identityResolver: { _ in nil })
+    let unused = RemoteEnvironmentClient(factory: { try fixture.connection() }, expectedEnvironmentID: fixture.environmentID)
+    let session: any ProviderSession
+    if provider == .claude { session = ContextHandoffLegacySession() }
+    else {
+        session = try CodexSession(executable: fixture.root.appendingPathComponent("private-codex"), cwd: fixture.workspace,
+            environment: environment, runtimeConfiguration: fixture.thread.codexRuntimeConfiguration)
+    }
+    do {
+        _ = try await engine.load()
+        let before = await engine.current().snapshot
+        let original = try fixture.transcript.map { try Data(contentsOf: $0) }
+        let review = try await engine.reviewConversationHistory(threadID: fixture.thread.id, runID: fixture.runIDs[0], kind: .forkAfterRun)
+        let reservation = fixture.root.appendingPathComponent("context-claude-reservation.json")
+        let result = try await ContextTransferNativeDelivery.apply(review: review, configuration: review.targetConfiguration, session: session) { publication in
+            let target = URL(fileURLWithPath: publication.target.configurationDirectory).appendingPathComponent("projects")
+                .appendingPathComponent(publication.target.projectDirectoryName).appendingPathComponent(publication.target.sessionID + ".jsonl")
+            guard !FileManager.default.fileExists(atPath: target.path) else { throw CoincideError("The private native fork was published before its reservation.") }
+            try JSONEncoder().encode(publication).write(to: reservation, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: reservation.path)
+        }
+        #expect(result.reference.nativeThreadID != fixture.nativeID)
+        #expect(await engine.current().snapshot == before)
+        if let transcript = fixture.transcript {
+            let originalBytes = try #require(original)
+            #expect(try Data(contentsOf: transcript) == originalBytes)
+            #expect(FileManager.default.fileExists(atPath: reservation.path))
+            #expect(try fixture.rows("claude-wire.jsonl", kind: "launch").isEmpty)
+        } else {
+            #expect(try fixture.rows("codex-wire.jsonl", kind: "mutation-request").count == 1)
+            #expect(try fixture.rows("codex-wire.jsonl", kind: "mutation-committed").count == 1)
+        }
+        await session.close(); await engine.shutdown()
+        try await fixture.finish(unused)
+    } catch {
+        await session.close(); await engine.shutdown(); await fixture.failed(unused); throw error
+    }
+}
+
 /// Actual helper, native provider history codecs, private SQLite and local Git.
 /// Native histories are synthetic, durable and task-owned; no installed CLI runs.
-private struct RemoteHistoryNativeFixture: Sendable {
+struct RemoteHistoryNativeFixture: Sendable {
     let root: URL, source: URL, workspace: URL, data: URL, host: URL, proxy: URL
     let environmentID: UUID, snapshot: WorkspaceSnapshot, nativeID: String
     let runIDs: [UUID], assistantIDs: [String], transcript: URL?
@@ -202,13 +251,13 @@ private struct RemoteHistoryNativeFixture: Sendable {
         releaseMutation(); await client.close(); print("Private native history fixture retained at \(root.path)")
     }
 }
-private final class RemoteHistoryNativeConnections: @unchecked Sendable {
+final class RemoteHistoryNativeConnections: @unchecked Sendable {
     let fixture: RemoteHistoryNativeFixture, dropped: UUID?
     private let lock = NSLock(); private var launches = 0
     init(_ fixture: RemoteHistoryNativeFixture, dropped: UUID? = nil) { self.fixture = fixture; self.dropped = dropped }
     func make() throws -> JSONRPCConnection { try lock.withLock { let value = launches == 0 ? dropped : nil; launches += 1; return try fixture.connection(dropping: value) } }
 }
-private func remoteHistoryEventually(_ predicate: @escaping @Sendable () async throws -> Bool) async throws {
+func remoteHistoryEventually(_ predicate: @escaping @Sendable () async throws -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(12)
     while try await !predicate() {
         guard ContinuousClock.now < deadline else { throw CoincideError("The private native history boundary was not reached") }

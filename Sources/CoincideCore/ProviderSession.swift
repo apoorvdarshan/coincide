@@ -14,14 +14,20 @@ public struct AppMCPConnection: Sendable, CustomStringConvertible, CustomDebugSt
     public let endpoint: URL
     public let authorizationHeader: String
     public let scopeID: UUID
-    public init(endpoint: URL, authorizationHeader: String, scopeID: UUID) throws {
+    /// Host-selected readiness proof, independent of provider-supplied names.
+    /// Full app scopes retain the ordinary read tool; context-only scopes must
+    /// prove the exact archive reader before a contextual prompt can be sent.
+    public let requiredToolName: String
+    public init(endpoint: URL, authorizationHeader: String, scopeID: UUID, requiredToolName: String = "t3_thread_read") throws {
         guard endpoint.scheme == "http", endpoint.host == "127.0.0.1", endpoint.port.map({ $0 > 0 && $0 <= 65_535 }) == true,
               endpoint.path == "/mcp", endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
+              ["t3_thread_read", "t3_context_read"].contains(requiredToolName),
               authorizationHeader.hasPrefix("Bearer "), authorizationHeader.utf8.count == 50,
               authorizationHeader.dropFirst(7).utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }) else {
             throw CoincideError("The app tool connection could not be configured.")
         }
         self.endpoint = endpoint; self.authorizationHeader = authorizationHeader; self.scopeID = scopeID
+        self.requiredToolName = requiredToolName
     }
     public var description: String { "AppMCPConnection(redacted)" }
     public var debugDescription: String { description }
@@ -90,6 +96,7 @@ public protocol ProviderSession: Actor {
     func acpConnectionInfo() async throws -> ACPConnectionInfo
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
+    func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition
     /// Captures an owned native baseline without sending input. The caller must
     /// persist this preparation before admitting its exact one-use prompt.
     func preparePiRun(input: ProviderInput, thread: CodingThread) async throws -> PiRunHistoryPreparation
@@ -132,6 +139,7 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition { .ordinary }
     public nonisolated var supportsAppMCP: Bool { false }
     public func configureAppMCP(_ connection: AppMCPConnection) async throws { throw MCPError(.unavailable) }
     public func preparePiRun(input: ProviderInput, thread: CodingThread) async throws -> PiRunHistoryPreparation {
@@ -207,7 +215,7 @@ extension ProviderSession {
     }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard input.images.isEmpty else { throw CoincideError("This provider does not support image input.") }
-        try await send(text: input.text, thread: thread)
+        try await send(text: input.providerText(), thread: thread)
     }
 }
 

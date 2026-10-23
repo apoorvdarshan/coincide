@@ -520,6 +520,13 @@ public actor OpenCodeV2Session: ProviderSession {
         try await send(input: .init(text: text), thread: thread)
     }
 
+    public func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition {
+        guard try ProviderCommandCatalog.requiresInventory(input.text) else { return .ordinary }
+        let catalog: ProviderCommandInventory?
+        do { catalog = try await providerCommands() }
+        catch let error as ProviderCommandError where error.kind == .unsupported { catalog = nil }
+        return try catalog.flatMap { try ProviderCommandCatalog.selection(in: input.text, inventory: $0) } == nil ? .ordinary : .nativeCommand
+    }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard !closing, !uncertain else { throw OpenCodeV2SessionError.closed }
         guard preparing == nil, activeRunID == nil, interrupting == nil, historyToken == nil, !historyUnsafe else { throw OpenCodeV2SessionError.busy }
@@ -554,6 +561,7 @@ public actor OpenCodeV2Session: ProviderSession {
                 try requirePreparation(token)
             } else { catalog = nil }
             let command = try catalog.flatMap { try ProviderCommandCatalog.selection(in: input.text, inventory: $0) }
+            guard command == nil || input.historicalContext == nil else { throw OpenCodeV2SessionError.unsupportedInput }
             let skills = try catalog.map { try ProviderCommandCatalog.skillIDs(in: input.text, inventory: $0) } ?? []
             let compact = command?.name == "compact"
             guard !compact || (command?.arguments.isEmpty == true && input.images.isEmpty) else { throw OpenCodeV2SessionError.unsupportedInput }
@@ -672,6 +680,7 @@ public actor OpenCodeV2Session: ProviderSession {
 
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String,
                       clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try input.requireNoHistoricalContextForSteering()
         try Task.checkCancellation()
         try ProviderSteeringValidation.id(clientMessageID)
         try ProviderSteeringValidation.input(input)
@@ -1445,7 +1454,7 @@ public actor OpenCodeV2Session: ProviderSession {
               input.images.allSatisfy({ $0.data.count <= 20 * 1_024 * 1_024 && ["image/png", "image/jpeg", "image/gif", "image/webp"].contains($0.mimeType) }) else {
             throw OpenCodeV2SessionError.unsupportedInput
         }
-        var object: [String: JSONValue] = ["id": .string(inputID), "text": .string(input.text), "delivery": .string(delivery)]
+        var object: [String: JSONValue] = ["id": .string(inputID), "text": .string(try input.providerText()), "delivery": .string(delivery)]
         if delivery == "queue" { object["resume"] = .bool(true) }
         if !input.images.isEmpty {
             object["files"] = .array(input.images.map { .object(["uri": .string("data:" + $0.mimeType + ";base64," + $0.data.base64EncodedString())]) })

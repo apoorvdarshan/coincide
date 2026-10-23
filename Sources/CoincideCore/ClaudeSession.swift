@@ -265,8 +265,8 @@ public actor ClaudeSession: ProviderSession {
                 .object(["type": .string("image"), "source": .object(["type": .string("base64"),
                     "media_type": .string(image.mimeType), "data": .string(image.data.base64EncodedString())])])
             }
-            if !input.text.isEmpty { images.append(.object(["type": .string("text"), "text": .string(input.text)])) }
-            let content: JSONValue = input.images.isEmpty ? .string(input.text) : .array(images)
+            images += try input.providerTextBlocks().map { .object(["type": .string("text"), "text": .string($0)]) }
+            let content: JSONValue = input.images.isEmpty && input.historicalContext == nil ? .string(input.text) : .array(images)
             submittedOpening = true
             try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(promptID),
                 "message": .object(["role": .string("user"), "content": content]), "parent_tool_use_id": .null]))
@@ -287,6 +287,7 @@ public actor ClaudeSession: ProviderSession {
         return .init(supportsActiveSteering: true, interruptsTools: true)
     }
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try input.requireNoHistoricalContextForSteering()
         try Task.checkCancellation()
         try ProviderSteeringValidation.id(expectedTurnID); try ProviderSteeringValidation.id(clientMessageID)
         try ProviderSteeringValidation.input(input)

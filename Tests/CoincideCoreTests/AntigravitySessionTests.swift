@@ -3,6 +3,16 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test func contextHandoffAntigravityCarriesSeparateHistoricalAndLiteralTextBlocks() async throws {
+    try await withAntigravity { fixture, session, _ in
+        let input = try contextHandoffTestInput()
+        try await session.send(input: input, thread: fixture.thread())
+        try await antigravityEventually { try !fixture.rows("prompt").isEmpty }
+        let prompt = try #require(fixture.rows("prompt").first)
+        #expect(prompt["prompt"].array?.compactMap { $0["text"].string } == (try input.providerTextBlocks()))
+    }
+}
+
 actor AntigravityObserved {
     var completions: [(UUID?, ThreadState)] = []
     var failures = 0, returnedStops = 0

@@ -71,6 +71,7 @@ public actor RemoteEnvironmentClient {
         let query: Data, binding: RemoteHistoryBinding
         let offset: Int, total: Int
     }
+    private var contextViews = RemoteContextClientState()
     private var historyHostID: UUID?
     private var historyBindings: [UUID: RemoteHistoryBinding] = [:]
     private var historyTargets: [UUID: Data] = [:]
@@ -198,6 +199,16 @@ public actor RemoteEnvironmentClient {
         if command.isCheckpointCommand, descriptor?.capabilities.supportsRemoteCheckpoints != true {
             throw RemoteEnvironmentClientError(.unsupported)
         }
+        if case .contextTransfer(let target, let action) = command {
+            guard descriptor?.capabilities.supportsContextTransfers == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            guard target.environmentID == environment, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteContextFailure(.invalidTarget) }
+            switch action {
+            case .begin(_, let digest, let title):
+                guard Self.isTerminalDigest(digest), title.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 4_096 && !$0.contains("\0") }) ?? true else { throw RemoteContextFailure(.invalidRequest) }
+            case .useFreshContext(_, let ids):
+                guard !ids.isEmpty, ids.count <= 32, Set(ids).count == ids.count else { throw RemoteContextFailure(.invalidRequest) }
+            }
+        }
         if case .history(let target, let action) = command {
             guard descriptor?.capabilities.supportsRemoteHistory == true else { throw RemoteEnvironmentClientError(.unsupported) }
             guard target.environmentID == environment, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteHistoryFailure(.invalidTarget) }
@@ -227,7 +238,7 @@ public actor RemoteEnvironmentClient {
         attemptedCommands.insert(id); activeRequests += 1
         defer { activeRequests -= 1 }
         do {
-            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand || command.isHistoryCommand) ? 120 : 45))
+            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand || command.isHistoryCommand || command.isContextTransferCommand) ? 120 : 45))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             try validateReceipt(result.receipt, environmentID: result.environmentID, commandID: id)
@@ -251,7 +262,7 @@ public actor RemoteEnvironmentClient {
         activeRequests += 1; defer { activeRequests -= 1 }
         do {
             let raw = try await connection.request(RemoteEnvironmentProtocol.receiptMethod,
-                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand || command.isHistoryCommand) ? 120 : 30))
+                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand || command.isHistoryCommand || command.isContextTransferCommand) ? 120 : 30))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentReceiptResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             guard result.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
@@ -1151,6 +1162,7 @@ public actor RemoteEnvironmentClient {
         pullRequestRepositories.removeAll()
         projectionMode = false; projectionHostID = nil; latestProjectionBinding = nil
         projectionCursors.removeAll(); projectionReplies.removeAll()
+        contextViews = .init()
         historyHostID = nil; historyBindings.removeAll(); historyTargets.removeAll(); historyCursors.removeAll(); historyReplies.removeAll()
         let gracefulEnvironment = graceful && connected && descriptor?.environmentID == expectedID ? expectedID : nil
         generation = UUID(); connected = false; subscribing = false
@@ -1564,6 +1576,187 @@ extension RemoteEnvironmentClient {
 }
 
 extension RemoteEnvironmentClient {
+    public func bindContextWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        let owner = generation
+        let result: RemoteWorkspaceTarget = try await contextRequest(RemoteContextProtocol.bindMethod, request: target, target: target)
+        try validateWorkspaceResponse(generation: owner) {
+            let expected = RemoteWorkspaceTarget(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID,
+                configuration: target.configuration, rootID: result.rootID)
+            guard result.rootID != nil, target.rootID == nil || target.rootID == result.rootID,
+                  ContextTransferProtocol.same(result, expected) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    public func reviewContext(_ request: RemoteContextReviewRequest) async throws -> RemoteContextReview {
+        guard request.target.rootID != nil else { throw RemoteContextFailure(.invalidTarget) }
+        let owner = generation
+        let result: RemoteContextReview = try await contextRequest(RemoteContextProtocol.reviewMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owner) {
+            guard ContextTransferProtocol.same(result.target, request.target), result.id == result.binding.objectID,
+                  Self.isTerminalDigest(result.digest), result.digest == result.binding.digest,
+                  result.value.sourcePoint.threadID == request.target.threadID, result.value.projectID == request.target.projectID,
+                  result.value.archiveItemCount >= 0, result.value.archiveByteCount >= 0,
+                  result.value.archiveByteCount <= ContextTransferProtocol.maximumArchiveBytes else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            switch request.intent {
+            case .fork:
+                guard result.value.kind == .fork, result.value.targetThreadID != request.target.threadID else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            case .providerHandoff:
+                guard result.value.kind == .providerHandoff, result.value.targetThreadID == request.target.threadID else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            case .mergeBack(let parent):
+                guard result.value.kind == .mergeBack, result.value.targetThreadID == parent.threadID,
+                      result.value.basePoint != nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            }
+            switch request.sourcePoint {
+            case .latestStable: break
+            case .run(let id): guard result.value.sourcePoint.runID == id else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            case .checkpoint(let run, let id, let digest):
+                guard result.value.sourcePoint.runID == run, result.value.sourcePoint.checkpointAttemptID == id,
+                      result.value.sourcePoint.checkpointDigest == digest else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            }
+            try Self.validateContextPoint(result.value.sourcePoint)
+            if let base = result.value.basePoint { try Self.validateContextPoint(base) }
+            try Self.validateProjectionText(result.value.title)
+            try Self.validateProjectionReference(result.value.sourceConfiguration, kind: .configuration)
+            try Self.validateProjectionReference(result.value.targetConfiguration, kind: .configuration)
+            if let selection = result.value.previewSelection { try Self.validateProjectionReference(selection, kind: .text) }
+            for warning in result.value.warnings { try Self.validateProjectionText(warning) }
+            try contextViews.remember(result.binding, target: request.target)
+        }
+        return result
+    }
+    public func readContext(_ request: RemoteContextReadRequest) async throws -> RemoteContextReadResult {
+        let owner = generation
+        var claim: RemoteContextClientState.Claim?
+        switch request.query {
+        case .transfers(let binding, let cursor):
+            claim = try contextViews.claim(request, binding: binding, normalized: .transfers(binding: binding, cursor: nil), cursor: cursor)
+        case .messages(let binding, let cursor):
+            claim = try contextViews.claim(request, binding: binding, normalized: .messages(binding: binding, cursor: nil), cursor: cursor)
+        case .content(let binding, let reference, let offset, let cursor):
+            try Self.validateProjectionReference(reference)
+            let captured = try contextViews.claim(request, binding: binding, normalized: .content(binding: binding, reference: reference, offset: 0, cursor: nil), cursor: cursor)
+            guard offset == captured.offset, offset <= reference.totalBytes else { throw RemoteContextFailure(.invalidRequest) }
+            claim = captured
+        case .release(let binding): try contextViews.require(binding, target: request.target)
+        default: break
+        }
+        let result: RemoteContextReadResult = try await contextRequest(RemoteContextProtocol.readMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owner) {
+            guard ContextTransferProtocol.same(result.target, request.target) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            switch (request.query, result.value) {
+            case (.inventory, .inventory(let inventory)):
+                guard inventory.binding.objectID == request.target.threadID, inventory.pendingCount >= 0,
+                      inventory.transfers.binding == inventory.binding else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                if let uncertain = inventory.uncertain {
+                    guard !uncertain.transferIDs.isEmpty, uncertain.transferIDs.count <= 32,
+                          Set(uncertain.transferIDs).count == uncertain.transferIDs.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                }
+                try contextViews.remember(inventory.binding, target: request.target)
+                let pageRequest = RemoteContextReadRequest(target: request.target, query: .transfers(binding: inventory.binding, cursor: nil))
+                let first = try contextViews.claim(pageRequest, binding: inventory.binding, normalized: pageRequest.query, cursor: nil)
+                try validateContextTransfers(inventory.transfers, target: request.target, claim: first)
+            case (.transfer(let id), .transfer(let binding, let summary)):
+                guard binding.objectID == id, summary.id == id else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try Self.validateContextSummary(summary, target: request.target)
+                try contextViews.remember(binding, target: request.target)
+            case (.transfers, .transfers(let page)):
+                guard let claim else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try validateContextTransfers(page, target: request.target, claim: claim)
+            case (.messages, .messages(let page)):
+                guard let claim, Set(page.items.map(\.id)).count == page.items.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try contextViews.finish(page, binding: page.binding, offset: page.offset, count: page.items.count,
+                    total: page.totalCount, complete: page.complete, next: page.nextCursor, claim: claim)
+                for item in page.items {
+                    guard !item.id.isEmpty, item.id.utf8.count <= 4_096, ["user", "assistant", "tool", "system"].contains(item.role),
+                          !item.kind.isEmpty, item.kind.utf8.count <= 1_024 else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                    try Self.validateProjectionText(item.text)
+                }
+            case (.content(let binding, let reference, let offset, _), .content(let content)):
+                guard let claim, content.binding == binding, content.reference == reference,
+                      content.data.count == min(RemoteProjectionProtocol.maximumContentChunkBytes, reference.totalBytes - offset) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try contextViews.finish(content, binding: binding, offset: content.offset, count: content.data.count,
+                    total: reference.totalBytes, complete: content.complete, next: content.nextCursor, claim: claim)
+            case (.release(let binding), .released): contextViews.release(binding)
+            default: throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+        }
+        return result
+    }
+    public func contextDocument(_ reference: RemoteProjectionContentReference, binding: RemoteHistoryBinding,
+                                target: RemoteWorkspaceTarget, maximumBytes: Int = 32 * 1_024 * 1_024) async throws -> Data {
+        try Self.validateProjectionReference(reference)
+        guard maximumBytes >= 0, maximumBytes <= RemoteProjectionProtocol.maximumCacheBytes, reference.totalBytes <= maximumBytes else { throw RemoteContextFailure(.limitExceeded) }
+        let owner = generation
+        var data = Data(), cursor: UUID?
+        repeat {
+            let result = try await readContext(.init(target: target, query: .content(binding: binding, reference: reference, offset: data.count, cursor: cursor)))
+            guard generation == owner, case .content(let chunk) = result.value else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            data.append(chunk.data); cursor = chunk.nextCursor
+            if chunk.complete { break }
+        } while true
+        try validateWorkspaceResponse(generation: owner) {
+            guard data.count == reference.totalBytes, RemoteProjectionProtocol.digest(data) == reference.digest else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return data
+    }
+    public func discardContextReview(_ request: RemoteContextDiscardRequest) async throws -> RemoteContextDiscardResult {
+        guard Self.isTerminalDigest(request.digest) else { throw RemoteContextFailure(.invalidRequest) }
+        let owner = generation
+        let result: RemoteContextDiscardResult = try await contextRequest(RemoteContextProtocol.discardMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owner) {
+            guard ContextTransferProtocol.same(result.request, request) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        contextViews.discard(id: request.reviewID, digest: request.digest)
+        return result
+    }
+    private func contextRequest<Request: Encodable & Sendable, Response: Decodable & Sendable>(_ method: String, request: Request, target: RemoteWorkspaceTarget) async throws -> Response {
+        let (connection, owner, environment) = try context()
+        guard target.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
+        guard descriptor?.capabilities.supportsContextTransfers == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        let bytes = try RemoteContextProtocol.payload(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumRequestBytes, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(120))
+            guard generation == owner, rpc != nil else { throw CancellationError() }
+            guard try RemoteContextProtocol.payload(raw).count <= RemoteContextProtocol.maximumResultBytes else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            do { return try RemoteEnvironmentProtocol.decode(Response.self, from: raw) }
+            catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            if generation == owner {
+                if let failure = error as? JSONRPCRemoteError, failure.code == -32_008,
+                   let raw = failure.data["kind"].string, let kind = RemoteContextFailure.Kind(rawValue: raw) { throw RemoteContextFailure(kind) }
+                if let failure = workspaceRejection(error) { throw failure }
+                if let failure = nativeRejection(error) { throw failure }
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
+            throw error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
+        }
+    }
+    private func validateContextTransfers(_ page: RemoteHistoryPage<RemoteContextTransferSummary>, target: RemoteWorkspaceTarget,
+                                          claim: RemoteContextClientState.Claim) throws {
+        guard Set(page.items.map(\.id)).count == page.items.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        try contextViews.finish(page, binding: page.binding, offset: page.offset, count: page.items.count,
+            total: page.totalCount, complete: page.complete, next: page.nextCursor, claim: claim)
+        for item in page.items { try Self.validateContextSummary(item, target: target) }
+    }
+    private static func validateContextPoint(_ point: ContextTransferResolvedPoint) throws {
+        guard (point.checkpointAttemptID != nil) == (point.checkpointDigest != nil),
+              point.checkpointDigest.map(Self.isTerminalDigest) ?? true else { throw RemoteEnvironmentClientError(.invalidResponse) }
+    }
+    private static func validateContextSummary(_ value: RemoteContextTransferSummary, target: RemoteWorkspaceTarget) throws {
+        guard value.sourceThreadID == target.threadID || value.targetThreadID == target.threadID,
+              value.sourcePoint.threadID == value.sourceThreadID, value.archivedItemCount >= 0,
+              value.updatedAt.timeIntervalSince1970.isFinite, (value.deliveryID != nil) == (value.deliveryStatus != nil) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        try validateContextPoint(value.sourcePoint)
+        if let point = value.basePoint { try validateContextPoint(point) }
+        if let error = value.error { try validateProjectionText(error) }
+        if let selection = value.selection { try validateProjectionReference(selection, kind: .text) }
+    }
+
     public func bindHistoryWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
         let owned = generation
         let result: RemoteWorkspaceTarget = try await historyRequest(RemoteHistoryProtocol.bindMethod, request: target, target: target)

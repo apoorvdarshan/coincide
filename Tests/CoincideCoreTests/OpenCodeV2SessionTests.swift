@@ -2,6 +2,22 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test func contextHandoffOpenCodeV2UsesLabeledPortableEnvelopeAndLiteralAppInput() async throws {
+    try await withOpenCodeV2Session { fixture in
+        let input = try contextHandoffTestInput()
+        #expect(try await fixture.session.contextInputDisposition(input: .init(text: "/tmp/foo"), thread: fixture.thread()) == .ordinary)
+        #expect(try await fixture.session.contextInputDisposition(input: .init(text: "/review"), thread: fixture.thread()) == .nativeCommand)
+        try await fixture.session.send(input: input, thread: fixture.thread())
+        let calls = await fixture.transport.calls
+        let prompt = try #require(calls.first { $0.path.last == "prompt" }?.body)
+        #expect(prompt["text"] == .string(try input.providerText()))
+        #expect(prompt["text"].string?.hasSuffix("User message:\n" + input.text) == true)
+        try await fixture.transport.beginInput()
+        try await fixture.transport.emit(.executionSucceeded)
+        try await openCodeSessionEventually { await fixture.record.completions == [.idle] }
+    }
+}
+
 @Test func openCodeV2ModelsShareInitializationAndNeverCreateOrPrompt() async throws {
     try await withOpenCodeV2Session { fixture in
         async let first = fixture.session.models()

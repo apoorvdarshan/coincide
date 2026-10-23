@@ -66,7 +66,8 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsRemoteCheckpoints: Bool
     public let supportsBoundedProjections: Bool
     public let supportsRemoteHistory: Bool
-    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false) {
+    public let supportsContextTransfers: Bool
+    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
@@ -78,10 +79,11 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRemoteCheckpoints = true
         self.supportsBoundedProjections = supportsBoundedProjections
         self.supportsRemoteHistory = supportsRemoteHistory
+        self.supportsContextTransfers = supportsContextTransfers
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -101,6 +103,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRemoteCheckpoints = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteCheckpoints) ?? false
         supportsBoundedProjections = try values.decodeIfPresent(Bool.self, forKey: .supportsBoundedProjections) ?? false
         supportsRemoteHistory = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteHistory) ?? false
+        supportsContextTransfers = try values.decodeIfPresent(Bool.self, forKey: .supportsContextTransfers) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
@@ -142,6 +145,7 @@ public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
     case pullRequest(target: RemoteWorkspaceTarget, action: RemotePullRequestAction)
     case checkpoint(target: RemoteWorkspaceTarget, action: RemoteCheckpointAction)
     case history(target: RemoteWorkspaceTarget, action: RemoteHistoryAction)
+    case contextTransfer(target: RemoteWorkspaceTarget, action: RemoteContextAction)
     case stop(threadID: UUID, runID: UUID, runtimeID: UUID)
     case respond(threadID: UUID, runID: UUID?, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case resumeQueue(threadID: UUID, expectedConfiguration: ProviderConfiguration)

@@ -175,7 +175,7 @@ public actor MuseSession: ProviderSession {
             try Task.checkCancellation(); try trimRuns()
             let command = await host.mintCommandID()
             var parts: [JSONValue] = []
-            if !input.text.isEmpty { parts.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+            parts += try input.providerTextBlocks().map { .object(["type": .string("text"), "text": .string($0)]) }
             for image in input.images { parts.append(.object(["type": .string("image"), "mediaType": .string(image.mimeType), "base64Data": .string(image.data.base64EncodedString())])) }
             var params: [String: JSONValue] = ["sessionId": .string(sessionID), "input": .array(parts), "displayText": .string(input.text), "ifBusy": .string("queue"), "workspaceRoots": .array([.string(cwd.path)])]
             let row = catalog.first { $0.museSelection?.modelID == (targetModel ?? observed.modelID) }
@@ -277,6 +277,7 @@ public actor MuseSession: ProviderSession {
 
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String,
                       clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try input.requireNoHistoricalContextForSteering()
         try Task.checkCancellation(); try ProviderSteeringValidation.input(input); try ProviderSteeringValidation.id(clientMessageID)
         guard let host = connection, let sessionID = nativeSessionID, !closing, !broken, preparing == nil, authorityReady,
               let id = activeID, let run = runs[id], run.terminal == nil, !run.stopRequested,

@@ -211,7 +211,7 @@ public actor AntigravitySession: ProviderSession {
             if !input.images.isEmpty { guard initialization?["agentCapabilities"]["promptCapabilities"]["image"] == .bool(true) else { throw AntigravityWireError(.invalidRequest) } }
             try Task.checkCancellation(); try trim()
             var prompt: [JSONValue] = []
-            if !input.text.isEmpty { prompt.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+            prompt += try input.providerTextBlocks().map { .object(["type": .string("text"), "text": .string($0)]) }
             prompt += input.images.map { .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())]) }
             runs[owner] = .init(configuration: captured, projection: .init(scope: "antigravity-\(configuration.instanceID)-\(sessionID)-\(owner)")); runOrder.append(owner); activeID = owner; preparing = nil
             let params = JSONValue.object(["sessionId": .string(sessionID), "prompt": .array(prompt)])

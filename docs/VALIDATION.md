@@ -1,5 +1,64 @@
 # Validation record
 
+## 2026-10-23 — Reviewed context transfers and merge-back
+
+- Native and remote reviews pin latest-stable, recorded-run and exact current
+  after-run checkpoint sources. Creation commits the original intent receipt
+  without input. Verified Codex/Claude native forks, portable context, saved
+  provider-session deltas and actual-parent merge-back share a durable delivery
+  audit. Provider handoff keeps the same app conversation.
+- Portable selection keeps intact public historical items in chronological
+  order, within conservative byte/envelope limits. Literal authored text and
+  attachments stay separate. Private reasoning, approvals, native internals and
+  attachment bytes are excluded. Scoped context readers expose only immutable
+  archives captured by the exact active input; remote context-only MCP cannot
+  expose general orchestration writes.
+- Remote display leases retain native proof on the host, validate full target
+  and immutable cursor/content identity, and bound messages/documents separately
+  from accepted work. Unknown delivery blocks replay; exact fresh-context
+  recovery preserves its audit and current private draft.
+
+- The final focused run passes all 64 declarations: 54 Core/protocol/provider
+  declarations in 23.961 seconds and ten UI/store declarations in 0.441 seconds,
+  after a 108.24-second build. Actual native-helper Codex/Claude cases confirm
+  zero input at creation, one exact native fork, and one later explicit input
+  in the reserved native session, preserving the original source and draft.
+  Lost outer replies resolve only the original receipt; oversized archives use
+  exact bounded pages and final content hashes.
+- Controlled checks cover queued overlapping context with cancellation versus
+  positive delivery, late pending merges invalidating a handoff review, preserved
+  pending child context during handoff, uncertain delivery across restart, and
+  old recovery receipts leaving newer runtimes untouched. Source/checkpoint
+  identities, full target bindings, stale cursors and immutable content replies
+  are checked separately from transport success.
+- Integration exposed an inline native-proof stack expansion in workspace
+  validation. Copy-on-write delivery storage preserves independent snapshot
+  values and the flat persisted format while bounding its inline footprint.
+  Claude inherited heads retain verified transfer lineage alongside existing
+  history-operation lineage. Both native fork routes recreate the consuming
+  runtime with the exact reserved native ID; scoped readiness requires the
+  host-selected tool, with wrong-scope catalogs refusing input.
+- All 74 Python cases pass in 2.543 seconds. The ABI guard checks 1080 objects
+  (769 Core and 312 app module coverage entries), with zero weak async default
+  records. Native GUI runner compilation and private offline launcher checks
+  pass without launching a GUI app. The previous pushed head `8c9cc81` also
+  completed [its entire hosted run](https://github.com/apoorvdarshan/coincide/actions/runs/39931186524),
+  including the main test/package job and all four native GUI shards.
+
+- The complete serial suite exits zero: 2072 of 2085 declarations pass, with
+  thirteen optional installed/live checks skipped and pinned Pi package
+  acceptance enabled. Core covers 1736 declarations in 509.772 seconds; UI/store
+  319 in 78.166 seconds; terminal seventeen in 10.282 seconds; Markdown thirteen
+  in 0.139 seconds. Build time is 0.69 seconds. No production source changes
+  follow this run.
+- Build-only packaging and strict deep signature verification pass. Compiled
+  and packaged app UUID `D88C4153-80D4-353F-BB65-88CA632DD61D` and helper UUID
+  `3ACBA706-FE95-3B3E-94D2-610D56722F89` match exactly.
+
+Installed provider/account, real SSH and current-batch native GUI runtime
+acceptance remain separate from private offline peer and offscreen validation.
+No installed app was changed and no native GUI XCTest was executed locally.
+
 ## 2026-10-23 — Reviewed remote conversation history
 
 - Native host/client/UI now expose exact recorded-run fork/rewind with separate

@@ -39,6 +39,8 @@ struct RemoteWorkspaceView: View {
     @State private var dismissingRequest = false
     @State private var showingPullRequests = false
     @State private var showingCheckpoints = false
+    @State private var contextModel: RemoteContextTransferWorkspace?
+    @State private var showingContext = false
 
     var body: some View {
         NavigationSplitView {
@@ -128,7 +130,7 @@ struct RemoteWorkspaceView: View {
                                 if store.usesProjection, store.selectedThreadID != nil {
                                     RemoteProjectedConversationView(store: store, chooseWorktree: {
                                         store.updateWorktrees(); if store.worktrees.beginSetup() { choosingWorktree = true }
-                                    })
+                                    }, mergeContextBack: { showContext(.mergeBack) })
                                 } else if let thread = store.selectedThread { conversation(thread) }
                                 else {
                                     ContentUnavailableView {
@@ -164,6 +166,12 @@ struct RemoteWorkspaceView: View {
         .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject, inspectorVisible: $store.inspectorVisible))
         .toolbar {
             ToolbarItem {
+                Menu("Transfer Context", systemImage: "arrow.triangle.branch") {
+                    Button("Fork Context…") { showContext(.fork) }
+                    Button("Switch Provider with Context…") { showContext(.providerHandoff) }
+                }.disabled(store.contextTransfers.current?.canRead != true || !store.canWrite)
+            }
+            ToolbarItem {
                 Button("Remote Checkpoints…", systemImage: "clock.arrow.circlepath") {
                     Task { await store.updateCheckpoints(); showingCheckpoints = true }
                 }.disabled(!store.isConnected || !store.selectedThreadExists || store.descriptor?.capabilities.supportsRemoteCheckpoints != true)
@@ -198,6 +206,7 @@ struct RemoteWorkspaceView: View {
         .task(id: store.attachmentSelection) { await store.updateAttachments() }
         .task(id: store.checkpointSelection) { await store.updateCheckpoints() }
         .task(id: store.historySelection) { await store.updateHistory() }
+        .task(id: store.contextTransferSelection) { await store.updateContextTransfers() }
         .task(id: store.pullRequestSelection) { await store.updatePullRequests() }
         .task(id: store.terminalSelection) { await store.updateTerminals() }
         .task(id: store.worktreeSelection) { store.updateWorktrees() }
@@ -209,7 +218,8 @@ struct RemoteWorkspaceView: View {
         .sheet(isPresented: $choosingWorktree) {
             RemoteWorktreeSheet(store: store.worktrees, onPrepared: { choosingWorktree = false })
         }
-        .sheet(isPresented: $showingCheckpoints) { RemoteRunCheckpointsSheet(store: store.checkpoints, history: store.history,
+        .sheet(isPresented: $showingContext) { if let contextModel { RemoteContextTransferSheet(model: contextModel, close: { showingContext = false }) } }
+        .sheet(isPresented: $showingCheckpoints) { RemoteRunCheckpointsSheet(store: store.checkpoints, history: store.history, contextTransfers: store.contextTransfers,
             attachmentAccess: store.attachmentTarget.map { store.attachments.access(target: $0) }) }
         .sheet(isPresented: $showingPullRequests) {
             RemotePullRequestsSheet(store: store.pullRequests, requestPush: {
@@ -221,6 +231,11 @@ struct RemoteWorkspaceView: View {
         } message: {
             Text("Inspect the remote conversation first: the request may already have run. Its local record will be retained, and nothing will be sent again automatically.")
         }
+    }
+
+    private func showContext(_ kind: ContextTransferFormKind) {
+        guard let model = store.contextTransfers.current else { return }
+        model.kind = kind; model.sourceID = "latest"; contextModel = model; showingContext = true
     }
 
     private var connectionStatus: some View {

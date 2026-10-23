@@ -293,6 +293,11 @@ public struct PiHistoryReviewEvidence: Codable, Sendable, Equatable {
                       row.runReference == .init(threadID: thread.id, runID: run.id) else { throw PiHistoryGraphError(.invalidWindow) }
                 if input.kind == .opening {
                     guard row.id == run.userMessageID, row.promptSteeringID == nil else { throw PiHistoryGraphError(.invalidWindow) }
+                    if let contextual = input.contextualInput {
+                        guard let delivery = run.contextDelivery, delivery.id == contextual.deliveryID,
+                              delivery.transferIDs == contextual.transferIDs, delivery.selection.digest == contextual.selectionDigest,
+                              run.contextTransferIDs == contextual.transferIDs else { throw PiHistoryGraphError(.invalidWindow) }
+                    } else { guard run.contextDelivery?.selection.messages.isEmpty != false else { throw PiHistoryGraphError(.invalidWindow) } }
                 } else {
                     guard let operationID = row.promptSteeringID,
                           let operation = steerings.first(where: { $0.id == operationID }),

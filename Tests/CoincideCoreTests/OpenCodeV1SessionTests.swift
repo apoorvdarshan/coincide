@@ -2,6 +2,22 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test func contextHandoffOpenCodeV1KeepsHistorySeparateFromLiteralInput() async throws {
+    try await withV1Session { fixture in
+        let input = try contextHandoffTestInput()
+        #expect(try await fixture.session.contextInputDisposition(input: .init(text: "/tmp/foo"), thread: fixture.thread()) == .ordinary)
+        #expect(try await fixture.session.contextInputDisposition(input: .init(text: "/review"), thread: fixture.thread()) == .nativeCommand)
+        try await fixture.session.send(input: input, thread: fixture.thread())
+        let calls = await fixture.peer.calls
+        let prompt = try #require(calls.first { $0.path.last == "prompt_async" }?.body)
+        let text = prompt["parts"].array?.compactMap { $0["text"].string }
+        #expect(text == (try input.providerTextBlocks()))
+        #expect(text?.last?.utf8.elementsEqual(input.text.utf8) == true)
+        try await fixture.peer.begin(); try await fixture.peer.idle()
+        try await v1Eventually { await fixture.record.completions == [.idle] }
+    }
+}
+
 @Test func openCodeV1CatalogSharesOneConnectionWithoutCreatingAConversation() async throws {
     try await withV1Session { f in
         async let models = f.session.models()

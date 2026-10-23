@@ -164,6 +164,15 @@ enum AppMCPAdmission {
             _ = try target(operation.threadID)
             try require(operation.configuration.permission, authority: authority, current: currentCeiling)
             try require(operation.input.configuration.permission, authority: authority, current: currentCeiling)
+        case .contextTransferAccepted(let review, _):
+            _ = try target(review.request.sourceThreadID)
+            try require(review.targetConfiguration.permission, authority: authority, current: currentCeiling)
+            switch review.kind {
+            case .fork:
+                guard capturedCreated[review.targetThreadID] == nil,
+                      !snapshot.threads.contains(where: { $0.id == review.targetThreadID }) else { throw AppMCPError(.invalidRequest) }
+            case .mergeBack, .providerHandoff: _ = try target(review.targetThreadID)
+            }
         case .conversationHistoryAccepted(let review, _):
             _ = try target(review.sourceThreadID)
             try require(review.sourceConfiguration.permission, authority: authority, current: currentCeiling)

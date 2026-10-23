@@ -2,6 +2,20 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test func contextHandoffPiUsesPortableEnvelopeWithoutChangingAuthoredInput() async throws {
+    try await withPi { peer in
+        let input = try contextHandoffTestInput()
+        #expect(try await peer.session.contextInputDisposition(input: .init(text: "/tmp/foo"), thread: peer.thread()) == .ordinary)
+        #expect(try await peer.session.contextInputDisposition(input: .init(text: "/compact preserve constraints"), thread: peer.thread()) == .nativeCommand)
+        #expect(try peer.frames().isEmpty)
+        try await peer.session.send(input: input, thread: peer.thread())
+        try await piEventually { try peer.frames().contains { $0["type"] == .string("prompt") } }
+        let prompt = try #require(peer.frames().first { $0["type"] == .string("prompt") })
+        #expect(prompt["message"] == .string(try input.providerText()))
+        #expect(prompt["message"].string?.hasSuffix("User message:\n" + input.text) == true)
+    }
+}
+
 private actor PiObserved {
     var completions: [(UUID?, ThreadState)] = []
     var failures: [String] = []

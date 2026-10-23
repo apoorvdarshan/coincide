@@ -3,6 +3,34 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test func contextHandoffPiPreparedNativeInputProvesBothAuthoredAndProviderFacingDigests() async throws {
+    try await withPiHistory { peer in
+        let input = try contextHandoffTestInput(), initial = peer.thread(text: input.text)
+        let preparation = try await peer.session.preparePiRun(input: input, thread: initial)
+        let contextual = try #require(preparation.openingInput.contextualInput)
+        #expect(contextual.authoredDigest == (try PiHistoryInputEvidence.digest(.init(text: input.text))))
+        #expect(contextual.nativeDigest == (try PiHistoryInputEvidence.digest(.init(text: input.providerText()))))
+        #expect(contextual.authoredDigest != contextual.nativeDigest)
+        #expect(try peer.frames().filter { $0["type"] == .string("prompt") }.isEmpty)
+        var committed = try peer.committing(preparation, to: initial)
+        let context = try #require(input.historicalContext)
+        let delivery = ContextTransferDelivery(id: context.deliveryID, runID: preparation.runID, transferIDs: context.transferIDs,
+            selection: context.selection, status: .dispatching, runtimeID: nil, nativeThreadID: preparation.nativeSessionFile, error: nil)
+        committed.runHistory?[0].contextTransferIDs = context.transferIDs; committed.runHistory?[0].contextDelivery = delivery
+        committed.activeRun?.contextTransferIDs = context.transferIDs; committed.activeRun?.contextDelivery = delivery
+        try await peer.session.sendPreparedPi(input: input, thread: committed, preparation: preparation)
+        try await piHistoryEventually { await peer.observed.started.contains(preparation.runID) }
+        try peer.signal("finish")
+        try await piHistoryEventually { await peer.observed.completions.count == 1 }
+        let proof = try #require(await peer.observed.evidence.first)
+        #expect(proof.captureStatus == .proven && proof.inputs.first?.contextualInput == contextual)
+        #expect(proof.inputs.first?.inputDigest == contextual.authoredDigest && proof.inputs.first?.nativeInputDigest == contextual.nativeDigest)
+        let prompt = try #require(peer.frames().first { $0["type"] == .string("prompt") })
+        #expect(prompt["message"] == .string(try input.providerText()))
+        #expect(committed.messages[0].text.utf8.elementsEqual(input.text.utf8))
+    }
+}
+
 private actor PiHistoryEvents {
     var evidence: [PiRunHistoryEvidence] = []
     var completions: [(UUID?, ThreadState)] = []

@@ -115,6 +115,7 @@ final class WorkspaceStore {
     @ObservationIgnored private let claudeRuntimeCapture: ClaudeRuntimeCapture
     @ObservationIgnored private let piRuntimeCapture: PiRuntimeCapture
     var snapshot = WorkspaceSnapshot()
+    @ObservationIgnored private var contextTransferStores: [UUID: ContextTransferStore] = [:]
     @ObservationIgnored lazy var notifications = NativeThreadNotifications { [weak self] id in
         guard let self, !self.terminating, let thread = self.thread(id), !thread.isArchived,
               self.snapshot.projects.contains(where: { $0.id == thread.projectID }) else { return }
@@ -416,6 +417,142 @@ final class WorkspaceStore {
         await engine?.endCodexAuthentication(leaseID: lease.engineLeaseID)
         codexAuthenticationLeases.removeValue(forKey: id)
         codexAuthenticationChanges.remove(lease.instanceID)
+    }
+    func contextTransferStore(threadID: UUID) -> ContextTransferStore {
+        if contextTransferStores[threadID] == nil { contextTransferStores[threadID] = ContextTransferStore() }
+        updateContextTransferStore(threadID: threadID)
+        return contextTransferStores[threadID]!
+    }
+    private func updateContextTransferStore(threadID: UUID) {
+        guard let model = contextTransferStores[threadID] else { return }
+        let transport: ContextTransferNativeTransport?
+        if let engine {
+            transport = .init(review: { try await engine.reviewContextTransfer($0) },
+                discard: { await engine.discardContextTransferReview(id: $0, digest: $1) },
+                accept: { [weak self] id, digest, title in
+                    guard let self else { throw CancellationError() }
+                    return try await self.acceptContextTransfer(threadID: threadID, id: id, digest: digest, title: title)
+                })
+        } else { transport = nil }
+        model.update(sourceThreadID: threadID, snapshot: snapshot, transport: transport,
+            destination: { [weak self] kind, provider, path, selectedModel, permission, agentID in
+                guard let self else { throw CancellationError() }
+                return try self.contextTransferDestination(threadID: threadID, kind: kind, provider: provider,
+                    path: path, model: selectedModel, permission: permission, agentID: agentID)
+            }, canReview: { [weak self] in self?.canReviewContextTransfer(threadID: threadID) == true },
+            canAccept: { [weak self] review in
+                guard let self, self.canReviewContextTransfer(threadID: threadID),
+                      let source = self.thread(threadID), ContextTransferProtocol.same(ProviderConfiguration(thread: source), review.request.expectedConfiguration),
+                      self.snapshot.contextTransfers?.contains(where: { $0.id == review.id }) != true else { return false }
+                if case .mergeBack(let expected) = review.request.intent {
+                    guard let parent = self.thread(review.targetThreadID), !parent.isArchived,
+                          ContextTransferProtocol.same(ProviderConfiguration(thread: parent), expected) else { return false }
+                }
+                return true
+            }, open: { [weak self] id in
+                guard let self, let target = self.thread(id) else { return }
+                self.selectedProjectID = target.projectID; self.showArchived = target.isArchived; self.selectedThreadID = id
+            })
+    }
+    private func canReviewContextTransfer(threadID: UUID) -> Bool {
+        guard !terminating, let source = thread(threadID), !source.isArchived, snapshot.workspaceReady(for: source),
+              !snapshot.isConversationHistoryLocked(threadID: threadID), !isCheckpointRestoreLocked(threadID: threadID),
+              !isPullRequestCreationLocked(threadID: threadID), !isPullRequestCheckoutLocked(threadID: threadID) else { return false }
+        return true
+    }
+    private func acceptContextTransfer(threadID: UUID, id: UUID, digest: String, title: String?) async throws -> WorkspaceCommandReceipt {
+        guard canReviewContextTransfer(threadID: threadID), let engine,
+              let review = contextTransferStores[threadID]?.review, review.id == id, review.digest == digest else { throw ContextTransferError.staleReview }
+        flushDrafts()
+        let previous = commandTail
+        let task = Task { [weak self] in
+            await previous?.value
+            guard let self, self.canReviewContextTransfer(threadID: threadID),
+                  let current = self.thread(threadID), ContextTransferProtocol.same(ProviderConfiguration(thread: current), review.request.expectedConfiguration) else { throw ContextTransferError.staleReview }
+            let receipt = try await engine.acceptContextTransfer(reviewID: id, digest: digest, title: title, commandID: UUID())
+            self.apply(await engine.current())
+            return receipt
+        }
+        commandTail = Task { _ = await task.result }
+        return try await task.value
+    }
+    func useFreshContext(threadID: UUID, deliveryID: UUID, transferIDs: [UUID]) async {
+        guard !terminating, let engine else { return }
+        flushDrafts()
+        let previous = commandTail
+        let task = Task { [weak self] in
+            await previous?.value
+            guard let self, !self.terminating else { return }
+            do {
+                let receipt = try await engine.abandonContextTransfer(threadID: threadID, deliveryID: deliveryID, expectedTransferIDs: transferIDs)
+                self.apply(await engine.current()); if let rejection = receipt.rejection { self.errorMessage = rejection }
+            } catch { self.errorMessage = "The context outcome changed. Inspect its saved state before choosing fresh context again." }
+        }
+        commandTail = task; await task.value
+    }
+    private func contextTransferDestination(threadID: UUID, kind: ContextTransferFormKind, provider: ProviderKind,
+                                            path: String, model: String, permission: PermissionMode, agentID: UUID?) throws -> ProviderConfiguration {
+        guard let source = thread(threadID), canReviewContextTransfer(threadID: threadID) else { throw ContextTransferError.unavailable }
+        let sameProvider = provider == source.provider && (provider != .acp || agentID == source.acpAgent?.id)
+        var configuration: ProviderConfiguration
+        if sameProvider { configuration = .init(thread: source) }
+        else {
+            let project = WorkspaceProject(path: path)
+            var fresh = newCodingThread(project: project); fresh.provider = provider; fresh.codexRuntimeConfiguration = nil
+            fresh.model = ""; fresh.permission = permission
+            switch provider {
+            case .codex: fresh.codexRuntimeConfiguration = codexRuntime.configuration
+            case .claude: fresh.claudeRuntimeConfiguration = try claudeRuntimeCapture(path)
+            case .pi:
+                let runtime = try piRuntimeCapture(path, ProviderKind.pi.executable, UUID())
+                fresh.piConfiguration = .init(instanceID: runtime.instanceID, executable: runtime.requestedExecutable, runtime: runtime)
+            case .opencode: fresh.openCodeConfiguration = .init()
+            case .muse: fresh.museConfiguration = .init()
+            case .antigravity: fresh.antigravityConfiguration = antigravityAccount.configuration
+            case .acp:
+                guard let agent = snapshot.acpAgents.first(where: { $0.id == agentID }) else { throw ContextTransferError.unavailable }
+                fresh.acpAgent = agent
+            }
+            configuration = .init(thread: fresh)
+        }
+        if sameProvider, !path.utf8.elementsEqual(source.workspacePath.utf8) {
+            if let runtime = configuration.claudeRuntimeConfiguration {
+                var environment = ProcessChannel.environment()
+                switch runtime.configurationDirectorySelection {
+                case .defaultHome(let home): environment["HOME"] = home; environment.removeValue(forKey: "CLAUDE_CONFIG_DIR")
+                case .explicitDirectory(let raw): environment["CLAUDE_CONFIG_DIR"] = raw
+                }
+                configuration.claudeRuntimeConfiguration = try .capture(workspacePath: path, executable: runtime.executable,
+                    projectDirectoryName: runtime.projectDirectoryName, environment: environment)
+            }
+            if let native = configuration.piConfiguration, let runtime = native.runtime {
+                let captured = try PiRuntimeConfiguration.capture(workspacePath: path, executable: runtime.requestedExecutable,
+                    instanceID: runtime.instanceID, environment: runtime.environment())
+                configuration.piConfiguration = .init(instanceID: native.instanceID, executable: native.executable,
+                    model: native.model, thinkingLevel: native.thinkingLevel, runtime: captured)
+            }
+        }
+        if model != configuration.model {
+            let rows = sameProvider ? models(for: source) : providerModels[provider] ?? []
+            let row = rows.first { $0.id == model }
+            switch provider {
+            case .opencode:
+                guard model.isEmpty || row?.openCodeSelection != nil else { throw CoincideError("Use the CLI default or a model already refreshed for OpenCode.") }
+                configuration.openCodeConfiguration = configuration.openCodeConfiguration?.selecting(model: row?.openCodeSelection)
+            case .pi:
+                guard model.isEmpty || row?.piSelection != nil else { throw CoincideError("Use the CLI default or a model already refreshed for Pi.") }
+                configuration.piConfiguration = configuration.piConfiguration?.selecting(model: row?.piSelection)
+            case .muse:
+                guard model.isEmpty || row?.museSelection != nil else { throw CoincideError("Use the CLI default or a model already refreshed for Muse.") }
+                configuration.museConfiguration = configuration.museConfiguration?.selecting(model: row?.museSelection)
+            case .antigravity: configuration.antigravityConfiguration = configuration.antigravityConfiguration?.selecting(model: model.isEmpty ? nil : model)
+            default: break
+            }
+            configuration.reasoningEffort = nil
+        }
+        configuration.workspacePath = path; configuration.model = model; configuration.permission = permission
+        configuration.nativeThreadID = nil; configuration.claudeLaunchSelection = nil; configuration.piFreshSessionIntent = nil
+        return configuration
     }
     private func newCodingThread(project: WorkspaceProject) -> CodingThread {
         var thread = CodingThread(project: project)
@@ -1058,6 +1195,7 @@ final class WorkspaceStore {
         if !terminating { notifications.observe(snapshot, baseline: isLoading, appIsActive: NSApp?.isActive ?? false) }
         acpConnections.invalidate(validAgents: snapshot.acpAgents)
         for model in pullRequestStores.values { model.apply(snapshot) }
+        for id in Array(contextTransferStores.keys) { updateContextTransferStore(threadID: id) }
         closeUnreferencedFileServices(previous: previous)
         if !removedThreads.isEmpty || !removedProjects.isEmpty { reconcileRemovedResources(threadIDs: removedThreads, projectIDs: removedProjects) }
         if let error = update.error, !terminating { errorMessage = error }
@@ -2817,6 +2955,7 @@ final class WorkspaceStore {
     func shutdown() async {
         terminating = true
         await notifications.shutdown()
+        for model in contextTransferStores.values { await model.shutdown() }
         let skills = retireSkills()
         codexAuthenticationBinding?.cancel()
         await codexAuthenticationBinding?.value

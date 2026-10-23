@@ -431,6 +431,13 @@ public actor OpenCodeV1Session: ProviderSession {
         try await send(input: .init(text: text), thread: thread)
     }
 
+    public func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition {
+        guard try ProviderCommandCatalog.requiresInventory(input.text) else { return .ordinary }
+        let catalog: ProviderCommandInventory?
+        do { catalog = try await providerCommands() }
+        catch let error as ProviderCommandError where error.kind == .unsupported { catalog = nil }
+        return try catalog.flatMap { try ProviderCommandCatalog.v1Selection(in: input.text, inventory: $0) } == nil ? .ordinary : .nativeCommand
+    }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         guard !closing, !uncertain else { throw OpenCodeV1SessionError.closed }
         guard preparing == nil, activeRunID == nil, historyToken == nil, !historyUnsafe else { throw OpenCodeV1SessionError.busy }
@@ -469,6 +476,7 @@ public actor OpenCodeV1Session: ProviderSession {
                 try requirePreparation(token)
                 command = try catalog.flatMap { try ProviderCommandCatalog.v1Selection(in: input.text, inventory: $0) }
             } else { command = nil }
+            guard command == nil || input.historicalContext == nil else { throw OpenCodeV1SessionError.unsupportedInput }
             let compact = command?.name == "compact"
             guard !compact || (command?.arguments.isEmpty == true && input.images.isEmpty) else { throw OpenCodeV1SessionError.unsupportedInput }
             let inventory = try await openCodeInventory(); try requirePreparation(token)
@@ -591,6 +599,7 @@ public actor OpenCodeV1Session: ProviderSession {
     /// parameter or independent native execution identity is invented.
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String,
                       clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try input.requireNoHistoricalContextForSteering()
         try Task.checkCancellation()
         try ProviderSteeringValidation.id(clientMessageID); try ProviderSteeringValidation.input(input)
         guard !closing, !uncertain, connected, preparing == nil, historyToken == nil, !historyUnsafe,
@@ -1290,7 +1299,7 @@ public actor OpenCodeV1Session: ProviderSession {
               !input.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !input.images.isEmpty,
               input.images.allSatisfy({ $0.data.count <= 20 * 1_024 * 1_024 && ["image/png", "image/jpeg", "image/gif", "image/webp"].contains($0.mimeType) }) else { throw OpenCodeV1SessionError.unsupportedInput }
         var parts: [JSONValue] = []
-        if !input.text.isEmpty { parts.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+        parts += try input.providerTextBlocks().map { .object(["type": .string("text"), "text": .string($0)]) }
         parts += input.images.map { .object(["type": .string("file"), "mime": .string($0.mimeType), "url": .string("data:" + $0.mimeType + ";base64," + $0.data.base64EncodedString())]) }
         return parts
     }

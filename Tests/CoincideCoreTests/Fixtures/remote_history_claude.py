@@ -1,10 +1,12 @@
 """Private stream-json consumer for a host-issued native Claude history choice."""
 import json
+import http.client
 import os
 from pathlib import Path
 import signal
 import sys
 import uuid
+import urllib.parse
 
 root = Path(sys.argv[1]).resolve(strict=True)
 assert root.name.startswith("coincide-remote-history-") and os.stat(root).st_mode & 0o077 == 0
@@ -38,6 +40,42 @@ def emit(value):
     print(json.dumps(value), flush=True)
 
 
+def verify_context_server(server):
+    url = urllib.parse.urlsplit(server["url"])
+    assert server["type"] == "http" and url.scheme == "http" and url.hostname == "127.0.0.1" and url.port
+    assert url.path == "/mcp" and not (url.query or url.fragment or url.username or url.password)
+    def request(method, params, identifier):
+        client = http.client.HTTPConnection("127.0.0.1", url.port, timeout=4)
+        try:
+            value = {"jsonrpc": "2.0", "method": method, "params": params}
+            if identifier is not None: value["id"] = identifier
+            client.request("POST", "/mcp", body=json.dumps(value).encode(), headers={
+                "Authorization": server["headers"]["Authorization"], "MCP-Protocol-Version": "2025-06-18",
+                "Accept": "application/json, text/event-stream", "Content-Type": "application/json"})
+            response = client.getresponse(); data = response.read(1048577)
+            if identifier is None:
+                assert response.status == 202 and not data
+                return None
+            if response.status != 200 or len(data) > 1048576:
+                record("context-catalog-failure", method=method, status=response.status)
+                raise AssertionError("Private context HTTP status or bound")
+            frame = json.loads(data)
+            if frame.get("id") != identifier or "error" in frame:
+                record("context-catalog-failure", method=method, code=frame.get("error", {}).get("code"))
+                raise AssertionError("Private context RPC identity or error")
+            return frame["result"]
+        finally:
+            client.close()
+    request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+        "clientInfo": {"name": "private-context-claude", "version": "1"}}, 1)
+    request("notifications/initialized", {}, None)
+    names = [tool["name"] for tool in request("tools/list", {}, 2)["tools"]]
+    if names != ["t3_context_read"]:
+        record("context-catalog-failure", names=names)
+        raise AssertionError("Private context catalog scope")
+    record("context-catalog", names=names)
+
+
 exited = False
 
 
@@ -64,8 +102,13 @@ try:
         frame = json.loads(line)
         if frame.get("type") == "control_request":
             method = frame["request"]["subtype"]
-            assert method in ("initialize", "set_model", "set_permission_mode")
+            assert method in ("initialize", "set_model", "set_permission_mode", "mcp_status", "mcp_set_servers")
             result = {"models": [{"value": "history-offline", "displayName": "Private history"}]} if method == "initialize" else {}
+            if method == "mcp_status": result = {"mcpServers": []}
+            elif method == "mcp_set_servers":
+                assert list(frame["request"]["servers"]) == ["coincide"]
+                verify_context_server(frame["request"]["servers"]["coincide"])
+                result = {"added": ["coincide"], "removed": [], "errors": {}}
             emit({"type": "control_response", "response": {"subtype": "success", "request_id": frame["request_id"], "response": result}})
             if method == "initialize":
                 emit({"type": "system", "subtype": "init", "session_id": native, "parent_tool_use_id": None, "claude_code_version": "2.1.276"})

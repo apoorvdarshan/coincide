@@ -10,6 +10,7 @@ struct RunHistorySheet: View {
         RunHistoryContent(thread: store.thread(threadID), showWorkspaceChanges: { sheet = .diff($0) },
                           historyAction: { sheet = .history($0, $1) },
                           historyUnavailableReason: { store.conversationHistoryUnavailableReason(threadID: threadID, runID: $0, kind: $1) },
+                          contextAction: { sheet = .context($0) },
                           restoreAction: { sheet = .restore($0, $1, $2) },
                           restoreUnavailableReason: { store.checkpointRestoreUnavailableReason(threadID: threadID, runID: $0, stage: $1, expectedAttemptID: $2) },
                           restoreOperations: store.checkpointRestoreOperations(threadID: threadID),
@@ -21,6 +22,7 @@ struct RunHistorySheet: View {
                 case .diff(let id): RunCheckpointDiffSheet(store: store, threadID: threadID, runID: id, restoreAction: { sheet = .restore(id, $0, $1) })
                 case .restore(let run, let stage, let attempt):
                     RunCheckpointRestoreSheet(store: store, threadID: threadID, runID: run, stage: stage, attemptID: attempt, close: { sheet = nil })
+                case .context(let id): ContextTransferRunSheet(store: store, threadID: threadID, runID: id, close: { sheet = nil })
                 case .history(let id, let kind):
                     ConversationHistoryReviewSheet(store: store, threadID: threadID, runID: id, kind: kind, close: { sheet = nil })
                 }
@@ -29,10 +31,11 @@ struct RunHistorySheet: View {
 }
 
 private enum RunHistorySheetRequest: Identifiable {
-    case diff(UUID), history(UUID, ConversationHistoryKind), restore(UUID, RunCheckpointStage, UUID)
+    case diff(UUID), history(UUID, ConversationHistoryKind), restore(UUID, RunCheckpointStage, UUID), context(UUID)
     var id: String {
         switch self {
         case .diff(let id): "diff-" + id.uuidString
+        case .context(let id): "context-" + id.uuidString
         case .restore(_, _, let id): "restore-" + id.uuidString
         case .history(let id, let kind): (kind == .forkAfterRun ? "fork-" : "rewind-") + id.uuidString
         }
@@ -44,6 +47,7 @@ struct RunHistoryContent: View {
     var showWorkspaceChanges: ((UUID) -> Void)? = nil
     var historyAction: ((UUID, ConversationHistoryKind) -> Void)? = nil
     var historyUnavailableReason: ((UUID, ConversationHistoryKind) -> String?)? = nil
+    var contextAction: ((UUID) -> Void)? = nil
     var restoreAction: ((UUID, RunCheckpointStage, UUID) -> Void)? = nil
     var restoreUnavailableReason: ((UUID, RunCheckpointStage, UUID) -> String?)? = nil
     var restoreOperations: [RunCheckpointRestoreOperation] = []
@@ -123,7 +127,7 @@ struct RunHistoryContent: View {
                 }
                 ForEach(records) { record in
                     RunHistoryRow(record: record, thread: thread, showWorkspaceChanges: showWorkspaceChanges,
-                                  historyAction: historyAction, restoreAction: restoreAction, restoreUnavailableReason: restoreUnavailableReason,
+                                  historyAction: historyAction, contextAction: contextAction, restoreAction: restoreAction, restoreUnavailableReason: restoreUnavailableReason,
                                   forkUnavailableReason: historyUnavailableReason?(record.id, .forkAfterRun),
                                   rewindUnavailableReason: historyUnavailableReason?(record.id, .rewindBeforeRun)).padding(.vertical, 14)
                     Divider()
@@ -138,6 +142,7 @@ private struct RunHistoryRow: View {
     let thread: CodingThread
     let showWorkspaceChanges: ((UUID) -> Void)?
     let historyAction: ((UUID, ConversationHistoryKind) -> Void)?
+    let contextAction: ((UUID) -> Void)?
     let restoreAction: ((UUID, RunCheckpointStage, UUID) -> Void)?
     let restoreUnavailableReason: ((UUID, RunCheckpointStage, UUID) -> String?)?
     let forkUnavailableReason: String?
@@ -169,6 +174,10 @@ private struct RunHistoryRow: View {
             if record.removedByHistoryOperationID != nil {
                 Text("Removed from the current conversation by a rewind").font(.caption).foregroundStyle(.secondary)
                     .accessibilityIdentifier("run-history-removed-\(record.id)")
+            }
+            if let contextAction {
+                Button("Transfer Context From This Run…") { contextAction(record.id) }
+                    .font(.caption).disabled(!record.status.isTerminal || record.status == .unknown || record.messageAttributionVersion == nil)
             }
             if let historyAction {
                 Menu("Conversation") {

@@ -107,15 +107,38 @@ extension WorkspaceEngine {
             return appMCPReceipt(try await appMCPAnswerQuestion(threadID: threadID, request: pending.request,
                 expectedRuntimeID: thread.runtimeID, expectedRunID: thread.activeRun?.id, answers: answers, context: context))
         case .forkThread(let threadID, let runID, let title):
-            _ = try appMCPThread(threadID, in: view)
-            let review = try await reviewConversationHistory(threadID: threadID, runID: runID, kind: .forkAfterRun)
-            do {
-                _ = try await appMCPView(context)
-                let receipt = try await beginConversationHistory(review, title: title)
-                return .object(["sequence": .number(Double(receipt.sequence)), "operationId": appMCPID(review.id),
-                    "targetThreadId": review.targetThreadID.map(appMCPID) ?? .null, "status": .string("accepted")])
-            } catch { await discardConversationHistoryReview(reviewID: review.id); throw error }
+            return try await appMCPTransfer(sourceID: threadID, point: .run(runID), parentID: nil, title: title, context: context)
+        case .forkContext(let threadID, let point, let title):
+            return try await appMCPTransfer(sourceID: threadID, point: point, parentID: nil, title: title, context: context)
+        case .mergeContext(let sourceID, let targetID, let point):
+            return try await appMCPTransfer(sourceID: sourceID, point: point, parentID: targetID, title: nil, context: context)
         }
+    }
+
+    private func appMCPTransfer(sourceID: UUID, point: ContextTransferSourcePoint, parentID: UUID?, title: String?, context: AppMCPContext) async throws -> JSONValue {
+        let view = try await appMCPView(context), source = try appMCPThread(sourceID, in: view)
+        let caller = try appMCPThread(context.scope.threadID, in: view)
+        let sourceConfiguration = ProviderConfiguration(thread: source)
+        var destination = sourceConfiguration; destination.nativeThreadID = nil
+        destination.claudeLaunchSelection = nil; destination.piFreshSessionIntent = nil
+        let intent: ContextTransferIntent
+        if let parentID {
+            let parent = try appMCPThread(parentID, in: view)
+            guard source.contextTransferLineage?.parentThreadID == parent.id, source.projectID == parent.projectID else { throw AppMCPError(.invalidRequest) }
+            destination = .init(thread: parent); intent = .mergeBack(targetConfiguration: destination)
+        } else { intent = .fork(destination: destination) }
+        guard [sourceConfiguration.permission, destination.permission].allSatisfy({
+            AppMCPAdmission.permits($0, ceiling: context.configuration.permission) && AppMCPAdmission.permits($0, ceiling: caller.permission)
+        }) else { throw AppMCPError(.permissionDenied) }
+        let review = try await reviewContextTransfer(request: .init(sourceThreadID: source.id,
+            expectedConfiguration: sourceConfiguration, sourcePoint: point, intent: intent))
+        do {
+            _ = try await appMCPView(context)
+            let receipt = try await acceptContextTransfer(reviewID: review.id, digest: review.digest, title: title, commandID: UUID())
+            guard receipt.rejection == nil else { throw AppMCPError(.unavailable) }
+            return .object(["sequence": .number(Double(receipt.sequence)), "transferId": appMCPID(review.id),
+                "targetThreadId": appMCPID(review.targetThreadID), "status": .string("accepted")])
+        } catch { await discardContextTransferReview(id: review.id, digest: review.digest); throw error }
     }
 
     private func appMCPWait(threadID: UUID, runID requestedRun: UUID?, timeout: Int, context: AppMCPContext) async throws -> JSONValue {

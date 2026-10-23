@@ -172,6 +172,7 @@ struct RemoteProjectedMessageView: View {
 struct RemoteProjectedConversationView: View {
     @Bindable var store: RemoteWorkspaceStore
     let chooseWorktree: () -> Void
+    var mergeContextBack: () -> Void = { }
     @State private var model = ""
     private var control: RemoteProjectionControl? { store.projection.control }
     var body: some View {
@@ -186,6 +187,7 @@ struct RemoteProjectedConversationView: View {
                 RemotePullRequestBanner(store: store.pullRequests)
                 RemoteRunCheckpointBanner(store: store.checkpoints)
                 RemoteHistoryBanner(store: store.history)
+                RemoteContextTransferBanner(store: store.contextTransfers, mergeBack: mergeContextBack)
                 transcript
                 if let request = control.requests.first {
                     ApprovalView(request: request.request, isResponding: request.responding || !store.canWrite,

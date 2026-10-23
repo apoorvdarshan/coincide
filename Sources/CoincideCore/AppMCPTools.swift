@@ -87,6 +87,8 @@ public enum AppMCPAction: Sendable, Equatable {
     case promoteQueued(threadID: UUID, queuedRunID: UUID, targetRunID: UUID)
     case answerQuestion(threadID: UUID, requestID: JSONValue, answers: [String: String])
     case forkThread(threadID: UUID, runID: UUID, title: String?)
+    case forkContext(threadID: UUID, sourcePoint: ContextTransferSourcePoint, title: String?)
+    case mergeContext(sourceThreadID: UUID, targetThreadID: UUID, sourcePoint: ContextTransferSourcePoint)
 }
 
 public struct AppMCPError: Error, Sendable, Equatable, LocalizedError {
@@ -114,21 +116,24 @@ public struct AppMCPTools: Sendable {
     public struct Client: Sendable {
         public let read: @Sendable (AppMCPContext) async throws -> AppMCPView
         public let perform: @Sendable (AppMCPAction, AppMCPContext) async throws -> JSONValue
+        public let contextRead: (@Sendable (JSONValue, AppMCPContext) async throws -> JSONValue)?
         public init(read: @escaping @Sendable (AppMCPContext) async throws -> AppMCPView,
-                    perform: @escaping @Sendable (AppMCPAction, AppMCPContext) async throws -> JSONValue) {
-            self.read = read; self.perform = perform
+                    perform: @escaping @Sendable (AppMCPAction, AppMCPContext) async throws -> JSONValue,
+                    contextRead: (@Sendable (JSONValue, AppMCPContext) async throws -> JSONValue)? = nil) {
+            self.read = read; self.perform = perform; self.contextRead = contextRead
         }
     }
     private let client: Client
-    public init(client: Client) { self.client = client }
+    private let allowedToolNames: Set<String>?
+    public init(client: Client, allowedToolNames: Set<String>? = nil) { self.client = client; self.allowedToolNames = allowedToolNames }
 
-    public static let unsupportedCapabilities = ["app_owned_subagents", "scheduled_tasks", "secret_requests", "preview", "device", "html_render", "pull_request_links_and_watch", "review_guides", "attachment_upload", "merge_back", "active_worktree_handoff", "environment_preferences", "queued_steering_input_text_revision", "managed_project_allocation", "missing_workspace_creation", "restart_delivery", "remote_worktree_fetch"]
-    public var descriptors: [MCPToolDefinition] { Self.catalog }
+    public static let unsupportedCapabilities = ["app_owned_subagents", "scheduled_tasks", "secret_requests", "preview", "device", "html_render", "pull_request_links_and_watch", "review_guides", "attachment_upload", "active_worktree_handoff", "environment_preferences", "queued_steering_input_text_revision", "managed_project_allocation", "missing_workspace_creation", "restart_delivery", "remote_worktree_fetch"]
+    public var descriptors: [MCPToolDefinition] { Self.catalog.filter { allowedToolNames?.contains($0.name) ?? true } }
 
     public func call(name: String, arguments: JSONValue, context: AppMCPContext) async -> MCPToolResult {
         do {
             try Task.checkCancellation()
-            guard let descriptor = Self.catalog.first(where: { $0.name == name }) else { throw AppMCPError(.unsupported) }
+            guard let descriptor = descriptors.first(where: { $0.name == name }) else { throw AppMCPError(.unsupported) }
             guard context.scope.capabilities.contains(descriptor.capability) else { throw AppMCPError(.capabilityDenied) }
             guard descriptor.readOnly || context.runID != nil else { throw AppMCPError(.staleCaller) }
             guard context.configuration.workspacePath == context.scope.workspacePath,
@@ -142,13 +147,23 @@ public struct AppMCPTools: Sendable {
                   caller.projectID == context.scope.projectID else { throw AppMCPError(.staleCaller) }
             let value: JSONValue
             switch name {
+            case "t3_context_read":
+                guard let contextRead = client.contextRead else { throw AppMCPError(.unsupported) }
+                try input.only(["transferId", "itemId", "afterPosition", "textOffset", "limit", "maxBytesPerItem"])
+                _ = try input.uuid("transferId", required: true)
+                _ = try input.text("itemId", maximum: 4_096)
+                _ = try input.integer("afterPosition", default: -1, range: 0...Int.max)
+                _ = try input.integer("textOffset", default: 0, range: 0...Int.max)
+                _ = try input.integer("limit", default: 20, range: 1...100)
+                _ = try input.integer("maxBytesPerItem", default: 4_096, range: 1...65_536)
+                value = try await contextRead(arguments, context)
             case "orchestrator_capabilities":
                 try input.only(["search"])
                 value = try await client.perform(.capabilities(search: input.text("search", maximum: 200)), context)
             case "t3_environment_read":
                 try input.only([])
                 value = .object(["label": .string("Coincide"), "platform": .string("macOS"),
-                    "toolNames": .array(Self.catalog.map { .string($0.name) }),
+                    "toolNames": .array(descriptors.map { .string($0.name) }),
                     "unsupportedCapabilities": .array(Self.unsupportedCapabilities.map(JSONValue.string))])
             case "t3_project_list":
                 try input.only(["cursor", "limit"])
@@ -164,6 +179,20 @@ public struct AppMCPTools: Sendable {
             case "t3_thread_list": value = try Self.threadList(input, view: view, caller: caller)
             case "t3_thread_read": value = try Self.threadRead(input, view: view)
             case "t3_thread_search": value = try Self.search(input, view: view, caller: caller)
+            case "t3_thread_transfers":
+                try input.only(["threadId", "cursor", "limit"])
+                let target = try Self.thread(input, view: view, caller: caller)
+                let (start, limit) = try input.page()
+                let transfers = (view.snapshot.contextTransfers ?? []).filter { $0.sourceThreadID == target.id || $0.targetThreadID == target.id }
+                let rows = Array(transfers.dropFirst(start).prefix(limit))
+                value = .object(["transfers": .array(rows.map { transfer in .object([
+                    "id": Self.id(transfer.id), "type": .string(transfer.review.kind.rawValue),
+                    "sourceThreadId": Self.id(transfer.sourceThreadID), "targetThreadId": Self.id(transfer.targetThreadID),
+                    "sourceRunId": Self.id(transfer.review.sourcePoint.runID), "status": .string(transfer.status.rawValue),
+                    "strategy": .string(transfer.review.strategy.rawValue), "targetRunId": transfer.targetRunID.map(Self.id) ?? .null,
+                    "deliveryStatus": transfer.delivery.map { .string($0.status.rawValue) } ?? .null,
+                    "updatedAt": Self.date(transfer.updatedAt)]) }), "totalCount": .number(Double(transfers.count)),
+                    "nextCursor": start + rows.count < transfers.count ? .number(Double(start + rows.count)) : .null])
             case "t3_thread_configuration":
                 try input.only(["threadId"])
                 let thread = try Self.thread(input, view: view, caller: caller)
@@ -269,17 +298,34 @@ public struct AppMCPTools: Sendable {
             return .answerQuestion(threadID: target.id, requestID: requestID, answers: answers)
         case "t3_thread_fork":
             try input.only(["threadId", "sourcePoint", "title"])
-            let target = try thread(input, view: view, caller: caller), point = try Input(input.value["sourcePoint"])
-            try point.only(["type", "runId"])
-            let runID: UUID
-            switch try point.text("type", maximum: 32, required: true) {
-            case "run": runID = try point.uuid("runId", required: true)!
-            case "latest_stable":
-                guard let run = target.runHistory?.last(where: { $0.removedByHistoryOperationID == nil && $0.status == .completed }) else { throw AppMCPError(.notFound) }
-                runID = run.id
-            default: throw AppMCPError(.unsupported)
-            }
-            return .forkThread(threadID: target.id, runID: runID, title: try input.text("title", maximum: 512))
+            let target = try thread(input, view: view, caller: caller)
+            return .forkContext(threadID: target.id, sourcePoint: try contextPoint(input.value["sourcePoint"], thread: target), title: try input.text("title", maximum: 512))
+        case "t3_thread_merge_back":
+            try input.only(["sourceThreadId", "targetThreadId", "sourcePoint"])
+            let sourceID = try input.uuid("sourceThreadId") ?? caller.id
+            guard let source = view.snapshot.threads.first(where: { $0.id == sourceID }), !source.isArchived else { throw AppMCPError(.notFound) }
+            return .mergeContext(sourceThreadID: sourceID, targetThreadID: try input.uuid("targetThreadId", required: true)!,
+                sourcePoint: try contextPoint(input.value["sourcePoint"], thread: source))
+        default: throw AppMCPError(.unsupported)
+        }
+    }
+
+    private static func contextPoint(_ value: JSONValue, thread: CodingThread) throws -> ContextTransferSourcePoint {
+        let point = try Input(value)
+        try point.only(["type", "runId", "checkpointId"])
+        switch try point.text("type", maximum: 32, required: true) {
+        case "latest_stable":
+            guard point.value["runId"] == .null, point.value["checkpointId"] == .null else { throw AppMCPError(.invalidRequest) }
+            return .latestStable
+        case "run":
+            guard point.value["checkpointId"] == .null else { throw AppMCPError(.invalidRequest) }
+            return .run(try point.uuid("runId", required: true)!)
+        case "checkpoint":
+            guard point.value["runId"] == .null else { throw AppMCPError(.invalidRequest) }
+            let id = try point.uuid("checkpointId", required: true)!
+            guard let run = thread.runHistory?.first(where: { $0.removedByHistoryOperationID == nil && $0.checkpoints?.postRun?.id == id }),
+                  let attempt = run.checkpoints?.postRun else { throw AppMCPError(.notFound) }
+            return .checkpoint(runID: run.id, attemptID: id, digest: try ContextTransferProtocol.digest(attempt))
         default: throw AppMCPError(.unsupported)
         }
     }
@@ -557,6 +603,7 @@ public struct AppMCPTools: Sendable {
             .init(name: name, description: description, inputSchema: object(properties, required: required), capability: capability, readOnly: readOnly)
         }
         return [
+            tool("t3_context_read", "Read only immutable context captured for the calling thread's exact active input. transferId must belong to that captured delivery; unrelated threads and later source edits are excluded. Pages and UTF-8 text slices are bounded, with explicit continuation offsets.", ["transferId": uuid, "itemId": string(maximum: 4_096), "afterPosition": integer(minimum: 0), "textOffset": integer(minimum: 0), "limit": integer(minimum: 1, maximum: 100), "maxBytesPerItem": integer(minimum: 1, maximum: 65_536)], required: ["transferId"], capability: .contextRead),
             tool("orchestrator_capabilities", "Read available native providers and models, current permission ceilings, and explicit app capability gaps. An explicit request may refresh provider metadata; listing tools never launches a provider.", ["search": string(maximum: 200)]),
             tool("t3_environment_read", "Read this native app's platform and supported app tools. This does not reveal process environment, account profiles or credentials."),
             tool("t3_project_list", "List registered projects. Pages use a live offset and may shift between requests.", page),
@@ -576,7 +623,9 @@ public struct AppMCPTools: Sendable {
             tool("t3_thread_wait", "Wait at most ten minutes for one exact run or the thread's selected run to reach terminal/waiting state. A timeout returns status and never cancels, resends or starts work.", ["threadId": uuid, "runId": uuid, "timeoutMs": integer(minimum: 0, maximum: 600_000)], required: ["threadId"]),
             tool("t3_thread_interrupt", "Request Stop for the exact current run, optionally fencing runId. It does not send another input or grant approval.", ["threadId": uuid, "runId": uuid, "reason": string(maximum: 2_000)], required: ["threadId"], readOnly: false),
             tool("t3_thread_organize", "Pin, archive, settle or resume a thread through native lifecycle rules. Settling the caller must wait for that exact successful turn and an empty queue; unsupported lifecycle transitions are refused.", ["threadId": uuid, "action": string(values: ["pin", "unpin", "archive", "unarchive", "settle", "unsettle"])], required: ["action"], readOnly: false),
-            tool("t3_thread_fork", "Fork provider-native history at a verified completed run or latest stable run. Native review/ownership guards apply. The result is acceptance, not completion; no prompt is automatically sent and the source draft is preserved. Legacy/unproven boundaries are refused.", ["threadId": uuid, "sourcePoint": object(["type": string(values: ["latest_stable", "run"]), "runId": uuid], required: ["type"]), "title": title], required: ["sourcePoint"], readOnly: false),
+            tool("t3_thread_fork", "Create a reviewed fork from an exact run or ready after-run checkpoint. Latest stable requires a completed run with a ready checkpoint. A verified native fork or bounded portable context is delivered only with the target's next explicit input; the current draft is preserved.", ["threadId": uuid, "sourcePoint": object(["type": string(values: ["latest_stable", "run", "checkpoint"]), "runId": uuid, "checkpointId": uuid], required: ["type"]), "title": title], required: ["sourcePoint"], readOnly: false),
+            tool("t3_thread_merge_back", "Queue reviewed child conversation delta for its actual parent in the same project. Existing lineage and already transferred-item coverage apply. No Git/filesystem merge or provider input is performed by this command.", ["sourceThreadId": uuid, "targetThreadId": uuid, "sourcePoint": object(["type": string(values: ["latest_stable", "run", "checkpoint"]), "runId": uuid, "checkpointId": uuid], required: ["type"])], required: ["targetThreadId", "sourcePoint"], readOnly: false),
+            tool("t3_thread_transfers", "Read bounded context-transfer status and delivery outcomes for one thread. Pages use live offsets; no native evidence, historical archive or credentials are returned.", optionalThread.merging(page) { _, new in new }),
             tool("t3_queue_list", "List queued inputs in captured delivery order, with up to 1,000 UTF-16 units of each text. This is a live offset page; it never starts or resumes the queue.", optionalThread.merging(page) { _, new in new }),
             tool("t3_queue_read", "Read up to 16,000 UTF-16 units of one exact queued input. Its captured configuration and attachment paths are not returned.", queued, required: ["queuedRunId"]),
             tool("t3_queue_edit", "Replace the text of an exact still-queued input in place. Preserve its attachments, captured provider configuration and queue position; never move it into the current draft.", queued.merging(["text": string(maximum: 100_000, empty: true)]) { _, new in new }, required: ["queuedRunId", "text"], readOnly: false),

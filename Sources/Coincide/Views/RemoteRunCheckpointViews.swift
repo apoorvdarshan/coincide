@@ -5,29 +5,34 @@ private enum RemoteCheckpointSheetSelection: Identifiable {
     case diff(UUID)
     case restore(UUID, RunCheckpointStage, UUID)
     case history(UUID, ConversationHistoryKind)
+    case context(UUID)
     var id: String {
-        switch self { case .diff(let run): "diff-\(run)"; case .restore(let run, let stage, let attempt): "restore-\(run)-\(stage.rawValue)-\(attempt)"; case .history(let run, let kind): "history-\(run)-\(kind.rawValue)" }
+        switch self { case .diff(let run): "diff-\(run)"; case .restore(let run, let stage, let attempt): "restore-\(run)-\(stage.rawValue)-\(attempt)"; case .history(let run, let kind): "history-\(run)-\(kind.rawValue)"; case .context(let run): "context-\(run)" }
     }
 }
 
 struct RemoteRunCheckpointsSheet: View {
     let store: RemoteCheckpointStore
     var history: RemoteHistoryStore?
+    var contextTransfers: RemoteContextTransferStore?
     var attachmentAccess: AttachmentAccess?
     @State private var captured: RemoteCheckpointWorkspace?
     @State private var selection: RemoteCheckpointSheetSelection?
-    init(store: RemoteCheckpointStore, history: RemoteHistoryStore? = nil, attachmentAccess: AttachmentAccess? = nil) {
-        self.store = store; self.history = history; self.attachmentAccess = attachmentAccess
+    init(store: RemoteCheckpointStore, history: RemoteHistoryStore? = nil, contextTransfers: RemoteContextTransferStore? = nil, attachmentAccess: AttachmentAccess? = nil) {
+        self.store = store; self.history = history; self.contextTransfers = contextTransfers; self.attachmentAccess = attachmentAccess
         _captured = State(initialValue: store.current)
     }
     var body: some View {
         RemoteRunCheckpointHistoryContent(model: captured, refresh: { Task { await captured?.refresh() } },
             showWorkspaceChanges: { selection = .diff($0) }, restore: { selection = .restore($0, $1, $2) },
-            history: history?.current, historyAction: { selection = .history($0, $1) })
+            history: history?.current, historyAction: { selection = .history($0, $1) },
+            contextAction: contextTransfers?.current?.canRead == true ? { selection = .context($0) } : nil)
             .task { await captured?.refresh() }
             .sheet(item: $selection) { selected in
                 if let model = captured {
                     switch selected {
+                    case .context(let run):
+                        if let context = contextTransfers?.current { RemoteContextTransferRunSheet(model: context, runID: run, close: { selection = nil }) }
                     case .diff(let run): RemoteCheckpointDiffPane(model: model, runID: run,
                         restore: { selection = .restore(run, $0, $1) }, close: { selection = nil })
                     case .history(let run, let kind):
@@ -50,6 +55,7 @@ struct RemoteRunCheckpointHistoryContent: View {
     let restore: (UUID, RunCheckpointStage, UUID) -> Void
     var history: RemoteHistoryWorkspace? = nil
     var historyAction: ((UUID, ConversationHistoryKind) -> Void)? = nil
+    var contextAction: ((UUID) -> Void)? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -64,10 +70,11 @@ struct RemoteRunCheckpointHistoryContent: View {
                 if let message = model.errorMessage ?? model.unavailableMessage { Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).padding(.horizontal, 16) }
                 if model.isLoading { ProgressView("Reading remote checkpoint inventory…").controlSize(.small).padding(.horizontal, 16) }
                 if model.projection != nil {
-                    RemoteProjectedCheckpointHistory(model: model, showDiff: showWorkspaceChanges, restore: restore, history: history, historyAction: historyAction)
+                    RemoteProjectedCheckpointHistory(model: model, showDiff: showWorkspaceChanges, restore: restore, history: history, historyAction: historyAction, contextAction: contextAction)
                 } else {
                 RunHistoryContent(thread: model.thread, showWorkspaceChanges: showWorkspaceChanges,
                     historyAction: nil, historyUnavailableReason: nil,
+                    contextAction: contextAction,
                     restoreAction: restore,
                     restoreUnavailableReason: { model.restoreUnavailableReason(runID: $0, stage: $1, attemptID: $2) },
                     restoreOperations: model.operations,
@@ -228,6 +235,7 @@ struct RemoteProjectedCheckpointHistory: View {
     let restore: (UUID, RunCheckpointStage, UUID) -> Void
     var history: RemoteHistoryWorkspace? = nil
     var historyAction: ((UUID, ConversationHistoryKind) -> Void)? = nil
+    var contextAction: ((UUID) -> Void)? = nil
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
@@ -245,6 +253,7 @@ struct RemoteProjectedCheckpointHistory: View {
                             Text("\(run.providerName) · \(run.model.preview)").font(.caption).foregroundStyle(.secondary)
                             Text(run.workspacePath).font(.caption).textSelection(.enabled)
                             if let history, let historyAction { RemoteHistoryRunActions(model: history, runID: run.id) { historyAction(run.id, $0) } }
+                            if let contextAction { Button("Transfer Context From This Run…") { contextAction(run.id) }.disabled(!run.status.isTerminal || run.status == .unknown || run.removedByHistoryOperationID != nil) }
                             if run.removedByHistoryOperationID != nil { Text("Removed from the current conversation by a rewind").font(.caption).foregroundStyle(.secondary) }
                             if run.checkpointDiff.allowed { Button("Show Workspace Changes") { showDiff(run.id) } }
                             ForEach(model.attempts(runID: run.id)) { attempt in

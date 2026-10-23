@@ -3,6 +3,18 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test func contextHandoffMuseKeepsDisplayTextLiteralAndSuppliesHistoricalBlocks() async throws {
+    try await withMuse { peer in
+        let input = try contextHandoffTestInput()
+        try await peer.session.send(input: input, thread: peer.thread())
+        try await museEventually { try peer.fixture.rows("prompt").count == 1 }
+        let prompts = try peer.fixture.rows("prompt"), requests = try peer.fixture.rows("request")
+        let prompt = try #require(prompts.first), request = try #require(requests.first { $0["method"] == .string("turn/start") })
+        #expect(prompt["input"].array?.compactMap { $0["text"].string } == (try input.providerTextBlocks()))
+        #expect(request["params"]["displayText"] == .string(input.text))
+    }
+}
+
 actor MuseObserved {
     var completions: [(UUID?, ThreadState)] = []
     var failures: [String] = []

@@ -21,7 +21,10 @@ public struct ProviderImage: Sendable, Equatable {
 public struct ProviderInput: Sendable, Equatable {
     public var text: String
     public var images: [ProviderImage]
-    public init(text: String, images: [ProviderImage] = []) { self.text = text; self.images = images }
+    public var historicalContext: ProviderHistoricalContext?
+    public init(text: String, images: [ProviderImage] = [], historicalContext: ProviderHistoricalContext? = nil) {
+        self.text = text; self.images = images; self.historicalContext = historicalContext
+    }
 }
 
 public enum AttachmentLimits {

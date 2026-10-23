@@ -3,6 +3,29 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test(.timeLimit(.minutes(1)), arguments: ["t3_thread_read", "t3_context_read"], [false, true])
+func codexAppMCPReadinessRequiresTheExactHostSelectedFullOrContextOnlyTool(requiredTool: String, matching: Bool) async throws {
+    let advertised = matching ? requiredTool : requiredTool == "t3_thread_read" ? "t3_context_read" : "t3_thread_read"
+    let f = try CodexMCPFixture(options: ["releaseTurn1": .string("gate")])
+    try await withCodexMCPPeer(f, advertisedTool: advertised, requiredTool: requiredTool) { session, connection in
+        #expect(connection.requiredToolName == requiredTool)
+        try await session.configureAppMCP(connection)
+        if matching {
+            try await session.send(text: "Explicit scoped catalog input", thread: f.thread)
+            try await codexMCPEEventually { try f.rows().contains { $0["method"] == .string("turn/start") } }
+            #expect(try f.rows().filter { $0["method"] == .string("turn/start") }.count == 1)
+        } else {
+            do {
+                try await session.send(text: "Must not use a different scope's catalog", thread: f.thread)
+                Issue.record("A different-scope MCP read tool admitted a native prompt.")
+            } catch {
+                #expect(error.localizedDescription == "The Codex app tool connection could not be confirmed. No prompt was sent.")
+            }
+            #expect(try !f.rows().contains { $0["method"] == .string("turn/start") })
+        }
+    }
+}
+
 @Test(.timeLimit(.minutes(1)), arguments: ["fresh", "resume", "minimal-status"])
 func codexAppMCPStdioOverridePreservesForeignServersAndConfirmsScopedCatalogBeforeCapturedPrompt(kind: String) async throws {
     let f = try CodexMCPFixture(options: ["minimalStatus": .bool(kind == "minimal-status"), "releaseTurn1": .string("gate")])
@@ -334,18 +357,19 @@ private struct CodexMCPFixture: Sendable {
     func remove() throws { try FileManager.default.removeItem(at: root) }
 }
 
-private func withCodexMCPPeer(_ f: CodexMCPFixture,
+private func withCodexMCPPeer(_ f: CodexMCPFixture, advertisedTool: String = "t3_thread_read", requiredTool: String = "t3_thread_read",
                             body: (CodexSession, AppMCPConnection) async throws -> Void) async throws {
     let registry = MCPSessionRegistry()
     let scope = MCPInvocationScope(threadID: f.thread.id, projectID: f.project.id, provider: .codex, runtimeID: UUID(), incarnation: UUID(),
         providerInstanceID: try #require(f.thread.codexRuntimeConfiguration?.instanceID), workspacePath: f.workspace.path,
-        permission: .supervised, capabilities: [.orchestration])
+        permission: .supervised, capabilities: advertisedTool == "t3_context_read" ? [.contextRead] : [.orchestration])
     let credential = try await registry.issue(scope: scope)
-    let tool = MCPToolDefinition(name: "t3_thread_read", description: "Read the offline fixture", inputSchema: .object(["type": .string("object")]), capability: .orchestration, readOnly: true)
+    let tool = MCPToolDefinition(name: advertisedTool, description: "Read the offline fixture", inputSchema: .object(["type": .string("object")]),
+        capability: advertisedTool == "t3_context_read" ? .contextRead : .orchestration, readOnly: true)
     let server = try await MCPHTTPServer.start(registry: registry, tools: [tool]) { _ in .init(content: ["Synthetic read"], structuredContent: .object(["observed": .bool(true)])) }
     let session = try f.session()
     do {
-        try await body(session, .init(endpoint: server.endpoint, authorizationHeader: credential.authorizationHeader, scopeID: credential.sessionID))
+        try await body(session, .init(endpoint: server.endpoint, authorizationHeader: credential.authorizationHeader, scopeID: credential.sessionID, requiredToolName: requiredTool))
         await session.close(); await server.close(); await registry.shutdown()
         try f.assertStopped(); try f.remove()
     } catch { f.releaseAll(); await session.close(); await server.close(); await registry.shutdown(); throw error }

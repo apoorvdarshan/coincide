@@ -130,7 +130,7 @@ public enum RemoteEnvironmentStdio {
                             continue requestLoop
                         case RemoteEnvironmentProtocol.commandMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
-                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand {
+                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand {
                                 try await workspaceReads.submit(id: id, operation: {
                                     try RemoteEnvironmentProtocol.encode(try await current.command(request))
                                 }, writer: writer, disconnect: { input.stop() })
@@ -139,7 +139,7 @@ public enum RemoteEnvironmentStdio {
                             result = try RemoteEnvironmentProtocol.encode(try await current.command(request))
                         case RemoteEnvironmentProtocol.receiptMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
-                            if request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand {
+                            if request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand {
                                 try await workspaceReads.submit(id: id, operation: {
                                     try RemoteEnvironmentProtocol.encode(try await current.receipt(request))
                                 }, writer: writer, disconnect: { input.stop() })
@@ -171,6 +171,30 @@ public enum RemoteEnvironmentStdio {
                             let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceMutationRequest.self, from: params)
                             try await workspaceReads.submit(id: id, operation: {
                                 try RemoteEnvironmentProtocol.encode(try await current.cancelWorkspaceOperation(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteContextProtocol.bindMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceTarget.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.bindContextWorkspace(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteContextProtocol.reviewMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteContextReviewRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.reviewContext(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteContextProtocol.readMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteContextReadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.readContext(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteContextProtocol.discardMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteContextDiscardRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.discardContextReview(request))
                             }, writer: writer, disconnect: { input.stop() })
                             continue requestLoop
                         case RemoteHistoryProtocol.bindMethod:
@@ -387,6 +411,7 @@ public enum RemoteEnvironmentStdio {
     fileprivate static func errorResponse(id: JSONValue, error: any Error) -> JSONValue {
         let code: Int, kind: String, message: String
         if let safe = error as? RemoteProjectionFailure { code = -32_006; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        else if let safe = error as? RemoteContextFailure { code = -32_008; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteHistoryFailure { code = -32_007; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteCheckpointFailure { code = -32_005; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemotePullRequestFailure { code = -32_004; kind = safe.kind.rawValue; message = safe.localizedDescription }
