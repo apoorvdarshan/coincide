@@ -24,6 +24,7 @@ public actor RemoteEnvironmentService {
     private var engine: WorkspaceEngine?
     private var workspaceService: RemoteWorkspaceService?
     private var terminalService: RemoteTerminalService?
+    private var attachmentService: RemoteAttachmentService?
     private var initializing: Task<WorkspaceEngine, any Error>?
     private var subscriptions: [UUID: Task<Void, Never>] = [:]
     private var closing = false
@@ -106,7 +107,7 @@ public actor RemoteEnvironmentService {
         _ = try RemoteEnvironmentProtocol.payload(request)
         let engine = try await workspace()
         var inspected: RemoteEnvironmentPreparation?
-        if request.command.inspectsWorktreeCompletion {
+        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments {
             do {
                 if let receipt = try await engine.remoteEnvironmentReceipt(request) { return .init(environmentID: environmentID, receipt: receipt) }
             } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
@@ -144,6 +145,37 @@ public actor RemoteEnvironmentService {
         if let workspaceService { return workspaceService }
         let service = try RemoteWorkspaceService(environmentID: environmentID, engine: engine, dataDirectory: dataDirectory)
         workspaceService = service; return service
+    }
+    private func attachments() async throws -> RemoteAttachmentService {
+        let engine = try await workspace()
+        guard !closing else { throw RemoteAttachmentFailure(.unavailable) }
+        if let attachmentService { return attachmentService }
+        let service = try RemoteAttachmentService(environmentID: environmentID, engine: engine, dataDirectory: dataDirectory)
+        attachmentService = service; return service
+    }
+    public func beginAttachmentUpload(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload {
+        try require(request.target.environmentID)
+        return try await (try await attachments()).begin(request)
+    }
+    public func attachmentUploadStatus(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload? {
+        try require(request.target.environmentID)
+        return try await (try await attachments()).status(request)
+    }
+    public func appendAttachmentChunk(_ request: RemoteAttachmentChunkRequest) async throws -> RemoteAttachmentUpload {
+        try require(request.upload.target.environmentID)
+        return try await (try await attachments()).append(request)
+    }
+    public func finalizeAttachmentUpload(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload {
+        try require(request.target.environmentID)
+        return try await (try await attachments()).finalize(request)
+    }
+    public func cancelAttachmentUpload(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload? {
+        try require(request.target.environmentID)
+        return try await (try await attachments()).cancel(request)
+    }
+    public func downloadAttachment(_ request: RemoteAttachmentDownloadRequest) async throws -> RemoteAttachmentDownloadResult {
+        try require(request.target.environmentID)
+        return try await (try await attachments()).download(request)
     }
     public func bindWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
         try require(target.environmentID)
@@ -264,6 +296,8 @@ public actor RemoteEnvironmentService {
             return try await engine.prepareRemoteWorktree(command, expectedSourceIdentity: identity)
         case .retryWorktree, .inspectWorktree:
             return try await engine.prepareRemoteWorktree(command)
+        case .submitWithAttachments:
+            return try await engine.prepareRemoteAttachmentSubmission(command)
         default: return .none
         }
     }
@@ -285,6 +319,12 @@ public actor RemoteEnvironmentService {
             case .model(let value): try text(value, maximum: 512, allowEmpty: true)
             case .permission: break }
         case .submit(_, let value, _): try text(value, maximum: 120_000)
+        case .submitWithAttachments(let target, let value, _, let draft, let uploaded):
+            guard target.environmentID == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
+            try text(value, maximum: 120_000, allowEmpty: !draft.isEmpty || !uploaded.isEmpty)
+            try AttachmentLimits.validate(draft)
+            guard draft.count + uploaded.count <= AttachmentLimits.count,
+                  Set(uploaded).count == uploaded.count else { throw RemoteEnvironmentError(.invalidRequest) }
         case .prepareWorktree(let target, _, _, let selection, let submodules):
             guard target.environmentID == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
             try GitWorktreeRequest(sourcePath: target.workspacePath, destinationRoot: dataDirectory.appendingPathComponent("Worktrees").path,
@@ -318,16 +358,24 @@ public actor RemoteEnvironmentService {
         closing = true
         let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
         for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
-        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService
+        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService
         for task in subscriptions { task.cancel() }
         let task = Task {
             await terminalService?.close()
             await workspaceService?.close()
+            await attachmentService?.close()
             if let engine { await engine.shutdown() }
             else if let initializing, let value = try? await initializing.value { await value.shutdown() }
             for task in subscriptions { await task.value }
         }
         closeTask = task; await task.value
         self.engine = nil; self.subscriptions = [:]
+    }
+}
+
+extension RemoteEnvironmentCommand {
+    var preparesAttachments: Bool {
+        if case .submitWithAttachments = self { return true }
+        return false
     }
 }

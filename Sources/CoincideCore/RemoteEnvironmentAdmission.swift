@@ -7,6 +7,7 @@ enum RemoteEnvironmentPreparation: Codable, Sendable {
     case project(WorkspaceProject)
     case thread(CodingThread)
     case worktree(RemoteWorktreePreparation)
+    case attachments(RemoteAttachmentSubmission)
 }
 
 enum RemoteEnvironmentAdmission {
@@ -39,6 +40,7 @@ enum RemoteEnvironmentAdmission {
             return .editThread(id, translated)
         case .submit(let id, let text, let captured):
             try configuration(id, captured: captured, snapshot: snapshot)
+            guard try target(id, snapshot: snapshot).draftAttachments.isEmpty else { throw stale() }
             return .submit(threadID: id, text: text)
         case .resumeQueue(let id, let captured):
             try configuration(id, captured: captured, snapshot: snapshot)
@@ -53,12 +55,25 @@ enum RemoteEnvironmentAdmission {
             guard thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
                   thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw stale() }
             return .respond(threadID: id, requestID: request.id, response: response)
-        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree:
+        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments:
             throw stale()
         }
     }
     static func commands(_ request: RemoteEnvironmentCommandRequest, preparation: RemoteEnvironmentPreparation,
                          snapshot: WorkspaceSnapshot) throws -> [EngineCommand] {
+        if case .submitWithAttachments(let owner, let text, let configuration, let expectedDraft, let ids) = request.command {
+            guard case .attachments(let captured) = preparation, captured.target == owner,
+                  owner.environmentID == request.environmentID, let thread = snapshot.threads.first(where: { $0.id == owner.threadID }),
+                  !thread.isArchived, thread.projectID == owner.projectID,
+                  ProviderConfiguration(thread: thread) == configuration,
+                  thread.workspacePath.utf8.elementsEqual(configuration.workspacePath.utf8),
+                  try RemoteAttachmentProtocol.payload(thread.draftAttachments) == RemoteAttachmentProtocol.payload(expectedDraft), Set(ids).count == ids.count,
+                  captured.records.map(\.attachment.id) == ids,
+                  captured.records.allSatisfy({ $0.upload.target == owner && !$0.cancelled && ($0.claimedBy == nil || $0.claimedBy == request.id) }) else { throw stale() }
+            do { try AttachmentLimits.validate(expectedDraft + captured.records.map(\.attachment)) } catch { throw stale() }
+            let additions = captured.records.map(\.attachment)
+            return (additions.isEmpty ? [] : [.client(.addAttachments(threadID: owner.threadID, attachments: additions))]) + [.client(.submit(threadID: owner.threadID, text: text))]
+        }
         guard request.command.isWorktreeCommand else { return [.client(try action(request, preparation: preparation, snapshot: snapshot))] }
         if case .refused = preparation { throw stale() }
         let target: RemoteWorkspaceTarget, expectedAttempt: UUID?
@@ -127,8 +142,24 @@ extension WorkspaceDecision {
     static func reduceRemoteEnvironment(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         guard case .remoteEnvironment(let request, let preparation) = command else { throw RemoteEnvironmentAdmission.stale() }
         let commands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: snapshot)
-        guard let action = commands.first else { return .init(snapshot: snapshot) }
-        do { return try make(action, id: id, snapshot: snapshot, now: now) }
+        guard commands.count <= 2 else { throw RemoteEnvironmentAdmission.stale() }
+        do {
+            var combined = Self(snapshot: snapshot)
+            for action in commands {
+                let next = try make(action, id: id, snapshot: combined.snapshot, now: now, validatingLedger: false)
+                combined.snapshot = next.snapshot; combined.effects += next.effects; combined.closeRuntimes.formUnion(next.closeRuntimes)
+                if let cancel = next.cancelCloneAttempt {
+                    guard combined.cancelCloneAttempt == nil || combined.cancelCloneAttempt == cancel else { throw RemoteEnvironmentAdmission.stale() }
+                    combined.cancelCloneAttempt = cancel
+                }
+                if let cancel = next.cancelWorktreeAttempt {
+                    guard combined.cancelWorktreeAttempt == nil || combined.cancelWorktreeAttempt == cancel else { throw RemoteEnvironmentAdmission.stale() }
+                    combined.cancelWorktreeAttempt = cancel
+                }
+            }
+            guard Set(combined.effects.map(\.id)).count == combined.effects.count else { throw RemoteEnvironmentAdmission.stale() }
+            return try finalizedRemoteBatch(combined)
+        }
         catch let error as WorkspaceCommandError { throw error }
         catch { throw WorkspaceCommandError("The remote request was refused before execution because its values or target are invalid.") }
     }

@@ -206,7 +206,7 @@ struct WorkspaceDecision: Sendable {
     /// Full ledger validation may encode retained checkpoint receipts. It must
     /// run after the general mutation switch releases its temporary buffers.
     @inline(never)
-    static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+    static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date, validatingLedger: Bool = true) throws -> Self {
         let reduced: GeneralReduction
         switch command {
         case .remoteEnvironment:
@@ -243,9 +243,12 @@ struct WorkspaceDecision: Sendable {
         default:
             reduced = try makeGeneral(command, id: id, snapshot: snapshot, now: now)
         }
-        guard reduced.requiresFinalization else { return reduced.decision }
+        guard reduced.requiresFinalization && validatingLedger else { return reduced.decision }
         return try finalized(reduced.decision)
     }
+    /// Only the host's closed remote command adapter uses deferred validation;
+    /// every native reducer still checks its own action admission normally.
+    static func finalizedRemoteBatch(_ decision: Self) throws -> Self { try finalized(decision) }
 
     /// Provider events have their own frame: the broad admission switch owns
     /// many large captured values that must not stay on the stack while a

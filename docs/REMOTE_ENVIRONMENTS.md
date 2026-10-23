@@ -144,6 +144,41 @@ pruning remains future work. Terminal output and input are not persisted by this
 remote feature. Persistent process reattachment, remote project-script controls,
 styled cold restoration and real two-Mac acceptance remain unfinished.
 
+## Remote attachments
+
+The remote composer accepts file/image picks, paste and drop. Imports first make
+private immutable copies on this Mac, with per-environment/conversation draft
+manifests. Choosing a conversation or reconnecting never starts an upload.
+Send uploads its captured copies, or Upload explicitly transfers a selected file.
+Progress, cancellation and explicit status checks preserve the local draft.
+Attachment-only messages and queued turns use the normal Engine readiness gate.
+
+Transfers use exact UUID/content descriptors, SHA-256, indexed 256 KiB chunks and
+bounded private staging. Duplicate exact chunks are idempotent; different bytes
+under the same identity are refused. Finalization creates a host-owned native
+attachment reference. The submit command carries only those reference IDs and
+the exact visible host draft references. It atomically claims the attachments and
+records the original command receipt with the message or queued turn. A lost
+reply requires Check Result; it never automatically submits the command again.
+Acknowledgment removes only the corresponding captured local mappings, preserving
+newer imports and text. Older helpers omit the attachment capability and cannot
+receive these commands. Legacy text sends on a current helper refuse hidden
+host draft attachments.
+
+History and draft previews resolve attachments within the captured remote
+conversation. Downloads verify range metadata, length and final digest before
+publishing a fresh local copy for preview, open, save or image copy. A remote
+attachment UUID or file path is never used to find a local workspace file.
+Disconnected transfers stop; retained verified copies remain available.
+
+Limits preserve the native 100-file, 50 MiB per-file, 10 MiB per-image and 80 MiB
+combined-image policies. Host staging reserves at most 512 MiB, finalized
+unclaimed files at most 6 GiB, and two finalizations run concurrently. Upload
+journals retain at most 8,192 identities/32 MiB. Cancellation cannot delete an
+attachment already claimed by a message. Automatic reference-aware cleanup of
+retained client copies and transfer identities remains unfinished; reaching a
+limit refuses new work rather than silently deleting drafts or history.
+
 ## Native service boundary
 
 `CoincideEnvironment` owns a normal `WorkspaceEngine`, SQLite journal and runtime
@@ -159,7 +194,7 @@ Conversation requests are bounded to 1 MiB. Workspace requests allow 14 MiB to
 carry JSON-escaped 2 MB files; aggregate queued requests are bounded to 32 MiB.
 Response frames are bounded to 16 MiB and in-flight requests to 32, with at most
 eight owned read/cancel replies and eight mutation jobs. The descriptor's
-optional Files/Git and remote-terminal capabilities default to unsupported for
+optional Files/Git, attachment and remote-terminal capabilities default to unsupported for
 older helpers. Terminal byte polling is separate from workspace snapshots.
 Subscription delivery coalesces complete snapshots with a monotonic
 sequence; it is not a lossless event/delta replay stream. A sequence floor is
@@ -214,7 +249,7 @@ The reference is T3 Code
 1. Verify a real SSH connection between two Macs, including installed-provider
    execution, interruption, disconnect and reconnect. Controlled local-process
    acceptance does not establish remote network or provider authentication.
-2. Complete remote worktree setup/removal and PR controls, media files, attachments,
+2. Complete remote worktree setup/removal and PR controls, media files,
    checkpoints/history and provider setup/authentication; add workspace
    receipt-capacity management and crash recovery for unsaved editor buffers.
    Preserve the current separation between local and remote paths/services.

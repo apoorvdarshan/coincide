@@ -131,7 +131,7 @@ private func ownedConfigurationContainsPrivateField(_ value: JSONValue) -> Bool 
     let database = try WorkspaceDatabase(url: url)
     let migrated = try await database.load()
     let migratedVersion = try ownedConfigurationStorageVersion(url)
-    #expect(migrated == expectedLegacy && migratedVersion == 41)
+    #expect(migrated == expectedLegacy && migratedVersion == 42)
     #expect(migrated.threads[0].activeRun?.configuration.codexRuntimeConfiguration == legacyConfiguration)
     #expect(migrated.threads[0].queuedTurns.first?.configuration.codexRuntimeConfiguration == legacyConfiguration)
     let instance = UUID(), oldBinding = CodexAccountBinding(profileID: UUID(), generation: UUID()), newBinding = CodexAccountBinding(profileID: UUID(), generation: UUID())
@@ -162,13 +162,13 @@ private func ownedConfigurationContainsPrivateField(_ value: JSONValue) -> Bool 
     }
 }
 
-@Test(arguments: [37, 38, 39, 40, 41]) func codexOwnedConfigurationAcceptsCurrentStorage41AndRefusesFuture42WithoutDowngradingIt(_ priorVersion: Int) throws {
+@Test(arguments: [37, 38, 39, 40, 41, 42]) func codexOwnedConfigurationAcceptsCurrentStorage42AndRefusesFuture43WithoutDowngradingIt(_ priorVersion: Int) throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let current = root.appendingPathComponent("current.sqlite"), future = root.appendingPathComponent("future.sqlite")
     try ownedConfigurationSQL(current, "PRAGMA user_version=\(priorVersion)")
     _ = try WorkspaceDatabase(url: current)
-    #expect(try ownedConfigurationStorageVersion(current) == 41)
-    try ownedConfigurationSQL(future, "PRAGMA user_version=42")
+    #expect(try ownedConfigurationStorageVersion(current) == 42)
+    try ownedConfigurationSQL(future, "PRAGMA user_version=43")
     #expect(throws: (any Error).self) { try WorkspaceDatabase(url: future) }
-    #expect(try ownedConfigurationStorageVersion(future) == 42)
+    #expect(try ownedConfigurationStorageVersion(future) == 43)
 }

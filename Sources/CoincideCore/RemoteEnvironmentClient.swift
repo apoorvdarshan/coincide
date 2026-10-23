@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public struct RemoteEnvironmentClientError: Error, Sendable, Equatable, LocalizedError {
     public enum Kind: Sendable, Equatable {
@@ -151,6 +152,9 @@ public actor RemoteEnvironmentClient {
         if command.isWorktreeCommand, descriptor?.capabilities.supportsRemoteWorktrees != true {
             throw RemoteEnvironmentClientError(.unsupported)
         }
+        if command.preparesAttachments, descriptor?.capabilities.supportsRemoteAttachments != true {
+            throw RemoteEnvironmentClientError(.unsupported)
+        }
         guard !attemptedCommands.contains(id) else { throw RemoteEnvironmentClientError(.commandAlreadyAttempted, commandID: id) }
         guard attemptedCommands.count < 4_096, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests else {
             throw RemoteEnvironmentClientError(.limitExceeded)
@@ -194,6 +198,149 @@ public actor RemoteEnvironmentClient {
             let safe = error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
             if generation == owned { retire(safe) }
             throw safe
+        }
+    }
+    public func beginAttachmentUpload(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload {
+        try Self.validateUploadRequest(request)
+        let owned = generation
+        let result: RemoteAttachmentUpload = try await attachmentRequest(RemoteAttachmentProtocol.beginMethod,
+            request: request, target: request.target, mutating: true)
+        try validateWorkspaceResponse(generation: owned) { try Self.validateUpload(result, request: request) }
+        return result
+    }
+    public func attachmentUploadStatus(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload? {
+        try Self.validateUploadRequest(request)
+        let owned = generation
+        let result: RemoteAttachmentUpload? = try await attachmentRequest(RemoteAttachmentProtocol.statusMethod,
+            request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) { if let result { try Self.validateUpload(result, request: request) } }
+        return result
+    }
+    public func appendAttachmentChunk(_ request: RemoteAttachmentChunkRequest) async throws -> RemoteAttachmentUpload {
+        try Self.validateUploadRequest(request.upload)
+        let chunk = RemoteAttachmentProtocol.maximumChunkBytes
+        let chunks = (request.upload.byteCount + chunk - 1) / chunk
+        guard request.index >= 0, request.index < chunks,
+              request.data.count == min(chunk, request.upload.byteCount - request.index * chunk),
+              Self.isTerminalDigest(request.digest),
+              SHA256.hash(data: request.data).map({ String(format: "%02x", $0) }).joined() == request.digest else {
+            throw RemoteAttachmentFailure(.invalidRequest)
+        }
+        let owned = generation
+        let result: RemoteAttachmentUpload = try await attachmentRequest(RemoteAttachmentProtocol.appendMethod,
+            request: request, target: request.upload.target, mutating: true)
+        try validateWorkspaceResponse(generation: owned) {
+            try Self.validateUpload(result, request: request.upload)
+            guard result.receivedChunks.contains(request.index) || [.cancelled, .failed, .uncertain].contains(result.state) else {
+                throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+        }
+        return result
+    }
+    public func finalizeAttachmentUpload(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload {
+        try Self.validateUploadRequest(request)
+        let owned = generation
+        let result: RemoteAttachmentUpload = try await attachmentRequest(RemoteAttachmentProtocol.finalizeMethod,
+            request: request, target: request.target, mutating: true)
+        try validateWorkspaceResponse(generation: owned) {
+            try Self.validateUpload(result, request: request)
+            guard result.state != .receiving else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    public func cancelAttachmentUpload(_ request: RemoteAttachmentUploadRequest) async throws -> RemoteAttachmentUpload? {
+        try Self.validateUploadRequest(request)
+        let owned = generation
+        let result: RemoteAttachmentUpload? = try await attachmentRequest(RemoteAttachmentProtocol.cancelMethod,
+            request: request, target: request.target, mutating: true)
+        try validateWorkspaceResponse(generation: owned) {
+            if let result {
+                try Self.validateUpload(result, request: request)
+                guard [.cancelled, .claimed, .uncertain].contains(result.state) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            }
+        }
+        return result
+    }
+    public func downloadAttachment(_ request: RemoteAttachmentDownloadRequest) async throws -> RemoteAttachmentDownloadResult {
+        guard request.offset >= 0, request.offset <= AttachmentLimits.fileBytes,
+              (1...RemoteAttachmentProtocol.maximumChunkBytes).contains(request.maxBytes) else { throw RemoteAttachmentFailure(.invalidRequest) }
+        let owned = generation
+        let result: RemoteAttachmentDownloadResult = try await attachmentRequest(RemoteAttachmentProtocol.downloadMethod,
+            request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) {
+            try AttachmentLimits.validate([result.attachment])
+            guard result.target == request.target, result.attachment.id == request.attachmentID,
+                  result.offset == request.offset, request.offset <= result.attachment.byteCount,
+                  result.data.count == min(request.maxBytes, result.attachment.byteCount - request.offset),
+                  result.eof == (request.offset + result.data.count == result.attachment.byteCount) else {
+                throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+            if request.offset == 0 && result.eof {
+                guard SHA256.hash(data: result.data).map({ String(format: "%02x", $0) }).joined() == result.attachment.digest else {
+                    throw RemoteEnvironmentClientError(.invalidResponse)
+                }
+            }
+        }
+        return result
+    }
+    private func attachmentRequest<Request: Encodable & Sendable, Response: Decodable & Sendable>(
+        _ method: String, request: Request, target: RemoteAttachmentTarget, mutating: Bool = false
+    ) async throws -> Response {
+        let (connection, owned, environment) = try context()
+        guard target.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
+        guard descriptor?.capabilities.supportsRemoteAttachments == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        let bytes = try JSONEncoder().encode(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumRequestBytes,
+              activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else {
+            throw RemoteEnvironmentClientError(.limitExceeded)
+        }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(45))
+            guard generation == owned, rpc != nil else { throw CancellationError() }
+            do { return try RemoteEnvironmentProtocol.decode(Response.self, from: raw) }
+            catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+        } catch {
+            if generation == owned {
+                if let failure = error as? JSONRPCRemoteError, failure.code == -32_003,
+                   let value = failure.data["kind"].string, let kind = RemoteAttachmentFailure.Kind(rawValue: value) {
+                    throw RemoteAttachmentFailure(kind)
+                }
+                if let failure = workspaceRejection(error) { throw failure }
+                if let failure = nativeRejection(error) { throw failure }
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
+            if mutating { throw RemoteAttachmentFailure(.uncertain) }
+            throw error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
+        }
+    }
+    private static func validateUploadRequest(_ request: RemoteAttachmentUploadRequest) throws {
+        guard request.byteCount >= 0, request.byteCount <= AttachmentLimits.fileBytes,
+              !request.name.isEmpty, request.name.utf8.count <= 1_024,
+              !request.name.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
+              isTerminalDigest(request.digest) else { throw RemoteAttachmentFailure(.invalidRequest) }
+    }
+    private static func validateUpload(_ value: RemoteAttachmentUpload, request: RemoteAttachmentUploadRequest) throws {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let chunks = (request.byteCount + RemoteAttachmentProtocol.maximumChunkBytes - 1) / RemoteAttachmentProtocol.maximumChunkBytes
+        guard try encoder.encode(value.request) == encoder.encode(request),
+              value.receivedChunks.count <= chunks, Set(value.receivedChunks).count == value.receivedChunks.count,
+              value.receivedChunks.allSatisfy({ $0 >= 0 && $0 < chunks }) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        switch value.state {
+        case .receiving, .finalizing:
+            guard value.attachment == nil, value.failure == nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        case .ready, .claimed:
+            guard let attachment = value.attachment, value.failure == nil, value.receivedChunks.count == chunks else {
+                throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+            try AttachmentLimits.validate([attachment])
+        case .cancelled:
+            guard value.attachment == nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        case .failed, .uncertain:
+            guard value.failure != nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            if let attachment = value.attachment { try AttachmentLimits.validate([attachment]) }
         }
     }
     public func bindWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {

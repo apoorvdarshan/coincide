@@ -2632,6 +2632,15 @@ public actor WorkspaceEngine {
                     } else if case .remoteEnvironment(let request, let preparation) = envelope.command {
                         if case .worktree(let captured) = preparation,
                            threadIncarnations[captured.threadID] != captured.incarnation { throw RemoteEnvironmentAdmission.stale() }
+                        if case .attachments(let captured) = preparation {
+                            guard threadIncarnations[captured.target.threadID] == captured.incarnation else { throw RemoteEnvironmentAdmission.stale() }
+                            for expected in captured.records {
+                                guard let actual = try await database.remoteAttachment(captured.target, id: expected.attachment.id),
+                                      !actual.cancelled, actual.claimedBy == nil || actual.claimedBy == request.id,
+                                      try RemoteAttachmentJournal.payload(actual.upload) == RemoteAttachmentJournal.payload(expected.upload),
+                                      try RemoteAttachmentProtocol.payload(actual.attachment) == RemoteAttachmentProtocol.payload(expected.attachment) else { throw RemoteEnvironmentAdmission.stale() }
+                            }
+                        }
                         admissionCommands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: base.snapshot)
                     } else { admissionCommands = [envelope.command] }
                     for command in admissionCommands {
@@ -2691,8 +2700,11 @@ public actor WorkspaceEngine {
                     })
                     var committed = false
                     defer { finishCommitFence(removed: committed) }
+                    let attachmentClaims: [RemoteAttachmentRecord]
+                    if case .remoteEnvironment(_, .attachments(let captured)) = envelope.command { attachmentClaims = captured.records }
+                    else { attachmentClaims = [] }
                     let outcome = try await database.commitWithRemovedEffects(decision.snapshot, event: "workspace.command", commandID: envelope.id,
-                        expectedSequence: base.sequence, effects: decision.effects, deduplicationPayload: payload)
+                        expectedSequence: base.sequence, effects: decision.effects, deduplicationPayload: payload, attachmentClaims: attachmentClaims)
                     let receipt = outcome.receipt
                     revision = .init(snapshot: decision.snapshot, sequence: receipt.sequence)
                     if let attemptID = decision.cancelCloneAttempt {
@@ -4534,6 +4546,46 @@ extension WorkspaceEngine {
 
 
 extension WorkspaceEngine {
+    func remoteAttachmentThread(_ target: RemoteAttachmentTarget, allowArchived: Bool = false) async throws -> CodingThread {
+        _ = try await load()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              allowArchived || !thread.isArchived,
+              revision.snapshot.projects.contains(where: { $0.id == target.projectID }) else { throw RemoteAttachmentFailure(.invalidTarget) }
+        return thread
+    }
+    func registerRemoteAttachment(_ request: RemoteAttachmentUploadRequest, attachment: ChatAttachment) async throws {
+        _ = try await remoteAttachmentThread(request.target)
+        try await database.publishRemoteAttachment(.init(upload: request, attachment: attachment, claimedBy: nil, cancelled: false))
+    }
+    func remoteAttachmentRecord(_ target: RemoteAttachmentTarget, id: UUID) async throws -> RemoteAttachmentRecord? {
+        try await database.remoteAttachment(target, id: id)
+    }
+    func cancelRemoteAttachment(_ target: RemoteAttachmentTarget, id: UUID) async throws -> RemoteAttachmentRecord? {
+        try await database.cancelRemoteAttachment(target, id: id)
+    }
+    func resolveRemoteAttachment(_ target: RemoteAttachmentTarget, id: UUID) async throws -> ChatAttachment {
+        let thread = try await remoteAttachmentThread(target, allowArchived: true)
+        if let row = try await database.remoteAttachment(target, id: id) {
+            guard !row.cancelled else { throw RemoteAttachmentFailure(.notFound) }; return row.attachment
+        }
+        let refs = thread.draftAttachments + thread.queuedTurns.flatMap { $0.attachments ?? [] } + thread.messages.flatMap { $0.attachments ?? [] }
+        guard let reference = refs.first(where: { $0.id == id }) else { throw RemoteAttachmentFailure(.notFound) }
+        return reference
+    }
+    func prepareRemoteAttachmentSubmission(_ command: RemoteEnvironmentCommand) async throws -> RemoteEnvironmentPreparation {
+        guard case .submitWithAttachments(let target, _, _, _, let ids) = command else { throw RemoteAttachmentFailure(.invalidRequest) }
+        _ = try await remoteAttachmentThread(target)
+        guard ids.count <= AttachmentLimits.count, Set(ids).count == ids.count,
+              let incarnation = threadIncarnations[target.threadID] else { throw RemoteAttachmentFailure(.invalidRequest) }
+        var records: [RemoteAttachmentRecord] = []
+        for id in ids {
+            guard let record = try await database.remoteAttachment(target, id: id), !record.cancelled else { throw RemoteAttachmentFailure(.notFound) }
+            guard record.claimedBy == nil else { throw RemoteAttachmentFailure(.collision) }
+            records.append(record)
+        }
+        return .attachments(.init(target: target, incarnation: incarnation, records: records))
+    }
     /// Capture the same native intent/recovery proof used by local preparation,
     /// without committing under a generated command ID. The external UUID is
     /// committed once, after the final snapshot and incarnation guards.

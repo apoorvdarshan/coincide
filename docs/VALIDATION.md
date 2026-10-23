@@ -1,5 +1,54 @@
 # Validation record
 
+## 2026-10-23 — Remote attachment transfer and retained drafts
+
+- The final complete serial suite passes 1887 of 1900 declarations, with thirteen
+  optional installed/live checks skipped and pinned Pi package acceptance enabled.
+  Core covers 1608 declarations in 378.595 seconds; native view/store 262 in
+  72.457 seconds; terminal seventeen in 10.319 seconds; Markdown thirteen in
+  0.134 seconds. No production source changes follow this full run.
+- Five actual native-helper/SQLite integration cases and six client declarations
+  with 29 expanded cases verify bounded chunks, exact duplicate/collision
+  handling, restart, lost finalization/submit replies, original receipt recovery,
+  wrong-scope refusal, claimed cancellation, verified download and attachment-only
+  queue readiness behind a real held worktree. Private provider executables and
+  Git repositories require no installed provider, authentication or network.
+- Four Core cases cover native immutable imports/range reads, image conversion,
+  exact host draft and uploaded-reference admission, one command transaction and
+  one ledger finalization, same-ID receipt reuse, new-ID claimed-reference
+  rejection, stale/cancelled/foreign refusal and rollback. Storage migrates to
+  version 42; all previous migration cases remain and future 43 is refused.
+- Ten native Store/persistence cases cover picker-independent file/image paste,
+  private copies across selection/restart, explicit unknown-upload status checks,
+  cancellation against delayed finalization, captured submissions and later
+  imports, exact manifest compare-and-swap, corrupt/escaping names, scoped fresh
+  download IDs, changed-byte rejection and same-client refresh. Observation
+  tracking verifies upload/import flags update at both asynchronous boundaries.
+  Two parent Store cases verify attachment-only lost-submit recovery preserves
+  newer imports and stale host references cannot reach the wire.
+- Build-only packaging, deep strict signatures and native math-resource rendering
+  pass. App/helper Mach-O UUIDs match their compiled products. Signed helper
+  discovery advertises Files/Git, terminal, worktree and attachment capabilities,
+  creates no SQLite workspace and exits on EOF. The installed app is not replaced
+  or launched. The ABI guard checks 1001 objects (690 Core, 277 app) with zero weak
+  async default contexts. All 72 supporting Python checks pass in 2.535 seconds.
+- The native GUI runner compiles and its offline launch-envelope checks pass
+  without GUI execution. Final cleanup finds zero owned attachment fixture roots
+  or processes. Staged changes pass a redacted secret scan.
+- Hosted acceptance remains separate. The preceding terminal head's run
+  39902574409 reached its 35-minute job cap; its buffered final log line does not
+  establish the stalled operation. All six isolated OAuth rotation-failure cases
+  pass locally in 0.005 seconds, so no speculative OAuth or timeout change was
+  made. The previous worktree head's run 39904821308 completed its 1873-test
+  suite with one Pi history late-reservation case failing its private eventual
+  boundary, so packaging and GUI execution were skipped. The current full local
+  suite passes that unchanged case; its hosted failure remains unresolved. The
+  earlier observed SwiftUI layout/teardown stall is also unresolved.
+
+Real two-Mac transfer/authentication, hosted attachment interaction, automatic
+reference-aware cleanup, remote PR/history controls and the remaining environment
+capabilities remain open. These checks do not establish full T3 feature parity.
+
 ## 2026-10-23 — Remote worktree preparation and recovery
 
 - The final complete serial suite passes 1860 of 1873 declarations, with thirteen

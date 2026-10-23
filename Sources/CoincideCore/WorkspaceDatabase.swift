@@ -44,7 +44,7 @@ public actor WorkspaceDatabase {
         let versionStatus = sqlite3_step(version)
         let storageVersion = sqlite3_column_int(version, 0)
         sqlite3_finalize(version)
-        guard versionStatus == SQLITE_ROW, (0...41).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
+        guard versionStatus == SQLITE_ROW, (0...42).contains(storageVersion) else { throw CoincideError("This workspace needs a newer version of Coincide.") }
         let setup = """
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=FULL;
@@ -55,7 +55,8 @@ public actor WorkspaceDatabase {
         CREATE TABLE IF NOT EXISTS workspace_receipts (id TEXT PRIMARY KEY, fingerprint BLOB NOT NULL, payload BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS workspace_effects (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, command_id TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, payload BLOB NOT NULL);
         CREATE INDEX IF NOT EXISTS workspace_effects_pending ON workspace_effects(status,sequence);
-        PRAGMA user_version=41;
+        CREATE TABLE IF NOT EXISTS remote_attachment_refs (id TEXT PRIMARY KEY, upload_id TEXT NOT NULL UNIQUE, byte_count INTEGER NOT NULL, claimed INTEGER NOT NULL, cancelled INTEGER NOT NULL, payload BLOB NOT NULL);
+        PRAGMA user_version=42;
         """
         guard sqlite3_exec(connection, setup, nil, nil, nil) == SQLITE_OK else { throw CoincideError("Could not initialize the workspace database.") }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -86,7 +87,7 @@ public actor WorkspaceDatabase {
     }
     func commitWithRemovedEffects(_ snapshot: WorkspaceSnapshot, event: String, commandID: UUID,
                                   expectedSequence: Int64? = nil, effects: [PendingWorkspaceEffect] = [],
-                                  deduplicationPayload: Data? = nil) throws -> WorkspaceCommitOutcome {
+                                  deduplicationPayload: Data? = nil, attachmentClaims: [RemoteAttachmentRecord] = []) throws -> WorkspaceCommitOutcome {
         try WorkspaceJournal.validate(snapshot)
         struct FingerprintInput: Encodable { let snapshot: WorkspaceSnapshot; let event: String }
         struct EffectFingerprintInput: Encodable { let snapshot: WorkspaceSnapshot; let event: String; let effects: [PendingWorkspaceEffect] }
@@ -163,6 +164,13 @@ public actor WorkspaceDatabase {
             }
             let before = try currentRevision()
             if let expectedSequence, expectedSequence != before.sequence { throw WorkspaceCommitError.revisionChanged }
+            for expected in attachmentClaims {
+                guard var actual = try remoteAttachment(expected.upload.target, id: expected.attachment.id), !actual.cancelled,
+                      actual.claimedBy == nil || actual.claimedBy == commandID,
+                      try RemoteAttachmentJournal.payload(actual.upload) == RemoteAttachmentJournal.payload(expected.upload),
+                      try RemoteAttachmentProtocol.payload(actual.attachment) == RemoteAttachmentProtocol.payload(expected.attachment) else { throw WorkspaceCommitError.revisionChanged }
+                if actual.claimedBy == nil { actual.claimedBy = commandID; try writeRemoteAttachment(actual) }
+            }
             for pending in effects {
                 let check = try prepare("SELECT 1 FROM workspace_effects WHERE id=?")
                 defer { sqlite3_finalize(check) }
@@ -358,6 +366,56 @@ public actor WorkspaceDatabase {
     }
     private func check(_ code: Int32) throws {
         guard code == SQLITE_OK || code == SQLITE_DONE else { throw CoincideError(String(cString: sqlite3_errmsg(db))) }
+    }
+}
+
+extension WorkspaceDatabase {
+    func remoteAttachment(_ target: RemoteAttachmentTarget, id: UUID) throws -> RemoteAttachmentRecord? {
+        let statement = try prepare("SELECT payload FROM remote_attachment_refs WHERE id=?")
+        defer { sqlite3_finalize(statement) }
+        try bind(id.uuidString, to: statement, index: 1)
+        let status = sqlite3_step(statement)
+        if status == SQLITE_DONE { return nil }; try checkRow(status)
+        let value = try JSONDecoder().decode(RemoteAttachmentRecord.self, from: blob(statement, column: 0))
+        guard value.attachment.id == id, value.upload.target == target else { throw RemoteAttachmentFailure(.invalidTarget) }
+        try AttachmentLimits.validate([value.attachment]); return value
+    }
+    func publishRemoteAttachment(_ value: RemoteAttachmentRecord) throws {
+        try AttachmentLimits.validate([value.attachment])
+        try execute("BEGIN IMMEDIATE")
+        do {
+            let statement = try prepare("SELECT payload FROM remote_attachment_refs WHERE id=? OR upload_id=?")
+            defer { sqlite3_finalize(statement) }
+            try bind(value.attachment.id.uuidString, to: statement, index: 1); try bind(value.upload.id.uuidString, to: statement, index: 2)
+            let status = sqlite3_step(statement)
+            if status == SQLITE_ROW {
+                let old = try JSONDecoder().decode(RemoteAttachmentRecord.self, from: blob(statement, column: 0))
+                guard try RemoteAttachmentJournal.payload(old.upload) == RemoteAttachmentJournal.payload(value.upload),
+                      try RemoteAttachmentProtocol.payload(old.attachment) == RemoteAttachmentProtocol.payload(value.attachment), !old.cancelled else { throw RemoteAttachmentFailure(.collision) }
+            } else {
+                try check(status)
+                guard try scalar("SELECT count(*) FROM remote_attachment_refs") < 8_192,
+                      try scalar("SELECT coalesce(sum(byte_count),0) FROM remote_attachment_refs WHERE claimed=0 AND cancelled=0") + Int64(value.attachment.byteCount) <= 6 * 1_024 * 1_024 * 1_024 else { throw RemoteAttachmentFailure(.limitExceeded) }
+                try writeRemoteAttachment(value)
+            }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+    func cancelRemoteAttachment(_ target: RemoteAttachmentTarget, id: UUID) throws -> RemoteAttachmentRecord? {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            var value = try remoteAttachment(target, id: id)
+            if var existing = value, existing.claimedBy == nil { existing.cancelled = true; try writeRemoteAttachment(existing); value = existing }
+            try execute("COMMIT"); return value
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+    private func writeRemoteAttachment(_ value: RemoteAttachmentRecord) throws {
+        let statement = try prepare("INSERT INTO remote_attachment_refs(id,upload_id,byte_count,claimed,cancelled,payload) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET claimed=excluded.claimed,cancelled=excluded.cancelled,payload=excluded.payload")
+        defer { sqlite3_finalize(statement) }
+        try bind(value.attachment.id.uuidString, to: statement, index: 1); try bind(value.upload.id.uuidString, to: statement, index: 2)
+        try check(sqlite3_bind_int64(statement, 3, Int64(value.attachment.byteCount)))
+        try check(sqlite3_bind_int(statement, 4, value.claimedBy == nil ? 0 : 1)); try check(sqlite3_bind_int(statement, 5, value.cancelled ? 1 : 0))
+        try bind(encoder.encode(value), to: statement, index: 6); try check(sqlite3_step(statement))
     }
 }
 

@@ -63,6 +63,6 @@ import Testing
     var statement: OpaquePointer?
     #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
     defer { sqlite3_finalize(statement) }
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 41)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 42)
     #expect(try await reopened.rebuildProjection().snapshot == snapshot)
 }

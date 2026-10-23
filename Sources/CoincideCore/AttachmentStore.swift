@@ -61,6 +61,15 @@ public actor AttachmentStore {
         return try importData(data, name: url.lastPathComponent)
     }
     public func importData(_ data: Data, name: String) throws -> ChatAttachment {
+        try importData(data, name: name, reserving: nil)
+    }
+    /// A host reserves this identity durably before publication. An exact
+    /// repeated finalize verifies the existing immutable copy instead of
+    /// allocating another blob after a lost response or process interruption.
+    func importFile(_ url: URL, name: String, reservedID: UUID) throws -> ChatAttachment {
+        try importData(readBounded(url, limit: AttachmentLimits.fileBytes), name: name, reserving: reservedID)
+    }
+    private func importData(_ data: Data, name: String, reserving reservedID: UUID?) throws -> ChatAttachment {
         try Task.checkCancellation()
         guard data.count <= AttachmentLimits.fileBytes else { throw CoincideError("Files must be 50 MiB or smaller.") }
         var bytes = data
@@ -89,13 +98,49 @@ public actor AttachmentStore {
         } else if ["image/png", "image/jpeg", "image/gif", "image/webp", "image/heic", "image/heif"].contains(mime) {
             throw CoincideError("This file does not contain a supported readable image.")
         }
-        let reference = ChatAttachment(id: UUID(), name: safeName.isEmpty ? "Attachment" : safeName, mimeType: mime,
+        let reference = ChatAttachment(id: reservedID ?? UUID(), name: safeName.isEmpty ? "Attachment" : safeName, mimeType: mime,
             byteCount: bytes.count, digest: Self.digest(bytes), fileExtension: ext)
         try AttachmentLimits.validate([reference])
         try Task.checkCancellation()
         let target = path(reference)
+        if reservedID != nil, FileManager.default.fileExists(atPath: target.path) {
+            guard try self.data(for: reference) == bytes else { throw CoincideError("The reserved attachment content changed.") }
+            return reference
+        }
         try writePrivate(bytes, to: target)
         return reference
+    }
+    /// Range reads never resolve a caller path and never reread a complete
+    /// 50 MiB attachment per page. Receivers verify its final native digest.
+    func read(_ reference: ChatAttachment, offset: Int, maximumBytes: Int) throws -> Data {
+        try AttachmentLimits.validate([reference])
+        guard offset >= 0, offset <= reference.byteCount, (1...RemoteAttachmentProtocol.maximumChunkBytes).contains(maximumBytes) else { throw RemoteAttachmentFailure(.invalidRequest) }
+        let directory = try GitWorktreeDirectory(path: root.path)
+        let fd = openat(directory.fd, path(reference).lastPathComponent, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { throw RemoteAttachmentFailure(.integrity) }
+        defer { Darwin.close(fd) }
+        var before = stat(), after = stat()
+        guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_uid == getuid(), before.st_nlink == 1,
+              before.st_size == reference.byteCount else { throw RemoteAttachmentFailure(.integrity) }
+        var bytes = Data(count: min(maximumBytes, reference.byteCount - offset)), position = 0
+        while position < bytes.count {
+            try Task.checkCancellation()
+            let count = bytes.withUnsafeMutableBytes { pread(fd, $0.baseAddress!.advanced(by: position), $0.count - position, off_t(offset + position)) }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { throw RemoteAttachmentFailure(.integrity) }; position += count
+        }
+        guard fstat(fd, &after) == 0, worktreeIdentity(before) == worktreeIdentity(after), before.st_size == after.st_size,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec, before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec, before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec else { throw RemoteAttachmentFailure(.integrity) }
+        try directory.validate()
+        return bytes
+    }
+    func removeUnclaimed(_ reference: ChatAttachment) throws {
+        var info = stat()
+        if lstat(path(reference).path, &info) != 0, errno == ENOENT { return }
+        _ = try data(for: reference)
+        let directory = try GitWorktreeDirectory(path: root.path)
+        guard unlinkat(directory.fd, path(reference).lastPathComponent, 0) == 0, fsync(directory.fd) == 0 else { throw RemoteAttachmentFailure(.unavailable) }
     }
     public func url(for reference: ChatAttachment) throws -> URL {
         try AttachmentLimits.validate([reference])

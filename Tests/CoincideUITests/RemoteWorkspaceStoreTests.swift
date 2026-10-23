@@ -288,3 +288,63 @@ func remoteStoreRechecksRetainedEditsAfterBlockedDraftDrainBeforeSendingWorktree
         releaseDraftLock(); _ = await sending?.value; await store.shutdown(); throw error
     }
 }
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func remoteStoreAttachmentOnlyReceiptRecoveryClearsExactCapturedCopiesAndPreservesNewerImport() async throws {
+    let f = try RemoteStoreFixture(); defer { f.remove() }
+    let state = try JSONDecoder().decode(RemoteStoreFixtureState.self, from: Data(contentsOf: f.stateURL))
+    let thread = try #require(state.snapshot.workspace.threads.first)
+    let target = RemoteAttachmentTarget(environmentID: f.connection.environmentID, projectID: thread.projectID, threadID: thread.id)
+    let persistence = RemoteAttachmentDraftPersistence(root: f.root.appendingPathComponent("Attachments"))
+    let local = try await persistence.importData(Data("Private retained attachment".utf8), name: "retained.txt")
+    var canonical = local; canonical.id = UUID()
+    let upload = RemoteAttachmentUploadRequest(target: target, name: local.name, byteCount: local.byteCount, digest: local.digest)
+    let ready = RemoteAttachmentUpload(request: upload, state: .ready, receivedChunks: [0], attachment: canonical)
+    try await persistence.save(environmentID: target.environmentID,
+        drafts: [.init(target: target, entries: [.init(local: local, upload: upload, remote: ready)])])
+    let first = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) })
+    var reopened: RemoteWorkspaceStore?
+    do {
+        await first.load(); await first.connect(f.connection); await first.updateAttachments()
+        #expect(first.draft.isEmpty && first.canSubmit && first.attachments.entries.count == 1)
+        try f.update(mode: "drop-command"); await first.submit()
+        let pending = try #require(first.pending)
+        guard case .submitWithAttachments(let captured, let text, _, let host, let ids) = pending.command else {
+            Issue.record("Attachment-only send did not capture its native attachment command"); await first.shutdown(); return
+        }
+        #expect(captured == target && text.isEmpty && host.isEmpty && ids == [canonical.id])
+        #expect(first.attachments.entries.count == 1 && !first.canWrite)
+        await first.attachments.importData(Data("Newer private copy".utf8), name: "newer.txt")
+        #expect(first.attachments.entries.count == 2)
+        await first.shutdown(); #expect(!first.hasUnsavedDrafts)
+        try f.update(mode: "normal")
+        let next = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) }); reopened = next
+        await next.load(); await next.connect(f.connection); await next.updateAttachments()
+        #expect(next.pending == pending && next.attachments.entries.count == 2)
+        await next.checkPendingResult()
+        #expect(next.pending == nil && next.attachments.entries.map(\.local.name) == ["newer.txt"])
+        #expect(try f.commands().count == 1)
+        await next.shutdown()
+        let records = try await RemoteAttachmentDraftPersistence(root: f.root.appendingPathComponent("Attachments")).load(environmentID: target.environmentID)
+        #expect(records.flatMap(\.entries).map(\.local.name) == ["newer.txt"])
+    } catch { await first.shutdown(); await reopened?.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func remoteStoreRejectsStaleHostAttachmentCaptureBeforePersistingOrSending() async throws {
+    let f = try RemoteStoreFixture(); defer { f.remove() }
+    let store = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) })
+    do {
+        await store.load(); await store.connect(f.connection)
+        let thread = try #require(store.selectedThread), target = try #require(store.attachmentTarget)
+        store.setDraft("Preserve text after host attachments changed", threadID: thread.id)
+        let reference = ChatAttachment(id: UUID(), name: "stale.txt", mimeType: "text/plain", byteCount: 1,
+            digest: String(repeating: "a", count: 64), fileExtension: "txt")
+        let accepted = await store.perform(.submitWithAttachments(target: target, text: store.draft,
+            expectedConfiguration: .init(thread: thread), expectedDraftAttachments: [reference], uploadedAttachmentIDs: []))
+        #expect(!accepted && store.pending == nil && store.canWrite)
+        #expect(store.draft == "Preserve text after host attachments changed")
+        #expect(try f.commands().isEmpty)
+        await store.shutdown()
+    } catch { await store.shutdown(); throw error }
+}

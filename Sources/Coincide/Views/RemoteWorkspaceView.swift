@@ -2,6 +2,7 @@ import AppKit
 import CoincideCore
 import CoincideMarkdown
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RemoteWorkspacePresentation {
     var newThread: Binding<Bool>
@@ -148,6 +149,7 @@ struct RemoteWorkspaceView: View {
         }
         .task { await store.load() }
         .task(id: store.inspectorSelection) { await store.updateInspector() }
+        .task(id: store.attachmentSelection) { await store.updateAttachments() }
         .task(id: store.terminalSelection) { await store.updateTerminals() }
         .task(id: store.worktreeSelection) { store.updateWorktrees() }
         .onDisappear { Task { await store.disconnect() } }
@@ -219,7 +221,9 @@ struct RemoteWorkspaceView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 24) {
-                        ForEach(thread.visibleMessages) { message in RemoteMessageView(message: message) }
+                        ForEach(thread.visibleMessages) { message in
+                            RemoteMessageView(message: message, source: store.attachmentTarget.map { store.attachments.access(target: $0) })
+                        }
                         if thread.isBusy { Label("\(thread.providerName) is working on the remote Mac…", systemImage: "ellipsis").font(.caption).foregroundStyle(.secondary) }
                         Color.clear.frame(height: 1).id("remote-latest")
                     }.frame(maxWidth: 760, alignment: .leading).padding(24).frame(maxWidth: .infinity)
@@ -248,10 +252,15 @@ struct RemoteWorkspaceView: View {
                 }.padding(.horizontal, 24)
             }
             VStack(alignment: .leading, spacing: 8) {
+                RemoteDraftAttachmentShelf(store: store.attachments)
                 TextEditor(text: Binding(get: { store.drafts[thread.id] ?? thread.draft }, set: { store.setDraft($0, threadID: thread.id) }))
                     .font(.body).scrollContentBackground(.hidden).frame(minHeight: 72, maxHeight: 120)
                     .accessibilityLabel("Remote message")
+                    .onPasteCommand(of: [UTType.fileURL, UTType.image]) { store.attachments.importAttachments(providers: $0) }
                 HStack {
+                    Button("Attach Files…", systemImage: "paperclip") { store.attachments.chooseAttachments() }
+                        .disabled(!store.attachments.canImport).accessibilityIdentifier("remote-attach-files")
+                    if store.isPreparingSubmission || store.attachments.isUploading { ProgressView().controlSize(.small) }
                     Text(store.draftPersistenceFailed ? "Draft could not be saved" : store.draftsSaving ? "Saving draft…" : "Drafts stay on this Mac")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -260,9 +269,16 @@ struct RemoteWorkspaceView: View {
                     }
                     Button(thread.isBusy ? "Queue" : "Send") { Task { await store.submit() } }
                         .keyboardShortcut(.return, modifiers: .command).buttonStyle(.borderedProminent)
-                        .disabled(!store.canWrite || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(!store.canSubmit)
+                }
+                if store.isConnected && store.descriptor?.capabilities.supportsRemoteAttachments != true {
+                    Text("Update the remote helper to enable attachments.").font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(14).coincideSurface(cornerRadius: 20).padding(18)
+                .onDrop(of: [UTType.fileURL.identifier, UTType.image.identifier], isTargeted: nil) { providers in
+                    guard store.attachments.canImport else { return false }
+                    store.attachments.importAttachments(providers: providers); return true
+                }
         }
     }
 
@@ -302,8 +318,10 @@ private struct RemoteConversationHeader: View {
 
 private struct RemoteMessageView: View {
     let message: ChatMessage
+    let source: AttachmentAccess?
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 8) {
+            if let attachments = message.attachments, !attachments.isEmpty, let source { AttachmentShelf(source: source, attachments: attachments) }
             if message.role == .tool || message.role == .reasoning {
                 DisclosureGroup(message.role == .tool ? "Tool activity" : "Reasoning") {
                     Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)

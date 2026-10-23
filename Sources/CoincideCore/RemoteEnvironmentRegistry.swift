@@ -241,6 +241,47 @@ public actor RemoteEnvironmentDraftStore {
     }
 }
 
+/// Private bounded documents with byte-exact compare-and-swap. Callers retain
+/// the raw bytes they decoded so another window/process cannot lose a draft.
+public actor RemotePrivateDocumentStore {
+    private let root: URL
+    public init(root: URL) { self.root = root }
+    public func load(name: String, maximum: Int) throws -> Data? {
+        try Self.validate(name, maximum: maximum)
+        return try RemotePrivateFiles(root: root).locked(create: false) { files in
+            try files?.read(name, maximum: maximum)
+        }
+    }
+    public func save(data: Data, name: String, maximum: Int, expected: Data?) throws {
+        try Self.validate(name, maximum: maximum)
+        guard data.count <= maximum else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+        try RemotePrivateFiles(root: root).locked(create: true) { files in
+            guard let files else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            guard try files.read(name, maximum: maximum) == expected else {
+                throw RemoteEnvironmentStorageError(.commandChanged)
+            }
+            try files.write(data, name: name, maximum: maximum)
+        }
+    }
+    public func remove(name: String, expected: Data) throws {
+        try Self.validate(name, maximum: 16_777_216)
+        try RemotePrivateFiles(root: root).locked(create: false) { files in
+            guard let files, try files.read(name, maximum: 16_777_216) == expected else {
+                throw RemoteEnvironmentStorageError(.commandChanged)
+            }
+            try files.remove(name)
+        }
+    }
+    private static func validate(_ name: String, maximum: Int) throws {
+        let stem = name.dropLast(5)
+        guard maximum > 0, maximum <= 16_777_216 else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+        guard name.hasSuffix(".json"), !stem.isEmpty, name.utf8.count <= 160,
+              stem.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }) else {
+            throw RemoteEnvironmentStorageError(.unsafeFile)
+        }
+    }
+}
+
 /// Every operation uses a private owned directory, no-follow regular files and
 /// one cross-instance/process advisory lock. Atomic replacements are fsynced;
 /// corrupt existing data is decoded by callers before any replacement/removal.

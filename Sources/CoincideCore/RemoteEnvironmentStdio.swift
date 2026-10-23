@@ -64,7 +64,7 @@ public enum RemoteEnvironmentStdio {
                             result = try RemoteEnvironmentProtocol.encode(snapshot)
                         case RemoteEnvironmentProtocol.commandMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
-                            if request.command.inspectsWorktreeCompletion {
+                            if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments {
                                 try await workspaceReads.submit(id: id, operation: {
                                     try RemoteEnvironmentProtocol.encode(try await current.command(request))
                                 }, writer: writer, disconnect: { input.stop() })
@@ -99,6 +99,42 @@ public enum RemoteEnvironmentStdio {
                             let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceMutationRequest.self, from: params)
                             try await workspaceReads.submit(id: id, operation: {
                                 try RemoteEnvironmentProtocol.encode(try await current.cancelWorkspaceOperation(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteAttachmentProtocol.beginMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteAttachmentUploadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.beginAttachmentUpload(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteAttachmentProtocol.statusMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteAttachmentUploadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.attachmentUploadStatus(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteAttachmentProtocol.appendMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteAttachmentChunkRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.appendAttachmentChunk(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteAttachmentProtocol.finalizeMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteAttachmentUploadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.finalizeAttachmentUpload(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteAttachmentProtocol.cancelMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteAttachmentUploadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.cancelAttachmentUpload(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteAttachmentProtocol.downloadMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteAttachmentDownloadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.downloadAttachment(request))
                             }, writer: writer, disconnect: { input.stop() })
                             continue requestLoop
                         case RemoteEnvironmentProtocol.terminalOpenMethod:
@@ -209,7 +245,8 @@ public enum RemoteEnvironmentStdio {
     }
     fileprivate static func errorResponse(id: JSONValue, error: any Error) -> JSONValue {
         let code: Int, kind: String, message: String
-        if let safe = error as? RemoteTerminalFailure { code = -32_002; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        if let safe = error as? RemoteAttachmentFailure { code = -32_003; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        else if let safe = error as? RemoteTerminalFailure { code = -32_002; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else if let safe = error as? RemoteWorkspaceFailure { code = -32_001; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else { let safe = error as? RemoteEnvironmentError ?? .init(.unavailable); code = -32_000; kind = safe.kind.rawValue; message = safe.localizedDescription }
         return .object(["jsonrpc": .string("2.0"), "id": id, "error": .object([

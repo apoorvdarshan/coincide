@@ -301,6 +301,9 @@ actor RemoteWorkspaceService {
         case .submit(let id, _, _), .resumeQueue(let id, _):
             guard let thread = snapshot.threads.first(where: { $0.id == id }) else { return }
             paths = [thread.workspacePath]
+        case .submitWithAttachments(let target, _, _, _, _):
+            guard let thread = snapshot.threads.first(where: { $0.id == target.threadID }) else { return }
+            paths = [thread.workspacePath]
         case .prepareWorktree(let target, let sourceRootID, let attemptID, let selection, _):
             try await validateWorktreeSource(target, sourceRootID: sourceRootID, expectedAttemptID: attemptID)
             guard let source = roots[sourceRootID] else { throw RemoteWorkspaceFailure(.staleRoot) }

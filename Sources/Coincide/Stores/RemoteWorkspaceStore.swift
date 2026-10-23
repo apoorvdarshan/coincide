@@ -36,6 +36,8 @@ final class RemoteWorkspaceStore {
     let inspector: RemoteWorkspaceInspectorStore
     let terminals = RemoteTerminalStore()
     let worktrees = RemoteWorktreeStore()
+    let attachments: RemoteAttachmentsStore
+    private(set) var isPreparingSubmission = false
     var inspectorVisible = true
     var terminalsVisible = false
     var selectedThreadID: UUID?
@@ -61,15 +63,38 @@ final class RemoteWorkspaceStore {
         pendingStore = .init(root: root.appendingPathComponent("Pending", isDirectory: true))
         draftStore = .init(root: root.appendingPathComponent("Drafts", isDirectory: true))
         inspector = .init(pendingStore: .init(root: root.appendingPathComponent("WorkspaceOperations", isDirectory: true)))
+        attachments = .init(root: root.appendingPathComponent("Attachments", isDirectory: true))
     }
 
     var projects: [WorkspaceProject] { snapshot?.workspace.projects ?? [] }
     var threads: [CodingThread] { snapshot?.workspace.threads.filter { !$0.isArchived } ?? [] }
     var selectedThread: CodingThread? { threads.first { $0.id == selectedThreadID } }
-    var canWrite: Bool { isConnected && !isWorking && pending == nil && !stopping }
+    var canWrite: Bool { isConnected && !isWorking && !isPreparingSubmission && pending == nil && !stopping }
     var draft: String { selectedThread.map { drafts[$0.id] ?? $0.draft } ?? "" }
-    var hasUnsavedDrafts: Bool { draftsSaving || draftPersistenceFailed }
+    var hasUnsavedDrafts: Bool { draftsSaving || draftPersistenceFailed || attachments.hasUnsavedDrafts }
     var hasUnsavedWorkspaceEdits: Bool { inspector.hasUnsavedEdits }
+    var attachmentTarget: RemoteAttachmentTarget? {
+        guard let environmentID = connection?.environmentID, let thread = selectedThread else { return nil }
+        return .init(environmentID: environmentID, projectID: thread.projectID, threadID: thread.id)
+    }
+    struct AttachmentSelection: Hashable {
+        let environmentID: UUID?, threadID: UUID?, sequence: Int64?
+        let generation: Int
+        let connected: Bool, supported: Bool
+    }
+    var attachmentSelection: AttachmentSelection {
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: snapshot?.sequence,
+            generation: generation, connected: isConnected, supported: descriptor?.capabilities.supportsRemoteAttachments == true)
+    }
+    func updateAttachments() async {
+        guard !stopping else { attachments.disconnect(); return }
+        await attachments.select(target: attachmentTarget, client: isConnected ? client : nil,
+            hostDraftAttachments: selectedThread?.draftAttachments ?? [], supported: descriptor?.capabilities.supportsRemoteAttachments == true)
+    }
+    var canSubmit: Bool {
+        canWrite && !attachments.isLoading && !attachments.isImporting && !attachments.isUploading &&
+            (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachments.hasAttachments || selectedThread?.draftAttachments.isEmpty == false)
+    }
     struct InspectorSelection: Hashable {
         let environmentID: UUID?, threadID: UUID?, path: Data
         let generation: Int
@@ -174,7 +199,7 @@ final class RemoteWorkspaceStore {
     }
 
     func connect(_ selected: RemoteWorkspaceConnection) async {
-        guard !isWorking, !stopping else { return }
+        guard !isWorking, !isPreparingSubmission, !stopping else { return }
         isWorking = true; defer { isWorking = false }
         generation += 1; let owner = generation
         await disconnectTransport(owner: owner)
@@ -257,6 +282,7 @@ final class RemoteWorkspaceStore {
         inspector.disconnect()
         terminals.disconnect()
         worktrees.disconnect()
+        attachments.disconnect()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -269,9 +295,10 @@ final class RemoteWorkspaceStore {
         await inspector.shutdown()
         await terminals.shutdown()
         await worktrees.shutdown()
+        await attachments.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown() }
+    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -291,7 +318,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
-        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection() }
+        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection() }
         selectedThreadID = id
         if let thread = selectedThread { selectedProjectID = thread.projectID }
         updateWorktrees()
@@ -342,6 +369,9 @@ final class RemoteWorkspaceStore {
     @discardableResult
     func perform(_ command: RemoteEnvironmentCommand) async -> Bool {
         guard canWrite, let client, let connection, let environmentID = connection.environmentID else { return false }
+        guard attachmentSubmissionStillAllowed(command) else {
+            errorMessage = "The selected conversation or its attachments changed. Review the draft before sending again."; return false
+        }
         let changingWorkspace: RemoteWorkspaceTarget?
         switch command {
         case .prepareWorktree(let target, _, _, _, _), .retryWorktree(let target, _):
@@ -357,6 +387,9 @@ final class RemoteWorkspaceStore {
         let owner = generation
         await drainDrafts(owner: owner)
         guard generation == owner, !stopping, !draftPersistenceFailed else { return false }
+        guard attachmentSubmissionStillAllowed(command) else {
+            errorMessage = "The selected conversation or its attachments changed. Your draft was kept."; return false
+        }
         if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
             errorMessage = "The workspace or its retained edits changed. Review them before choosing the checkout again."
             return false
@@ -367,6 +400,12 @@ final class RemoteWorkspaceStore {
             try await pendingStore.save(request)
             guard generation == owner, !stopping else { return false }
             pending = request
+            if !attachmentSubmissionStillAllowed(command) {
+                try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
+                pending = nil
+                errorMessage = "The selected conversation or its attachments changed. Your draft was kept."
+                return false
+            }
             if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
                 // This identity has never reached the transport. Remove only
                 // its exact local record; preserve every draft and editor.
@@ -387,6 +426,14 @@ final class RemoteWorkspaceStore {
             if pending != nil { notice = "The request's result is unconfirmed. It will not be sent again automatically." }
             return false
         }
+    }
+
+    private func attachmentSubmissionStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        guard case .submitWithAttachments(let target, _, let configuration, let expected, _) = command else { return true }
+        guard isConnected, !stopping, attachmentTarget == target, let thread = selectedThread,
+              ProviderConfiguration(thread: thread) == configuration else { return false }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(thread.draftAttachments)) == (try? encoder.encode(expected))
     }
 
     func checkPendingResult() async {
@@ -414,7 +461,19 @@ final class RemoteWorkspaceStore {
 
     private func finish(_ request: RemoteEnvironmentPendingCommand, receipt: WorkspaceCommandReceipt) async throws {
         guard receipt.commandID == request.id else { throw CoincideError("The remote receipt belongs to a different request.") }
-        if receipt.rejection == nil, case .submit(let threadID, let text, _) = request.command,
+        let submitted: (UUID, String)?
+        switch request.command {
+        case .submit(let id, let text, _): submitted = (id, text)
+        case .submitWithAttachments(let target, let text, _, _, let uploaded):
+            submitted = (target.threadID, text)
+            if receipt.rejection == nil {
+                guard await attachments.acknowledge(target: target, uploadedAttachmentIDs: uploaded) else {
+                    throw CoincideError("The accepted request's attachment draft could not be saved. Check its result again after saving is available.")
+                }
+            }
+        default: submitted = nil
+        }
+        if receipt.rejection == nil, let (threadID, text) = submitted,
            let currentDraft = drafts[threadID], currentDraft.utf8.elementsEqual(text.utf8) {
             drafts[threadID] = ""; saveDrafts(); await drainDrafts(owner: generation)
             guard !draftPersistenceFailed else { throw CoincideError("The accepted request's updated draft could not be saved.") }
@@ -425,10 +484,26 @@ final class RemoteWorkspaceStore {
     }
 
     func submit() async {
-        guard let thread = selectedThread, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard canSubmit, let thread = selectedThread, let target = attachmentTarget else { return }
         // Materialize a server-provided draft locally before recording the send.
         let text = draft; setDraft(text, threadID: thread.id)
-        _ = await perform(.submit(threadID: thread.id, text: text, expectedConfiguration: .init(thread: thread)))
+        let configuration = ProviderConfiguration(thread: thread), owner = generation
+        if descriptor?.capabilities.supportsRemoteAttachments == true {
+            isPreparingSubmission = true
+            defer { isPreparingSubmission = false }
+            await updateAttachments()
+            guard let prepared = await attachments.prepareSubmission(), generation == owner, !stopping,
+                  attachmentTarget == target, prepared.target == target,
+                  selectedThread.map({ ProviderConfiguration(thread: $0) == configuration }) == true else { return }
+            isPreparingSubmission = false
+            _ = await perform(.submitWithAttachments(target: target, text: text, expectedConfiguration: configuration,
+                expectedDraftAttachments: prepared.expectedDraftAttachments, uploadedAttachmentIDs: prepared.uploadedAttachmentIDs))
+        } else {
+            guard thread.draftAttachments.isEmpty, !attachments.hasAttachments else {
+                errorMessage = "Update the remote helper before sending this conversation's attachments."; return
+            }
+            _ = await perform(.submit(threadID: thread.id, text: text, expectedConfiguration: configuration))
+        }
     }
 
     func stop(_ thread: CodingThread) async {
@@ -450,7 +525,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); notice = message.localizedDescription
+            isConnected = false; inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -467,6 +542,7 @@ final class RemoteWorkspaceStore {
         let nextSelection = inspectorSelection
         if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path {
             inspector.clearSelection(); terminals.clearSelection()
+            if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID { attachments.clearSelection() }
         }
         updateWorktrees()
     }
