@@ -34,20 +34,23 @@ public enum CodeHighlight {
     }
 
     /// SwiftUI text colored for an explicit appearance, so offscreen and per-view color
-    /// schemes resolve the same palette.
+    /// schemes resolve the same palette. Colors are applied over ranges of one string
+    /// instead of concatenating a piece per token.
     public static func attributedString(_ source: String, language: String, dark: Bool, increasedContrast: Bool = false) -> AttributedString {
         let found = tokens(source, language: language)
-        guard !found.isEmpty else { return AttributedString(source) }
-        let units = Array(source.utf16)
-        var result = AttributedString(), cursor = 0
-        func piece(_ range: Range<Int>) -> String { String(decoding: units[range], as: UTF16.self) }
+        var result = AttributedString(source)
+        guard !found.isEmpty else { return result }
+        let utf16 = source.utf16
+        var colors: [CodeTokenKind: Color] = [:], cursor = utf16.startIndex, offset = 0
         for token in found {
-            if token.range.lowerBound > cursor { result += AttributedString(piece(cursor..<token.range.lowerBound)) }
-            var part = AttributedString(piece(token.range))
-            part.foregroundColor = Color(nsColor: CodeTheme.color(token.kind, dark: dark, increasedContrast: increasedContrast))
-            result += part; cursor = token.range.upperBound
+            guard let lower = utf16.index(cursor, offsetBy: token.range.lowerBound - offset, limitedBy: utf16.endIndex),
+                  let upper = utf16.index(lower, offsetBy: token.range.count, limitedBy: utf16.endIndex) else { break }
+            cursor = upper; offset = token.range.upperBound
+            guard let start = AttributedString.Index(lower, within: result), let end = AttributedString.Index(upper, within: result), start < end else { continue }
+            let color = colors[token.kind] ?? Color(nsColor: CodeTheme.color(token.kind, dark: dark, increasedContrast: increasedContrast))
+            colors[token.kind] = color
+            result[start..<end].foregroundColor = color
         }
-        if cursor < units.count { result += AttributedString(piece(cursor..<units.count)) }
         return result
     }
 }

@@ -1,17 +1,21 @@
 import AppKit
 import SwiftUI
 
+/// Highlighted code per appearance. Small blocks highlight on the main actor; larger ones
+/// highlight in the background (debounced while their fence is still open) and only
+/// finished fences are stored, so streaming prefixes do not evict useful entries.
 @MainActor enum CodeHighlightCache {
+    struct Key: Hashable, Sendable { var source: String; var language: String; var dark: Bool; var increasedContrast: Bool }
+    static let synchronousLimit = 8_192
     private final class Entry { let text: AttributedString; init(_ text: AttributedString) { self.text = text } }
     private static let cache: NSCache<NSString, Entry> = {
         let value = NSCache<NSString, Entry>(); value.countLimit = 256; value.totalCostLimit = 8_388_608; return value
     }()
-    static func text(_ source: String, language: String, dark: Bool, increasedContrast: Bool) -> AttributedString {
-        let key = "\(dark)|\(increasedContrast)|\(language)|\(source)" as NSString
-        if let cached = cache.object(forKey: key) { return cached.text }
-        let text = CodeHighlight.attributedString(source, language: language, dark: dark, increasedContrast: increasedContrast)
-        cache.setObject(Entry(text), forKey: key, cost: source.utf16.count * 2)
-        return text
+    private static func name(_ key: Key) -> NSString { "\(key.dark)|\(key.increasedContrast)|\(key.language)|\(key.source)" as NSString }
+    static func cached(_ key: Key) -> AttributedString? { cache.object(forKey: name(key))?.text }
+    static func store(_ key: Key, _ text: AttributedString) { cache.setObject(Entry(text), forKey: name(key), cost: key.source.utf16.count * 2) }
+    static func highlight(_ key: Key) -> AttributedString {
+        CodeHighlight.attributedString(key.source, language: key.language, dark: key.dark, increasedContrast: key.increasedContrast)
     }
 }
 
@@ -38,9 +42,26 @@ struct MarkdownCodeView: View {
     @AppStorage(MarkdownPreferences.wordWrapKey) private var wordWrap = true
     @State private var wrapOverride: Bool?
     @State private var copied = false
+    @State private var background: (key: CodeHighlightCache.Key, text: AttributedString)?
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     private var wrapped: Bool { wrapOverride ?? wordWrap }
+
+    /// Cached or small blocks color immediately. A large block shows its last background
+    /// result plus the new plain tail until the next result arrives.
+    private func highlighted(_ key: CodeHighlightCache.Key) -> AttributedString {
+        if let cached = CodeHighlightCache.cached(key) { return cached }
+        if key.source.utf16.count <= CodeHighlightCache.synchronousLimit {
+            let text = CodeHighlightCache.highlight(key)
+            if closed { CodeHighlightCache.store(key, text) }
+            return text
+        }
+        if let background, background.key.language == key.language, background.key.dark == key.dark, background.key.increasedContrast == key.increasedContrast,
+           key.source.hasPrefix(background.key.source) {
+            return background.text + AttributedString(String(key.source.dropFirst(background.key.source.count)))
+        }
+        return AttributedString(key.source)
+    }
 
     var body: some View {
         let title = CodeFence.title(meta)
@@ -48,7 +69,8 @@ struct MarkdownCodeView: View {
         let command = context.runShell == nil ? nil : CodeFence.runnableCommand(language: language, code: source, closed: closed, streaming: context.isStreaming)
         // The fence's final newline is not a visible line; copying keeps the exact source.
         let shown = source.hasSuffix("\n") ? String(source.dropLast()) : source
-        let highlighted = CodeHighlightCache.text(shown, language: language, dark: scheme == .dark, increasedContrast: contrast == .increased)
+        let key = CodeHighlightCache.Key(source: shown, language: language, dark: scheme == .dark, increasedContrast: contrast == .increased)
+        let highlighted = highlighted(key)
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 if let title {
@@ -87,6 +109,20 @@ struct MarkdownCodeView: View {
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(1.2)); copied = false
+        }
+        .task(id: key) {
+            guard key.source.utf16.count > CodeHighlightCache.synchronousLimit, CodeHighlightCache.cached(key) == nil else { return }
+            if !closed {
+                // A streaming fence changes with every token; highlight once it pauses.
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+            }
+            let text = await Task.detached(priority: .userInitiated) {
+                CodeHighlight.attributedString(key.source, language: key.language, dark: key.dark, increasedContrast: key.increasedContrast)
+            }.value
+            guard !Task.isCancelled else { return }
+            if closed { CodeHighlightCache.store(key, text) }
+            background = (key, text)
         }
     }
 }

@@ -1,8 +1,9 @@
 import Foundation
 
 /// A small, inert HTML subset for agent replies: `<details>/<summary>`, `<br>`, `<kbd>`,
-/// `<sub>/<sup>`, emphasis, code, `<a href>`, `<img alt>`, headings and transparent
-/// containers. Nothing is executed or loaded; any other element keeps the block literal.
+/// `<sub>/<sup>`, emphasis, code, `<a href>`, `<img alt>`, headings, lists, tables,
+/// definition lists and transparent containers. Nothing is executed or loaded; any other
+/// element keeps the block literal.
 enum MarkdownHTML {
     enum Kind: Equatable {
         case text(String)
@@ -21,7 +22,11 @@ enum MarkdownHTML {
     static let containers: Set<String> = ["p", "div", "center", "section", "article", "header", "footer", "figure", "figcaption", "blockquote"]
     static let headings: [String: Int] = ["h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6]
     static let other: Set<String> = ["br", "hr", "img", "a", "pre", "details", "summary", "wbr"]
-    static func isAllowed(_ name: String) -> Bool { inlineStyles[name] != nil || containers.contains(name) || headings[name] != nil || other.contains(name) }
+    static let structure: Set<String> = ["ul", "ol", "li", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col", "dl", "dt", "dd"]
+    static func isAllowed(_ name: String) -> Bool {
+        inlineStyles[name] != nil || containers.contains(name) || headings[name] != nil || other.contains(name) || structure.contains(name)
+    }
+    private static let void: Set<String> = ["br", "hr", "img", "wbr", "col"]
     private static let rawText: Set<String> = ["script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "plaintext", "noscript", "template"]
 
     static func tokenize(_ raw: String) -> (scalars: [Unicode.Scalar], tokens: [Token]) {
@@ -142,33 +147,167 @@ enum MarkdownHTML {
             default: break
             }
         }
-        var builder = InlineBuilder(), result: [MarkdownBlock] = [], heading: Int?, index = 0
-        func flush() {
-            let spans = builder.finish()
-            guard !spans.isEmpty else { return }
-            result.append(heading.map { .heading(level: $0, spans) } ?? .paragraph(spans))
-        }
-        while index < tokens.count {
-            let token = tokens[index]
-            switch token.kind {
-            case .start(let name, _, _) where containers.contains(name), .end(let name) where containers.contains(name): flush()
-            case .start(let name, _, _) where headings[name] != nil: flush(); heading = headings[name]
-            case .end(let name) where headings[name] != nil: flush(); heading = nil
-            case .start("hr", _, _): flush(); result.append(.rule)
-            case .start("pre", _, _):
-                flush()
-                var end = index + 1
-                while end < tokens.count, tokens[end].kind != .end("pre") { end += 1 }
-                let code = tokens[(index + 1)..<end].compactMap { if case .text(let text) = $0.kind { decodeEntities(text) } else { nil } }.joined()
-                result.append(.code(language: "", text: code.hasPrefix("\n") ? String(code.dropFirst()) : code, meta: "", closed: end < tokens.count))
-                index = end
-            case .start("details", _, _), .end("details"), .start("summary", _, _), .end("summary"), .comment: break
-            default: builder.add(token)
+        return Element.tree(tokens).blocks(depth: 0)
+    }
+
+    /// An element tree with HTML's implied end tags for list items, rows, cells and
+    /// paragraphs, so lists and tables map onto native blocks.
+    final class Element {
+        enum Child { case text(String), element(Element) }
+        let name: String
+        let attributes: [String: String]
+        var children: [Child] = []
+        var closed = false
+        init(_ name: String, _ attributes: [String: String]) { self.name = name; self.attributes = attributes }
+
+        static func tree(_ tokens: [Token]) -> Element {
+            let root = Element("#root", [:])
+            var stack = [root]
+            /// Closes the innermost `names` element unless one of `scopes` opened after it.
+            func close(_ names: Set<String>, scopes: Set<String> = []) {
+                guard let index = stack.indices.dropFirst().last(where: { names.contains(stack[$0].name) || scopes.contains(stack[$0].name) }),
+                      names.contains(stack[index].name) else { return }
+                stack[index].closed = true
+                stack.removeSubrange(index...)
             }
-            index += 1
+            for token in tokens {
+                switch token.kind {
+                case .text(let text): stack[stack.count - 1].children.append(.text(text))
+                case .start(let name, let attributes, let selfClosing):
+                    switch name {
+                    case "li": close(["li"], scopes: ["ul", "ol"])
+                    case "dt", "dd": close(["dt", "dd"], scopes: ["dl"])
+                    case "tr": close(["tr"], scopes: ["table", "thead", "tbody", "tfoot"])
+                    case "td", "th": close(["td", "th"], scopes: ["tr", "table"])
+                    case "thead", "tbody", "tfoot": close(["thead", "tbody", "tfoot"], scopes: ["table"])
+                    default: break
+                    }
+                    if !inlineStyles.keys.contains(name), !["a", "img", "br", "wbr", "summary"].contains(name) { close(["p"], scopes: containers.subtracting(["p"]).union(structure)) }
+                    let element = Element(name, attributes)
+                    stack[stack.count - 1].children.append(.element(element))
+                    if !selfClosing, !void.contains(name) { stack.append(element) }
+                case .end(let name): close([name])
+                default: break
+                }
+            }
+            return root
         }
-        flush()
-        return result
+
+        private static func isInline(_ name: String) -> Bool { inlineStyles[name] != nil || ["a", "img", "br", "wbr"].contains(name) }
+
+        func blocks(depth: Int) -> [MarkdownBlock] {
+            guard depth < 32 else { return [] }
+            var builder = InlineBuilder(), result: [MarkdownBlock] = []
+            func flush() {
+                let spans = builder.finish()
+                if !spans.isEmpty { result.append(.paragraph(spans)) }
+            }
+            for child in children {
+                switch child {
+                case .text(let text): builder.add(.init(kind: .text(text), range: 0..<0))
+                case .element(let element) where Self.isInline(element.name): element.inline(&builder, depth: depth + 1)
+                case .element(let element): flush(); result += element.block(depth: depth + 1)
+                }
+            }
+            flush()
+            return result
+        }
+
+        /// Inline content, with any nested block elements flattened into the same run.
+        func inline(_ builder: inout InlineBuilder, depth: Int) {
+            guard depth < 32 else { return }
+            let inline = Self.isInline(name)
+            if inline { builder.add(.init(kind: .start(name, attributes, selfClosing: false), range: 0..<0)) }
+            for child in children {
+                switch child {
+                case .text(let text): builder.add(.init(kind: .text(text), range: 0..<0))
+                case .element(let element): element.inline(&builder, depth: depth + 1)
+                }
+            }
+            if inline { builder.add(.init(kind: .end(name), range: 0..<0)) } else { builder.add(.init(kind: .text(" "), range: 0..<0)) }
+        }
+        func spans(depth: Int) -> [MarkdownSpan] {
+            var builder = InlineBuilder()
+            inline(&builder, depth: depth)
+            return builder.finish()
+        }
+        private func elements(_ names: Set<String>) -> [Element] {
+            children.compactMap { if case .element(let element) = $0, names.contains(element.name) { element } else { nil } }
+        }
+        private func text() -> String {
+            children.map { child in
+                switch child { case .text(let text): decodeEntities(text); case .element(let element): element.name == "br" ? "\n" : element.text() }
+            }.joined()
+        }
+
+        func block(depth: Int) -> [MarkdownBlock] {
+            guard depth < 32 else { return [] }
+            if let level = headings[name] {
+                let spans = spans(depth: depth)
+                return spans.isEmpty ? [] : [.heading(level: level, spans)]
+            }
+            switch name {
+            case "hr": return [.rule]
+            case "pre":
+                let code = text()
+                return [.code(language: "", text: code.hasPrefix("\n") ? String(code.dropFirst()) : code, meta: "", closed: closed)]
+            case "blockquote":
+                let inner = blocks(depth: depth)
+                return inner.isEmpty ? [] : [.quote(inner)]
+            case "ul", "ol":
+                let items = elements(["li"]).map { MarkdownListItem(checked: nil, blocks: $0.blocks(depth: depth)) }
+                guard !items.isEmpty else { return [] }
+                return [.list(start: name == "ol" ? (attributes["start"].flatMap { UInt($0.trimmingCharacters(in: .whitespaces)) } ?? 1) : nil, items: items)]
+            case "dl":
+                return elements(["dt", "dd"]).flatMap { element -> [MarkdownBlock] in
+                    guard element.name == "dt" else { return element.blocks(depth: depth) }
+                    let spans = element.spans(depth: depth).map { span in var span = span; span.style.insert(.strong); return span }
+                    return spans.isEmpty ? [] : [.paragraph(spans)]
+                }
+            case "table":
+                // Rows in document order, with `<thead>` rows first.
+                var rows: [(row: Element, header: Bool)] = []
+                for element in elements(["tr", "thead", "tbody", "tfoot"]) {
+                    rows += element.name == "tr" ? [(element, false)] : element.elements(["tr"]).map { ($0, element.name == "thead") }
+                }
+                rows = rows.filter(\.header) + rows.filter { !$0.header }
+                guard let first = rows.first else { return [] }
+                let headerCells = first.row.elements(["td", "th"])
+                let headers = headerCells.map { $0.spans(depth: depth) }
+                let body = rows.dropFirst().map { $0.row.elements(["td", "th"]).map { $0.spans(depth: depth) } }
+                let alignments: [MarkdownBlock.ColumnAlignment] = headerCells.map { cell in
+                    switch cell.attributes["align"]?.lowercased() { case "center": .center; case "right": .right; default: .left }
+                }
+                let caption = elements(["caption"]).first.map { $0.spans(depth: depth) } ?? []
+                let width = max(headers.count, body.map(\.count).max() ?? 0)
+                guard width > 0 else { return [] }
+                let padded = headers + Array(repeating: [], count: width - headers.count)
+                return (caption.isEmpty ? [] : [.paragraph(caption)])
+                    + [.table(headers: padded, rows: Array(body), alignments: alignments + Array(repeating: .left, count: width - alignments.count))]
+            case "details":
+                let summary = elements(["summary"]).first.map { $0.spans(depth: depth) } ?? []
+                let content = Element("#body", [:])
+                content.children = children.filter { if case .element(let element) = $0 { element.name != "summary" } else { true } }
+                return [.details(summary: summary, open: attributes["open"] != nil, content.blocks(depth: depth))]
+            case "colgroup", "col", "caption": return []
+            default: return blocks(depth: depth)
+            }
+        }
+    }
+
+    /// The point before an outermost `<details>` that stays open at the end of `raw`, when
+    /// other HTML precedes it, so that disclosure can pair with later Markdown blocks.
+    static func splitBeforeUnclosedDetails(_ raw: String) -> (before: String, rest: String)? {
+        let (s, tokens) = tokenize(raw)
+        var depth = 0, opening: Token?
+        for token in tokens {
+            if case .start("details", _, false) = token.kind { if depth == 0 { opening = token }; depth += 1 }
+            if token.kind == .end("details") { depth = max(0, depth - 1) }
+        }
+        guard depth > 0, let opening, opening.range.lowerBound > 0 else { return nil }
+        let before = string(s, 0..<opening.range.lowerBound)
+        guard !before.allSatisfy(\.isWhitespace) else { return nil }
+        return (before, string(s, opening.range.lowerBound..<s.count))
     }
 
     /// Collects inline tokens into styled spans, collapsing HTML whitespace.

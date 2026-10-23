@@ -112,7 +112,8 @@ public enum CodexDirectives {
 
     private static func labelEnd(_ s: [Unicode.Scalar], from start: Int) -> Int? {
         var depth = 0, index = start
-        while index < s.count, s[index] != "\n" {
+        // Bounded, so a line of unclosed labels stays linear.
+        while index < s.count, index - start < 4_096, s[index] != "\n" {
             switch s[index] {
             case "\\": index += 1
             case "[": depth += 1
@@ -128,10 +129,11 @@ public enum CodexDirectives {
     static func attributes(_ s: [Unicode.Scalar], from start: Int) -> (values: [String: String?], end: Int)? {
         guard start < s.count, s[start] == "{" else { return nil }
         var values: [String: String?] = [:], index = start + 1
+        func bounded() -> Bool { index - start < 8_192 }
         func isNameCharacter(_ value: Unicode.Scalar) -> Bool {
             value.properties.isAlphabetic || value.properties.numericType != nil || "-_:.".unicodeScalars.contains(value)
         }
-        while index < s.count {
+        while index < s.count, bounded() {
             while index < s.count, s[index] == " " || s[index] == "\t" { index += 1 }
             guard index < s.count, s[index] != "\n" else { return nil }
             if s[index] == "}" { return (values, index + 1) }
@@ -152,7 +154,7 @@ public enum CodexDirectives {
             if s[index] == "\"" || s[index] == "'" {
                 let quote = s[index]
                 var close = index + 1
-                while close < s.count, s[close] != quote, s[close] != "\n" { close += 1 }
+                while close < s.count, close - start < 8_192, s[close] != quote, s[close] != "\n" { close += 1 }
                 guard close < s.count, s[close] == quote else { return nil }
                 values[key] = String(String.UnicodeScalarView(s[(index + 1)..<close])); index = close + 1
             } else {
@@ -172,7 +174,7 @@ public enum CodexDirectives {
         let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = normalized.components(separatedBy: "\n")
         var transform = MarkdownSourceTransform(math: false, footnotes: false, directives: true)
-        var output = transform.apply(lines, excluded: MarkdownDocument.protectedLines(Document(parsing: normalized, options: [.disableSmartOpts])))
+        var output = transform.apply(lines, document: Document(parsing: normalized, options: MarkdownDocument.parseOptions))
         for index in output.indices {
             guard let decoded = MarkdownSourceTransform.decode(output[index].trimmingCharacters(in: CharacterSet(charactersIn: "`"))), decoded.kind == "A",
                   decoded.index < transform.artifacts.count else { continue }

@@ -86,75 +86,28 @@ public struct MarkdownDocument: Sendable, Equatable {
         let normalized = source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         let lines = normalized.components(separatedBy: "\n")
         let document = Document(parsing: normalized, options: Self.parseOptions)
-        let transforms = MarkdownSourceTransform.mayApply(normalized)
-        guard transforms || normalized.contains("$$") || normalized.contains("\\[") else {
+        guard MarkdownSourceTransform.mayApply(normalized) else {
             blocks = MarkdownBlockBuilder(options: options, nesting: nesting).blocks(document, lines: lines); return
         }
-        var excluded = Self.protectedLines(document)
-        let segments = Self.displayMathSegments(lines, protected: excluded)
-        for case .math(_, let range) in segments { excluded.formUnion(range) }
         var transform = MarkdownSourceTransform(footnotes: options.footnotes)
-        let transformed = transforms ? transform.apply(lines, excluded: excluded) : lines
-        let builder = MarkdownBlockBuilder(options: options, nesting: nesting, formulas: transform.formulas, footnotes: transform.footnoteOrder, artifacts: transform.artifacts)
-        var result: [MarkdownBlock] = []
-        if segments == [.markdown(0..<lines.count)], transformed == lines {
-            result = builder.blocks(document, lines: lines)
-        } else {
-            for segment in segments {
-                switch segment {
-                case .markdown(let range):
-                    let part = Array(transformed[range])
-                    result += builder.blocks(Document(parsing: part.joined(separator: "\n"), options: Self.parseOptions), lines: part)
-                case .math(let tex, _): result.append(.math(tex))
-                }
-            }
+        let transformed = transform.apply(lines, document: document)
+        // Definitions share the message's numbering, so a note referenced only from another
+        // note is still listed. Each label is transformed once, in first-reference order.
+        var notes: [[String]] = []
+        while notes.count < transform.footnoteOrder.count {
+            let text = transform.definitions[transform.footnoteOrder[notes.count]] ?? ""
+            notes.append(transform.apply(text.components(separatedBy: "\n"), document: Document(parsing: text, options: Self.parseOptions), collecting: false))
         }
-        if !transform.footnoteOrder.isEmpty {
-            var nested = options; nested.footnotes = false
-            result.append(.footnotes(transform.footnoteOrder.enumerated().map { index, label in
-                MarkdownFootnote(number: index + 1, label: label, blocks: MarkdownDocument(parsing: transform.definitions[label] ?? "", options: nested, nesting: nesting + 1).blocks)
+        let builder = MarkdownBlockBuilder(options: options, nesting: nesting, formulas: transform.formulas, footnotes: transform.footnoteOrder,
+                                           artifacts: transform.artifacts, separators: true)
+        func parse(_ part: [String]) -> Document { Document(parsing: part.joined(separator: "\n"), options: Self.parseOptions) }
+        var result = transformed == lines ? builder.blocks(document, lines: lines) : builder.blocks(parse(transformed), lines: transformed)
+        if !notes.isEmpty {
+            result.append(.footnotes(notes.enumerated().map { index, part in
+                MarkdownFootnote(number: index + 1, label: transform.footnoteOrder[index], blocks: builder.blocks(parse(part), lines: part))
             }))
         }
         blocks = result
-    }
-
-    /// Lines owned by code and HTML blocks, which source passes never rewrite.
-    static func protectedLines(_ document: Document) -> Set<Int> {
-        var protected = Set<Int>()
-        func protect(_ node: any Markup, depth: Int = 0) {
-            guard depth < 64 else { return }
-            if node is CodeBlock || node is HTMLBlock, let range = node.range {
-                for line in range.lowerBound.line...max(range.lowerBound.line, range.upperBound.line) { protected.insert(line - 1) }
-            } else { for child in node.children { protect(child, depth: depth + 1) } }
-        }
-        protect(document)
-        return protected
-    }
-
-    enum Segment: Equatable { case markdown(Range<Int>), math(String, ClosedRange<Int>) }
-
-    /// Closed whole-line `$$ … $$` and `\[ … \]` formulas outside code and HTML.
-    static func displayMathSegments(_ lines: [String], protected: Set<Int>) -> [Segment] {
-        let trimmed = lines.map { $0.trimmingCharacters(in: .whitespaces) }
-        let dollars = lines.indices.filter { trimmed[$0] == "$$" && !protected.contains($0) }
-        let brackets = lines.indices.filter { trimmed[$0] == "\\]" && !protected.contains($0) }
-        guard !dollars.isEmpty || !brackets.isEmpty else { return [.markdown(0..<lines.count)] }
-        var dollarIndex = 0, bracketIndex = 0
-        var result: [Segment] = [], start = 0, index = 0
-        while index < lines.count {
-            let opening = trimmed[index]
-            guard !protected.contains(index), lines[index].prefix(while: { $0 == " " }).count < 4,
-                  opening == "$$" || opening == "\\[" else { index += 1; continue }
-            while dollarIndex < dollars.count && dollars[dollarIndex] <= index { dollarIndex += 1 }
-            while bracketIndex < brackets.count && brackets[bracketIndex] <= index { bracketIndex += 1 }
-            let end = opening == "$$" ? (dollarIndex < dollars.count ? dollars[dollarIndex] : nil) : (bracketIndex < brackets.count ? brackets[bracketIndex] : nil)
-            guard let end else { index += 1; continue }
-            if index > start { result.append(.markdown(start..<index)) }
-            result.append(.math(lines[(index + 1)..<end].joined(separator: "\n"), index...end))
-            index = end + 1; start = index
-        }
-        if start < lines.count || result.isEmpty { result.append(.markdown(start..<lines.count)) }
-        return result
     }
 }
 
@@ -165,15 +118,17 @@ final class MarkdownBlockBuilder {
     let formulas: [MarkdownFormula]
     let footnotes: [String]
     let artifacts: [CodexArtifactTemplate]
+    /// Whether the source passes ran, so sentinel and separator scalars are mapped back.
+    let separators: Bool
     private var lines: [String] = []
 
-    init(options: MarkdownParseOptions, nesting: Int, formulas: [MarkdownFormula] = [], footnotes: [String] = [], artifacts: [CodexArtifactTemplate] = []) {
-        self.options = options; self.nesting = nesting; self.formulas = formulas; self.footnotes = footnotes; self.artifacts = artifacts
+    init(options: MarkdownParseOptions, nesting: Int, formulas: [MarkdownFormula] = [], footnotes: [String] = [], artifacts: [CodexArtifactTemplate] = [], separators: Bool = false) {
+        self.options = options; self.nesting = nesting; self.formulas = formulas; self.footnotes = footnotes; self.artifacts = artifacts; self.separators = separators
     }
 
     func blocks(_ document: Document, lines: [String]) -> [MarkdownBlock] {
         self.lines = lines
-        return blocks(Array(document.children), depth: 0)
+        return blocks(Array(document.children).map { .node($0) }, depth: 0)
     }
 
     private func nestedBlocks(_ markdown: String) -> [MarkdownBlock] {
@@ -182,29 +137,42 @@ final class MarkdownBlockBuilder {
         return MarkdownDocument(parsing: markdown, options: nested, nesting: nesting + 1).blocks
     }
 
-    /// Sibling blocks, pairing an opening `<details>` HTML block with its closing block.
-    private func blocks(_ nodes: [any Markup], depth: Int) -> [MarkdownBlock] {
-        var result: [MarkdownBlock] = [], index = 0
-        while index < nodes.count {
-            guard options.rawHTML, depth < 64, let html = nodes[index] as? HTMLBlock, let opening = MarkdownHTML.detailsOpening(html.rawHTML) else {
-                result += block(nodes[index], depth: depth); index += 1; continue
+    /// A sibling block, or the rest of an HTML block after a `</details>` closed inside it.
+    private enum Item { case node(any Markup), html(String) }
+    private func blocks(_ nodes: [any Markup], depth: Int) -> [MarkdownBlock] { blocks(nodes.map { .node($0) }, depth: depth) }
+
+    /// Sibling blocks, pairing an opening `<details>` HTML block with its closing block. The
+    /// HTML left after a closing tag goes back through the loop, so consecutive disclosures
+    /// in one HTML block pair too.
+    private func blocks(_ siblings: [Item], depth: Int) -> [MarkdownBlock] {
+        var items = siblings, result: [MarkdownBlock] = [], index = 0
+        func raw(_ item: Item) -> String? {
+            switch item { case .html(let raw): raw; case .node(let node): (node as? HTMLBlock).map { restore($0.rawHTML) } }
+        }
+        while index < items.count {
+            guard options.rawHTML, depth < 64, let html = raw(items[index]) else {
+                if case .node(let node) = items[index] { result += block(node, depth: depth) } else if let html = raw(items[index]) { result += htmlBlocks(html) }
+                index += 1; continue
+            }
+            guard let opening = MarkdownHTML.detailsOpening(html) else {
+                if let split = MarkdownHTML.splitBeforeUnclosedDetails(html) { result += htmlBlocks(split.before); items[index] = .html(split.rest); continue }
+                result += htmlBlocks(html); index += 1; continue
             }
             if let trailing = opening.trailing {
                 result.append(.details(summary: opening.summary, open: opening.open, nestedBlocks(opening.body)))
-                if !trailing.allSatisfy(\.isWhitespace) { result += htmlBlocks(trailing) }
-                index += 1; continue
+                if trailing.allSatisfy(\.isWhitespace) { index += 1 } else { items[index] = .html(trailing) }
+                continue
             }
             // Unclosed details extend to the end of their container, as an HTML parser would.
             var depthCount = 1, end = index + 1, split: (before: String, after: String)?
-            while end < nodes.count {
-                if let closing = nodes[end] as? HTMLBlock, let found = MarkdownHTML.detailsClose(closing.rawHTML, depth: &depthCount) { split = found; break }
+            while end < items.count {
+                if let closing = raw(items[end]), let found = MarkdownHTML.detailsClose(closing, depth: &depthCount) { split = found; break }
                 end += 1
             }
-            var content = nestedBlocks(opening.body) + blocks(Array(nodes[(index + 1)..<min(end, nodes.count)]), depth: depth + 1)
+            var content = nestedBlocks(opening.body) + blocks(Array(items[(index + 1)..<min(end, items.count)]), depth: depth + 1)
             if let split { content += nestedBlocks(split.before) }
             result.append(.details(summary: opening.summary, open: opening.open, content))
-            if let split, !split.after.allSatisfy(\.isWhitespace) { result += htmlBlocks(split.after) }
-            index = end + 1
+            if let split, !split.after.allSatisfy(\.isWhitespace) { items[end] = .html(split.after); index = end } else { index = end + 1 }
         }
         return result
     }
@@ -225,7 +193,8 @@ final class MarkdownBlockBuilder {
             let meta = info.dropFirst(language.count).trimmingCharacters(in: .whitespaces)
             let closed = fenced(code) ? closedFence(code) : true
             if language.lowercased() == "math", closed { return [.math(code.code)] }
-            return [.code(language: language, text: code.code, meta: meta, closed: closed)]
+            // Removed footnote definitions can turn a later line into code or HTML on the second parse.
+            return [.code(language: language, text: restore(code.code), meta: meta, closed: closed)]
         case let quote as BlockQuote: return [quoteBlock(Array(quote.children), depth: depth)]
         case let list as OrderedList: return [.list(start: list.startIndex, items: items(list, depth: depth))]
         case let list as UnorderedList: return [.list(start: nil, items: items(list, depth: depth))]
@@ -237,7 +206,7 @@ final class MarkdownBlockBuilder {
             }
             return [.table(headers: headers, rows: rows, alignments: alignments)]
         case is ThematicBreak: return [.rule]
-        case let html as HTMLBlock: return htmlBlocks(html.rawHTML)
+        case let html as HTMLBlock: return htmlBlocks(restore(html.rawHTML))
         default:
             let children = blocks(Array(node.children), depth: depth + 1)
             return children.isEmpty ? [.literal(node.format())] : children
@@ -258,12 +227,13 @@ final class MarkdownBlockBuilder {
         return .alert(kind, first + blocks(Array(children.dropFirst()), depth: depth + 1))
     }
 
-    /// A paragraph, split around artifact-template cards; a lone display formula becomes a block.
+    /// A paragraph, split around artifact-template cards and display math blocks; a lone
+    /// display formula becomes a block too.
     private func paragraphBlocks(_ inlines: [any Markup]) -> [MarkdownBlock] {
         var result: [MarkdownBlock] = [], group: [any Markup] = []
         func flush() {
-            while group.first is SoftBreak || group.first is LineBreak { group.removeFirst() }
-            while group.last is SoftBreak || group.last is LineBreak { group.removeLast() }
+            while group.first is SoftBreak || group.first is LineBreak || isSeparator(group.first) { group.removeFirst() }
+            while group.last is SoftBreak || group.last is LineBreak || isSeparator(group.last) { group.removeLast() }
             defer { group = [] }
             let parts = spans(group)
             guard !parts.isEmpty else { return }
@@ -272,25 +242,78 @@ final class MarkdownBlockBuilder {
             result.append(.paragraph(parts))
         }
         for node in inlines {
-            if let code = node as? InlineCode, let (kind, index) = MarkdownSourceTransform.decode(code.code), kind == "A", index < artifacts.count {
-                flush(); result.append(.artifactTemplate(artifacts[index])); continue
+            if let code = node as? InlineCode, let (kind, index) = MarkdownSourceTransform.decode(code.code) {
+                if kind == "A", index < artifacts.count { flush(); result.append(.artifactTemplate(artifacts[index])); continue }
+                if kind == "D", index < formulas.count { flush(); result.append(.math(formulas[index].tex)); continue }
             }
             group.append(node)
         }
         flush()
         return result
     }
+    /// Text where cmark paired a sentinel's backticks differently than the source pass
+    /// expected (raw HTML or code spans the pass could not see): each sentinel goes back to
+    /// its authored source, with its own backticks, and separators are dropped.
+    private func restore(_ text: String) -> String {
+        let marks: ClosedRange<UInt32> = 0xE000...0xE002
+        guard separators, text.unicodeScalars.contains(where: { marks.contains($0.value) }) else { return text }
+        let scalars = Array(text.unicodeScalars)
+        var result = String.UnicodeScalarView(), index = 0
+        while index < scalars.count {
+            let scalar = scalars[index]
+            if scalar == MarkdownSourceTransform.open, index + 1 < scalars.count, "AMFD".unicodeScalars.contains(scalars[index + 1]) {
+                var end = index + 2, number = 0
+                while end < scalars.count, end - index < 12, scalars[end].isASCII, let digit = Int(String(scalars[end])) { number = number * 10 + digit; end += 1 }
+                var close = end
+                while close < scalars.count, scalars[close] == MarkdownSourceTransform.separator || scalars[close] == ">" || scalars[close].properties.isWhitespace { close += 1 }
+                if close < scalars.count, scalars[close] == MarkdownSourceTransform.close { end = close + 1 }
+                if end > index + 2, let source = authored(Character(scalars[index + 1]), number) {
+                    if result.last == "`" { result.removeLast() }
+                    result.append(contentsOf: source.unicodeScalars)
+                    index = end < scalars.count && scalars[end] == "`" ? end + 1 : end; continue
+                }
+            }
+            if !marks.contains(scalar.value) { result.append(scalar) }
+            index += 1
+        }
+        return String(result)
+    }
+    private func authored(_ kind: Character, _ index: Int) -> String? {
+        switch kind {
+        case "M", "D": index < formulas.count ? formulas[index].source : nil
+        case "F": index < footnotes.count ? "[^\(footnotes[index])]" : nil
+        case "A": index < artifacts.count ? artifacts[index].displayName : nil
+        default: nil
+        }
+    }
+    private func isSeparator(_ node: (any Markup)?) -> Bool {
+        guard separators, let text = node as? Markdown.Text else { return false }
+        return text.string.unicodeScalars.allSatisfy { $0 == MarkdownSourceTransform.separator || $0.properties.isWhitespace }
+    }
 
+    /// Fences start at the block's column (UTF-8 bytes), after any list marker on that line.
+    /// An indented code block starts at its own first line, so that line is its content.
     private func fenced(_ code: CodeBlock) -> Bool {
-        guard let range = code.range, range.lowerBound.line > 0, range.lowerBound.line <= lines.count else { return false }
-        let opening = lines[range.lowerBound.line - 1].drop { $0 == " " || $0 == ">" || $0 == "\t" }
-        return opening.hasPrefix("```") || opening.hasPrefix("~~~")
+        guard let opening = openingLine(code) else { return false }
+        let scalars = Array(opening.unicodeScalars), start = MarkdownSourceTransform.container(scalars, lists: true).end
+        let rest = scalars[start...]
+        guard rest.starts(with: "```".unicodeScalars) || rest.starts(with: "~~~".unicodeScalars) else { return false }
+        let first = code.code.split(separator: "\n", omittingEmptySubsequences: false).first ?? ""
+        func trimmed(_ text: Substring) -> Substring { text.prefix(text.count - text.reversed().prefix { $0 == " " || $0 == "\t" }.count) }
+        return code.code.isEmpty || trimmed(first) != trimmed(opening)
+    }
+    private func openingLine(_ code: CodeBlock) -> Substring? {
+        guard let range = code.range, range.lowerBound.line > 0, range.lowerBound.line <= lines.count else { return nil }
+        let line = lines[range.lowerBound.line - 1], utf8 = line.utf8
+        let offset = min(utf8.count, max(0, range.lowerBound.column - 1))
+        guard let start = utf8.index(utf8.startIndex, offsetBy: offset, limitedBy: utf8.endIndex), let index = start.samePosition(in: line) else { return Substring(line) }
+        return line[index...]
     }
 
     private func closedFence(_ code: CodeBlock) -> Bool {
         guard let range = code.range, range.upperBound.line > range.lowerBound.line,
-              range.lowerBound.line > 0, range.upperBound.line <= lines.count else { return false }
-        let opening = lines[range.lowerBound.line - 1], closing = lines[range.upperBound.line - 1]
+              range.lowerBound.line > 0, range.upperBound.line <= lines.count, let opening = openingLine(code) else { return false }
+        let closing = lines[range.upperBound.line - 1]
         guard let marker = opening.firstIndex(where: { $0 == "`" || $0 == "~" }) else { return false }
         let character = opening[marker], count = opening[marker...].prefix(while: { $0 == character }).count
         let tail = closing.trimmingCharacters(in: CharacterSet(charactersIn: " >\t"))
@@ -338,7 +361,9 @@ final class MarkdownBlockBuilder {
             text = ""
         }
         for (index, node) in nodes.enumerated() {
-            if let value = node as? Markdown.Text { text += value.string; continue }
+            if let value = node as? Markdown.Text {
+                text += restore(value.string); continue
+            }
             flush()
             if let kind = tags[index] {
                 switch kind {
@@ -368,22 +393,23 @@ final class MarkdownBlockBuilder {
         switch node {
         case let code as InlineCode:
             if let (kind, index) = MarkdownSourceTransform.decode(code.code) {
-                if kind == "M", index < formulas.count {
+                if kind == "M" || kind == "D", index < formulas.count {
                     let formula = formulas[index]
                     return [.init(text: formula.tex, style: style.union(formula.display ? .displayMath : .inlineMath), destination: destination, source: formula.source)]
                 }
                 if kind == "F", index < footnotes.count { return [.init(text: "\(index + 1)", style: style.union(.footnoteReference), source: "[^\(footnotes[index])]")] }
             }
-            return [.init(text: code.code, style: style.union(.code), destination: destination)]
+            return [.init(text: restore(code.code), style: style.union(.code), destination: destination)]
         case is Strong: style.insert(.strong)
         case is Emphasis: style.insert(.emphasis)
         case is Strikethrough: style.insert(.strike)
-        case let link as Markdown.Link: destination = link.destination
+        case let link as Markdown.Link: destination = link.destination.map(restore)
         case let image as Markdown.Image:
-            let alt = image.plainText.isEmpty ? "Image" : "Image: \(image.plainText)"
-            return [.init(text: alt, style: style, destination: image.source)]
+            // Formulas and footnote references in alt text keep their authored source.
+            let text = spans(Array(image.children), depth: depth).map { $0.source ?? $0.text }.joined()
+            return [.init(text: text.isEmpty ? "Image" : "Image: \(text)", style: style, destination: image.source.map(restore))]
         case is SoftBreak, is LineBreak: return [.init(text: "\n", style: style)]
-        case let html as InlineHTML: return [.init(text: html.rawHTML, style: style, destination: destination)]
+        case let html as InlineHTML: return [.init(text: restore(html.rawHTML), style: style, destination: destination)]
         default: break
         }
         return spans(Array(node.children), style: style, destination: destination, depth: depth)
