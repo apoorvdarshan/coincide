@@ -2580,7 +2580,8 @@ public actor WorkspaceEngine {
             }
         }
         guard ownsWorktree(threadID: threadID, attemptID: state.id, incarnation: incarnation) else { throw CancellationError() }
-        let request = GitWorktreeRequest(sourcePath: state.request.sourcePath, destinationRoot: worktreesRoot.path, selection: state.request.selection, submodules: state.request.submodules)
+        let request = GitWorktreeRequest(sourcePath: state.request.sourcePath, destinationRoot: worktreesRoot.path, selection: state.request.selection, submodules: state.request.submodules,
+            expectedSourceIdentity: state.request.expectedSourceIdentity)
         let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation, reviewSetup: state.setup != nil, claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true)), piRuntimeConfiguration: try thread.piConfiguration?.runtime?.replacingWorkspace(request.destinationPath, physicalPath: PiRuntimeConfiguration.physical(request.destinationPath, allowMissing: true))))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
@@ -2629,7 +2630,9 @@ public actor WorkspaceEngine {
                         try AppMCPAdmission.validate(authority: authority, snapshot: base.snapshot, commands: commands)
                         admissionCommands = commands
                     } else if case .remoteEnvironment(let request, let preparation) = envelope.command {
-                        admissionCommands = [.client(try RemoteEnvironmentAdmission.action(request, preparation: preparation, snapshot: base.snapshot))]
+                        if case .worktree(let captured) = preparation,
+                           threadIncarnations[captured.threadID] != captured.incarnation { throw RemoteEnvironmentAdmission.stale() }
+                        admissionCommands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: base.snapshot)
                     } else { admissionCommands = [envelope.command] }
                     for command in admissionCommands {
                         try validateCodexDefaultCommand(command, snapshot: base.snapshot)
@@ -4531,6 +4534,63 @@ extension WorkspaceEngine {
 
 
 extension WorkspaceEngine {
+    /// Capture the same native intent/recovery proof used by local preparation,
+    /// without committing under a generated command ID. The external UUID is
+    /// committed once, after the final snapshot and incarnation guards.
+    func prepareRemoteWorktree(_ command: RemoteEnvironmentCommand, expectedSourceIdentity: GitWorktreeNodeIdentity? = nil) async throws -> RemoteEnvironmentPreparation {
+        _ = try await load()
+        let target: RemoteWorkspaceTarget, attempt: UUID?
+        switch command {
+        case .prepareWorktree(let value, _, _, _, _): target = value; attempt = nil
+        case .retryWorktree(let value, let id), .inspectWorktree(let value, let id): target = value; attempt = id
+        default: return .none
+        }
+        if await waitForRemovalCommit(threadID: target.threadID) { throw CancellationError() }
+        try Task.checkCancellation()
+        let thread = try RemoteEnvironmentAdmission.worktreeTarget(target, environmentID: target.environmentID, snapshot: revision.snapshot)
+        guard !stoppingEffects, let incarnation = threadIncarnations[thread.id] else { throw RemoteEnvironmentAdmission.stale() }
+        if let setup = thread.workspacePreparation?.setup, scriptRuntimes[setup.id] != nil || scriptClosures[setup.id] != nil { throw RemoteEnvironmentAdmission.stale() }
+        let previous = thread.workspacePreparation
+        if let attempt {
+            guard let state = previous, state.id == attempt, state.canRetry,
+                  state.request.destinationRoot.utf8.elementsEqual(worktreesRoot.path.utf8), state.setup == nil else { throw RemoteEnvironmentAdmission.stale() }
+            if let plan = state.plan {
+                let session = try worktreeFactory(state.request), token = UUID()
+                let task = Task { try await session.inspectCompletion(plan) }
+                worktreeInspections[token] = .init(threadID: thread.id, projectID: thread.projectID, task: task)
+                defer { worktreeInspections.removeValue(forKey: token) }
+                let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+                if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
+                guard !task.isCancelled, ownsWorktree(threadID: thread.id, attemptID: state.id, incarnation: incarnation) else { throw RemoteEnvironmentAdmission.stale() }
+                try Task.checkCancellation()
+                if let result {
+                    try ThreadWorkspacePreparation.validate(result: result, plan: plan)
+                    return .worktree(.init(threadID: thread.id, incarnation: incarnation, expectedWorkspacePath: thread.workspacePath,
+                        expectedAttemptID: state.id, request: nil, result: result, claudeRuntimeConfiguration: nil))
+                }
+            }
+            if case .inspectWorktree = command {
+                return .worktree(.init(threadID: thread.id, incarnation: incarnation, expectedWorkspacePath: thread.workspacePath,
+                    expectedAttemptID: state.id, request: nil, result: nil, claudeRuntimeConfiguration: nil))
+            }
+        }
+        let selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode, source: String
+        if case .prepareWorktree(_, _, let expectedAttempt, let selected, let mode) = command {
+            guard previous?.id == expectedAttempt else { throw RemoteEnvironmentAdmission.stale() }
+            selection = selected; submodules = mode
+            source = previous.flatMap { $0.canRetry ? $0.request.sourcePath : nil } ?? thread.workspacePath
+        } else {
+            guard let state = previous, state.id == attempt else { throw RemoteEnvironmentAdmission.stale() }
+            selection = state.request.selection; submodules = state.request.submodules; source = state.request.sourcePath
+        }
+        let request = GitWorktreeRequest(sourcePath: source, destinationRoot: worktreesRoot.path, selection: selection, submodules: submodules,
+            expectedSourceIdentity: command.inspectsWorktreeCompletion ? previous?.request.expectedSourceIdentity : expectedSourceIdentity)
+        try request.validate()
+        let claude = try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath,
+            physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true))
+        return .worktree(.init(threadID: thread.id, incarnation: incarnation, expectedWorkspacePath: thread.workspacePath,
+            expectedAttemptID: previous?.id, request: request, result: nil, claudeRuntimeConfiguration: claude))
+    }
     func dispatchRemoteEnvironment(_ request: RemoteEnvironmentCommandRequest,
                                    preparation: RemoteEnvironmentPreparation) async throws -> WorkspaceCommandReceipt {
         _ = try await load()

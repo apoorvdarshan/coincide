@@ -6,7 +6,8 @@ saved connections, environment identity confirmation, existing remote projects,
 Codex/Claude conversations, streamed snapshots, questions/approvals, queued input
 and exact-run Stop. The Files/Changes inspector adds remote text editing and
 source control. A separate terminal panel opens and controls host PTYs without
-starting a local shell. Full T3 remote parity remains unfinished.
+starting a local shell. Blank conversations can prepare or reuse remote Git
+worktrees. Full T3 remote parity remains unfinished.
 
 The client owns the SSH process and the host it launches. **Disconnecting,
 closing the remote window or quitting stops that host's active work.** Saved
@@ -70,8 +71,7 @@ Controls initialize a repository, stage/unstage paths, commit, create/switch
 branches, fetch, pull clean fast-forward changes and explicitly push one branch.
 Git uses the host's existing noninteractive credentials. It does not prompt for
 new authentication. Branch changes and pulls require saving or discarding dirty
-editor buffers first. Remote worktree management and pull-request actions remain
-unfinished.
+editor buffers first. Pull-request actions and worktree removal remain unfinished.
 
 Each mutation has an exact UUID and payload recorded privately on both sides.
 The host acknowledges durable admission promptly and runs the operation as owned
@@ -86,6 +86,33 @@ The current host journal retains up to 256 operation records or 64 MiB and
 refuses further mutations at capacity. It does not silently delete receipt
 history or replay interrupted operations. Capacity/recovery management remains a
 follow-up; deleting the journal is not a safe retry procedure.
+
+## Remote worktrees
+
+Before a conversation's first message, **Choose Worktree…** can create a branch
+from an explicit local base, check out an existing local branch, or reuse a
+registered checkout. Inventory comes from the host, and new destinations belong
+to its managed worktree directory. Source directory identity and the exact
+conversation configuration/preparation are rechecked before admission. Local
+filesystem paths are never substituted for remote ones.
+
+New checkouts offer None, top-level or recursive submodule initialization.
+Registered reuse preserves existing files and never initializes submodules.
+Messages wait for readiness; the banner shows progress, cancellation and errors.
+**Inspect Result** checks a saved attempt without creating a checkout or starting
+queued input.
+**Retry** uses native ownership evidence or a new destination, preserving earlier
+folders and branches. A failed preparation can also be replaced with a new
+explicit selection after queued messages are cleared. Unconfirmed commands use
+the existing exact-payload receipt lookup and are never replayed automatically.
+
+Save or discard retained edits and close relevant terminal tabs before changing
+the checkout. The host also excludes active file mutations and terminals on the
+source/reuse destination, and prevents new mutations or terminal opens while a
+preparation owns that path. Cancellation and read-only inspection remain
+available. This version does not discover or execute remote project setup
+scripts; those controls, worktree removal, persistent-host recovery and real
+two-Mac acceptance remain separate work.
 
 ## Remote terminals
 
@@ -187,7 +214,7 @@ The reference is T3 Code
 1. Verify a real SSH connection between two Macs, including installed-provider
    execution, interruption, disconnect and reconnect. Controlled local-process
    acceptance does not establish remote network or provider authentication.
-2. Complete remote worktree/PR controls, media files, attachments,
+2. Complete remote worktree setup/removal and PR controls, media files, attachments,
    checkpoints/history and provider setup/authentication; add workspace
    receipt-capacity management and crash recovery for unsaved editor buffers.
    Preserve the current separation between local and remote paths/services.

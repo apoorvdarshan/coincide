@@ -3561,7 +3561,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         let title = "Quit with unsaved file edits?"
         XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", title, title)).element.exists)
-        let warning = "Unsaved file edits will be discarded. Cancel to return to your files and save them before quitting."
+        let warning = "Unsaved file edits and commit messages will be discarded. Cancel to return to your work and save it before quitting. Unconfirmed remote operation records remain available after restart."
         XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", warning, warning)).element.exists)
         XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
         return review

@@ -35,6 +35,7 @@ final class RemoteWorkspaceStore {
     private(set) var draftPersistenceFailed = false
     let inspector: RemoteWorkspaceInspectorStore
     let terminals = RemoteTerminalStore()
+    let worktrees = RemoteWorktreeStore()
     var inspectorVisible = true
     var terminalsVisible = false
     var selectedThreadID: UUID?
@@ -119,6 +120,45 @@ final class RemoteWorkspaceStore {
         // while other threads keep their existing terminal transport and tabs.
         let supported = descriptor?.capabilities.supportsRemoteTerminal == true
         await terminals.select(target: terminalSelection.ready && supported ? target : nil, client: isConnected ? client : nil)
+    }
+    struct WorktreeSelection: Hashable {
+        let environmentID: UUID?, threadID: UUID?, sequence: Int64?
+        let generation: Int
+        let connected: Bool, supported: Bool, canWrite: Bool, canChange: Bool
+    }
+    var canChangeRemoteWorkspace: Bool {
+        guard canWrite,
+              let environmentID = connection?.environmentID, let thread = selectedThread else { return false }
+        let current = RemoteWorkspaceTarget(environmentID: environmentID, projectID: thread.projectID,
+            threadID: thread.id, configuration: .init(thread: thread))
+        return workspaceChangeStillAllowed(current)
+    }
+    private func workspaceChangeStillAllowed(_ current: RemoteWorkspaceTarget) -> Bool {
+        guard isConnected, !stopping, !inspector.hasUnsavedEdits,
+              connection?.environmentID == current.environmentID,
+              let thread = selectedThread, thread.id == current.threadID, thread.projectID == current.projectID,
+              ProviderConfiguration(thread: thread) == current.configuration,
+              thread.workspacePath.utf8.elementsEqual(current.workspacePath.utf8) else { return false }
+        if terminals.hasLiveTerminals(in: current) { return false }
+        if let preparation = thread.workspacePreparation, preparation.canRetry {
+            var source = current.configuration; source.workspacePath = preparation.request.sourcePath
+            if terminals.hasLiveTerminals(in: .init(environmentID: current.environmentID, projectID: thread.projectID,
+                threadID: thread.id, configuration: source)) { return false }
+        }
+        return true
+    }
+    var worktreeSelection: WorktreeSelection {
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: snapshot?.sequence,
+            generation: generation, connected: isConnected, supported: descriptor?.capabilities.supportsRemoteWorktrees == true,
+            canWrite: canWrite, canChange: canChangeRemoteWorkspace)
+    }
+    func updateWorktrees() {
+        worktrees.update(environmentID: connection?.environmentID, thread: selectedThread, client: isConnected ? client : nil,
+            supported: descriptor?.capabilities.supportsRemoteWorktrees == true, canWrite: canWrite,
+            canChangeWorkspace: canChangeRemoteWorkspace, perform: { [weak self] command in
+                guard let self else { return false }
+                return await self.perform(command)
+            })
     }
 
     func load() async {
@@ -216,6 +256,7 @@ final class RemoteWorkspaceStore {
         isConnected = false; needsTrust = false
         inspector.disconnect()
         terminals.disconnect()
+        worktrees.disconnect()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -227,9 +268,10 @@ final class RemoteWorkspaceStore {
         await disconnect()
         await inspector.shutdown()
         await terminals.shutdown()
+        await worktrees.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown() }
+    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -252,6 +294,7 @@ final class RemoteWorkspaceStore {
         if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection() }
         selectedThreadID = id
         if let thread = selectedThread { selectedProjectID = thread.projectID }
+        updateWorktrees()
     }
 
     func setDraft(_ text: String, threadID: UUID) {
@@ -299,17 +342,40 @@ final class RemoteWorkspaceStore {
     @discardableResult
     func perform(_ command: RemoteEnvironmentCommand) async -> Bool {
         guard canWrite, let client, let connection, let environmentID = connection.environmentID else { return false }
+        let changingWorkspace: RemoteWorkspaceTarget?
+        switch command {
+        case .prepareWorktree(let target, _, _, _, _), .retryWorktree(let target, _):
+            changingWorkspace = target
+            guard workspaceChangeStillAllowed(target) else {
+                errorMessage = "Save or discard remote file edits and close this workspace's terminal tabs before changing its checkout."
+                return false
+            }
+        default: changingWorkspace = nil
+        }
         isWorking = true; defer { isWorking = false }
         errorMessage = nil; notice = nil
         let owner = generation
         await drainDrafts(owner: owner)
         guard generation == owner, !stopping, !draftPersistenceFailed else { return false }
+        if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
+            errorMessage = "The workspace or its retained edits changed. Review them before choosing the checkout again."
+            return false
+        }
         let request = RemoteEnvironmentPendingCommand(connectionID: connection.id, environmentID: environmentID,
             id: UUID(), command: command)
         do {
             try await pendingStore.save(request)
             guard generation == owner, !stopping else { return false }
             pending = request
+            if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
+                // This identity has never reached the transport. Remove only
+                // its exact local record; preserve every draft and editor.
+                try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
+                guard generation == owner else { return false }
+                pending = nil
+                errorMessage = "The workspace or its retained edits changed before sending. Review them and choose the checkout again."
+                return false
+            }
             let result = try await client.command(command, id: request.id)
             guard generation == owner else { return false }
             try await finish(request, receipt: result.receipt)
@@ -384,7 +450,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; inspector.disconnect(); terminals.disconnect(); notice = message.localizedDescription
+            isConnected = false; inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -402,5 +468,6 @@ final class RemoteWorkspaceStore {
         if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path {
             inspector.clearSelection(); terminals.clearSelection()
         }
+        updateWorktrees()
     }
 }

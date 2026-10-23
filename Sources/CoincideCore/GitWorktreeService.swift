@@ -32,7 +32,7 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
         try validateSourceURL()
         try request.validate(); try Task.checkCancellation()
         guard canonical(source.path) == canonical(request.sourcePath) else { throw WorktreeValidation.invalid("The worktree request belongs to a different source folder.") }
-        let context = try await context(request.sourcePath), inventory = try await inventory(context)
+        let context = try await context(request.sourcePath, expectedSourceIdentity: request.expectedSourceIdentity), inventory = try await inventory(context)
         switch request.selection {
         case .reuse:
             let checkout = try await verifyCheckout(path: request.destinationPath, context: context, inventory: inventory, branch: nil)
@@ -57,7 +57,7 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
     }
     public func run(_ plan: GitWorktreePlan) async throws -> GitWorktreeResult {
         try validateSession(plan)
-        let context = try await context(plan.sourcePath)
+        let context = try await context(plan.sourcePath, expectedSourceIdentity: plan.sourceIdentity)
         try validate(context, plan: plan)
         return try await GitOperationGate.shared.perform(key: plan.commonDirectoryPath) {
             try await execute(plan, context: context)
@@ -67,13 +67,13 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
     /// exact common-directory path; all normal plan and ownership checks remain.
     func runHoldingOperationGate(_ plan: GitWorktreePlan) async throws -> GitWorktreeResult {
         try validateSession(plan)
-        let context = try await context(plan.sourcePath)
+        let context = try await context(plan.sourcePath, expectedSourceIdentity: plan.sourceIdentity)
         try validate(context, plan: plan)
         return try await execute(plan, context: context)
     }
     public func inspectCompletion(_ plan: GitWorktreePlan) async throws -> GitWorktreeResult? {
         try validateSession(plan)
-        let context = try await context(plan.sourcePath)
+        let context = try await context(plan.sourcePath, expectedSourceIdentity: plan.sourceIdentity)
         try validate(context, plan: plan)
         return try await inspect(plan, context: context)
     }
@@ -101,8 +101,9 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
         guard context.source.path == plan.sourcePath, context.common.path == plan.commonDirectoryPath,
               context.admin.path == plan.sourceGitDirectoryPath else { throw worktreeFileFailure("The source repository identity changed after worktree planning.") }
     }
-    private func context(_ sourcePath: String) async throws -> Context {
+    private func context(_ sourcePath: String, expectedSourceIdentity: GitWorktreeNodeIdentity? = nil) async throws -> Context {
         let directory = try GitWorktreeDirectory(path: canonical(sourcePath))
+        try directory.validate(expected: expectedSourceIdentity)
         let result = try await command.run(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwdFD: directory.fd)
         guard result.status == 0 else { throw GitWorktreeError(.notRepository, "This source folder is not an available local Git repository.") }
         try directory.validate()

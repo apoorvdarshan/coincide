@@ -215,3 +215,76 @@ func remoteStoreDrainsQueuedDraftsRejectsShutdownEditsAndExposesPreservedPersist
         #expect(try Data(contentsOf: file) == corrupt)
     } catch { await store.shutdown(); throw error }
 }
+
+import Darwin
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func remoteStoreRefusesCapturedWorktreeConfigurationBeforeWireAndKeepsComposerDraft() async throws {
+    let f = try RemoteStoreFixture(); defer { f.remove() }
+    let store = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) })
+    do {
+        await store.load(); await store.connect(f.connection)
+        let thread = try #require(store.selectedThread)
+        store.setDraft("Preserve this unsent worktree draft", threadID: thread.id)
+        var stale = ProviderConfiguration(thread: thread); stale.model += "-previous"
+        let target = RemoteWorkspaceTarget(environmentID: f.connection.environmentID, projectID: thread.projectID,
+            threadID: thread.id, configuration: stale)
+        let accepted = await store.perform(.prepareWorktree(target: target, sourceRootID: UUID(), expectedAttemptID: nil,
+            selection: .createBranch(name: "must-not-run", baseRef: "HEAD"), submodules: .none))
+        #expect(!accepted && store.pending == nil && !store.isWorking)
+        #expect(store.draft == "Preserve this unsent worktree draft")
+        #expect(try f.commands().isEmpty)
+        let savedPending = try await RemoteEnvironmentPendingStore(root: f.root.appendingPathComponent("Pending")).load(connectionID: f.connection.id)
+        #expect(savedPending == nil)
+        await store.shutdown()
+    } catch { await store.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func remoteStoreRechecksRetainedEditsAfterBlockedDraftDrainBeforeSendingWorktreeCommand() async throws {
+    let f = try RemoteStoreFixture(); defer { f.remove() }
+    let store = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) })
+    var lockDescriptor: Int32 = -1
+    var sending: Task<Bool, Never>?
+    func releaseDraftLock() {
+        if lockDescriptor >= 0 { _ = flock(lockDescriptor, LOCK_UN); _ = close(lockDescriptor); lockDescriptor = -1 }
+    }
+    defer { releaseDraftLock() }
+    do {
+        await store.load(); await store.connect(f.connection)
+        let thread = try #require(store.selectedThread)
+        store.setDraft("Establish private draft storage", threadID: thread.id)
+        try await remoteStoreEventually { !store.draftsSaving }
+        let lockFile = f.root.appendingPathComponent("Drafts/.remote-data.lock")
+        lockDescriptor = open(lockFile.path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+        #expect(lockDescriptor >= 0)
+        guard lockDescriptor >= 0, flock(lockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
+            throw CoincideError("The owned draft lock could not be acquired.")
+        }
+        let text = "Keep exact text while checkout admission waits"
+        store.setDraft(text, threadID: thread.id)
+        let target = RemoteWorkspaceTarget(environmentID: f.connection.environmentID, projectID: thread.projectID,
+            threadID: thread.id, configuration: .init(thread: thread))
+        sending = Task { await store.perform(.prepareWorktree(target: target, sourceRootID: UUID(), expectedAttemptID: nil,
+            selection: .createBranch(name: "must-not-run", baseRef: "HEAD"), submodules: .none)) }
+        try await remoteStoreEventually { store.isWorking }
+        // Real retained editor state can change while the root is awaiting its
+        // unrelated draft fsync. It must be rechecked after that await.
+        await store.inspector.select(environmentID: f.connection.environmentID, thread: thread, client: nil, canMutate: false)
+        let model = try #require(store.inspector.selected)
+        model.git.commitMessage = "Newer retained remote Git draft"
+        #expect(store.hasUnsavedWorkspaceEdits && store.draftsSaving)
+        releaseDraftLock()
+        let accepted = await sending?.value
+        #expect(accepted == false && store.pending == nil && !store.isWorking)
+        #expect(store.draft == text && model.git.commitMessage == "Newer retained remote Git draft")
+        #expect(try f.commands().isEmpty)
+        let savedPending = try await RemoteEnvironmentPendingStore(root: f.root.appendingPathComponent("Pending")).load(connectionID: f.connection.id)
+        #expect(savedPending == nil)
+        await store.shutdown()
+        let drafts = try await RemoteEnvironmentDraftStore(root: f.root.appendingPathComponent("Drafts")).load(environmentID: f.connection.environmentID)
+        #expect(drafts[thread.id] == text)
+    } catch {
+        releaseDraftLock(); _ = await sending?.value; await store.shutdown(); throw error
+    }
+}

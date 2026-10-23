@@ -148,6 +148,9 @@ public actor RemoteEnvironmentClient {
     }
     public func command(_ command: RemoteEnvironmentCommand, id: UUID = UUID()) async throws -> RemoteEnvironmentCommandResult {
         let (connection, owned, environment) = try context()
+        if command.isWorktreeCommand, descriptor?.capabilities.supportsRemoteWorktrees != true {
+            throw RemoteEnvironmentClientError(.unsupported)
+        }
         guard !attemptedCommands.contains(id) else { throw RemoteEnvironmentClientError(.commandAlreadyAttempted, commandID: id) }
         guard attemptedCommands.count < 4_096, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests else {
             throw RemoteEnvironmentClientError(.limitExceeded)
@@ -200,6 +203,37 @@ public actor RemoteEnvironmentClient {
         try validateWorkspaceResponse(generation: owned) {
             guard Self.sameWorkspace(result, target), result.rootID != nil,
                   target.rootID == nil || target.rootID == result.rootID else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    public func worktreeCatalog(target: RemoteWorkspaceTarget) async throws -> RemoteWorktreeCatalog {
+        _ = try context()
+        guard descriptor?.capabilities.supportsRemoteWorktrees == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        let owned = generation
+        let result: RemoteWorktreeCatalog = try await workspaceRequest(RemoteEnvironmentProtocol.worktreeCatalogMethod,
+            request: RemoteWorktreeCatalogRequest(target: target), environmentID: target.environmentID)
+        try validateWorkspaceResponse(generation: owned) {
+            guard Self.sameWorkspace(result.target, target), result.target.configuration == target.configuration,
+                  result.target.rootID == target.rootID,
+                  result.branches.count <= 10_000, result.worktrees.count <= 10_000,
+                  Set(result.branches.map { Data($0.ref.utf8) }).count == result.branches.count,
+                  Set(result.worktrees.map { Data($0.path.utf8) }).count == result.worktrees.count else {
+                throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+            try WorktreeValidation.path(result.sourcePath)
+            for branch in result.branches {
+                guard branch.ref.hasPrefix("refs/heads/") else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try WorktreeValidation.branch(branch.name)
+            }
+            for worktree in result.worktrees {
+                try WorktreeValidation.path(worktree.path)
+                guard !worktree.isBare, !worktree.isDetached, worktree.prunableReason == nil,
+                      let branch = worktree.branch, let head = worktree.headCommit,
+                      [40, 64].contains(head.utf8.count), head.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }) else {
+                    throw RemoteEnvironmentClientError(.invalidResponse)
+                }
+                try WorktreeValidation.branch(branch)
+            }
         }
         return result
     }

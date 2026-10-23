@@ -28,6 +28,7 @@ public enum RemoteEnvironmentProtocol {
     public static let terminalResizeMethod = "remoteEnvironment.terminal.resize"
     public static let terminalCloseMethod = "remoteEnvironment.terminal.close"
     public static let terminalListMethod = "remoteEnvironment.terminal.list"
+    public static let worktreeCatalogMethod = "remoteEnvironment.worktree.catalog"
     public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let bytes = try encoder.encode(value)
@@ -59,16 +60,18 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let persistentDaemon: Bool
     public let supportsWorkspaceFilesAndGit: Bool
     public let supportsRemoteTerminal: Bool
+    public let supportsRemoteWorktrees: Bool
     public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
         supportsWorkspaceFilesAndGit = true
         self.supportsRemoteTerminal = supportsRemoteTerminal
+        supportsRemoteWorktrees = true
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -82,6 +85,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         persistentDaemon = try values.decode(Bool.self, forKey: .persistentDaemon)
         supportsWorkspaceFilesAndGit = try values.decodeIfPresent(Bool.self, forKey: .supportsWorkspaceFilesAndGit) ?? false
         supportsRemoteTerminal = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteTerminal) ?? false
+        supportsRemoteWorktrees = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteWorktrees) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
@@ -121,6 +125,10 @@ public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
     case stop(threadID: UUID, runID: UUID, runtimeID: UUID)
     case respond(threadID: UUID, runID: UUID?, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case resumeQueue(threadID: UUID, expectedConfiguration: ProviderConfiguration)
+    case prepareWorktree(target: RemoteWorkspaceTarget, sourceRootID: UUID, expectedAttemptID: UUID?, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode)
+    case retryWorktree(target: RemoteWorkspaceTarget, attemptID: UUID)
+    case cancelWorktree(target: RemoteWorkspaceTarget, attemptID: UUID)
+    case inspectWorktree(target: RemoteWorkspaceTarget, attemptID: UUID)
 }
 public struct RemoteEnvironmentCommandRequest: Codable, Sendable, Equatable {
     public let environmentID: UUID

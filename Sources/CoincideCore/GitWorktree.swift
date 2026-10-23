@@ -12,10 +12,12 @@ public struct GitWorktreeRequest: Codable, Sendable, Equatable {
     public let destinationRoot: String
     public let selection: GitWorktreeSelection
     public let submodules: ProjectWorktreeSubmoduleMode
+    public let expectedSourceIdentity: GitWorktreeNodeIdentity?
     public init(id: UUID = UUID(), sourcePath: String, destinationRoot: String, selection: GitWorktreeSelection,
-                submodules: ProjectWorktreeSubmoduleMode = .none) {
+                submodules: ProjectWorktreeSubmoduleMode = .none, expectedSourceIdentity: GitWorktreeNodeIdentity? = nil) {
         self.id = id; self.sourcePath = sourcePath; self.destinationRoot = destinationRoot; self.selection = selection
         self.submodules = submodules
+        self.expectedSourceIdentity = expectedSourceIdentity
     }
     public var destinationPath: String {
         if case .reuse(let path) = selection { return path }
@@ -23,6 +25,7 @@ public struct GitWorktreeRequest: Codable, Sendable, Equatable {
     }
     public func validate() throws {
         try WorktreeValidation.path(sourcePath); try WorktreeValidation.path(destinationRoot)
+        if let expectedSourceIdentity, expectedSourceIdentity.inode == 0 { throw WorktreeValidation.invalid("The worktree source identity is invalid.") }
         switch selection {
         case .createBranch(let name, let baseRef):
             try WorktreeValidation.branch(name)
@@ -36,12 +39,13 @@ public struct GitWorktreeRequest: Codable, Sendable, Equatable {
             guard submodules == .none else { throw WorktreeValidation.invalid("Registered-worktree reuse does not initialize or change its submodules.") }
         }
     }
-    private enum CodingKeys: String, CodingKey { case id, sourcePath, destinationRoot, selection, submodules }
+    private enum CodingKeys: String, CodingKey { case id, sourcePath, destinationRoot, selection, submodules, expectedSourceIdentity }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(id: try c.decode(UUID.self, forKey: .id), sourcePath: try c.decode(String.self, forKey: .sourcePath),
                   destinationRoot: try c.decode(String.self, forKey: .destinationRoot), selection: try c.decode(GitWorktreeSelection.self, forKey: .selection),
-                  submodules: c.contains(.submodules) ? try c.decode(ProjectWorktreeSubmoduleMode.self, forKey: .submodules) : .none)
+                  submodules: c.contains(.submodules) ? try c.decode(ProjectWorktreeSubmoduleMode.self, forKey: .submodules) : .none,
+                  expectedSourceIdentity: try c.decodeIfPresent(GitWorktreeNodeIdentity.self, forKey: .expectedSourceIdentity))
         try validate()
     }
 }
@@ -115,6 +119,7 @@ public struct GitWorktreePlan: Codable, Sendable, Equatable {
         try WorktreeValidation.path(sourceGitDirectoryPath)
         try WorktreeValidation.branch(branch); try WorktreeValidation.commit(baseCommit)
         guard sourceIdentity.inode != 0, commonDirectoryIdentity.inode != 0, destinationParentIdentity.inode != 0,
+              request.expectedSourceIdentity == nil || request.expectedSourceIdentity == sourceIdentity,
               sourceGitDirectoryIdentity.inode != 0,
               sourceGitDirectoryPath == commonDirectoryPath || sourceGitDirectoryPath.hasPrefix(commonDirectoryPath + "/worktrees/") else { throw WorktreeValidation.invalid("The worktree plan is missing filesystem ownership.") }
         switch request.selection {

@@ -34,6 +34,7 @@ struct RemoteWorkspaceView: View {
     @State private var addingConnection = false
     @State private var addingProject = false
     @State private var addingThread = false
+    @State private var choosingWorktree = false
     @State private var dismissingRequest = false
 
     var body: some View {
@@ -148,11 +149,15 @@ struct RemoteWorkspaceView: View {
         .task { await store.load() }
         .task(id: store.inspectorSelection) { await store.updateInspector() }
         .task(id: store.terminalSelection) { await store.updateTerminals() }
+        .task(id: store.worktreeSelection) { store.updateWorktrees() }
         .onDisappear { Task { await store.disconnect() } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .sheet(isPresented: $addingConnection) { RemoteConnectionSheet(store: store) }
         .sheet(isPresented: $addingProject) { RemoteProjectSheet(store: store) }
         .sheet(isPresented: $addingThread) { RemoteThreadSheet(store: store) }
+        .sheet(isPresented: $choosingWorktree) {
+            RemoteWorktreeSheet(store: store.worktrees, onPrepared: { choosingWorktree = false })
+        }
         .confirmationDialog("Dismiss the unconfirmed request?", isPresented: $dismissingRequest) {
             Button("Keep Draft and Dismiss") { Task { await store.dismissPending() } }
         } message: {
@@ -198,6 +203,19 @@ struct RemoteWorkspaceView: View {
     private func conversation(_ thread: CodingThread) -> some View {
         VStack(spacing: 0) {
             RemoteConversationHeader(store: store, thread: thread)
+            HStack {
+                Button("Choose Worktree…", systemImage: "arrow.triangle.branch") {
+                    store.updateWorktrees()
+                    if store.worktrees.beginSetup() { choosingWorktree = true }
+                }
+                .disabled(!store.worktrees.canChoose)
+                .accessibilityIdentifier("remote-choose-worktree")
+                if store.isConnected && store.descriptor?.capabilities.supportsRemoteWorktrees != true {
+                    Text("Update the remote helper to enable worktrees.").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }.padding(.horizontal, 14).padding(.bottom, 8)
+            RemoteWorktreeBanner(store: store.worktrees)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 24) {

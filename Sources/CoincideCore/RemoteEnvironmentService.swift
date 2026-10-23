@@ -102,12 +102,25 @@ public actor RemoteEnvironmentService {
         } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
     }
     public func command(_ request: RemoteEnvironmentCommandRequest) async throws -> RemoteEnvironmentCommandResult {
+        try require(request.environmentID)
+        _ = try RemoteEnvironmentProtocol.payload(request)
+        let engine = try await workspace()
+        var inspected: RemoteEnvironmentPreparation?
+        if request.command.inspectsWorktreeCompletion {
+            do {
+                if let receipt = try await engine.remoteEnvironmentReceipt(request) { return .init(environmentID: environmentID, receipt: receipt) }
+            } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
+            // Saved-plan inspection can wait for native Git. It owns a bounded
+            // task in Engine, outside the short command/mutation admission lane.
+            do { try validate(request.command); inspected = try await prepare(request.command, engine: engine) }
+            catch is CancellationError { throw CancellationError() }
+            catch { inspected = .refused }
+        }
         try await acquireWorkspaceAdmission()
         defer { releaseWorkspaceAdmission() }
         try Task.checkCancellation()
         try require(request.environmentID)
         _ = try RemoteEnvironmentProtocol.payload(request)
-        let engine = try await workspace()
         do {
             // A durable original receipt wins before native runtime recapture or
             // filesystem preparation, even when the host has since changed.
@@ -116,7 +129,8 @@ public actor RemoteEnvironmentService {
             do {
                 try await workspaceService?.admitConversationCommand(request.command)
                 try validate(request.command)
-                preparation = try await prepare(request.command, engine: engine)
+                if let inspected { preparation = inspected }
+                else { preparation = try await prepare(request.command, engine: engine) }
             } catch is CancellationError { throw CancellationError() }
             catch { preparation = .refused }
             try require(request.environmentID)
@@ -196,6 +210,31 @@ public actor RemoteEnvironmentService {
         try require(target.environmentID)
         return try await (try await terminals()).list(target)
     }
+    public func worktreeCatalog(_ request: RemoteWorktreeCatalogRequest) async throws -> RemoteWorktreeCatalog {
+        try require(request.target.environmentID)
+        let engine = try await workspace(), initial = await engine.current().snapshot
+        let thread = try RemoteEnvironmentAdmission.worktreeTarget(request.target, environmentID: environmentID, snapshot: initial)
+        guard thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, thread.settlement == nil,
+              thread.workspacePreparation?.isRunning != true else { throw RemoteEnvironmentError(.invalidRequest) }
+        let operations = try await workspaceOperations()
+        let source = try await operations.bindWorktreeSource(request.target)
+        let target = request.target
+        let anchor = try WorkspaceFileRoot(root: URL(fileURLWithPath: source.sourcePath))
+        defer { anchor.close() }
+        async let branches = GitService(root: URL(fileURLWithPath: source.sourcePath)).branchDetails()
+        async let inventory = GitWorktreeService(source: URL(fileURLWithPath: source.sourcePath), timeout: .seconds(15)).inventory()
+        let (allBranches, registered) = try await (branches, inventory)
+        guard allBranches.count <= 10_000, registered.worktrees.count <= 10_000 else { throw RemoteEnvironmentError(.limitExceeded) }
+        try Task.checkCancellation(); try anchor.validate()
+        let current = try RemoteEnvironmentAdmission.worktreeTarget(target, environmentID: environmentID, snapshot: await engine.current().snapshot)
+        guard current.workspacePreparation?.id == thread.workspacePreparation?.id, current.messages.isEmpty,
+              !current.isBusy, current.queuedTurns.isEmpty else { throw RemoteEnvironmentError(.invalidRequest) }
+        try await operations.validateWorktreeSource(target, sourceRootID: source.sourceRootID, expectedAttemptID: source.attemptID)
+        let value = RemoteWorktreeCatalog(target: target, sourcePath: source.sourcePath, sourceRootID: source.sourceRootID, attemptID: source.attemptID, branches: allBranches.filter { !$0.isRemote },
+            worktrees: registered.worktrees.filter { !$0.isBare && !$0.isDetached && $0.prunableReason == nil && $0.branch != nil && $0.headCommit != nil })
+        _ = try RemoteEnvironmentProtocol.encode(value)
+        return value
+    }
     private func prepare(_ command: RemoteEnvironmentCommand, engine: WorkspaceEngine) async throws -> RemoteEnvironmentPreparation {
         switch command {
         case .addProject(let id, let path, let title):
@@ -220,6 +259,11 @@ public actor RemoteEnvironmentService {
                 try captured.validate(); thread.codexRuntimeConfiguration = captured
             }
             return .thread(thread)
+        case .prepareWorktree(let target, let sourceRootID, let expectedAttemptID, _, _):
+            let identity = try await (try await workspaceOperations()).validateWorktreeSource(target, sourceRootID: sourceRootID, expectedAttemptID: expectedAttemptID)
+            return try await engine.prepareRemoteWorktree(command, expectedSourceIdentity: identity)
+        case .retryWorktree, .inspectWorktree:
+            return try await engine.prepareRemoteWorktree(command)
         default: return .none
         }
     }
@@ -241,6 +285,13 @@ public actor RemoteEnvironmentService {
             case .model(let value): try text(value, maximum: 512, allowEmpty: true)
             case .permission: break }
         case .submit(_, let value, _): try text(value, maximum: 120_000)
+        case .prepareWorktree(let target, _, _, let selection, let submodules):
+            guard target.environmentID == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
+            try GitWorktreeRequest(sourcePath: target.workspacePath, destinationRoot: dataDirectory.appendingPathComponent("Worktrees").path,
+                selection: selection, submodules: submodules).validate()
+        case .retryWorktree(let target, _), .cancelWorktree(let target, _), .inspectWorktree(let target, _):
+            guard target.environmentID == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
+            try ProviderHistoryValidation.path(target.workspacePath)
         case .stop, .respond, .resumeQueue: break
         }
     }

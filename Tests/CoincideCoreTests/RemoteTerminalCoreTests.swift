@@ -140,6 +140,40 @@ private struct RemoteTerminalCoreFixture {
     } catch { await fixture.close(); throw error }
 }
 
+@Test func remoteWorktreePreparationRefusesLiveTerminalUntilItsOwnedDriverDrains() async throws {
+    let fixture = try await RemoteTerminalCoreFixture.make()
+    do {
+        let opened = try await fixture.service.openTerminal(.init(target: fixture.target))
+        _ = try await fixture.running(opened.reference)
+        let driver = try #require(await fixture.factory.drivers.first)
+        let command = RemoteEnvironmentCommand.prepareWorktree(target: fixture.target,
+            sourceRootID: try #require(fixture.target.rootID), expectedAttemptID: nil,
+            selection: .createBranch(name: "private-worktree", baseRef: "HEAD"), submodules: .none)
+        let refused = RemoteEnvironmentCommandRequest(environmentID: fixture.target.environmentID, command: command)
+        let result = try await fixture.service.command(refused)
+        #expect(result.receipt.rejection != nil)
+        #expect(try await fixture.service.snapshot(.init(environmentID: fixture.target.environmentID))
+            .workspace.threads.first?.workspacePreparation == nil)
+        await driver.holdClose()
+        let closing = Task { try await fixture.service.closeTerminal(opened.reference) }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !(await driver.closeStarted) {
+            guard ContinuousClock.now < deadline else { await driver.releaseClose(); throw CoincideError("The owned terminal did not begin closing.") }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(try await fixture.service.command(.init(environmentID: fixture.target.environmentID, command: command)).receipt.rejection != nil)
+        await driver.releaseClose(); _ = try await closing.value
+        #expect(try await fixture.service.command(refused).receipt == result.receipt)
+        // A new explicit identity is admitted after drain. This fixture is not
+        // a Git repository, so only admission is asserted, never Git success.
+        #expect(try await fixture.service.command(.init(environmentID: fixture.target.environmentID, command: command)).receipt.rejection == nil)
+        await fixture.close()
+    } catch {
+        if let driver = await fixture.factory.drivers.first { await driver.releaseClose() }
+        await fixture.close(); throw error
+    }
+}
+
 @Test func remoteTerminalInputReceiptsRollWithoutRepeatingBytesOrPersistingRawKeystrokes() async throws {
     let fixture = try await RemoteTerminalCoreFixture.make()
     do {

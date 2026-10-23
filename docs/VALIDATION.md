@@ -1,5 +1,59 @@
 # Validation record
 
+## 2026-10-23 — Remote worktree preparation and recovery
+
+- The final complete serial suite passes 1860 of 1873 declarations, with thirteen
+  optional installed/live checks skipped and pinned Pi package acceptance enabled.
+  Core covers 1593 declarations in 407.787 seconds; native view/store 250 in
+  71.724 seconds; terminal seventeen in 10.238 seconds; Markdown thirteen in
+  0.142 seconds. This includes the final seventeen malformed-client cases and
+  the two parent Store race regressions. No production source changes follow.
+- Build-only app packaging, deep strict signature verification and native math
+  resource rendering pass. Packaged app/helper Mach-O UUIDs match the compiled
+  products. Signed helper discovery advertises worktrees, Files/Git and terminals,
+  creates no SQLite workspace and exits on EOF. The installed app is not replaced
+  or launched. The ABI guard checks 986 objects (675 Core, 268 app) with zero weak
+  async default contexts. All 72 supporting Python checks pass.
+- The native GUI runner compiles successfully without launching the app. Its
+  offline CLI envelope/selected-chain/argument checks also pass. Actual hosted
+  worktree interaction is still a separate acceptance gap.
+- Actual native helper, codec and private SQLite/Git fixtures verify new/existing
+  branch worktrees, registered reuse with dirty source preservation, queued
+  readiness, cancel/inspect/retry and explicit reuse after a failed destination,
+  exact receipt recovery after a dropped reply without replay, replaced source
+  rejection, and mutation admission at source and reused destinations. All Git
+  origins and deliberately held hooks remain inside private fixtures. No terminal
+  login shell, installed provider, network or real SSH connection is used.
+- Core checks verify original-command/native-attempt ownership, stale configuration
+  and attempt refusal, inspect-only recovery without queue execution, capability
+  fallback, physical source identity from admission through planning and retry,
+  and live-terminal exclusion until the owned driver drains. Native requests
+  without the new optional source identity still decode for existing journals.
+- Native Store checks cover captured catalog/configuration/attempts, missing
+  destination recovery, exact Unicode path identities, explicit submodule policy,
+  reconnect fencing and exact dispatch. Two parent Store regressions verify no
+  wire command for a stale configuration or edits introduced while the real
+  private draft-store lock holds persistence; all draft bytes remain intact.
+- The malformed catalog peer dynamically chooses the opposite Unicode
+  normalization of the encoded target, so its UTF-8 refusal assertion cannot
+  accidentally test an unchanged Foundation-normalized path. It also verifies
+  identity/ref/path/commit validation and old-helper capability refusal before
+  any write command is transmitted.
+- Hosted UI remains a separate gate. The older Files/Git run 39900202085
+  reproduces the already-fixed remote-form accessibility assertion. Its Claude
+  context-inspection workflow completes the functional checks but then stalls
+  during diagnostic teardown. The attached spindump shows sustained SwiftUI
+  transaction/lazy-stack layout activity on the app main thread; the initiating
+  mutation is not established. No timeout or assertion was weakened for this
+  unresolved issue, and this batch does not claim to fix it. The same older run
+  also exposes one stale exact quit-warning string; that assertion now matches
+  the existing product text about commit drafts and saved remote records. Its
+  title, message, button and workflow checks remain intact.
+
+Remote setup-script execution, removal, real two-Mac/provider authentication and
+hosted worktree interaction remain unverified or unimplemented. These local
+checks do not establish complete T3 Code parity.
+
 ## 2026-10-23 — Remote PTYs and terminal panel
 
 - The complete serial suite passes 1838 of 1851 declarations, with thirteen

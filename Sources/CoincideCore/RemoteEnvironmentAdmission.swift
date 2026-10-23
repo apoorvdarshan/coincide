@@ -6,6 +6,7 @@ enum RemoteEnvironmentPreparation: Codable, Sendable {
     case refused
     case project(WorkspaceProject)
     case thread(CodingThread)
+    case worktree(RemoteWorktreePreparation)
 }
 
 enum RemoteEnvironmentAdmission {
@@ -52,7 +53,60 @@ enum RemoteEnvironmentAdmission {
             guard thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
                   thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw stale() }
             return .respond(threadID: id, requestID: request.id, response: response)
+        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree:
+            throw stale()
         }
+    }
+    static func commands(_ request: RemoteEnvironmentCommandRequest, preparation: RemoteEnvironmentPreparation,
+                         snapshot: WorkspaceSnapshot) throws -> [EngineCommand] {
+        guard request.command.isWorktreeCommand else { return [.client(try action(request, preparation: preparation, snapshot: snapshot))] }
+        if case .refused = preparation { throw stale() }
+        let target: RemoteWorkspaceTarget, expectedAttempt: UUID?
+        switch request.command {
+        case .prepareWorktree(let value, _, let attempt, _, _): target = value; expectedAttempt = attempt
+        case .retryWorktree(let value, let attempt), .cancelWorktree(let value, let attempt), .inspectWorktree(let value, let attempt):
+            target = value; expectedAttempt = attempt
+        default: throw stale()
+        }
+        let thread = try worktreeTarget(target, environmentID: request.environmentID, snapshot: snapshot)
+        if let expectedAttempt { guard thread.workspacePreparation?.id == expectedAttempt else { throw stale() } }
+        if case .cancelWorktree = request.command { return [.client(.cancelWorktreePreparation(thread.id))] }
+        guard case .worktree(let captured) = preparation,
+              captured.threadID == thread.id,
+              captured.expectedWorkspacePath.utf8.elementsEqual(thread.workspacePath.utf8),
+              captured.expectedAttemptID == thread.workspacePreparation?.id else { throw stale() }
+        switch request.command {
+        case .prepareWorktree(_, _, let expectedAttempt, let selection, let submodules):
+            guard expectedAttempt == thread.workspacePreparation?.id, let native = captured.request, native.selection == selection,
+                  native.submodules == submodules else { throw stale() }
+            return [.beginWorktreePreparation(threadID: thread.id, request: native, expectedSourcePath: thread.workspacePath,
+                previousAttemptID: nil, incarnation: captured.incarnation, reviewSetup: false,
+                claudeRuntimeConfiguration: captured.claudeRuntimeConfiguration)]
+        case .retryWorktree, .inspectWorktree:
+            guard let state = thread.workspacePreparation, state.canRetry else { throw stale() }
+            if let result = captured.result {
+                guard let plan = state.plan else { throw stale() }
+                do { try ThreadWorkspacePreparation.validate(result: result, plan: plan) } catch { throw stale() }
+                if case .inspectWorktree = request.command {
+                    return [.worktreeRecovered(threadID: thread.id, attemptID: state.id, incarnation: captured.incarnation, result: result)]
+                }
+                return [.effectResult(.prepareWorktree(threadID: thread.id, plan: plan), .worktreePrepared(result))]
+            }
+            if case .inspectWorktree = request.command { guard captured.request == nil else { throw stale() }; return [] }
+            guard let native = captured.request, native.selection == state.request.selection,
+                  native.submodules == state.request.submodules else { throw stale() }
+            return [.beginWorktreePreparation(threadID: thread.id, request: native, expectedSourcePath: thread.workspacePath,
+                previousAttemptID: state.id, incarnation: captured.incarnation, reviewSetup: false,
+                claudeRuntimeConfiguration: captured.claudeRuntimeConfiguration)]
+        default: throw stale()
+        }
+    }
+    static func worktreeTarget(_ target: RemoteWorkspaceTarget, environmentID: UUID, snapshot: WorkspaceSnapshot) throws -> CodingThread {
+        let thread = try self.target(target.threadID, snapshot: snapshot)
+        guard target.environmentID == environmentID, thread.projectID == target.projectID,
+              target.workspacePath.utf8.elementsEqual(thread.workspacePath.utf8),
+              target.configuration == ProviderConfiguration(thread: thread) else { throw stale() }
+        return thread
     }
     private static func configuration(_ id: UUID, captured: ProviderConfiguration, snapshot: WorkspaceSnapshot) throws {
         let thread = try target(id, snapshot: snapshot)
@@ -72,8 +126,9 @@ extension WorkspaceDecision {
     @inline(never)
     static func reduceRemoteEnvironment(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         guard case .remoteEnvironment(let request, let preparation) = command else { throw RemoteEnvironmentAdmission.stale() }
-        let action = try RemoteEnvironmentAdmission.action(request, preparation: preparation, snapshot: snapshot)
-        do { return try make(.client(action), id: id, snapshot: snapshot, now: now) }
+        let commands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: snapshot)
+        guard let action = commands.first else { return .init(snapshot: snapshot) }
+        do { return try make(action, id: id, snapshot: snapshot, now: now) }
         catch let error as WorkspaceCommandError { throw error }
         catch { throw WorkspaceCommandError("The remote request was refused before execution because its values or target are invalid.") }
     }

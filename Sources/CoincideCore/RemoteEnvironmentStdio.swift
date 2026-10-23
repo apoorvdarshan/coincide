@@ -64,6 +64,12 @@ public enum RemoteEnvironmentStdio {
                             result = try RemoteEnvironmentProtocol.encode(snapshot)
                         case RemoteEnvironmentProtocol.commandMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
+                            if request.command.inspectsWorktreeCompletion {
+                                try await workspaceReads.submit(id: id, operation: {
+                                    try RemoteEnvironmentProtocol.encode(try await current.command(request))
+                                }, writer: writer, disconnect: { input.stop() })
+                                continue requestLoop
+                            }
                             result = try RemoteEnvironmentProtocol.encode(try await current.command(request))
                         case RemoteEnvironmentProtocol.receiptMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
@@ -71,6 +77,12 @@ public enum RemoteEnvironmentStdio {
                         case RemoteEnvironmentProtocol.workspaceBindMethod:
                             let target = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceTarget.self, from: params)
                             result = try RemoteEnvironmentProtocol.encode(try await current.bindWorkspace(target))
+                        case RemoteEnvironmentProtocol.worktreeCatalogMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteWorktreeCatalogRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.worktreeCatalog(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
                         case RemoteEnvironmentProtocol.workspaceReadMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceReadRequest.self, from: params)
                             try await workspaceReads.submit(id: id, operation: {

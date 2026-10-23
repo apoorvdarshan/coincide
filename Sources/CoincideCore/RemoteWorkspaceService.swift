@@ -44,6 +44,7 @@ actor RemoteWorkspaceService {
               !snapshot.isPullRequestCreationLocked(path: target.workspacePath),
               !snapshot.isConversationHistoryLocked(threadID: thread.id) else { throw RemoteWorkspaceFailure(.invalidTarget) }
         if mutating {
+            guard !hasRunningWorktree(at: target.workspacePath, snapshot: snapshot) else { throw RemoteWorkspaceFailure(.busy) }
             let owners = snapshot.threads.filter { samePath($0.workspacePath, target.workspacePath) }
             guard owners.allSatisfy({ !$0.isBusy && $0.activeRun == nil && $0.queuedTurns.isEmpty && $0.runtimeRequests.isEmpty
                 && $0.heldPostRunCheckpoint == nil && snapshot.workspaceReady(for: $0) }) else { throw RemoteWorkspaceFailure(.busy) }
@@ -55,19 +56,57 @@ actor RemoteWorkspaceService {
     }
     private func bindRoot(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
         try await authorize(target)
-        let path = target.workspacePath
+        let id = try bindPhysicalRoot(path: target.workspacePath, expectedID: target.rootID)
+        return .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID,
+                     configuration: target.configuration, rootID: id)
+    }
+    private func bindPhysicalRoot(path: String, expectedID: UUID?) throws -> UUID {
         guard samePath(URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path, path) else { throw RemoteWorkspaceFailure(.invalidTarget) }
         let anchor = try WorkspaceFileRoot(root: URL(fileURLWithPath: path))
         let id: UUID
         do { id = try rootIdentity(anchor) } catch { anchor.close(); throw error }
-        guard target.rootID == nil || target.rootID == id else { anchor.close(); throw RemoteWorkspaceFailure(.staleRoot) }
+        guard expectedID == nil || expectedID == id else { anchor.close(); throw RemoteWorkspaceFailure(.staleRoot) }
         if let existing = roots[id] { anchor.close(); try existing.anchor.validate() }
         else {
             guard roots.count < 128 else { anchor.close(); throw RemoteWorkspaceFailure(.limitExceeded) }
             roots[id] = Root(id: id, path: path, anchor: anchor)
         }
-        return .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID,
-                     configuration: target.configuration, rootID: id)
+        return id
+    }
+    /// Failed preparation may point at a destination that does not exist. Bind
+    /// its saved source separately, without granting file access to that path.
+    func bindWorktreeSource(_ target: RemoteWorkspaceTarget) async throws -> (sourcePath: String, sourceRootID: UUID, attemptID: UUID?) {
+        let thread = try await worktreeThread(target)
+        let source = thread.workspacePreparation.flatMap { $0.canRetry ? $0.request.sourcePath : nil } ?? thread.workspacePath
+        let id = try bindPhysicalRoot(path: source, expectedID: samePath(source, target.workspacePath) ? target.rootID : nil)
+        return (source, id, thread.workspacePreparation?.id)
+    }
+    @discardableResult
+    func validateWorktreeSource(_ target: RemoteWorkspaceTarget, sourceRootID: UUID, expectedAttemptID: UUID?) async throws -> GitWorktreeNodeIdentity {
+        let thread = try await worktreeThread(target)
+        let source = thread.workspacePreparation.flatMap { $0.canRetry ? $0.request.sourcePath : nil } ?? thread.workspacePath
+        guard thread.workspacePreparation?.id == expectedAttemptID,
+              let root = roots[sourceRootID], samePath(root.path, source) else { throw RemoteWorkspaceFailure(.staleRoot) }
+        do { try root.anchor.validate() } catch { throw RemoteWorkspaceFailure(.staleRoot) }
+        return .init(device: root.anchor.device, inode: root.anchor.inode)
+    }
+    private func worktreeThread(_ target: RemoteWorkspaceTarget) async throws -> CodingThread {
+        guard !closing, !journalFailed, target.environmentID == environmentID else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        let update = await engine.current()
+        guard !closing, !journalFailed, update.error == nil,
+              let thread = update.snapshot.threads.first(where: { $0.id == target.threadID }),
+              !thread.isArchived, thread.projectID == target.projectID,
+              update.snapshot.projects.contains(where: { $0.id == target.projectID }),
+              ProviderConfiguration(thread: thread) == target.configuration,
+              samePath(thread.workspacePath, target.workspacePath),
+              thread.workspacePreparation?.isRunning != true else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        return thread
+    }
+    private func hasRunningWorktree(at path: String, snapshot: WorkspaceSnapshot) -> Bool {
+        snapshot.threads.contains { thread in
+            guard let state = thread.workspacePreparation, state.isRunning else { return false }
+            return samePath(state.request.sourcePath, path) || samePath(state.destinationPath, path)
+        }
     }
     private func rootIdentity(_ root: WorkspaceFileRoot) throws -> UUID {
         var value = stat()
@@ -255,16 +294,34 @@ actor RemoteWorkspaceService {
     /// Called under the environment service's admission gate, before its Engine
     /// command commits. Mutations reserve busyRoots under that same gate.
     func admitConversationCommand(_ command: RemoteEnvironmentCommand) async throws {
-        let id: UUID
-        switch command { case .submit(let threadID, _, _), .resumeQueue(let threadID, _): id = threadID
-        default: return }
         let snapshot = await engine.current().snapshot
-        guard let thread = snapshot.threads.first(where: { $0.id == id }) else { return }
-        guard !busyRoots.keys.contains(where: { roots[$0].map { samePath($0.path, thread.workspacePath) } == true }) else { throw RemoteWorkspaceFailure(.busy) }
+        var paths: [String] = []
+        var excludesTerminals = false
+        switch command {
+        case .submit(let id, _, _), .resumeQueue(let id, _):
+            guard let thread = snapshot.threads.first(where: { $0.id == id }) else { return }
+            paths = [thread.workspacePath]
+        case .prepareWorktree(let target, let sourceRootID, let attemptID, let selection, _):
+            try await validateWorktreeSource(target, sourceRootID: sourceRootID, expectedAttemptID: attemptID)
+            guard let source = roots[sourceRootID] else { throw RemoteWorkspaceFailure(.staleRoot) }
+            paths = [source.path, target.workspacePath]
+            if case .reuse(let destination) = selection { paths.append(destination) }
+            excludesTerminals = true
+        case .retryWorktree(let target, let attemptID):
+            guard let thread = snapshot.threads.first(where: { $0.id == target.threadID }),
+                  let state = thread.workspacePreparation, state.id == attemptID else { throw RemoteWorkspaceFailure(.invalidTarget) }
+            paths = [state.request.sourcePath, state.destinationPath]
+            excludesTerminals = true
+        default: return
+        }
+        let held = Set(busyRoots.keys).union(excludesTerminals ? Set(terminalRoots.values) : [])
+        guard !held.contains(where: { id in roots[id].map { root in paths.contains { samePath(root.path, $0) } } == true }),
+              !excludesTerminals || !paths.contains(where: { hasRunningWorktree(at: $0, snapshot: snapshot) }) else { throw RemoteWorkspaceFailure(.busy) }
     }
     func acquireTerminalRoot(_ target: RemoteWorkspaceTarget, owner: UUID) async throws {
         let root = try await self.root(target)
-        guard !closing, busyRoots[root.id] == nil else { throw RemoteWorkspaceFailure(.busy) }
+        let snapshot = await engine.current().snapshot
+        guard !closing, busyRoots[root.id] == nil, !hasRunningWorktree(at: root.path, snapshot: snapshot) else { throw RemoteWorkspaceFailure(.busy) }
         terminalRoots[owner] = root.id
     }
     func validateTerminalRoot(_ target: RemoteWorkspaceTarget, owner: UUID) async throws {
