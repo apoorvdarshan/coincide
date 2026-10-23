@@ -295,10 +295,25 @@ def signals():
                 item("subagent", "child-" + last_turn, 2, "completed", owner=last_turn, role="Worker", result={"text": "Original child result"})
             elif name == "gap": notify("view/gap", {"sessionId": session["sessionId"], "after": "opaque:old", "next": "opaque:new"})
             elif name == "flood":
-                frame = {"jsonrpc": "2.0", "method": "session/statusChanged", "params": {"sessionId": session["sessionId"], "status": "running", "viewCursor": "opaque:volume"}}
-                payload = ((json.dumps(frame) + "\n") * 5000).encode("utf8")
+                # A fast consumer can drain any finite status-update burst without
+                # overflowing its transport queue. Exercise the Session's actual
+                # 64-pending-approval bound instead, with 65 distinct valid native
+                # notifications (below the connection's 128-event capacity).
+                record("notificationFlood", {"type": "pending-approval", "count": 65})
                 with lock:
-                    sys.stdout.buffer.write(payload); sys.stdout.buffer.flush()
+                    for index in range(65):
+                        body = approval_body()
+                        identifier = "overflow-approval-" + str(index)
+                        body["approvalId"] = identifier
+                        body["itemId"] = "overflow-item-" + str(index)
+                        body["toolCallId"] = "overflow-call-" + str(index)
+                        body["currentRequirementId"]["approvalId"] = identifier
+                        notify("approval/requested", body)
+                        # The test acknowledges each presented request through its
+                        # private control file. This bounds transport backlog and
+                        # proves the 65th fails the Session registry, not timing.
+                        while index < 64 and options().get("floodAcknowledged", 0) < index + 1:
+                            time.sleep(.005)
             elif name == "exit": os._exit(0)
         time.sleep(.005)
 

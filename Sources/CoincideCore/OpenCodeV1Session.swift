@@ -836,7 +836,14 @@ public actor OpenCodeV1Session: ProviderSession {
         if let question = event.question { try receive(question, owner: owner); return }
         switch event.kind {
         case .sessionStatus:
-            if event.status == .busy || event.status == .retry { backgroundActive.insert(nativeID) }
+            if event.status == .busy || event.status == .retry {
+                backgroundActive.insert(nativeID)
+                if var run = runs[owner], run.sessionID == nativeID, !run.finished {
+                    run.statusObservationRevision += 1
+                    run.idleEarly = false
+                    runs[owner] = run
+                }
+            }
             if event.status == .idle { try endNativeSession(nativeID, owner: owner, failed: false, interrupted: false) }
         case .sessionIdle: try endNativeSession(nativeID, owner: owner, failed: false, interrupted: false)
         case .sessionError:
@@ -993,6 +1000,7 @@ public actor OpenCodeV1Session: ProviderSession {
             guard run.inputObserved else { throw OpenCodeV1SessionError.invalidResponse }
             finish(owner, state: interrupted || run.stopped ? .interrupted : .failed); return
         }
+        run.statusObservationRevision += 1; runs[owner] = run
         if run.pendingSteeringID != nil {
             run.idleEarly = true; runs[owner] = run
             releaseSteeringAdmission(owner); return
@@ -1007,12 +1015,12 @@ public actor OpenCodeV1Session: ProviderSession {
         guard !closing, !uncertain, let run = runs[id], !run.finished, !run.stopped, run.idleEarly,
               run.accepted, run.inputObserved, reconciliation[id] == nil,
               run.pendingSteeringID == nil || (run.steeringAccepted && run.steeringObserved) else { return }
-        let generation = run.generation
+        let generation = run.generation, statusRevision = run.statusObservationRevision
         reconciliationGenerations[id] = generation
-        reconciliation[id] = Task { [weak self] in await self?.reconcileIdle(id, generation: generation) }
+        reconciliation[id] = Task { [weak self] in await self?.reconcileIdle(id, generation: generation, statusRevision: statusRevision) }
     }
 
-    private func reconcileIdle(_ id: UUID, generation: Int) async {
+    private func reconcileIdle(_ id: UUID, generation: Int, statusRevision: Int) async {
         defer {
             if reconciliationGenerations[id] == generation {
                 reconciliation.removeValue(forKey: id); reconciliationGenerations.removeValue(forKey: id)
@@ -1027,6 +1035,13 @@ public actor OpenCodeV1Session: ProviderSession {
             guard !closing, !uncertain, var current = runs[id], !current.finished, !current.stopped,
                   current.generation == generation, current.accepted, current.inputObserved,
                   current.pendingSteeringID == nil || (current.steeringAccepted && current.steeringObserved) else { return }
+            // A status snapshot cannot overwrite a later native status event.
+            // A fresh idle remains pending for a new read in defer; fresh
+            // busy/retry retires the old idle without completing this run.
+            guard current.statusObservationRevision == statusRevision else {
+                if !current.idleEarly { releaseSteeringAdmission(id) }
+                return
+            }
             current.idleEarly = false; current.pendingSteeringID = nil; runs[id] = current
             continuation.yield(.steeringCapabilitiesChanged)
             if statuses[run.sessionID] == nil || statuses[run.sessionID] == .idle { finish(id, state: .idle) }
@@ -1378,6 +1393,7 @@ private struct OpenCodeV1Run {
     var assistantObserved = false
     var announced = false
     var idleEarly = false
+    var statusObservationRevision = 0
     var stopped = false
     var finished = false
     var generation = 0

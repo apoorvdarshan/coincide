@@ -626,7 +626,8 @@ private actor V1Peer: OpenCodeV1SessionTransport {
     func disconnect() { continuation.finish() }
     func holdCommandReads() { holdingCommands = true }
     func releaseCommands() async { holdingCommands = false; await commandGate.release() }
-    func holdStatusRead() { holdingStatus = true }
+    private var heldStatusIsBusy = false
+    func holdStatusRead(snapshotBusy: Bool = false) { holdingStatus = true; heldStatusIsBusy = snapshotBusy }
     func releaseStatus() async { holdingStatus = false; await statusGate.release() }
     func raw(_ text: String) { continuation.yield(.init(event: "message", data: text, id: nil, retryMilliseconds: nil)) }
     func seed(fault: String) {
@@ -642,8 +643,9 @@ private actor V1Peer: OpenCodeV1SessionTransport {
         calls.append(.init(method: method, path: path, body: body))
         if path == ["session", "status"] {
             if holdingStatus {
+                let snapshotBusy = heldStatusIsBusy
                 statusReadHeld = true; await statusGate.wait(); heldStatusReturns += 1
-                return try response(.object([:]))
+                return try response(.object(snapshotBusy ? ["ses_root": .object(["type": .string("busy")])] : [:]))
             }
             return try response(.object(busy ? ["ses_root": .object(["type": .string("busy")])] : [:]))
         }
@@ -683,11 +685,11 @@ private actor V1Peer: OpenCodeV1SessionTransport {
         if path.last == "abort" || path.last == "reply" || path.last == "reject" { return try response(.bool(true)) }
         throw CoincideError("The private OpenCode 1 peer received an unexpected route.")
     }
-    func begin(assistant: String = "msg_assistant") throws {
+    func begin(assistant: String = "msg_assistant", busyStatus: Bool = true) throws {
         guard let inputID else { throw CoincideError("The private peer has no input.") }
         busy = true
         try user(id: inputID); try self.assistant(id: assistant, parent: inputID)
-        try emit("session.status", fields: ["status": .object(["type": .string("busy")])])
+        if busyStatus { try emit("session.status", fields: ["status": .object(["type": .string("busy")])]) }
     }
     func user(id: String, session: String = "ses_root") throws {
         try emit("message.updated", session: session, fields: ["info": message(id: id, role: "user", session: session)])
@@ -817,7 +819,7 @@ func openCodeV1SteeringHoldsOldIdleUntilExactInputAndFreshStatus(lostAck: Bool) 
             try await f.peer.user(id: "msg_unrelated_steer")
             try await f.peer.assistant(id: "msg_unrelated_reply", parent: "msg_unrelated_steer", completed: true)
             #expect(await f.record.completions.isEmpty)
-            try await f.peer.begin(assistant: "msg_held_reply")
+            try await f.peer.begin(assistant: "msg_held_reply", busyStatus: false)
             if lostAck { try await f.peer.assistant(id: "msg_held_reply", completed: true) }
             try await v1Eventually { await f.record.associations["held-steering"] != nil }
             await f.peer.release()
@@ -829,6 +831,84 @@ func openCodeV1SteeringHoldsOldIdleUntilExactInputAndFreshStatus(lostAck: Bool) 
             try await v1Eventually { await f.record.completions == [.idle] }
             #expect(await f.record.turns == [opening])
         } catch { await f.peer.release(); _ = await task.result; throw error }
+    }
+}
+
+@Test func openCodeV1FreshIdleDuringHeldBusyReconciliationIsNotLostOrReplayed() async throws {
+    try await withV1Session { f in
+        let thread = try await v1ReadyToSteer(f), opening = try #require(thread.activeRun?.nativeTurnID)
+        let statusCount = await f.peer.statusCount
+        await f.peer.setMode(.heldAck)
+        await f.peer.holdStatusRead(snapshotBusy: true)
+        let task = Task { try await f.session.steer(input: .init(text: "Exact held steering"), thread: thread,
+            expectedTurnID: opening, clientMessageID: "idle-during-status") }
+        do {
+            try await v1Eventually { await f.peer.promptCount == 2 }
+            try await f.peer.idle()
+            try await f.peer.begin(assistant: "msg_held_status_reply", busyStatus: false)
+            try await v1Eventually { await f.record.associations["idle-during-status"] != nil }
+            await f.peer.release()
+            #expect(try await task.value.turnID == opening)
+            try await v1Eventually { await f.peer.statusReadHeld }
+            #expect(await f.record.completions.isEmpty)
+            // The older read owns a frozen busy result. A later text event
+            // proves the fresh idle before it has passed the ordered reader.
+            try await f.peer.idle()
+            try await f.peer.text("Fresh idle observed during status read", assistant: "msg_held_status_reply")
+            try await v1Eventually { await f.record.text.contains("Fresh idle observed during status read") }
+            await f.peer.releaseStatus()
+            try await v1Eventually { await f.record.completions == [.idle] }
+            #expect(await f.peer.statusCount >= statusCount + 2)
+            #expect(await f.peer.promptCount == 2)
+            #expect(await f.record.turns == [opening])
+            #expect(await f.record.failures == 0)
+        } catch {
+            await f.peer.release(); await f.peer.releaseStatus(); _ = await task.result
+            throw error
+        }
+    }
+}
+
+@Test(arguments: ["busy", "retry"])
+func openCodeV1FreshActivityDuringHeldIdleReconciliationCannotManufactureCompletion(status: String) async throws {
+    try await withV1Session { f in
+        let thread = try await v1ReadyToSteer(f), opening = try #require(thread.activeRun?.nativeTurnID)
+        await f.peer.setMode(.heldAck)
+        await f.peer.holdStatusRead()
+        let task = Task { try await f.session.steer(input: .init(text: "Exact active steering"), thread: thread,
+            expectedTurnID: opening, clientMessageID: "activity-during-status") }
+        do {
+            try await v1Eventually { await f.peer.promptCount == 2 }
+            try await f.peer.idle()
+            try await f.peer.begin(assistant: "msg_active_status_reply", busyStatus: false)
+            try await v1Eventually { await f.record.associations["activity-during-status"] != nil }
+            await f.peer.release()
+            #expect(try await task.value.turnID == opening)
+            try await v1Eventually { await f.peer.statusReadHeld }
+            // Preserve a newer busy/retry event even though the older held
+            // status snapshot will claim idle. The following owned text is
+            // an ordered reader barrier, not a scheduling delay.
+            var activity: [String: JSONValue] = ["type": .string(status)]
+            if status == "retry" {
+                activity["attempt"] = .number(1)
+                activity["next"] = .number(50)
+                activity["message"] = .string("Private fixture retry")
+            }
+            try await f.peer.emit("session.status", fields: ["status": .object(activity)])
+            try await f.peer.text("Fresh activity observed during status read", assistant: "msg_active_status_reply")
+            try await v1Eventually { await f.record.text.contains("Fresh activity observed during status read") }
+            await f.peer.releaseStatus()
+            try await v1Eventually { await f.session.steeringCapabilities().supportsActiveSteering }
+            #expect(await f.record.completions.isEmpty)
+            #expect(await f.record.failures == 0)
+            try await f.peer.idle()
+            try await v1Eventually { await f.record.completions == [.idle] }
+            #expect(await f.peer.promptCount == 2)
+            #expect(await f.record.turns == [opening])
+        } catch {
+            await f.peer.release(); await f.peer.releaseStatus(); _ = await task.result
+            throw error
+        }
     }
 }
 
@@ -1003,7 +1083,7 @@ func openCodeV1SteeringEnginePersistsNativeAssociationFIFOAndUnknownRestart(unkn
         try await v1Eventually { await f.peer.promptCount == 1 }
         await f.peer.holdStatusRead()
         try await f.peer.idle()
-        try await f.peer.begin()
+        try await f.peer.begin(busyStatus: false)
         await f.peer.release()
         try await send.value
         try await v1Eventually { await f.peer.statusReadHeld }

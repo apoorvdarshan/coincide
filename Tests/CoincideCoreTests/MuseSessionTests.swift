@@ -421,8 +421,25 @@ func museStopNativeTerminalWinsHeldOldACKOrErrorAndPreservesHealthySuccessor(_ l
 func museGapEOFAndNotificationOverflowFailClosedWithoutManufacturedCompletion(_ signal: String) async throws {
     try await withMuse { peer in
         try await peer.start(peer.thread()); try peer.fixture.signal(signal)
-        try await museEventually { await !peer.observed.failures.isEmpty }
+        var floodAcknowledged = 0
+        try await museEventually {
+            if signal == "flood" {
+                let presented = await peer.observed.requests.count
+                if presented > floodAcknowledged {
+                    try peer.fixture.set("floodAcknowledged", .number(Double(presented)))
+                    floodAcknowledged = presented
+                }
+            }
+            return await !peer.observed.failures.isEmpty
+        }
         let completed = await peer.observed.completions; #expect(completed.isEmpty)
+        if signal == "flood" {
+            let presented = await peer.observed.requests.count
+            let floods = try peer.fixture.rows("notificationFlood")
+            let flood = try #require(floods.first)
+            #expect(presented == 64 && flood["type"] == .string("pending-approval") && flood["count"] == .number(65),
+                    "Exactly the bounded pending registry is filled before overflow; consumer speed is not a failure condition.")
+        }
         do { try await peer.session.send(text: "No blind replay", thread: peer.thread()); Issue.record("Broken native host was reused.") } catch {}
     }
 }

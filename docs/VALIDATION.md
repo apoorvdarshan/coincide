@@ -5382,3 +5382,44 @@ URL-handler, install, shell-startup or power-assertion acceptance claim. No user
 credential, real SSH host, installed app or shell configuration was changed. Complete
 T3 parity, remaining transcript/project-script features and live/hosted acceptance remain
 unfinished. See [desktop behavior and limits](DESKTOP_SHELL.md).
+
+
+## 2026-10-24: Hosted protocol failures and status reconciliation
+
+Hosted Git-actions run `40010287048` compiled successfully and completed 2500 tests
+across eight suites in 1403.512 seconds with two issues: the Muse flood expectation
+and OpenCode v1 steering's status boundary. The remote 5001-line review-sheet test
+passed in 0.102 seconds. Native GUI shards were skipped after Core failures; their
+aggregate failure is not a GUI-test result.
+
+- Muse's old stimulus assumed 5000 ignored status notifications would overflow a
+  128-slot transport buffer. A consumer keeping up correctly avoids overflow, so
+  the expectation depended on scheduling. The fixture now acknowledges each of
+  64 valid pending approvals before emitting the 65th, deterministically reaching
+  the Session's explicit limit. Failure, exact 64 presentations, no fabricated
+  completion and no reuse remain asserted. The separate deliberately unopened
+  consumer test still proves actual transport-buffer overflow. Production Muse
+  behavior and all deadlines are unchanged.
+- A controlled OpenCode v1 held-busy-response regression failed before the fix in
+  5.045 seconds: a later native idle could be overwritten by an older status read.
+  Each owned run now versions idle/busy/retry observations. Stale reads cannot
+  retire newer idle evidence or finish work after newer activity; reconciliation
+  preserves current run/input/admission ownership. Held idle/busy/retry tests prove
+  one completion and two total prompts without replay. Early-idle fixtures omit a
+  later busy notification when their purpose is to require status reconciliation;
+  original assertions and deadlines remain.
+
+Final local verification: `swift build --build-tests` passes in 18.89 seconds;
+ABI coverage reports 1418 Mach-O objects, 1018 Core/459 App coverage counters,
+zero weak async-default records and six local records. The complete affected
+selection passes **137 Core declarations in 14.578 seconds** and **7 UI/store
+ declarations in 2.784 seconds**. Build-only packaging, strict deep signatures and
+native math rendering pass. Compiled/package UUIDs match: Coincide
+`EB0CB1C9-D84A-33AD-B5E7-7E8084BA0894`, CoincideEnvironment
+`AE35FE90-82B2-31F6-A4B7-33A1DA7DD96D`, CoincideScriptHelper
+`F8192742-18E2-3948-94EC-C9132D3530C1`.
+
+Logs use `/tmp/coincide-protocol-ci-*-20261024.log`. Staged secret scanning passes.
+No live provider/model request or installed-app launch was performed. Hosted
+success for this follow-up and full native GUI/provider/T3 acceptance remain
+unproven; the overall app goal remains active.
