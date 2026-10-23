@@ -33,11 +33,13 @@ struct CoincideApp: App {
     @State private var store: WorkspaceStore
     @State private var remoteStore: RemoteWorkspaceStore
     @State private var mainWindows: MainWindowCoordinator
+    @State private var keybindings: KeybindingsStore
     @FocusedValue(\.cloneRepositoryPresentation) private var cloneRepositoryPresentation: Binding<Bool>?
     @FocusedValue(\.newProjectPresentation) private var newProjectPresentation: Binding<Bool>?
     @FocusedValue(\.settlementPresentation) private var settlementPresentation: Binding<CodingThread?>?
     @FocusedValue(\.agentSessionImportPresentation) private var agentSessionImportPresentation: Binding<Bool>?
     @FocusedValue(\.remoteWorkspacePresentation) private var remotePresentation: RemoteWorkspacePresentation?
+    @FocusedValue(\.mainWindowController) private var keyboardController: MainWindowController?
     private var defaultWindowSize: CGSize {
         MainWindowSizing.size(fitting: NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 820))
     }
@@ -56,10 +58,13 @@ struct CoincideApp: App {
             } else {
                 remoteStore = RemoteWorkspaceStore(root: remoteRoot)
             }
+            let keybindings = KeybindingsStore(fileURL: dataRoot.appendingPathComponent("keybindings.json"))
+            _keybindings = State(initialValue: keybindings)
+            Task { await keybindings.start() }
             _store = State(initialValue: store)
             _remoteStore = State(initialValue: remoteStore)
             _mainWindows = State(initialValue: mainWindows)
-            delegate.attach(store, mainWindows: mainWindows, remoteStore: remoteStore)
+            delegate.attach(store, mainWindows: mainWindows, remoteStore: remoteStore, keybindings: keybindings)
         } catch {
             FileHandle.standardError.write(Data("Coincide UI-test workspace configuration is invalid.\n".utf8))
             exit(EXIT_FAILURE)
@@ -67,32 +72,40 @@ struct CoincideApp: App {
     }
     var body: some Scene {
         WindowGroup("Coincide", id: MainWindowCoordinator.sceneID) {
-            ContentView(store: store)
+            ContentView(store: store).environment(keybindings)
                 .frame(minWidth: 900, minHeight: 600)
                 .background(MainWindowRegistration(coordinator: mainWindows))
         }
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
-            RemoteWorkspaceCommands()
-            TerminalCommands()
-            MainWindowCommands(coordinator: mainWindows) {
+            RemoteWorkspaceCommands(shortcut: keybindings.menuShortcut(.remoteOpen), allowsInvocation: { !keybindings.dispatcher.declinedCurrentEvent() })
+            TerminalCommands(keybindings: keybindings)
+            NavigationCommands(keybindings: keybindings)
+            MainWindowCommands(coordinator: mainWindows, newWindowShortcut: keybindings.menuShortcut(.windowNew), allowsInvocation: { !keybindings.dispatcher.declinedCurrentEvent() }) {
                 Button("New Thread") {
+                    guard !keybindings.dispatcher.declinedCurrentEvent() else { return }
                     if let remotePresentation { remotePresentation.newThread.wrappedValue = true }
+                    else if let keyboardController { keyboardController.perform(.chatNew) }
                     else { delegate.newThread() }
-                }.keyboardShortcut("n")
-                    .disabled(remotePresentation != nil && (!remoteStore.canWrite || remoteStore.selectedProjectID == nil))
-                Button("New Project…") { newProjectPresentation?.wrappedValue = true }
-                    .keyboardShortcut("n", modifiers: [.command, .shift]).disabled(newProjectPresentation == nil)
+                }.keyboardShortcut(keybindings.menuShortcut(.chatNew))
+                    .disabled(remotePresentation != nil
+                        ? !remoteStore.canWrite || remoteStore.selectedProjectID == nil
+                        : keyboardController.map { !$0.canPerform(.chatNew) } ?? false)
+                Button("New Project…") { if !keybindings.dispatcher.declinedCurrentEvent() { newProjectPresentation?.wrappedValue = true } }
+                    .keyboardShortcut(keybindings.menuShortcut(.projectNew)).disabled(newProjectPresentation == nil)
                 Button("Add Project…") {
+                    guard !keybindings.dispatcher.declinedCurrentEvent() else { return }
                     if let remotePresentation { remotePresentation.addProject.wrappedValue = true }
                     else { store.addProject() }
-                }.keyboardShortcut("o").disabled(remotePresentation != nil && !remoteStore.canWrite)
-                Button("Clone Repository…") { cloneRepositoryPresentation?.wrappedValue = true }
-                    .keyboardShortcut("o", modifiers: [.command, .shift]).disabled(cloneRepositoryPresentation == nil)
-                Button("Import Agent Projects…") { agentSessionImportPresentation?.wrappedValue = true }
+                }.keyboardShortcut(keybindings.menuShortcut(.projectAdd)).disabled(remotePresentation != nil && !remoteStore.canWrite)
+                Button("Clone Repository…") { if !keybindings.dispatcher.declinedCurrentEvent() { cloneRepositoryPresentation?.wrappedValue = true } }
+                    .keyboardShortcut(keybindings.menuShortcut(.projectClone)).disabled(cloneRepositoryPresentation == nil)
+                Button("Import Agent Projects…") { if !keybindings.dispatcher.declinedCurrentEvent() { agentSessionImportPresentation?.wrappedValue = true } }
+                    .keyboardShortcut(keybindings.menuShortcut(.projectImport))
                     .disabled(remotePresentation != nil || agentSessionImportPresentation == nil)
             }
             CommandMenu("Thread") {
+                ThreadMenuItems(keybindings: keybindings)
                 if remotePresentation != nil {
                     Button("Resume Queue") {
                         if let thread = remoteStore.selectedThread {
@@ -100,33 +113,42 @@ struct CoincideApp: App {
                         }
                     }.disabled(!remoteStore.canWrite || remoteStore.selectedThread?.queuePaused != true)
                 } else if let thread = store.selectedThread, let settlement = thread.settlement {
-                    Button("Resume Conversation") { store.requestResume(thread.id, generationID: settlement.id) }
-                        .disabled(settlement.phase == .resuming)
+                    Button("Resume Conversation") {
+                        guard !keybindings.dispatcher.declinedCurrentEvent() else { return }
+                        store.requestResume(thread.id, generationID: settlement.id)
+                    }
+                        .keyboardShortcut(keybindings.menuShortcut(.threadSettle)).disabled(settlement.phase == .resuming)
                 } else {
                     Button("Settle Conversation…") {
+                        guard !keybindings.dispatcher.declinedCurrentEvent() else { return }
                         if let thread = store.selectedThread { settlementPresentation?.wrappedValue = thread }
-                    }.disabled(settlementPresentation == nil || (store.selectedThread.map { !store.canSettle($0) } ?? true))
+                    }.keyboardShortcut(keybindings.menuShortcut(.threadSettle))
+                        .disabled(settlementPresentation == nil || (store.selectedThread.map { !store.canSettle($0) } ?? true))
                 }
                 Button("Stop Turn") {
+                    guard !keybindings.dispatcher.declinedCurrentEvent() else { return }
                     if remotePresentation != nil {
                         if let thread = remoteStore.selectedThread { Task { await remoteStore.stop(thread) } }
-                    } else if let id = store.selectedThreadID { Task { await store.interrupt(id) } }
+                    } else if let thread = store.selectedThread {
+                        Task { await store.interrupt(thread.id, expectedRunID: thread.activeRun?.id, expectedRuntimeID: thread.runtimeID) }
+                    }
                 }
-                    .keyboardShortcut(".")
+                    .keyboardShortcut(keybindings.menuShortcut(.threadStop))
                     .disabled(remotePresentation != nil
                         ? !remoteStore.canWrite || remoteStore.selectedThread?.activeRun == nil || remoteStore.selectedThread?.runtimeID == nil
                         : store.selectedThreadID.map { !store.isBusy($0) } ?? true)
                 Button("Toggle Inspector") {
+                    guard !keybindings.dispatcher.declinedCurrentEvent() else { return }
                     if let remotePresentation { remotePresentation.inspectorVisible.wrappedValue.toggle() }
                     else { store.inspectorVisible.toggle() }
-                }.keyboardShortcut("i", modifiers: [.command, .option])
+                }.keyboardShortcut(keybindings.menuShortcut(.rightPanelToggle))
             }
         }
         Window("Remote Workspaces", id: RemoteWorkspaceStore.sceneID) {
             RemoteWorkspaceView(store: remoteStore).frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
-        Settings { SettingsView(store: store) }
+        Settings { SettingsView(store: store).environment(keybindings) }
     }
 }
 
@@ -140,14 +162,16 @@ enum MainWindowSizing {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var store: WorkspaceStore?
     private weak var remoteStore: RemoteWorkspaceStore?
+    private weak var keybindings: KeybindingsStore?
     private var mainWindows: MainWindowCoordinator?
     private var pendingProjects: [URL] = []
     private var startup: Task<Void, Never>?
     private var ready = false
     private var isQuitting = false
-    func attach(_ store: WorkspaceStore, mainWindows: MainWindowCoordinator, remoteStore: RemoteWorkspaceStore? = nil) {
+    func attach(_ store: WorkspaceStore, mainWindows: MainWindowCoordinator, remoteStore: RemoteWorkspaceStore? = nil, keybindings: KeybindingsStore? = nil) {
         self.store = store
         self.remoteStore = remoteStore
+        self.keybindings = keybindings
         self.mainWindows = mainWindows
         startLoading()
     }
@@ -230,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             await store.shutdown()
+            await self.keybindings?.shutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

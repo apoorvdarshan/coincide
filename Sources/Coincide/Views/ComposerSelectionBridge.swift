@@ -57,6 +57,7 @@ struct ComposerSelectionBridge: NSViewRepresentable {
                     ancestor = view.superview
                 }
                 if let editor {
+                    ComposerEditorRegistry.register(editor)
                     for name in [NSTextView.didChangeSelectionNotification, NSText.didChangeNotification] {
                         observations.append(NotificationCenter.default.addObserver(forName: name, object: editor, queue: .main) { [weak self] _ in
                             MainActor.assumeIsolated { self?.publish() }
@@ -92,6 +93,6 @@ struct ComposerSelectionBridge: NSViewRepresentable {
             for token in observations { NotificationCenter.default.removeObserver(token) }; observations.removeAll()
             if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         }
-        func detach() { detached = true; stopObserving(); editor = nil; anchor = nil }
+        func detach() { detached = true; stopObserving(); if let editor { ComposerEditorRegistry.unregister(editor) }; editor = nil; anchor = nil }
     }
 }

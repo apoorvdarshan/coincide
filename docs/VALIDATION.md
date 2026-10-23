@@ -5191,3 +5191,65 @@ The installed app was not replaced/opened. No account, provider session, live SS
 host or shell configuration was changed. Live process reattachment, broader
 remote/script controls, complete terminal compatibility/accessibility and full
 T3 parity remain unfinished.
+
+
+### Native keyboard and command palette integration (2026-10-24)
+
+Merged immutable `claude/keyboard-palette` commit `2498fd3` onto `ea6497f`.
+The intervening terminal splits, appearance, inert restoration, original checkout
+identity, prompt/process idle proof, math preferences, provider profiles, usage,
+remote scripts and guarded native UI helper remain. No other worktree or its
+uncommitted changes was edited.
+
+The app adds a native palette, thread/project search, Find in Thread, navigation
+history, closed inspector reopening, jump hints and editable shortcuts with live
+reload. The pinned `chat.new` command opens the project chooser when multiple
+groups exist; `chat.newLocal` uses current context. Private config parsing has
+1 MiB/depth/entry limits, strict UTF-8 and bounded shortcut/condition parsers.
+Descriptor-relative no-follow file access, private locking, exact revision checks
+and fsynced 0600 replacement protect editing; malformed or unsafe targets are
+not rewritten.
+
+Dispatch requires the exact registered key window and respects sheets, marked
+text and input ownership. Replacing a window's controller retires its old
+callbacks; a stale registry entry cannot retire a controller moved elsewhere.
+Retained palette actions check their captured source before activation. Stop
+passes exact run/runtime IDs into the existing atomic Engine guard. Native and
+app monitors share one bounded event decision, so terminal new/close/split cannot
+run twice. Custom rules replace mutation defaults and update context-menu labels;
+Find/Clear/navigation keep their native fallback when applicable. Pending terminal
+focus respects the original responder/window and never starts a saved shell.
+
+Local verification on Apple Swift 6.4:
+
+- Final `swift build --build-tests` passes in 7.13 seconds. The ABI guard reports
+  **1336 Mach-O objects**, **zero weak async-default records** and three local
+  records (941 Core, 411 App).
+- The complete **411-declaration UI/store suite passes in 96.000 seconds**,
+  including original native views and the added keyboard/window/modal/palette
+  cases. The six focused keyboard/chooser declarations pass in 3.587 seconds.
+- **18 keyboard Core declarations pass in 0.471 seconds**, including malformed,
+  oversized, deep and non-UTF8 config; symlink, hardlink and FIFO refusal; exact
+  raw revision checks and multiple-binding/default semantics.
+- The full **39-declaration Terminal suite passes in 17.691 seconds**, retaining
+  styled output, process/input ownership, idle-proof and original workspace tests
+  while adding focus and changed-checkout coverage.
+- Initial offscreen keyboard tests used real `NSWindow.makeKey`, which did not
+  establish a key window in the headless unit host. Test-only windows now model
+  one exclusive key owner without app activation or ordering windows onscreen;
+  production checks and actual responder/sheet assertions remain. Remap tests
+  now edit the original rule through the real replacement API rather than adding
+  a second shortcut. No assertions, deadlines or existing cases were removed.
+- Build-only packaging, strict deep signatures and native math-resource rendering
+  pass. Compiled/package UUIDs match: Coincide
+  `B88ABCEA-236C-37E5-88B1-29BD13BB062B`, CoincideEnvironment
+  `C8B941F5-A860-3542-A1F8-A39363FD3A14`, CoincideScriptHelper
+  `281F024A-AE7E-304B-9BDC-82727D74D521`.
+
+Logs use `/tmp/coincide-keyboard-integration-*`; final UI/Core/build/ABI/package
+logs use the `20261024` suffix. Hosted terminal-batch run `40001722482` passes
+Swift 6.3 compilation and is still testing at this check. There is no exact-head
+hosted/native GUI success claim for this keyboard merge. No installed app was
+replaced/opened, authentication migrated, provider model request sent, live SSH
+host changed or shell configuration edited. Remaining command surfaces and
+complete installed/remote/provider/T3 acceptance remain unfinished.

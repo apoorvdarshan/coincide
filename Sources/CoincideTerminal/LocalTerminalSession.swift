@@ -42,6 +42,20 @@ public enum TerminalCommand: Equatable, Sendable {
     }
 }
 
+/// A window's configurable keybindings can handle an event or deliberately
+/// suppress a native default. Unregistered terminals retain their native keys.
+public enum TerminalKeyEventDisposition: Equatable, Sendable {
+    case useDefault, passThrough, handled
+}
+
+public struct TerminalKeyEquivalent {
+    public let characters: String
+    public let modifiers: NSEvent.ModifierFlags
+    public init(characters: String, modifiers: NSEvent.ModifierFlags) {
+        self.characters = characters; self.modifiers = modifiers
+    }
+}
+
 /// Owns one native terminal emulator and its PTY. Hiding its view does not end the shell.
 @MainActor @Observable
 public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewDelegate {
@@ -64,6 +78,8 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
     @ObservationIgnored public private(set) var shellPath: String?
     @ObservationIgnored private(set) var idleExecutableIdentity: TerminalShellExecutableIdentity?
     @ObservationIgnored public var onCommand: (@MainActor (LocalTerminalSession, TerminalCommand) -> Void)?
+    @ObservationIgnored public var onKeyEvent: (@MainActor (NSEvent) -> TerminalKeyEventDisposition)?
+    @ObservationIgnored public var onKeyEquivalent: (@MainActor (LocalTerminalSession, TerminalCommand) -> TerminalKeyEquivalent?)?
     @ObservationIgnored public var onOpenLink: (@MainActor (LocalTerminalSession, String) -> Void)?
     @ObservationIgnored public var onExit: (@MainActor (LocalTerminalSession, Int32?) -> Void)?
     /// A click in this terminal, used to make its pane the selected one.
@@ -75,7 +91,7 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
     @ObservationIgnored private let counter = TerminalActivityCounter()
     @ObservationIgnored private var appearance: TerminalAppearance?
     @ObservationIgnored private var appliedAppearance: AppliedAppearance?
-    @ObservationIgnored private var focusRequested = false
+    @ObservationIgnored private var pendingFocus: PendingTerminalFocus?
     @ObservationIgnored private var historyCache: (mark: UInt64, history: TerminalStyledText.History)?
     @ObservationIgnored private var idleObservation: (proof: TerminalIdleProcessProof, generation: UUID, mark: UInt64)?
     @ObservationIgnored private var hasSentInput = false
@@ -273,11 +289,38 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
     /// Views are not focused merely by being shown again, so a starting or
     /// re-attached terminal does not take typing away from the composer.
     public func requestFocus() {
-        if let window = view.window { window.makeFirstResponder(view) } else { focusRequested = true }
+        requestFocus(from: view.window?.firstResponder ?? NSApp?.keyWindow?.firstResponder)
     }
+    public func requestFocus(from origin: NSResponder?) {
+        if let window = view.window { window.makeFirstResponder(view); return }
+        pendingFocus = PendingTerminalFocus(origin: origin)
+    }
+    public static func isTerminalResponder(_ responder: NSResponder?) -> Bool { responder is TerminalView }
     fileprivate func viewDidJoinWindow() {
-        guard focusRequested, let window = view.window else { return }
-        focusRequested = false; window.makeFirstResponder(view)
+        guard let pending = pendingFocus, let window = view.window else { return }
+        pendingFocus = nil
+        guard ContinuousClock.now < pending.deadline,
+              !pending.hadWindow || pending.window === window,
+              !pending.hadOrigin || window.firstResponder === pending.origin || window.firstResponder === window || window.firstResponder == nil else { return }
+        window.makeFirstResponder(view)
+    }
+
+    /// Used by the native event monitor and offscreen responder tests. Delivery
+    /// remains scoped to this view's own window and actual first responder.
+    public func handleFocusedKeyEvent(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, let window = view.window, event.window === window,
+              window.firstResponder === view, window.attachedSheet == nil else { return false }
+        switch onKeyEvent?(event) ?? .useDefault {
+        case .handled: return true
+        case .passThrough:
+            if lifecycle == .running { recordInput() }
+            return false
+        case .useDefault: break
+        }
+        if let command = TerminalCommand.keyCommand(characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags),
+           perform(command) { return true }
+        if lifecycle == .running { recordInput() }
+        return false
     }
 
     /// Completes when the bytes reach the PTY, not when the command finishes.
@@ -367,7 +410,7 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
         appliedAppearance = nil
         if let appearance { apply(appearance) }
         activity = .idle; detachment = nil; displayGeneration = UUID(); hasSentInput = false; blockedPromptOrigin = nil
-        focusRequested = focus
+        if focus { requestFocus() } else { pendingFocus = nil }
         do { try launch(executable: executable, arguments: arguments, environmentOverrides: environmentOverrides, unsetEnvironment: unsetEnvironment) }
         catch { lifecycle = .failed(error.localizedDescription); throw error }
     }
@@ -407,6 +450,15 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
             menu.addItem(item)
         }
         menu.autoenablesItems = false
+        func commandItem(_ title: String, command: TerminalCommand, fallbackKey: String,
+                         modifiers: NSEvent.ModifierFlags = [.command]) {
+            if let provider = onKeyEquivalent {
+                let shortcut = provider(self, command)
+                item(title, shortcut?.characters ?? "", shortcut?.modifiers ?? []) { [weak self] in _ = self?.perform(command) }
+            } else {
+                item(title, fallbackKey, modifiers) { [weak self] in _ = self?.perform(command) }
+            }
+        }
         let view = view
         let end = Unicode.Scalar(UInt32(NSEndFunctionKey)).map { String(Character($0)) } ?? ""
         item(String(localized: "Copy"), "c", enabled: view.selectionActive) { view.copy(view) }
@@ -420,11 +472,11 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
             if isRestored || (!isCommand && lifecycle != .running && lifecycle != .closing) {
                 item(String(localized: "Start Shell Here"), enabled: !isCommand) { [weak self] in _ = self?.perform(.resume) }
             }
-            item(String(localized: "New Terminal"), "n") { [weak self] in _ = self?.perform(.newTerminal) }
-            item(String(localized: "Split Right"), "d") { [weak self] in _ = self?.perform(.splitRight) }
-            item(String(localized: "Split Down"), "d", [.command, .shift]) { [weak self] in _ = self?.perform(.splitDown) }
+            commandItem(String(localized: "New Terminal"), command: .newTerminal, fallbackKey: "n")
+            commandItem(String(localized: "Split Right"), command: .splitRight, fallbackKey: "d")
+            commandItem(String(localized: "Split Down"), command: .splitDown, fallbackKey: "d", modifiers: [.command, .shift])
             menu.addItem(.separator())
-            item(String(localized: "Close Terminal"), "w") { [weak self] in _ = self?.perform(.close) }
+            commandItem(String(localized: "Close Terminal"), command: .close, fallbackKey: "w")
         }
         return menu
     }
@@ -560,14 +612,22 @@ public struct TerminalTabCapture: @unchecked Sendable {
             }
             return false
         }
-        guard window.isKeyWindow, let view = window.firstResponder as? WorkspaceTerminalView,
+        guard window.isKeyWindow, window.attachedSheet == nil, let view = window.firstResponder as? WorkspaceTerminalView,
               let owner = view.owner else { return false }
-        if let command = TerminalCommand.keyCommand(characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags),
-           owner.perform(command) { return true }
-        // SwiftTerm delivers keyboard bytes directly to its process adapter,
-        // bypassing the TerminalView delegate. Observe before passing them on.
-        if owner.lifecycle == .running { owner.recordInput() }
-        return false
+        return owner.handleFocusedKeyEvent(event)
+    }
+}
+
+@MainActor private final class PendingTerminalFocus {
+    weak var origin: NSResponder?
+    weak var window: NSWindow?
+    let hadOrigin: Bool
+    let hadWindow: Bool
+    let deadline = ContinuousClock.now + .seconds(3)
+    init(origin: NSResponder?) {
+        self.origin = origin
+        let window = (origin as? NSView)?.window ?? origin as? NSWindow
+        self.window = window; hadOrigin = origin != nil; hadWindow = window != nil
     }
 }
 

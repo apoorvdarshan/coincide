@@ -35,12 +35,17 @@ extension FocusedValues {
 /// terminal has keyboard focus, so they are handled by the terminal itself and
 /// shown in its context menu rather than claimed here for the whole window.
 struct TerminalCommands: Commands {
+    var keybindings: KeybindingsStore? = nil
     @FocusedValue(\.terminalCommands) private var target: TerminalCommandTarget?
 
     var body: some Commands {
         CommandMenu("Terminal") {
-            Button("Toggle Terminal") { target?.toggle() }
-                .keyboardShortcut("j").disabled(target?.thread == nil || target?.workspaceReady != true)
+            Button("Toggle Terminal") {
+                guard keybindings?.dispatcher.declinedCurrentEvent() != true else { return }
+                target?.toggle()
+            }
+                .keyboardShortcut(keybindings == nil ? KeyboardShortcut("j") : keybindings?.menuShortcut(.terminalToggle))
+                .disabled(target?.thread == nil || target?.workspaceReady != true)
             Divider()
             Button("New Terminal") { target?.perform { try target?.terminals.add(for: $0) } }
                 .disabled(target?.canOpen != true || target?.terminals.isRestoring == true)

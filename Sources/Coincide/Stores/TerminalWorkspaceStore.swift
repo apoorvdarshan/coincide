@@ -7,6 +7,8 @@ import Observation
 /// How a window's terminals reach the rest of the app. WorkspaceStore installs
 /// it when the window registers; tests and unregistered windows use the defaults.
 struct TerminalIntegration {
+    var routeKeyEvent: @MainActor (NSEvent) -> TerminalKeyEventDisposition = { _ in .useDefault }
+    var keyEquivalent: (@MainActor (LocalTerminalSession, TerminalCommand) -> TerminalKeyEquivalent?)?
     var thread: (@MainActor (UUID) -> CodingThread?)? = nil
     var canOpen: @MainActor (CodingThread) -> Bool = { _ in true }
     var environment: @MainActor (CodingThread) -> [String: String] = { _ in [:] }
@@ -59,7 +61,9 @@ final class TerminalWorkspaceStore {
     private(set) var isRestoring = false
     private(set) var restorationError: String?
     var sessionWillClose: (@MainActor (LocalTerminalSession) -> Void)?
-    @ObservationIgnored var integration = TerminalIntegration()
+    @ObservationIgnored var integration = TerminalIntegration() {
+        didSet { for session in sessions.values.flatMap({ $0 }) { configureKeyboard(session) } }
+    }
     private var panelHeights: [UUID: Double] = [:]
     @ObservationIgnored private var knownThreads: [UUID: CodingThread] = [:]
     @ObservationIgnored private var monitor: TerminalActivityMonitor?
@@ -170,6 +174,7 @@ final class TerminalWorkspaceStore {
         register(session, thread: thread)
         layout.addGroup(session.id); layouts[thread.id] = layout
         selection[thread.id] = session.id
+        session.requestFocus()
         return session
     }
     /// Starts a fresh shell in a tab showing saved or exited output.
@@ -380,6 +385,7 @@ final class TerminalWorkspaceStore {
         workspacePaths[thread.id] = thread.workspacePath
         knownThreads[thread.id] = thread
         sessions[thread.id, default: []].append(session)
+        configureKeyboard(session)
         session.onCommand = { [weak self] session, command in self?.perform(command, on: session) }
         session.onOpenLink = { [weak self] session, link in self?.openLink(link, from: session) }
         session.onExit = { [weak self] session, code in self?.shellExited(session, code: code) }
@@ -388,6 +394,15 @@ final class TerminalWorkspaceStore {
             self.select(session, threadID: threadID, focus: false)
         }
         monitor?.wake()
+    }
+    private func configureKeyboard(_ session: LocalTerminalSession) {
+        session.onKeyEvent = { [weak self] event in self?.integration.routeKeyEvent(event) ?? .useDefault }
+        if let provider = integration.keyEquivalent {
+            session.onKeyEquivalent = { [weak self] (session: LocalTerminalSession, command: TerminalCommand) -> TerminalKeyEquivalent? in
+                guard let self, self.threadID(of: session) != nil else { return nil }
+                return provider(session, command)
+            }
+        } else { session.onKeyEquivalent = nil }
     }
     private func show(_ session: LocalTerminalSession, threadID: UUID) {
         selection[threadID] = session.id

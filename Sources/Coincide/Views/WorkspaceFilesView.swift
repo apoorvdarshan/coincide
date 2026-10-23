@@ -4,6 +4,8 @@ import SwiftUI
 struct WorkspaceFilesView: View {
     @Bindable var model: FileBrowserStore
     let navigation: FileNavigation?
+    var searchFocusRequest: UUID? = nil
+    @FocusState private var searchFocused: Bool
     @State private var pendingNavigation: FileNavigation?
     @State private var pendingPath: String?
     @State private var discard = false
@@ -28,6 +30,8 @@ struct WorkspaceFilesView: View {
             }.pickerStyle(.segmented).padding(.horizontal).accessibilityIdentifier("workspace-search-mode")
             TextField(model.searchMode == .paths ? "Search workspace files" : "Search file contents", text: $model.query).textFieldStyle(.roundedBorder).padding(.horizontal)
                 .accessibilityIdentifier("workspace-file-search")
+                .focused($searchFocused)
+                .onChange(of: searchFocusRequest, initial: true) { _, request in if request != nil { searchFocused = true } }
             if model.searchMode == .contents {
                 HStack {
                     Toggle("Aa", isOn: $model.caseSensitive).help("Match case").accessibilityLabel("Match case")

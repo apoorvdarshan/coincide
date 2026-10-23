@@ -2209,6 +2209,24 @@ final class WorkspaceStore {
         let task = enqueue(.interrupt(threadID: id))
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
     }
+    /// Native command surfaces use the same atomic run/runtime guard as app MCP,
+    /// so a scheduled Stop cannot affect a successor turn.
+    func interrupt(_ id: UUID, expectedRunID: UUID?, expectedRuntimeID: UUID?) async {
+        guard !terminating, let captured = thread(id), captured.activeRun?.id == expectedRunID,
+              captured.runtimeID == expectedRuntimeID else { return }
+        let configuration = ProviderConfiguration(thread: captured)
+        let task = enqueue(.interruptFromAppMCP(threadID: id, expectedRunID: expectedRunID, expectedRuntimeID: expectedRuntimeID), preflight: {
+            guard !self.terminating, let current = self.thread(id), current.projectID == captured.projectID,
+                  current.createdAt == captured.createdAt,
+                  current.workspacePath.utf8.elementsEqual(captured.workspacePath.utf8),
+                  current.workspacePreparation?.id == captured.workspacePreparation?.id,
+                  ProviderConfiguration(thread: current) == configuration,
+                  current.activeRun?.id == expectedRunID, current.runtimeID == expectedRuntimeID else { throw CancellationError() }
+        })
+        do { _ = try await task.value }
+        catch is CancellationError { }
+        catch { if !terminating { errorMessage = error.localizedDescription } }
+    }
     func respond(_ request: ApprovalRequest, threadID id: UUID, allow: Bool) async {
         let task = enqueue(.respond(threadID: id, requestID: request.id, response: .decision(allow)))
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }

@@ -10,6 +10,9 @@ struct ContentView: View {
     @State private var agentSessionImportSheetPresented = false
     @State private var scriptThread: CodingThread?
     @State private var settlementThread: CodingThread?
+    @Environment(KeybindingsStore.self) private var keybindings: KeybindingsStore?
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     var body: some View {
         NavigationSplitView {
             SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true },
@@ -54,7 +57,8 @@ struct ContentView: View {
             ToolbarItem { Button { store.newThread() } label: { Label("New Thread", systemImage: "square.and.pencil") } }
             ToolbarItem {
                 Button { toggleTerminal() } label: { Label("Terminal", systemImage: "terminal") }
-                    .keyboardShortcut("t", modifiers: [.command, .option]).disabled(store.selectedThread.map { !store.workspaceReady(for: $0) } ?? true)
+                    .keyboardShortcut(keybindings == nil ? KeyboardShortcut("t", modifiers: [.command, .option]) : keybindings?.menuShortcut(.terminalToggle))
+                    .disabled(store.selectedThread.map { !store.workspaceReady(for: $0) } ?? true)
             }
             ToolbarItem {
                 Button { scriptThread = store.selectedThread } label: { Label("Run Script…", systemImage: "play") }
@@ -85,12 +89,31 @@ struct ContentView: View {
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .disabled(store.isLoading)
         .task { await store.refreshExternalEditors() }
-        .onAppear { store.registerTerminals(terminals) }
+        .onAppear {
+            store.registerTerminals(terminals)
+            let bindings = keybindings
+            terminals.integration.routeKeyEvent = { [weak bindings] event in
+                bindings?.dispatcher.routeTerminalEvent(event) ?? .useDefault
+            }
+            if bindings != nil {
+                terminals.integration.keyEquivalent = { [weak bindings] session, command in
+                    bindings?.dispatcher.terminalKeyEquivalent(command, in: session.view.window)
+                }
+            }
+        }
         .task(id: store.hasLoadedWorkspace) {
             store.restoreTerminals(terminals)
         }
         .onDisappear { store.unregisterTerminals(terminals) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in terminals.suspend() }
+        .mainWindowKeyboard(store: store, keybindings: keybindings) {
+            MainWindowPresentations(newProject: { newProjectSheetPresented = true }, cloneRepository: { cloneSheetPresented = true },
+                importAgentProjects: { agentSessionImportSheetPresented = true }, settle: { settlementThread = $0 }, runScript: { scriptThread = $0 },
+                toggleTerminal: { toggleTerminal() }, terminalVisible: { store.selectedThreadID.map(terminals.isVisible) ?? false },
+                terminalTarget: { terminalCommandTarget },
+                newWindow: { openWindow(id: MainWindowCoordinator.sceneID) }, openRemote: { openWindow(id: RemoteWorkspaceStore.sceneID) },
+                openSettings: { openSettings() }, canInteract: { terminalCommandTarget != nil })
+        }
     }
     private func toggleTerminal() {
         guard let thread = store.selectedThread else { return }

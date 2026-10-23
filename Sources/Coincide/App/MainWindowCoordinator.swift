@@ -87,10 +87,16 @@ final class MainWindowCoordinator {
 struct MainWindowCommands<NewItemContent: View>: Commands {
     @Environment(\.openWindow) private var openWindow
     let coordinator: MainWindowCoordinator
+    private let newWindowShortcut: KeyboardShortcut?
+    private let allowsInvocation: @MainActor () -> Bool
     private let newItems: NewItemContent
 
-    init(coordinator: MainWindowCoordinator, @ViewBuilder newItems: () -> NewItemContent) {
+    init(coordinator: MainWindowCoordinator, newWindowShortcut: KeyboardShortcut? = KeyboardShortcut("n", modifiers: [.command, .option]),
+         allowsInvocation: @escaping @MainActor () -> Bool = { true },
+         @ViewBuilder newItems: () -> NewItemContent) {
         self.coordinator = coordinator
+        self.newWindowShortcut = newWindowShortcut
+        self.allowsInvocation = allowsInvocation
         self.newItems = newItems()
     }
 
@@ -101,8 +107,8 @@ struct MainWindowCommands<NewItemContent: View>: Commands {
         // commands inserted after the replaced .newItem anchor on macOS.
         CommandGroup(replacing: .newItem) {
             newItems
-            Button("New Window") { coordinator.newWindow() }
-                .keyboardShortcut("n", modifiers: [.command, .option])
+            Button("New Window") { if allowsInvocation() { coordinator.newWindow() } }
+                .keyboardShortcut(newWindowShortcut)
                 .accessibilityIdentifier("main-window-new")
         }
     }

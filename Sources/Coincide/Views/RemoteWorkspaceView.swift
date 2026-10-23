@@ -21,10 +21,13 @@ extension FocusedValues {
 
 struct RemoteWorkspaceCommands: Commands {
     @Environment(\.openWindow) private var openWindow
+    /// Configured as `remote.open` in keybindings.json.
+    var shortcut: KeyboardShortcut? = KeyboardShortcut("r", modifiers: [.command, .option])
+    var allowsInvocation: @MainActor () -> Bool = { true }
     var body: some Commands {
         CommandMenu("Remote") {
-            Button("Remote Workspaces…") { openWindow(id: RemoteWorkspaceStore.sceneID) }
-                .keyboardShortcut("r", modifiers: [.command, .option])
+            Button("Remote Workspaces…") { if allowsInvocation() { openWindow(id: RemoteWorkspaceStore.sceneID) } }
+                .keyboardShortcut(shortcut)
         }
     }
 }
