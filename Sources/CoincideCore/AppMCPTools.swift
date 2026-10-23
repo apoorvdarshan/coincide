@@ -228,7 +228,7 @@ public struct AppMCPTools: Sendable {
             case "t3_thread_configuration":
                 try input.only(["threadId"])
                 let thread = try Self.thread(input, view: view, caller: caller)
-                value = Self.configuration(thread)
+                value = try Self.configuration(thread)
             case "t3_queue_list", "t3_queue_read": value = try Self.queue(name, input: input, view: view, caller: caller)
             case "t3_pending_request_list", "t3_pending_request_read": value = try Self.questions(name, input: input, view: view, caller: caller)
             case "t3_worktree_status":
@@ -574,9 +574,13 @@ public struct AppMCPTools: Sendable {
             "pendingQuestionCount": .number(Double(value.runtimeRequests.filter { $0.request.isQuestion && !$0.responding }.count)),
             "createdAt": date(value.createdAt), "updatedAt": date(value.updatedAt)])
     }
-    private static func configuration(_ value: CodingThread) -> JSONValue {
-        .object(["threadId": id(value.id), "provider": .string(value.provider.rawValue), "model": .string(value.model),
-            "permission": .string(value.permission.rawValue), "reasoningEffort": value.reasoningEffort.map(JSONValue.string) ?? .null])
+    private static func configuration(_ value: CodingThread) throws -> JSONValue {
+        let options = try AppMCPProviderModelOptions.captured(.init(thread: value)).sorted { $0.key < $1.key }.map {
+            JSONValue.object(["id": .string($0.key), "value": $0.value])
+        }
+        return .object(["threadId": id(value.id), "provider": .string(value.provider.rawValue), "model": .string(value.model),
+            "permission": .string(value.permission.rawValue), "reasoningEffort": value.reasoningEffort.map(JSONValue.string) ?? .null,
+            "options": .array(options)])
     }
     private static func id(_ value: UUID) -> JSONValue { .string(value.uuidString.lowercased()) }
     private static func date(_ value: Date) -> JSONValue { .string(value.ISO8601Format()) }
@@ -640,7 +644,7 @@ public struct AppMCPTools: Sendable {
         let request = optionalThread.merging(["requestId": .object(["anyOf": .array([string(maximum: 512), .object(["type": .string("number")])])])]) { _, new in new }
         let queued = optionalThread.merging(["queuedRunId": uuid]) { _, new in new }
         let page = ["cursor": integer(minimum: 0), "limit": integer(minimum: 1, maximum: 100)]
-        let options: JSONValue = .object(["anyOf": .array([
+        let options: JSONValue = .object(["description": .string("Only options advertised by orchestrator_capabilities. Claude: effort, fastMode, thinking, contextWindow. Codex: reasoningEffort, serviceTier; legacy fastMode is used only when serviceTier is absent. Omitted options preserve inherited settings; empty options clear explicit overrides. Settings apply to future inputs, never an active turn."), "anyOf": .array([
             .object(["type": .string("object"), "maxProperties": .number(64), "additionalProperties": .object(["type": .array([.string("string"), .string("number"), .string("boolean")])])]),
             .object(["type": .string("array"), "maxItems": .number(64), "items": object(["id": string(maximum: 128), "value": .object(["type": .array([.string("string"), .string("number"), .string("boolean")])])], required: ["id", "value"])])
         ])])

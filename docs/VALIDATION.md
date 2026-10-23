@@ -4728,3 +4728,81 @@ Final verification on the frozen Core and corrected App source:
 
 Installed task/skill execution, broader provider/account acceptance, real remote
 hosts, hosted verification of this commit and full T3 Code parity remain pending.
+
+
+## 2026-10-23 — native model controls, saved-session import and composer recovery
+
+- Codex captures actual advertised service tiers, native defaults and bounded
+  legacy speed-tier metadata. Explicit choices recheck the native catalog before
+  starting/resuming a conversation or sending input. Clearing an app-owned sticky
+  tier sends the native persistent null reset; untouched defaults retain the CLI
+  cascade. Owned ChatGPT connections do not advertise unsupported tier controls.
+- Claude captures supported effort/fast/thinking/context choices, lowers only
+  pinned aliases and prompt efforts, and keeps requested fast mode separate from
+  reported effective state. Launch-only changes and clearing explicit effort
+  drain/recreate the connection to the same native conversation. Queued/active
+  inputs keep their own captured controls. Native menus, durable edits and app
+  tools share validation; stale menu captures cannot overwrite a newer profile
+  or sibling choice. Indirect control cases preserve bounded reducer frames and
+  backward decoding of commands without an optional expectation.
+- Explicit local project discovery/import follows the pinned T3 filesystem
+  sources, Codex and Claude. Bounded selective JSONL reads skip private tool/image
+  payloads, retain visible history, and inspect Git metadata without subprocesses.
+  Reviews bind physical roots, descriptors, digests and project incarnations.
+  Adoption creates settled histories, no provider input or invented run proof.
+  Durable provenance protects edited/archived/deleted imports and native owners,
+  including legacy Codex captures with an unknown home across instance aliases.
+  Import cursors retain their original completed-source view across page commits.
+  Cache admission accounts for full retained pages, including duplicate metadata.
+- Large native pastes become immutable text attachments; explicit inline paste,
+  a global 20-prompt local stash, and retained-original attachment retry are wired
+  into the composer. Exact draft/reference compare-and-swap preserves newer text.
+  Private manifests precede mutation, and unknown outcomes inspect/fence the
+  original command rather than replaying it. Project removal and Quit join owned
+  work; unfinished session-only attachment copies have an explicit Quit warning.
+  Canonically equivalent byte changes survive journal rebuilds for both draft
+  metadata and imported native transcript content.
+- Final source compilation passes. The new checks cover 51 Core and 16
+  native UI/store declarations; the repaired focus run passes 66 Core and 19
+  UI/store declarations, including existing Pi and attachment regressions. Initial test-only formatter and registered-path
+  fixtures were corrected, retaining their assertions and production guards.
+  The final serial aggregate run exits zero: **2190 declarations pass and 13
+  optional installed/live-provider declarations skip**, covering all 2203 listed
+  declarations. Core covers 1825 in 523.480 seconds (1812 pass, 13 skip), native
+  UI/store 348 in 79.464 seconds, Terminal 17 in 10.423 seconds, and Markdown 13
+  in 0.137 seconds. The full Pi package uses the existing pinned offline runtime;
+  no model service is contacted. This final run includes the previously crashing
+  Pi adoption/restart case and unchanged legacy attachment/removal assertions.
+- The first aggregate regression run exposed two App-only attachment-state/
+  removal regressions and a reproducible Pi native-history validation stack fault.
+  Busy-state reporting is again separate from failed/unknown submission blocking;
+  removed transient imports drain/dispose while global saved prompts and original
+  receipts remain recoverable. Existing assertions and deadlines are preserved.
+  Native journal validation now runs in a non-inlined 112-byte wrapper before
+  entering the separate 5584-byte event-diff frame (formerly 5648 bytes allocated
+  during validation). The previously crashing exact Pi case and complete focused
+  history/Unicode/import checks pass. Hashing, stack limits and validations stay
+  unchanged. The final aggregate run below is separate from that failed attempt.
+- All 75 Python support tests pass in 2.743 seconds; both new private Python peers
+  parse successfully. The ABI guard checks 1181 objects (837 Core and 343 app
+  coverage entries), with zero weak async-default records and three local ones.
+  The native GUI runner compiles and its offline launcher checks pass without
+  opening a GUI application. The packaged app passes strict deep code-signature
+  verification and native math resource rendering.
+- Separate evidence for the preceding pushed head `9c0f067`: its entire
+  [hosted run](https://github.com/apoorvdarshan/coincide/actions/runs/39951666097)
+  passes, including build, complete Swift tests, packaging, ABI/resources,
+  all four native GUI shards and the final shard-coverage gate. This result
+  does not validate the unpushed changes in this batch.
+- Compiled and packaged UUIDs match: Coincide
+  `78D14BE8-6696-3C28-AC87-02D627EBB95C`, CoincideEnvironment
+  `82C9819C-11DD-3064-9C6D-BA1C52C1DA03`, and CoincideScriptHelper
+  `6F07B85F-C0D5-3C39-AF1B-8E4F454EB599`.
+
+These checks use private offline peers and generated transcripts. No real native
+session file was changed, provider/model turn sent, authentication migrated, or
+installed app replaced/opened. New native GUI interaction, installed-provider
+control acceptance, remote display controls/composer/import parity and broader T3 parity remain
+unverified. Scanner-only duplicate alias metadata is reported without a hidden
+write in the read-only preparation API; deterministic native ownership still
+prevents duplicate thread adoption.

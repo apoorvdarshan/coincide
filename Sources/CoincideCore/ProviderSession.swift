@@ -244,7 +244,8 @@ public enum ProviderSessions {
             let resume = thread.claudeResumeSelection?.kind == .freshSession && launch == nil ? nil : thread.providerThreadID
             return try ClaudeSession(executable: URL(fileURLWithPath: configuration.executable),
                 cwd: URL(fileURLWithPath: thread.workspacePath), resumeID: resume,
-                configuration: configuration, launchSelection: launch)
+                configuration: configuration, launchSelection: launch,
+                modelOptions: try ClaudeModelControl.options(in: thread.activeRun?.configuration ?? .init(thread: thread)))
         }
         if thread.provider == .antigravity {
             try AntigravityConfigurationValidation.configuration(.init(thread: thread))
@@ -306,7 +307,8 @@ public enum ProviderSessions {
         let cwd = URL(fileURLWithPath: thread.workspacePath)
         switch thread.provider {
         case .codex: throw CodexRuntimeConfiguration.invalid()
-        case .claude: return try ClaudeSession(executable: executable, cwd: cwd, resumeID: thread.providerThreadID)
+        case .claude: return try ClaudeSession(executable: executable, cwd: cwd, resumeID: thread.providerThreadID,
+            modelOptions: try ClaudeModelControl.options(in: thread.activeRun?.configuration ?? .init(thread: thread)))
         case .opencode: throw OpenCodeConfiguration.invalid()
         case .pi: throw PiConfiguration.invalid()
         case .muse: throw MuseConfiguration.invalid()

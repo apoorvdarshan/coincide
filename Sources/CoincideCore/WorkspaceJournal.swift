@@ -17,6 +17,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case delegatedTasksReplaced([DelegatedTask]?)
     case delegatedTaskCohortsReplaced([DelegatedTaskCohort]?)
     case delegatedTaskTransfersReplaced([DelegatedTaskResultTransfer]?)
+    case agentSessionImportsReplaced([AgentSessionImportRecord]?)
     case threadMetadataUpserted(CodingThread)
     case threadRemoved(UUID)
     case threadsOrdered([UUID])
@@ -26,6 +27,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
 
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
+        case .agentSessionImportsReplaced(let values): snapshot.agentSessionImports = values
         case .delegatedTaskTransfersReplaced(let values): snapshot.delegatedTaskTransfers = values
         case .delegatedTasksReplaced(let values): snapshot.delegatedTasks = values
         case .delegatedTaskCohortsReplaced(let values): snapshot.delegatedTaskCohorts = values
@@ -106,6 +108,7 @@ public enum WorkspaceJournal {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
         try snapshot.validateDelegatedTasks()
+        try snapshot.validateAgentSessionImports()
         try snapshot.validatePromptSteerings()
         try snapshot.validateContextTransfers()
         try snapshot.validatePullRequestCheckouts()
@@ -191,9 +194,18 @@ public enum WorkspaceJournal {
         }
     }
 
+    /// Native history proof validation can descend through large retained value
+    /// types. Run it before allocating the transcript/metadata diff frame.
+    @inline(never)
     public static func changes(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) throws -> [WorkspaceEvent] {
         try validate(previous); try validate(next)
+        return changesAfterValidation(from: previous, to: next)
+    }
+
+    @inline(never)
+    private static func changesAfterValidation(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) -> [WorkspaceEvent] {
         var events: [WorkspaceEvent] = []
+        if previous.agentSessionImports != next.agentSessionImports { events.append(.agentSessionImportsReplaced(next.agentSessionImports)) }
         if previous.delegatedTaskTransfers != next.delegatedTaskTransfers { events.append(.delegatedTaskTransfersReplaced(next.delegatedTaskTransfers)) }
         if previous.delegatedTasks != next.delegatedTasks { events.append(.delegatedTasksReplaced(next.delegatedTasks)) }
         if previous.delegatedTaskCohorts != next.delegatedTaskCohorts { events.append(.delegatedTaskCohortsReplaced(next.delegatedTaskCohorts)) }
@@ -216,10 +228,20 @@ public enum WorkspaceJournal {
         for thread in next.threads {
             var metadata = thread; metadata.messages = []
             var oldMetadata = oldThreads[thread.id]; oldMetadata?.messages = []
-            if metadata != oldMetadata { events.append(.threadMetadataUpserted(metadata)) }
+            let currentImport = next.agentSessionImports?.first(where: { $0.threadID == thread.id })
+            let priorImport = previous.agentSessionImports?.first(where: { $0.threadID == thread.id })
+            let importedUpdate = currentImport != nil && currentImport?.lastCommandID != priorImport?.lastCommandID
+            let exactMetadata = oldMetadata.map {
+                metadata.draft.utf8.elementsEqual($0.draft.utf8) && metadata.title.utf8.elementsEqual($0.title.utf8) &&
+                    metadata.workspacePath.utf8.elementsEqual($0.workspacePath.utf8) && ComposerDraftSnapshot.sameAttachments(metadata.draftAttachments, $0.draftAttachments)
+            } ?? false
+            if metadata != oldMetadata || importedUpdate || !exactMetadata { events.append(.threadMetadataUpserted(metadata)) }
             let oldMessages = oldThreads[thread.id]?.messages ?? []
             if thread.messages.count < oldMessages.count { events.append(.messagesTruncated(threadID: thread.id, count: thread.messages.count)) }
             for (index, message) in thread.messages.enumerated() {
+                // An imported content fingerprint binds exact UTF8. Native
+                // normalization-only changes must survive journal rebuilds.
+                if importedUpdate { events.append(.messageUpserted(threadID: thread.id, index: index, message: message)); continue }
                 if index < oldMessages.count {
                     let old = oldMessages[index]
                     if old == message { continue }

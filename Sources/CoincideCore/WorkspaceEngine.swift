@@ -2349,6 +2349,7 @@ public actor WorkspaceEngine {
         var claudeConfiguration: ClaudeRuntimeConfiguration?
         var claudeLaunchSelection: ClaudeResumeSelection?
         var claudeNativeID: String?
+        var claudeModelOptions: ClaudeModelOptions?
         var reader: Task<Void, Never>?
         var mcpScope: MCPInvocationScope?
     }
@@ -2398,6 +2399,15 @@ public actor WorkspaceEngine {
         let task: Task<Void, Never>
     }
     private var contextTransferRetirements: [UUID: ContextTransferRetirement] = [:]
+    private let agentSessionDataRoot: URL
+    private var agentSessionScanner: AgentSessionScanner?
+    private var agentSessionProfilesDigest: String?
+    private var agentSessionScannerGeneration = UUID()
+    private var agentSessionScanResults: [UUID: AgentSessionScanResult] = [:]
+    private var agentSessionScanOrder: [UUID] = []
+    private var agentSessionCompletedSources: [String: [AgentSessionImportSource]] = [:]
+    private var agentSessionImportReviews: [UUID: AgentSessionImportAdmission] = [:]
+    private var agentSessionImportsClosing = false
     private let mcpRegistry = MCPSessionRegistry()
     private var mcpServer: MCPHTTPServer?
     private var mcpServerStart: Task<MCPHTTPServer, any Error>?
@@ -2465,6 +2475,7 @@ public actor WorkspaceEngine {
                 pullRequestCheckoutFactory: @escaping PullRequestCheckoutFactory = { GitHubPullRequestCheckoutService(request: $0) }) throws {
         self.appMCPEnabled = appMCPEnabled
         self.contextMCPEnabled = contextMCPEnabled
+        agentSessionDataRoot = url.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
@@ -2542,6 +2553,27 @@ public actor WorkspaceEngine {
         let receipt = try await enqueue(.client(capturedCommand), id: id)
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
         return receipt
+    }
+
+    /// Receipt inspection uses the original payload and never resubmits a draft
+    /// mutation whose response was lost across a restart or interrupted window.
+    public func composerDraftReceipt(commandID: UUID, replacement: ComposerDraftReplacement, resolvingAbsent: Bool = false) async throws -> WorkspaceCommandReceipt? {
+        _ = try await load()
+        return try await inspectedCommandReceipt(commandID, payload: taskCommandPayload(.client(.replaceComposerDraft(replacement))), resolvingAbsent: resolvingAbsent)
+    }
+    private func inspectedCommandReceipt(_ commandID: UUID, payload: Data, resolvingAbsent: Bool) async throws -> WorkspaceCommandReceipt? {
+        for attempt in 0..<4 {
+            if let receipt = try await database.receipt(commandID, matching: payload) { return receipt }
+            guard resolvingAbsent else { return nil }
+            let base = try await database.revision()
+            do {
+                // This original-ID rejection is atomic with every writer's
+                // command deduplication. A late original cannot apply afterward.
+                return try await database.rejectCommand(commandID, matching: payload,
+                    reason: "The earlier change was not admitted. Your current draft and saved data were kept.", expectedSequence: base.sequence)
+            } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
+        }
+        throw WorkspaceCommitError.revisionChanged
     }
     /// A retry first checks the previous attempt's durable publication evidence. A crash or
     /// late Cancel must not overwrite or clone over an already completed destination.
@@ -2652,7 +2684,7 @@ public actor WorkspaceEngine {
             for attempt in 0..<4 {
                 let base = try await database.revision()
                 if let fatalError { throw CoincideError(fatalError) }
-                let decision: WorkspaceDecision
+                var decision: WorkspaceDecision
                 do {
                     try envelope.mcpAdmission?.check()
                     let admissionCommands: [EngineCommand]
@@ -2684,6 +2716,7 @@ public actor WorkspaceEngine {
                         admissionCommands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: base.snapshot)
                     } else { admissionCommands = [envelope.command] }
                     for command in admissionCommands {
+                        if case .agentSessionImportAccepted(let admission) = command { try await validateAgentSessionImportAdmission(admission, snapshot: base.snapshot) }
                         if case .contextTransferAccepted(let review, _) = command { try validateContextTransferAcceptance(review, snapshot: base.snapshot) }
                         try validateCodexDefaultCommand(command, snapshot: base.snapshot)
                         try validateAntigravityAdmission(command, snapshot: base.snapshot)
@@ -2724,14 +2757,15 @@ public actor WorkspaceEngine {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
                 }
-                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError {
+                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError {
                     do {
-                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
+                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)
                         envelope.continuation.resume(returning: receipt); return
                     } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
                 }
                 do {
+                    try decision.snapshot.reconcileAgentSessionImports(previous: base.snapshot)
                     completedDuringCommit = []
                     removalCommitProjects = Set(base.snapshot.projects.map(\.id)).subtracting(decision.snapshot.projects.map(\.id))
                     removalCommitThreads = Set(base.snapshot.threads.map(\.id)).subtracting(decision.snapshot.threads.map(\.id))
@@ -3318,7 +3352,14 @@ public actor WorkspaceEngine {
                       revision.snapshot.workspaceReady(for: committed) else { if contextDelivery != nil { throw CancellationError() }; return .cancelled }
                 configured.runHistory = committed.runHistory; configured.providerThreadID = preparation.nativeSessionFile
                 try await runtime.session.sendPreparedPi(input: input, thread: configured, preparation: preparation)
-            } else { try await runtime.session.send(input: input, thread: configured) }
+            } else {
+                if configuration.provider == .claude, runtimes[thread.id]?.id == runtime.id {
+                    // Controls may be applied before a user-frame failure. Keep
+                    // the attempt so clearing effort still recreates its actor.
+                    runtimes[thread.id]?.claudeModelOptions = try ClaudeModelControl.options(in: configuration)
+                }
+                try await runtime.session.send(input: input, thread: configured)
+            }
             if let delivery = contextDelivery {
                 let receipt = try await enqueue(.contextTransferDelivered(threadID: thread.id, runID: runID, deliveryID: delivery.id))
                 guard receipt.rejection == nil else { throw ContextTransferError.uncertain }
@@ -3536,6 +3577,7 @@ public actor WorkspaceEngine {
         }
         let id = UUID(), session = try factory(thread)
         var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding, antigravityBinding: ProviderConfiguration(thread: thread).antigravityRuntimeBinding, codexBinding: ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeConfiguration: thread.claudeRuntimeConfiguration, claudeLaunchSelection: thread.activeRun?.configuration.claudeLaunchSelection, claudeNativeID: thread.providerThreadID)
+        if thread.provider == .claude { runtime.claudeModelOptions = try ClaudeModelControl.options(in: configuration) }
         runtimes[thread.id] = runtime
         do { runtime.mcpScope = try await configureAppMCP(thread: thread, runID: runID, runtimeID: id, session: session, configuration: configuration) }
         catch { await closeRuntime(thread.id, matching: id); throw error }
@@ -3880,6 +3922,7 @@ public actor WorkspaceEngine {
         if let initialization { _ = try? await initialization.value }
         guard !closing else { return }
         stoppingEffects = true
+        await closeAgentSessionImports()
         delegatedTaskDeliveryJob?.cancel()
         if loaded, fatalError == nil { _ = try? await enqueue(.pauseQueues) }
         closing = true
@@ -4383,9 +4426,14 @@ extension WorkspaceEngine {
 
     private func claudeRuntimeMatches(_ runtime: Runtime, thread: CodingThread) -> Bool {
         guard thread.provider == .claude else { return runtime.claudeConfiguration == nil }
+        let next = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
+        var previous = next
+        do { previous.agentConfiguration = try ClaudeModelControl.setting(runtime.claudeModelOptions ?? .init(), in: nil) }
+        catch { return false }
         return runtime.claudeConfiguration == thread.claudeRuntimeConfiguration &&
             runtime.claudeLaunchSelection == thread.activeRun?.configuration.claudeLaunchSelection &&
-            (runtime.claudeNativeID == nil || runtime.claudeNativeID == thread.providerThreadID)
+            (runtime.claudeNativeID == nil || runtime.claudeNativeID == thread.providerThreadID) &&
+            !ClaudeModelControl.requiresNewSession(previous: previous, next: next)
     }
 
     /// The native namespace is the physical configuration root and session UUID.
@@ -5958,6 +6006,7 @@ extension WorkspaceEngine {
     }
     private func taskCommandPayload(_ command: EngineCommand) throws -> Data {
         switch command {
+        case .agentSessionImportAccepted(let admission): return try agentSessionImportPayload(reviewID: admission.review.id, digest: admission.review.digest)
         case .delegatedTaskAccepted(let prepared): return try TaskOrchestration.payload(["delegatedTask": try TaskOrchestration.payload(prepared.request)])
         case .appMCP(_, let commands) where commands.count == 1:
             if case .delegatedTaskAccepted = commands[0] { return try taskCommandPayload(commands[0]) }
@@ -6038,5 +6087,122 @@ extension WorkspaceEngine {
               plan.sourceGitDirectoryPath.utf8.elementsEqual(proof.projectGitDirectoryPath.utf8), plan.sourceGitDirectoryIdentity == proof.projectGitDirectoryIdentity,
               plan.commonDirectoryPath.utf8.elementsEqual(proof.commonDirectoryPath.utf8), plan.commonDirectoryIdentity == proof.commonDirectoryIdentity,
               plan.baseCommit == proof.baseCommit else { throw TaskIsolationError.changedRepository }
+    }
+}
+
+extension WorkspaceEngine {
+    /// Filesystem-only discovery from explicitly host-captured native profiles.
+    /// A changed profile retires all prior read leases; it never starts a CLI.
+    public func scanAgentSessions(profiles: [AgentSessionProfile]) async throws -> AgentSessionScanResult {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, !agentSessionImportsClosing else { throw CancellationError() }
+        let digest = try AgentSessionImportProtocol.digest(profiles)
+        if agentSessionScanner == nil || agentSessionProfilesDigest != digest {
+            let previous = agentSessionScanner
+            agentSessionScanner = try AgentSessionScanner(profiles: profiles,
+                excludingWorkspaceRoots: [agentSessionDataRoot.path, worktreesRoot.path])
+            agentSessionProfilesDigest = digest; agentSessionScannerGeneration = UUID()
+            agentSessionScanResults = [:]; agentSessionScanOrder = []; agentSessionCompletedSources = [:]; agentSessionImportReviews = [:]
+            if let previous { await previous.close() }
+        }
+        guard let scanner = agentSessionScanner, agentSessionProfilesDigest == digest else { throw AgentSessionImportError.staleScan }
+        let generation = agentSessionScannerGeneration
+        let result = try await scanner.scan(projects: revision.snapshot.projects)
+        guard !closing, !stoppingEffects, !agentSessionImportsClosing, generation == agentSessionScannerGeneration else {
+            await scanner.release(scanID: result.id); throw CancellationError()
+        }
+        agentSessionScanResults[result.id] = result; agentSessionScanOrder.append(result.id)
+        while agentSessionScanOrder.count > 4, let first = agentSessionScanOrder.first { await releaseAgentSessionScan(first) }
+        return result
+    }
+
+    public func prepareAgentSessionImport(scanID: UUID, projectID: UUID, expectedWorkspaceRoot: String, cursor: UUID? = nil) async throws -> AgentSessionImportPage {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, !agentSessionImportsClosing, let scanner = agentSessionScanner,
+              let scan = agentSessionScanResults[scanID], scan.candidates.contains(where: { $0.path.utf8.elementsEqual(expectedWorkspaceRoot.utf8) }),
+              let project = revision.snapshot.projects.first(where: { $0.id == projectID }),
+              project.path.utf8.elementsEqual(expectedWorkspaceRoot.utf8), project.clone?.isReady ?? true,
+              let incarnation = projectIncarnations[projectID], !removalCommitProjects.contains(projectID) else { throw AgentSessionImportError.changed }
+        let generation = agentSessionScannerGeneration
+        let key = scanID.uuidString + ":" + projectID.uuidString + ":" + Data(expectedWorkspaceRoot.utf8).base64EncodedString()
+        if agentSessionCompletedSources[key] == nil {
+            guard cursor == nil else { throw AgentSessionImportError.staleScan }
+            agentSessionCompletedSources[key] = (revision.snapshot.agentSessionImports ?? [])
+                .filter { $0.workspacePath.utf8.elementsEqual(expectedWorkspaceRoot.utf8) }.flatMap(\.sources)
+        }
+        let page = try await scanner.prepareImport(scanID: scanID, projectID: projectID, expectedWorkspaceRoot: expectedWorkspaceRoot,
+            cursor: cursor, completedSources: agentSessionCompletedSources[key] ?? [])
+        guard !closing, !stoppingEffects, !agentSessionImportsClosing, generation == agentSessionScannerGeneration,
+              agentSessionScanResults[scanID] != nil, projectIncarnations[projectID] == incarnation,
+              revision.snapshot.projects.contains(where: { $0.id == projectID && $0.path.utf8.elementsEqual(expectedWorkspaceRoot.utf8) }),
+              !removalCommitProjects.contains(projectID) else { throw AgentSessionImportError.changed }
+        for review in page.reviews {
+            var configuration = review.profile.configuration
+            configuration.provider = review.transcript.source.provider; configuration.workspacePath = expectedWorkspaceRoot
+            configuration.nativeThreadID = review.transcript.providerSessionID
+            configuration.model = review.transcript.model ?? configuration.model
+            configuration.claudeLaunchSelection = nil
+            if let runtime = configuration.claudeRuntimeConfiguration {
+                configuration.claudeRuntimeConfiguration = try runtime.replacingWorkspace(expectedWorkspaceRoot, physicalPath: expectedWorkspaceRoot)
+            }
+            try configuration.codexRuntimeConfiguration?.validate(); try configuration.validateClaudeConfiguration()
+            agentSessionImportReviews[review.id] = .init(review: review, configuration: configuration, projectIncarnation: incarnation)
+        }
+        return page
+    }
+
+    @discardableResult public func acceptAgentSessionImport(reviewID: UUID, digest: String, commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        let payload = try agentSessionImportPayload(reviewID: reviewID, digest: digest)
+        // Original receipts win before volatile leases, native file reads or any
+        // new provider/settings lookup, including after an app restart.
+        if let receipt = try await database.receipt(commandID, matching: payload) { return receipt }
+        guard !closing, !stoppingEffects, !agentSessionImportsClosing, let scanner = agentSessionScanner,
+              let admission = agentSessionImportReviews[reviewID], admission.review.digest == digest else { throw AgentSessionImportError.staleScan }
+        let generation = agentSessionScannerGeneration
+        try await scanner.validate(admission.review)
+        try Task.checkCancellation()
+        guard !closing, !stoppingEffects, !agentSessionImportsClosing, generation == agentSessionScannerGeneration,
+              agentSessionImportReviews[reviewID] == admission else { throw AgentSessionImportError.staleScan }
+        let receipt = try await enqueue(.agentSessionImportAccepted(admission), id: commandID)
+        agentSessionImportReviews.removeValue(forKey: reviewID)
+        await scanner.release(reviewID: reviewID)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+
+    public func agentSessionImportReceipt(reviewID: UUID, digest: String, commandID: UUID, resolvingAbsent: Bool = false) async throws -> WorkspaceCommandReceipt? {
+        _ = try await load()
+        return try await inspectedCommandReceipt(commandID, payload: agentSessionImportPayload(reviewID: reviewID, digest: digest), resolvingAbsent: resolvingAbsent)
+    }
+
+    public func releaseAgentSessionScan(_ scanID: UUID) async {
+        agentSessionScanResults.removeValue(forKey: scanID); agentSessionScanOrder.removeAll { $0 == scanID }
+        agentSessionImportReviews = agentSessionImportReviews.filter { $0.value.review.scanID != scanID }
+        agentSessionCompletedSources = agentSessionCompletedSources.filter { !$0.key.hasPrefix(scanID.uuidString + ":") }
+        await agentSessionScanner?.release(scanID: scanID)
+    }
+    public func closeAgentSessionImports() async {
+        agentSessionImportsClosing = true; agentSessionScannerGeneration = UUID()
+        let scanner = agentSessionScanner; agentSessionScanner = nil; agentSessionProfilesDigest = nil
+        agentSessionScanResults = [:]; agentSessionScanOrder = []; agentSessionCompletedSources = [:]; agentSessionImportReviews = [:]
+        await scanner?.close()
+    }
+    private func agentSessionImportPayload(reviewID: UUID, digest: String) throws -> Data {
+        guard digest.utf8.count == 64, digest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { throw AgentSessionImportError.invalidRequest }
+        struct Intent: Encodable { let kind = "agent-session-import-v1"; let reviewID: UUID; let digest: String }
+        return try AgentSessionImportProtocol.payload(Intent(reviewID: reviewID, digest: digest))
+    }
+    private func validateAgentSessionImportAdmission(_ admission: AgentSessionImportAdmission, snapshot: WorkspaceSnapshot) async throws {
+        guard !closing, !stoppingEffects, !agentSessionImportsClosing, let scanner = agentSessionScanner,
+              agentSessionImportReviews[admission.review.id] == admission,
+              projectIncarnations[admission.review.projectID] == admission.projectIncarnation,
+              snapshot.projects.contains(where: { $0.id == admission.review.projectID && $0.path.utf8.elementsEqual(admission.review.expectedWorkspaceRoot.utf8) }),
+              !removalCommitProjects.contains(admission.review.projectID), !isCodexAuthenticationLocked(admission.configuration) else { throw AgentSessionImportError.changed }
+        let generation = agentSessionScannerGeneration
+        try await scanner.validateAdmissionIdentity(admission.review)
+        guard !closing, !stoppingEffects, !agentSessionImportsClosing, generation == agentSessionScannerGeneration,
+              agentSessionImportReviews[admission.review.id] == admission,
+              projectIncarnations[admission.review.projectID] == admission.projectIncarnation else { throw AgentSessionImportError.changed }
     }
 }

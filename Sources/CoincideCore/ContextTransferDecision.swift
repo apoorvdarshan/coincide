@@ -227,7 +227,7 @@ extension WorkspaceDecision {
         guard pending || uncertain else { return }
         switch edit {
         case .title, .draft, .pinned, .archived: return
-        case .model, .permission, .codexModel, .codexReasoning, .codexDefaultModel, .openCodeModel, .openCodeVariant, .piModel, .piThinking, .museModel, .museReasoning, .checkpointPolicy:
+        case .model, .permission, .codexModel, .codexReasoning, .codexDefaultModel, .codexServiceTier, .claudeModel, .claudeModelOptions, .resetProviderModelOptions, .openCodeModel, .openCodeVariant, .piModel, .piThinking, .museModel, .museReasoning, .checkpointPolicy:
             guard !uncertain else { throw ContextTransferError.uncertain }
         default: throw WorkspaceCommandError("This conversation has saved context. Keep its provider and workspace until delivery, or explicitly choose fresh context after an uncertain delivery.")
         }

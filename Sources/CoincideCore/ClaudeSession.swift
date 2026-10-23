@@ -14,6 +14,11 @@ public actor ClaudeSession: ProviderSession {
     private var skillReads: [UUID: Task<ProviderSkillInventory, any Error>] = [:]
     private let workspacePath: String
     private let launchSelection: ClaudeResumeSelection?
+    private let launchModelOptions: ClaudeModelOptions
+    private var lastAppliedModelSelection: CompiledClaudeModelSelection?
+    private var activeModelSelection: CompiledClaudeModelSelection?
+    private var nativeVersion: String?
+    private var modelControlMetadata: [String: JSONValue] = [:]
     private var appMCPConnection: AppMCPConnection?
     private var appMCPRedaction: Task<Void, any Error>?
     private var historyEvidence: ClaudeRunHistoryEvidence?
@@ -52,11 +57,13 @@ public actor ClaudeSession: ProviderSession {
     private var attemptedSteeringInputIDs: Set<String> = []
 
     public init(executable: URL, cwd: URL, resumeID: String? = nil, arguments: [String]? = nil,
-                configuration: ClaudeRuntimeConfiguration? = nil, launchSelection: ClaudeResumeSelection? = nil) throws {
+                configuration: ClaudeRuntimeConfiguration? = nil, launchSelection: ClaudeResumeSelection? = nil,
+                modelOptions: ClaudeModelOptions = .init()) throws {
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
         self.events = events; self.continuation = continuation
         supportsAppMCP = configuration != nil && arguments == nil
         runtimeConfiguration = configuration; self.launchSelection = launchSelection
+        try modelOptions.validate(); launchModelOptions = modelOptions
         workspacePath = cwd.path
         var environment: [String: String]?
         if let configuration {
@@ -78,6 +85,12 @@ public actor ClaudeSession: ProviderSession {
         var args = arguments ?? ["--print", "--input-format", "stream-json", "--output-format", "stream-json",
             "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio",
             "--allow-dangerously-skip-permissions"]
+        if let thinking = modelOptions.thinking {
+            // The SDK implements this as a launch flag. Never turn a live
+            // process's session default into an approximation of a fresh one.
+            guard arguments == nil else { throw ClaudeModelControl.requiresFreshSession() }
+            args += ["--thinking", thinking ? "adaptive" : "disabled"]
+        }
         if let launchSelection {
             guard let configuration, arguments == nil else { throw ClaudeRuntimeConfiguration.invalid() }
             try launchSelection.validate(runtime: configuration)
@@ -168,6 +181,7 @@ public actor ClaudeSession: ProviderSession {
             try Task.checkCancellation()
             if !initialized {
                 initialization = result; initialized = true
+                observeModelControlMetadata(result)
                 if advertisedCommands == nil { advertisedCommands = result.object?["commands"] }
                 logger.info("Claude connection ready")
             }
@@ -201,10 +215,9 @@ public actor ClaudeSession: ProviderSession {
     }
     public func models() async throws -> [ProviderModel] {
         try await connect()
-        return (initialization["models"].array ?? []).compactMap {
-            guard let id = $0["value"].string ?? $0["id"].string else { return nil }
-            return ProviderModel(id: id, name: $0["displayName"].string ?? id)
-        }
+        await rpc.flushEvents()
+        guard !shuttingDown else { throw CancellationError() }
+        return try ClaudeModelCatalog.models(initialization["models"], version: nativeVersion)
     }
     public func providerCommands(forceReload: Bool = false) async throws -> ProviderCommandInventory {
         try await connect()
@@ -258,15 +271,15 @@ public actor ClaudeSession: ProviderSession {
             guard ownsPreparing(generation) else { throw CancellationError() }
             _ = try await rpc.request("set_permission_mode", params: .object(["mode": .string(Self.permissionMode(captured.permission))]))
             guard ownsPreparing(generation) else { throw CancellationError() }
-            _ = try await rpc.request("set_model", params: .object(["model": captured.model.isEmpty ? .null : .string(captured.model)]))
-            guard ownsPreparing(generation) else { throw CancellationError() }
+            let selection = try await applyModelSelection(captured, generation: generation)
             await rpc.flushEvents()
             guard ownsPreparing(generation) else { throw CancellationError() }
             let promptID = submittedRunID.map(ClaudeInputIdentity.opening(runID:)) ?? UUID().uuidString
             activeTurnID = promptID
-            let plan = try await skillDispatch(input.text)
+            let transportInput = ClaudeModelControl.input(input, promptEffort: selection.promptEffort)
+            let plan = try await skillDispatch(transportInput.text)
             guard ownsPreparing(generation) else { throw CancellationError() }
-            let content = try ClaudeSkillDispatch.content(input: input, plan: plan)
+            let content = try ClaudeSkillDispatch.content(input: transportInput, plan: plan)
             submittedOpening = true
             try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(promptID),
                 "message": .object(["role": .string("user"), "content": content]), "parent_tool_use_id": .null]))
@@ -301,10 +314,11 @@ public actor ClaudeSession: ProviderSession {
         guard activeRootSubagentTools.isEmpty else { throw ProviderSteeringError(.unsupported) }
         try ProviderSteeringValidation.target(thread, provider: .claude, configuration: activeConfiguration,
             runID: eventRunID, nativeThreadID: activeNativeThreadID, turnID: activeTurnID, expectedTurnID: expectedTurnID)
-        let plan = try await skillDispatch(input.text)
+        let transportInput = ClaudeModelControl.input(input, promptEffort: activeModelSelection?.promptEffort)
+        let plan = try await skillDispatch(transportInput.text)
         try ProviderSteeringValidation.target(thread, provider: .claude, configuration: activeConfiguration,
             runID: eventRunID, nativeThreadID: activeNativeThreadID, turnID: activeTurnID, expectedTurnID: expectedTurnID)
-        let content = try ClaudeSkillDispatch.content(input: input, plan: plan)
+        let content = try ClaudeSkillDispatch.content(input: transportInput, plan: plan)
         // The native UUID is bound to the already-persisted authored row. It is
         // prospective history ownership, never a provider idempotency promise.
         let promptID = try ClaudeInputIdentity.steering(messageID: clientMessageID), id = UUID()
@@ -413,6 +427,48 @@ public actor ClaudeSession: ProviderSession {
         await task.value
         reader = nil; steeringTask = nil; appMCPConnection = nil; appMCPRedaction = nil
     }
+    private func applyModelSelection(_ captured: ProviderConfiguration, generation: Int) async throws -> CompiledClaudeModelSelection {
+        let options = try ClaudeModelControl.options(in: captured)
+        guard options.thinking == launchModelOptions.thinking else { throw ClaudeModelControl.requiresFreshSession() }
+        if lastAppliedModelSelection?.options.effort != nil, options.effort == nil { throw ClaudeModelControl.requiresFreshSession() }
+        let models = options.isEmpty ? [] : try ClaudeModelCatalog.models(initialization["models"], version: nativeVersion)
+        let selected = try ClaudeModelCatalog.compile(model: captured.model, options: options, models: models, version: nativeVersion)
+        let appliesFlags = selected.effort != nil || selected.fastMode != nil || selected.ultracode ||
+            lastAppliedModelSelection?.fastMode != nil || lastAppliedModelSelection?.ultracode == true
+        do {
+            _ = try await rpc.request("set_model", params: .object(["model": selected.model.isEmpty ? .null : .string(selected.model)]))
+            guard ownsPreparing(generation) else { throw CancellationError() }
+            if appliesFlags {
+                _ = try await rpc.request("apply_flag_settings", params: .object(["settings": selected.flagSettings]))
+                guard ownsPreparing(generation) else { throw CancellationError() }
+            }
+            lastAppliedModelSelection = selected; activeModelSelection = selected
+            return selected
+        } catch {
+            // A failed/cancelled control may already have changed session state.
+            // Retire and drain it before any later input can use partial state.
+            await close()
+            if error is CancellationError { throw CancellationError() }
+            throw CoincideError("Claude could not confirm the selected model controls. No user input was submitted. Reconnect before sending.")
+        }
+    }
+    private func observeModelControlMetadata(_ frame: JSONValue) {
+        var changed = false
+        if let version = frame["claude_code_version"].string, version.utf8.count <= 128,
+           version.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?$"#, options: .regularExpression) != nil {
+            nativeVersion = version
+            if modelControlMetadata["version"] != .string(version) { modelControlMetadata["version"] = .string(version); changed = true }
+        }
+        if let state = frame["fast_mode_state"].string, ["off", "cooldown", "on"].contains(state) {
+            if modelControlMetadata["fastModeState"] != .string(state) { modelControlMetadata["fastModeState"] = .string(state); changed = true }
+            let reason = frame["fast_mode_disabled_reason"].string.flatMap { reason in
+                ["free", "preference", "extra_usage_disabled", "network_error", "unknown", "not_first_party", "disabled_by_env", "model_not_allowed", "sdk_opt_in_required", "pending"].contains(reason) ? reason : nil
+            }
+            let next = reason.map(JSONValue.string)
+            if modelControlMetadata["fastModeDisabledReason"] != next { modelControlMetadata["fastModeDisabledReason"] = next; changed = true }
+        }
+        if changed { emit(.configuration(.object(["claudeModelControl": .object(modelControlMetadata)]))) }
+    }
     private func skillDispatch(_ text: String) async throws -> ClaudeSkillDispatchPlan? {
         guard text.range(of: #"\p{Sc}"#, options: .regularExpression) != nil, let configuration = skillDiscoveryConfiguration else { return nil }
         guard !shuttingDown else { throw CancellationError() }
@@ -500,6 +556,7 @@ public actor ClaudeSession: ProviderSession {
                     emit(.message(.init(id: "result-\(id)", role: .tool, text: text)))
                 }
             case "system":
+                if isRoot, frame["subtype"] == .string("init") { observeModelControlMetadata(frame) }
                 if isRoot, frame["subtype"] == .string("commands_changed") {
                     // Replacement, including empty/malformed payloads. A stale
                     // healthy cache must not survive a native removal or error.
@@ -517,6 +574,7 @@ public actor ClaudeSession: ProviderSession {
                 // ahead of a Stop result. Completion is one fact for the live
                 // root query; late segments and child results cannot repeat it.
                 guard isRoot, working, submittedOpening, resultBelongsToCurrentInput(frame) else { return }
+                observeModelControlMetadata(frame)
                 if steeringSubmitted, !requestedInterrupt,
                    ["aborted_tools", "aborted_streaming"].contains(frame["terminal_reason"].string ?? "") { return }
                 let terminal: ThreadRunStatus = requestedInterrupt ? .interrupted : (frame["is_error"] == .bool(true) ? .failed : .completed)

@@ -73,7 +73,7 @@ struct ComposerSelectionBridge: NSViewRepresentable {
                 }
             }
             guard let editor else { return }
-            if let request = parent.request, request.id != appliedRequest, editor.string == request.text,
+            if let request = parent.request, request.id != appliedRequest, editor.string.utf8.elementsEqual(request.text.utf8),
                ComposerUTF16Selection.isValid(request.range, in: editor.string) {
                 appliedRequest = request.id; editor.setSelectedRange(request.range)
                 editor.window?.makeFirstResponder(editor); editor.scrollRangeToVisible(request.range)

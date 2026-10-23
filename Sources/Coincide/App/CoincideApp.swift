@@ -36,6 +36,7 @@ struct CoincideApp: App {
     @FocusedValue(\.cloneRepositoryPresentation) private var cloneRepositoryPresentation: Binding<Bool>?
     @FocusedValue(\.newProjectPresentation) private var newProjectPresentation: Binding<Bool>?
     @FocusedValue(\.settlementPresentation) private var settlementPresentation: Binding<CodingThread?>?
+    @FocusedValue(\.agentSessionImportPresentation) private var agentSessionImportPresentation: Binding<Bool>?
     @FocusedValue(\.remoteWorkspacePresentation) private var remotePresentation: RemoteWorkspacePresentation?
     private var defaultWindowSize: CGSize {
         MainWindowSizing.size(fitting: NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 820))
@@ -80,6 +81,8 @@ struct CoincideApp: App {
                 }.keyboardShortcut("o").disabled(remotePresentation != nil && !remoteStore.canWrite)
                 Button("Clone Repository…") { cloneRepositoryPresentation?.wrappedValue = true }
                     .keyboardShortcut("o", modifiers: [.command, .shift]).disabled(cloneRepositoryPresentation == nil)
+                Button("Import Agent Projects…") { agentSessionImportPresentation?.wrappedValue = true }
+                    .disabled(remotePresentation != nil || agentSessionImportPresentation == nil)
             }
             CommandMenu("Thread") {
                 if remotePresentation != nil {
@@ -182,6 +185,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store else { return .terminateNow }
         guard !isQuitting else { return .terminateLater }
+        if !store.composerDraftTools.imports.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Quit with unfinished attachments?")
+            alert.informativeText = String(localized: "Some chosen or pasted attachments are not yet attached to a draft. Their captured retry copies are kept only for this session. Cancel to retry or remove them, or quit and choose or paste them again later. Successfully attached files and saved prompts remain available.")
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            alert.addButton(withTitle: String(localized: "Quit and Discard"))
+            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        }
         if store.hasUnsavedFileEdits || remoteStore?.hasUnsavedWorkspaceEdits == true {
             let alert = NSAlert()
             alert.messageText = String(localized: "Quit with unsaved file edits?")

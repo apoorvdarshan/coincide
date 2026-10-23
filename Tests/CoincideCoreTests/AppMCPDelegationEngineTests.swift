@@ -2,6 +2,38 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+private func delegationMCPControlsModel() -> ProviderModel {
+    .init(id: "wire-model", name: "Controlled model", reasoningEfforts: [.init(id: "high", description: "High"), .init(id: "low", description: "Low")], defaultReasoningEffort: "low",
+        codexServiceTiers: [.init(id: "priority", name: "Priority", description: "Native fixture tier"), .init(id: "ultrafast", name: "Ultrafast", description: "Native fixture tier")])
+}
+
+@Test(.timeLimit(.minutes(1))) func appMCPProviderControlsEngineCaptureTaskSpeedAndConfigureFutureOptionsWithoutChangingActiveInputOrDraft() async throws {
+    let initial = try CodexServiceTier.setting("priority", in: nil), f = try await DelegationMCPFixture.make(options: initial)
+    do {
+        _ = try await f.engine.dispatch(.editThread(f.parentID, .codexServiceTier(model: delegationMCPControlsModel(), tier: "ultrafast")))
+        let inherited = try await f.task(f.perform(.delegateTask(.init(task: "Captured tier", target: .init(model: "wire-model", options: ["reasoningEffort": .string("high")]), clientRequestID: "tier-capture"))))
+        #expect(try CodexServiceTier.selected(in: inherited.request.configuration) == "priority")
+        let cleared = try await f.task(f.perform(.delegateTask(.init(task: "Clear tier", target: .init(model: "wire-model", options: [:]), clientRequestID: "tier-clear"))))
+        #expect(try CodexServiceTier.selected(in: cleared.request.configuration) == nil)
+        await #expect(throws: AppMCPError(.invalidRequest)) { _ = try await f.perform(.delegateTask(.init(task: "Unavailable tier", target: .init(options: ["serviceTier": .string("missing")]), clientRequestID: "bad-tier"))) }
+        let launched = try await f.perform(.launchThread(.init(projectID: f.project.id, creation: .init(title: "Control target"))))
+        let targetID = try #require(launched["threadId"].string.flatMap(UUID.init(uuidString:)))
+        _ = try await f.engine.dispatch(.editThread(targetID, .draft("Retain authored draft 工作\n")))
+        _ = try await f.perform(.configureThread(threadID: targetID, selection: .init(model: "wire-model", options: ["serviceTier": .string("ultrafast")])))
+        let configured = try #require(await f.engine.current().snapshot.threads.first { $0.id == targetID })
+        #expect(configured.reasoningEffort == "high" && configured.draft == "Retain authored draft 工作\n")
+        #expect(try CodexServiceTier.selected(in: .init(thread: configured)) == "ultrafast")
+        _ = try await f.perform(.configureThread(threadID: targetID, selection: .init(model: "wire-model", options: [:])))
+        let reset = try #require(await f.engine.current().snapshot.threads.first { $0.id == targetID })
+        #expect(reset.reasoningEffort == "low" && reset.draft == configured.draft)
+        #expect(try CodexServiceTier.selected(in: .init(thread: reset)) == nil)
+        let parent = try #require(await f.engine.current().snapshot.threads.first { $0.id == f.parentID })
+        let active = try #require(parent.activeRun)
+        #expect(try CodexServiceTier.selected(in: active.configuration) == "priority")
+        #expect(try CodexServiceTier.selected(in: .init(thread: parent)) == "ultrafast")
+    } catch { await f.close(); throw error }; await f.close()
+}
+
 /// Registers a real Engine-owned app-tool scope, without an installed provider.
 /// Reuses the task lane's controlled event/input peer and its bounded waits.
 private actor DelegationMCPTestSession: ProviderSession {
@@ -19,7 +51,7 @@ private actor DelegationMCPTestSession: ProviderSession {
     func configureAppMCP(_ connection: AppMCPConnection) { }
     func models() async -> [ProviderModel] {
         await modelProbe.record(configuration)
-        return [.init(id: "wire-model", name: "Controlled model", reasoningEfforts: [.init(id: "high", description: "High"), .init(id: "low", description: "Low")], defaultReasoningEffort: "low")]
+        return [delegationMCPControlsModel()]
     }
     func send(text: String, thread: CodingThread) async throws { try await send(input: .init(text: text), thread: thread) }
     func send(input: ProviderInput, thread: CodingThread) async throws { try await peer.receive(input, thread: thread, events: continuation) }
@@ -37,7 +69,7 @@ private struct DelegationMCPFixture: Sendable {
     let engine: WorkspaceEngine, peer: DelegatedTaskTestPeer
     let modelProbe: DelegationMCPModelProbe
     let project: WorkspaceProject, parentID: UUID
-    static func make() async throws -> Self {
+    static func make(options: [String: JSONValue]? = nil) async throws -> Self {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-mcp-delegation-" + UUID().uuidString).standardizedFileURL.resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let database = root.appendingPathComponent("workspace.sqlite"), peer = DelegatedTaskTestPeer(), project = WorkspaceProject(path: root.path), modelProbe = DelegationMCPModelProbe()
@@ -46,6 +78,7 @@ private struct DelegationMCPFixture: Sendable {
         do {
             _ = try await engine.load(); var parent = CodingThread(project: project, model: "wire-model")
             parent.checkpointPolicy = .disabled; parent.reasoningEffort = "high"; parent.permission = .supervised
+            parent.agentConfiguration = options
             _ = try await engine.dispatch(.addProjectWithThread(project: project, thread: parent))
             _ = try await engine.dispatch(.submit(threadID: parent.id, text: "PRIVATE-PARENT-HISTORY-MUST-NOT-BE-COPIED"))
             try await taskEventually {

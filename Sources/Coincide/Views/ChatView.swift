@@ -157,7 +157,7 @@ struct ChatView: View {
                     }
                     if !thread.queuedTurns.isEmpty { QueuedTurnsView(store: store, thread: thread) }
                     if !thread.draftAttachments.isEmpty { AttachmentShelf(store: store, attachments: thread.draftAttachments, remove: { store.removeAttachment($0, threadID: threadID) }) }
-                    if store.isImportingAttachments(threadID) { HStack { ProgressView().controlSize(.small); Text("Adding attachments…").font(.caption).foregroundStyle(.secondary); Spacer() } }
+                    if store.composerDraftTools.isWorking(threadID) { HStack { ProgressView().controlSize(.small); Text("Updating draft…").font(.caption).foregroundStyle(.secondary); Spacer() } }
                     ComposerView(text: draft, provider: thread.provider, providerName: thread.providerName, permission: thread.permission,
                                  busy: store.isBusy(threadID), submitting: sending || store.isAcceptingPromptSteering(threadID) || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
                                  hasAttachments: !thread.draftAttachments.isEmpty,
@@ -184,7 +184,7 @@ struct ChatView: View {
                                  }, stop: { Task { await store.interrupt(threadID) } },
                                  grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode,
                                  setGrokRuntimeMode: { store.setGrokRuntimeMode($0, threadID: threadID) },
-                                 skills: skillsModel)
+                                 skills: skillsModel, draftTools: store.composerDraftTools, draftThreadID: threadID)
                 }
                 .coincideGlassGroup()
                 .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(minWidth: 0, maxWidth: .infinity)

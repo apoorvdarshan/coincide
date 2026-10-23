@@ -205,8 +205,9 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var delegatedTaskCohorts: [DelegatedTaskCohort]?
     public var delegatedTaskTransfers: [DelegatedTaskResultTransfer]?
     public var contextTransfers: [ContextTransfer]?
+    public var agentSessionImports: [AgentSessionImportRecord]?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -223,6 +224,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         delegatedTaskTransfers = try values.decodeIfPresent([DelegatedTaskResultTransfer].self, forKey: .delegatedTaskTransfers)
         delegatedTaskCohorts = try values.decodeIfPresent([DelegatedTaskCohort].self, forKey: .delegatedTaskCohorts)
         contextTransfers = try values.decodeIfPresent([ContextTransfer].self, forKey: .contextTransfers)
+        agentSessionImports = try values.decodeIfPresent([AgentSessionImportRecord].self, forKey: .agentSessionImports)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {

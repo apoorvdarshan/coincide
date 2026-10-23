@@ -110,6 +110,10 @@ final class WorkspaceStore {
     typealias PiRuntimeCapture = @Sendable (String, String, UUID) throws -> PiRuntimeConfiguration
     let managedProjectsRoot: URL
     let worktreesRoot: URL
+    let composerDraftTools: ComposerDraftToolsStore
+    let agentSessionImports: AgentSessionImportStore
+    @ObservationIgnored private var agentSessionImportScans: [UUID: [AgentSessionProjectCandidate]] = [:]
+    @ObservationIgnored private var agentSessionImportProjects: [UUID: [UUID: UUID]] = [:]
     private let projectCreator: ProjectCreator
     private let projectScriptReader: NativeProjectScriptService.Reader
     @ObservationIgnored private let claudeRuntimeCapture: ClaudeRuntimeCapture
@@ -239,6 +243,8 @@ final class WorkspaceStore {
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
          piRuntimeCapture: PiRuntimeCapture? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
+        composerDraftTools = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("ComposerDrafts", isDirectory: true))
+        agentSessionImports = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AgentSessionImports", isDirectory: true))
         terminalArchives = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("TerminalHistory", isDirectory: true))
         self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
@@ -255,7 +261,7 @@ final class WorkspaceStore {
                                   sessionFactory: AntigravityAuthentication.nativeSessionFactory(stateRoot: runtimeRoot, installation: runtimeInstallation))
         defer {
             if let engine { antigravityAccount.bind(engine: engine) }
-            bindAntigravityInstallation(); bindCodexRuntime()
+            bindAntigravityInstallation(); bindCodexRuntime(); bindComposerDraftTools(); bindAgentSessionImports()
         }
         projectScriptReader = { try await ProjectConfigurationService.load(using: $0) }
         managedProjectsRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Projects", isDirectory: true)
@@ -282,6 +288,8 @@ final class WorkspaceStore {
          piRuntimeCapture: PiRuntimeCapture? = nil,
          projectScriptReader: NativeProjectScriptService.Reader? = nil,
          projectCreator: ProjectCreator? = nil) {
+        composerDraftTools = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("ComposerDrafts", isDirectory: true))
+        agentSessionImports = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AgentSessionImports", isDirectory: true))
         terminalArchives = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("TerminalHistory", isDirectory: true))
         self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
@@ -301,7 +309,143 @@ final class WorkspaceStore {
         self.projectCreator = projectCreator ?? { name, root in try await ManagedProjectService(root: root).create(name: name) }
         self.projectScriptReader = projectScriptReader ?? { try await ProjectConfigurationService.load(using: $0) }
         antigravityAccount.bind(engine: engine)
-        bindAntigravityInstallation(); bindCodexRuntime()
+        bindAntigravityInstallation(); bindCodexRuntime(); bindComposerDraftTools(); bindAgentSessionImports()
+    }
+    private func bindAgentSessionImports() {
+        agentSessionImports.bind(.init(scan: { [weak self] in
+            guard let self, !self.terminating, let engine = self.engine else { throw CancellationError() }
+            let profiles = try await self.captureAgentSessionProfiles()
+            try Task.checkCancellation()
+            guard !self.terminating else { throw CancellationError() }
+            let result = try await engine.scanAgentSessions(profiles: profiles)
+            guard !self.terminating, !Task.isCancelled else { await engine.releaseAgentSessionScan(result.id); throw CancellationError() }
+            self.agentSessionImportScans[result.id] = result.candidates
+            return result
+        }, prepare: { [weak self] scanID, candidate, cursor in
+            guard let self else { throw CancellationError() }
+            return try await self.prepareAgentSessionImport(scanID: scanID, candidate: candidate, cursor: cursor)
+        }, accept: { [weak self] reviewID, digest, commandID in
+            guard let self, !self.terminating, let engine = self.engine else { throw CancellationError() }
+            let receipt = try await engine.acceptAgentSessionImport(reviewID: reviewID, digest: digest, commandID: commandID)
+            self.apply(await engine.current()); return receipt
+        }, receipt: { [weak self] reviewID, digest, commandID in
+            guard let self, !self.terminating, let engine = self.engine else { throw CancellationError() }
+            let receipt = try await engine.agentSessionImportReceipt(reviewID: reviewID, digest: digest, commandID: commandID, resolvingAbsent: true)
+            self.apply(await engine.current()); return receipt
+        }, release: { [weak self] scanID in
+            guard let self else { return }
+            await self.engine?.releaseAgentSessionScan(scanID)
+            self.agentSessionImportScans.removeValue(forKey: scanID); self.agentSessionImportProjects.removeValue(forKey: scanID)
+        }))
+    }
+    private func captureAgentSessionProfiles() async throws -> [AgentSessionProfile] {
+        let selected = selectedThread.map { [ProviderConfiguration(thread: $0)] } ?? []
+        let captured = selected + snapshot.threads.flatMap { thread in
+            [ProviderConfiguration(thread: thread)] + [thread.activeRun?.configuration].compactMap { $0 } + thread.queuedTurns.map(\.configuration)
+        }
+        let runtime = codexRuntime.configuration, capture = claudeRuntimeCapture
+        let path = selectedThread?.workspacePath ?? snapshot.projects.first?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let environment = ProcessChannel.environment()
+        let task = Task.detached { try AgentSessionProfileCapture.profiles(codex: runtime, captured: captured, workspacePath: path, environment: environment, claude: capture) }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+    private func prepareAgentSessionImport(scanID: UUID, candidate: AgentSessionProjectCandidate, cursor: UUID?) async throws -> AgentSessionImportPage {
+        guard !terminating, let engine, let captured = agentSessionImportScans[scanID]?.first(where: { $0.id == candidate.id }),
+              try AgentSessionImportProtocol.payload(captured) == AgentSessionImportProtocol.payload(candidate) else { throw AgentSessionImportError.staleScan }
+        let projectID: UUID
+        if let frozen = agentSessionImportProjects[scanID]?[candidate.id] { projectID = frozen }
+        else {
+            guard cursor == nil else { throw AgentSessionImportError.staleScan }
+            let path = candidate.path
+            try await Task.detached {
+                try Task.checkCancellation()
+                let url = URL(fileURLWithPath: path), values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                guard values.isDirectory == true, values.isSymbolicLink != true,
+                      url.standardizedFileURL.resolvingSymlinksInPath().path.utf8.elementsEqual(path.utf8) else { throw AgentSessionImportError.changed }
+            }.value
+            if let expected = candidate.projectID {
+                guard let project = snapshot.projects.first(where: { $0.id == expected }), project.path.utf8.elementsEqual(candidate.path.utf8) else { throw AgentSessionImportError.changed }
+                projectID = expected
+            } else if let project = snapshot.projects.first(where: { $0.path.utf8.elementsEqual(candidate.path.utf8) }) { projectID = project.id }
+            else {
+                var project = WorkspaceProject(path: candidate.path)
+                project.id = TaskOrchestration.derivedID(candidate.id, "agent-session-project")
+                guard project.path.utf8.elementsEqual(candidate.path.utf8) else { throw AgentSessionImportError.changed }
+                let capturedProject = project, previous = commandTail
+                let actionID = TaskOrchestration.derivedID(candidate.id, "agent-session-add-project")
+                let action = Task {
+                    await previous?.value
+                    try Task.checkCancellation()
+                    guard !self.terminating, self.agentSessionImportScans[scanID] != nil else { throw CancellationError() }
+                    let receipt = try await engine.dispatch(.addProject(capturedProject), id: actionID)
+                    self.apply(await engine.current()); return receipt
+                }
+                commandTail = Task { _ = await action.result }
+                _ = try await action.value
+                projectID = project.id
+            }
+            agentSessionImportProjects[scanID, default: [:]][candidate.id] = projectID
+        }
+        try Task.checkCancellation()
+        guard !terminating, let project = snapshot.projects.first(where: { $0.id == projectID }),
+              project.path.utf8.elementsEqual(candidate.path.utf8), removalEditorLocks[projectID] == nil else { throw AgentSessionImportError.changed }
+        return try await engine.prepareAgentSessionImport(scanID: scanID, projectID: projectID, expectedWorkspaceRoot: candidate.path, cursor: cursor)
+    }
+    private func bindComposerDraftTools() {
+        composerDraftTools.bind(.init(snapshot: { [weak self] id in self?.composerDraftSnapshot(id) },
+            replace: { [weak self] id, replacement in
+                guard let self else { return .unknown }
+                return await self.replaceComposerDraft(id: id, replacement: replacement)
+            }, receipt: { [weak self] id, replacement in
+                guard let self, !self.terminating, let engine = self.engine else { return nil }
+                guard let receipt = try await engine.composerDraftReceipt(commandID: id, replacement: replacement, resolvingAbsent: true) else { return nil }
+                self.apply(await engine.current())
+                return receipt.rejection == nil ? .applied : .rejected
+            }, importData: { [weak self] data, name in
+                guard let self, !self.terminating, let engine = self.engine else { throw CancellationError() }
+                return try await engine.attachments.importData(data, name: name)
+            }, verify: { [weak self] attachment in
+                guard let self, !self.terminating, let engine = self.engine else { throw CancellationError() }
+                _ = try await engine.attachments.data(for: attachment)
+            }, canOperate: { [weak self] id in
+                guard let self, !self.terminating, let thread = self.thread(id), !thread.isArchived,
+                      self.historyRecallDraftOwners[id] == nil, self.removalEditorLocks[thread.projectID] == nil else { return false }
+                return self.snapshot.projects.contains { $0.id == thread.projectID }
+            }, reportError: { [weak self] id, message in
+                guard let self, !self.terminating, let thread = self.thread(id),
+                      self.removalEditorLocks[thread.projectID] == nil else { return }
+                self.errorMessage = message
+            }))
+    }
+    func composerDraftSnapshot(_ id: UUID) -> ComposerDraftSnapshot? {
+        guard let thread = thread(id) else { return nil }
+        return .init(threadID: id, projectID: thread.projectID, workspacePath: thread.workspacePath,
+            text: thread.draft, attachments: thread.draftAttachments)
+    }
+    private func replaceComposerDraft(id: UUID, replacement: ComposerDraftReplacement) async -> ComposerDraftToolsOutcome {
+        guard !terminating, let engine, historyRecallDraftOwners[replacement.expected.threadID] == nil else { return .rejected }
+        flushDrafts()
+        let previous = commandTail
+        let task = Task<ComposerDraftToolsOutcome, Never> { [weak self] in
+            await previous?.value
+            guard let self, !self.terminating, self.historyRecallDraftOwners[replacement.expected.threadID] == nil,
+                  let current = self.composerDraftSnapshot(replacement.expected.threadID), current.matches(replacement.expected) else { return .rejected }
+            do {
+                _ = try await engine.dispatch(.replaceComposerDraft(replacement), id: id)
+                self.apply(await engine.current())
+                let target = replacement.expected.threadID
+                if self.draftOverrides[target].map({ $0.utf8.elementsEqual(replacement.expected.text.utf8) }) == true {
+                    self.draftOverrides.removeValue(forKey: target)
+                }
+                if self.pendingDrafts[target].map({ $0.utf8.elementsEqual(replacement.expected.text.utf8) }) == true {
+                    self.pendingDrafts.removeValue(forKey: target)
+                }
+                return .applied
+            } catch is WorkspaceCommandError { return .rejected }
+            catch { return .unknown }
+        }
+        commandTail = Task { _ = await task.value }
+        return await task.value
     }
     private func bindCodexRuntime() {
         let initial = codexRuntime.configuration
@@ -1033,7 +1177,10 @@ final class WorkspaceStore {
             throw CoincideError("New unsaved file edits appeared. Review the project removal again before discarding them.")
         }
         removalEditorLocks[request.id] = Set(([project.path] + snapshot.threads.filter { $0.projectID == request.id }.map(\.workspacePath)).map(Self.canonicalPath))
-        defer { removalEditorLocks.removeValue(forKey: request.id) }
+        let affected = Set(request.threadIDs)
+        var removed = false
+        defer { removalEditorLocks.removeValue(forKey: request.id); if !removed { composerDraftTools.resume(threadIDs: affected) } }
+        await composerDraftTools.suspend(threadIDs: affected)
         _ = try await enqueue(.removeProject(projectID: request.id, expectedThreadIDs: request.threadIDs), preflight: {
             guard let latest = self.projectRemovalRequest(request.id) else { throw CancellationError() }
             guard latest.path == request.path else { throw CoincideError("The checkout changed. Review the project removal again.") }
@@ -1043,6 +1190,7 @@ final class WorkspaceStore {
             let paths = [latest.path] + self.snapshot.threads.filter { $0.projectID == request.id }.map(\.workspacePath)
             self.extendRemovalLocks(projectIDs: [request.id], paths: paths)
         }).value
+        removed = true
         await engine.awaitProjectRemovalCleanup(projectID: request.id)
         await awaitRemovalCleanup(projectIDs: [request.id])
     }
@@ -1072,12 +1220,16 @@ final class WorkspaceStore {
         let threads = snapshot.threads.filter { members.contains($0.projectID) }
         let paths = Set((request.projects.map(\.path) + threads.map(\.workspacePath)).map(Self.canonicalPath))
         for id in members { removalEditorLocks[id] = paths }
-        defer { for id in members { removalEditorLocks.removeValue(forKey: id) } }
+        let affected = Set(request.threadIDs)
+        var removed = false
+        defer { for id in members { removalEditorLocks.removeValue(forKey: id) }; if !removed { composerDraftTools.resume(threadIDs: affected) } }
+        await composerDraftTools.suspend(threadIDs: affected)
         _ = try await enqueue(.removeProjectGroup(groupKey: request.id, expectedProjects: request.projects, expectedThreadIDs: request.threadIDs), preflight: {
             try self.validateGroupRemoval(request)
             let paths = request.projects.map(\.path) + self.snapshot.threads.filter { members.contains($0.projectID) }.map(\.workspacePath)
             self.extendRemovalLocks(projectIDs: members, paths: paths)
         }).value
+        removed = true
         for id in members { await engine.awaitProjectRemovalCleanup(projectID: id) }
         await awaitRemovalCleanup(projectIDs: members)
     }
@@ -1126,6 +1278,8 @@ final class WorkspaceStore {
             updatesTask = Task { [weak self] in for await value in stream { self?.apply(value) } }
             _ = try await engine.load()
             apply(await engine.current())
+            await composerDraftTools.load()
+            await agentSessionImports.load()
             selectedThreadID = snapshot.effectiveSidebarPreferences.selectedThreadID
                 ?? snapshot.threads.first(where: { !$0.isArchived })?.id
             selectedProjectID = selectedThread?.projectID ?? snapshot.projects.first?.id
@@ -1257,6 +1411,7 @@ final class WorkspaceStore {
         }
         let cleanupID = UUID()
         let task: Task<Void, Never> = Task { [weak self] in
+            await self?.composerDraftTools.forgetRemovedThreads(threadIDs)
             for task in modelReads { _ = await task.value }
             for task in skills { await task.value }
             for task in imports { await task.value }
@@ -1398,8 +1553,53 @@ final class WorkspaceStore {
             } catch { errorMessage = error.localizedDescription }
         }
     }
+    func setClaudeModelOptions(_ options: ClaudeModelOptions, model: ProviderModel, threadID: UUID, expected: ProviderConfiguration? = nil) {
+        let captured = expected ?? thread(threadID).map { ProviderConfiguration(thread: $0) }
+        let task = enqueuePreparing { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == .claude,
+                  let captured, ProviderConfiguration(thread: current).matchesModelControlCapture(captured),
+                  let actual = self.models(for: current).first(where: { $0.id == model.id }), actual == model else {
+                throw CoincideError("Claude's model controls changed. Refresh models and choose the current options.")
+            }
+            return .editThread(threadID, .claudeModelOptions(model: actual, options: options, expected: captured))
+        }
+        Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
+    }
+    func setCodexServiceTier(_ tier: String?, model: ProviderModel, threadID: UUID, expected: ProviderConfiguration? = nil) {
+        let captured = expected ?? thread(threadID).map { ProviderConfiguration(thread: $0) }
+        let task = enqueuePreparing { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == .codex,
+                  let captured, ProviderConfiguration(thread: current).matchesModelControlCapture(captured),
+                  let actual = self.models(for: current).first(where: { $0.id == model.id }), actual == model else {
+                throw CoincideError("Codex's speed choices changed. Refresh models and choose the current option.")
+            }
+            return .editThread(threadID, .codexServiceTier(model: actual, tier: tier, expected: captured))
+        }
+        Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
+    }
+    func resetCodexServiceTier(threadID: UUID, expected: ProviderConfiguration? = nil) { resetNativeModelOptions(.codex, threadID: threadID, expected: expected) }
+    func resetClaudeModelOptions(threadID: UUID, expected: ProviderConfiguration? = nil) { resetNativeModelOptions(.claude, threadID: threadID, expected: expected) }
+    private func resetNativeModelOptions(_ provider: ProviderKind, threadID: UUID, expected: ProviderConfiguration?) {
+        let captured = expected ?? thread(threadID).map { ProviderConfiguration(thread: $0) }
+        let task = enqueuePreparing { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == provider,
+                  let captured, ProviderConfiguration(thread: current).matchesModelControlCapture(captured) else { throw CancellationError() }
+            return .editThread(threadID, .resetProviderModelOptions(expected: captured))
+        }
+        Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
+    }
     func setModel(_ model: String, id: UUID) {
         cancelCodexModelDefaultsRead(id)
+        if thread(id)?.provider == .claude {
+            let task = enqueuePreparing { [weak self] in
+                guard let self, !self.terminating, let current = self.thread(id), current.provider == .claude else { throw CancellationError() }
+                if model.isEmpty { return .editThread(id, .claudeModel(nil)) }
+                guard let row = self.models(for: current).first(where: { $0.id == model }) else { throw CoincideError("Refresh Claude models before choosing a model.") }
+                return .editThread(id, .claudeModel(row))
+            }
+            Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
+            return
+        }
         if thread(id)?.provider == .antigravity {
             _ = enqueuePreparing { [weak self] in
                 guard let self, !self.terminating, let current = self.thread(id), current.provider == .antigravity,
@@ -1715,7 +1915,7 @@ final class WorkspaceStore {
             guard thread(id) != nil else { continue }
             let task = enqueue(.editThread(id, .draft(text)))
             Task {
-                do { _ = try await task.value; if draftOverrides[id] == text { draftOverrides.removeValue(forKey: id) } }
+                do { _ = try await task.value; if draftOverrides[id].map({ $0.utf8.elementsEqual(text.utf8) }) == true { draftOverrides.removeValue(forKey: id) } }
                 catch { if !terminating, thread(id) != nil { errorMessage = error.localizedDescription } }
             }
         }
@@ -1726,7 +1926,7 @@ final class WorkspaceStore {
     func rename(_ id: UUID, title: String) { sendCommand(.editThread(id, .title(title))) }
     func isBusy(_ id: UUID) -> Bool { thread(id)?.isBusy == true }
     func isPreparingWorkspace(_ id: UUID) -> Bool { preparingWorkspaces.contains(id) }
-    func isImportingAttachments(_ id: UUID) -> Bool { attachmentImportCounts[id, default: 0] > 0 }
+    func isImportingAttachments(_ id: UUID) -> Bool { attachmentImportCounts[id, default: 0] > 0 || composerDraftTools.isWorking(id) }
     func chooseAttachments(threadID: UUID) {
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.canChooseFiles = true
         panel.allowsMultipleSelection = true; panel.prompt = "Attach"
@@ -1735,6 +1935,12 @@ final class WorkspaceStore {
         }
     }
     func importAttachments(files: [URL] = [], providers: [NSItemProvider] = [], threadID: UUID) {
+        guard !terminating, engine != nil, thread(threadID) != nil else { return }
+        guard files.count + providers.count <= AttachmentLimits.count else { errorMessage = "Attach up to 100 files per message."; return }
+        composerDraftTools.importFiles(files, threadID: threadID)
+        composerDraftTools.importProviders(providers, threadID: threadID)
+    }
+    private func legacyImportAttachments(files: [URL] = [], providers: [NSItemProvider] = [], threadID: UUID) {
         guard !terminating, let engine, thread(threadID) != nil else { return }
         guard files.count + providers.count <= AttachmentLimits.count else { errorMessage = "Attach up to 100 files per message."; return }
         let taskID = UUID()
@@ -1818,7 +2024,7 @@ final class WorkspaceStore {
     func submit(_ text: String, threadID id: UUID) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
-              !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
+              !preparingWorkspaces.contains(id), !isImportingAttachments(id), !composerDraftTools.blocksSubmission(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !claudeResumeSelectionNeedsInspection(threadID: id),
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
@@ -1909,7 +2115,7 @@ final class WorkspaceStore {
     }
     func steer(_ text: String, threadID id: UUID, queuedID: UUID? = nil) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !terminating, let engine, let thread = thread(id), !isImportingAttachments(id),
+        guard !terminating, let engine, let thread = thread(id), !isImportingAttachments(id), queuedID != nil || !composerDraftTools.blocksSubmission(id),
               !isPreparingWorkspace(id), !actionsPreventPromptSteering(threadID: id),
               let availability = steeringAvailability(threadID: id), availability.canSteer,
               let runID = availability.runID, thread.activeRun?.id == runID,
@@ -2968,6 +3174,8 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        await agentSessionImports.shutdown()
+        await composerDraftTools.shutdown()
         await notifications.shutdown()
         for model in contextTransferStores.values { await model.shutdown() }
         let skills = retireSkills()

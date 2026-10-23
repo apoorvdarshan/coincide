@@ -25,6 +25,10 @@ public actor CodexSession: ProviderSession {
     private var shuttingDown = false
     private var eventRunID: UUID?
     private var activeConfiguration: ProviderConfiguration?
+    /// Only overrides this actor actually attempted. A later explicit reset
+    /// clears that sticky native setting without changing an untouched default.
+    private var requestedServiceTier: String?
+    private var serviceTierHistoryObserved = false
     private var steeringTask: ProviderSteeringTask?
     private var accountRevision = UUID()
     private var accountReadID: UUID?
@@ -296,7 +300,12 @@ public actor CodexSession: ProviderSession {
                         if !entry.hidden { models.append(model) }
                     }
                 }
-                guard let next = try CodexModelCatalogEntry.string(response["nextCursor"], maximum: 4_096) else { return models }
+                guard let next = try CodexModelCatalogEntry.string(response["nextCursor"], maximum: 4_096) else {
+                    if runtimeConfiguration?.authenticationMode == .ownedChatGPT {
+                        return models.map { model in var value = model; value.codexServiceTiers = nil; return value }
+                    }
+                    return models
+                }
                 guard seenCursors.insert(next).inserted else { throw CodexModelCatalogEntry.failure() }
                 cursor = next
             }
@@ -365,6 +374,7 @@ public actor CodexSession: ProviderSession {
     }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
+        let selectedServiceTier = try CodexServiceTier.selected(in: captured)
         try validateRuntimeBinding(captured)
         guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
         guard !working, !historyMutationInFlight else { throw CoincideError("A turn or conversation history operation is already running in this thread.") }
@@ -382,8 +392,28 @@ public actor CodexSession: ProviderSession {
         let requiresAppMCP = appMCP != nil
         var promptAttempted = false
         do {
+            if !serviceTierHistoryObserved {
+                serviceTierHistoryObserved = true
+                if let nativeID = captured.nativeThreadID,
+                   let previous = thread.runHistory?.reversed().first(where: { record in
+                       record.id != thread.activeRun?.id && record.status.isTerminal && record.configuration.provider == .codex &&
+                       record.providerThreadID?.utf8.elementsEqual(nativeID.utf8) == true &&
+                       record.configuration.codexRuntimeBinding == captured.codexRuntimeBinding
+                   }) {
+                    // A saved run in this exact native/home scope proves the
+                    // override belongs to Coincide. Foreign history and the new
+                    // active run never authorize resetting a CLI-owned default.
+                    requestedServiceTier = try CodexServiceTier.selected(in: previous.configuration)
+                }
+            }
             try await connect()
             try requireSend(generation)
+            if let selectedServiceTier {
+                let catalog = try await readModelCatalog(deadline: ContinuousClock.now + .seconds(30))
+                try requireSend(generation)
+                guard let model = catalog.first(where: { $0.id.utf8.elementsEqual(captured.model.utf8) }) else { throw CodexServiceTier.invalid() }
+                try CodexServiceTier.validate(selectedServiceTier, model: model)
+            }
             if threadID == nil {
                 if appMCP != nil {
                     do { try await requireAppMCPNamespaceAvailable(); try requireSend(generation) }
@@ -437,6 +467,11 @@ public actor CodexSession: ProviderSession {
                 "sandboxPolicy": captured.permission.sandbox(cwd: captured.workspacePath), "summary": .string("detailed")]
             if !captured.model.isEmpty { params["model"] = .string(captured.model) }
             if let effort = captured.reasoningEffort { params["effort"] = .string(effort) }
+            if let selectedServiceTier { params["serviceTier"] = .string(selectedServiceTier) }
+            else if requestedServiceTier != nil { params["serviceTier"] = .null }
+            // Keep an uncertain start's tier capture: if its response is lost,
+            // the next explicit default must still clear our prior override.
+            requestedServiceTier = selectedServiceTier
             promptAttempted = true
             let response = try await rpc.request("turn/start", params: .object(params))
             guard let id = response["turn"]["id"].string else { throw CoincideError("Codex did not return a turn id.") }

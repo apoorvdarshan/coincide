@@ -206,13 +206,51 @@ private actor AppMCPFacadePeer: ProviderSession {
 private actor AppMCPFacadeModels {
     private var hold = false
     private var continuation: CheckedContinuation<Void, Never>?
+    private var suppliedModels: [ProviderModel]?
+    func use(_ values: [ProviderModel]) { suppliedModels = values }
     var isHeld: Bool { continuation != nil }
     func holdNextRead() { hold = true }
     func read() async -> [ProviderModel] {
         if hold { hold = false; await withCheckedContinuation { continuation = $0 } }
-        return [.init(id: "wire-model", name: "Synthetic model", reasoningEfforts: [.init(id: "high", description: "High")])]
+        return suppliedModels ?? [.init(id: "wire-model", name: "Synthetic model", reasoningEfforts: [.init(id: "high", description: "High")])]
     }
     func release() { continuation?.resume(); continuation = nil }
+}
+
+@Test(.timeLimit(.minutes(1))) func appMCPProviderControlsEngineConfiguresResolvedClaudeModelAndReportsOptionsWithoutStartingOrChangingItsDraft() async throws {
+    let f = try await AppMCPFacadeFixture.make()
+    do {
+        let home = f.root.appendingPathComponent("controlled-claude-home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+        let project = try #require(await f.engine.current().snapshot.projects.first { $0.id == f.projectID })
+        var thread = CodingThread(project: project, model: "canonical-claude"); thread.provider = .claude; thread.checkpointPolicy = .disabled
+        thread.claudeRuntimeConfiguration = .init(executable: "/offline/claude", configurationDirectory: try ClaudeRuntimeValidation.physical(home.path, allowMissing: false),
+            workspacePath: try ClaudeRuntimeValidation.physical(f.workspace.path, allowMissing: false), registeredWorkspacePath: f.workspace.path)
+        _ = try await f.engine.dispatch(.createThread(thread))
+        _ = try await f.engine.dispatch(.editThread(thread.id, .draft("Keep latest authored 工作\n ")))
+        let row = ProviderModel(id: "claude-alias", name: "Controlled native model", reasoningEfforts: [.init(id: "max", description: "Max")],
+            claudeCapabilities: .init(resolvedModel: "canonical-claude", supportsFastMode: true, supportsThinking: true, contextWindows: ["200k", "1m"]))
+        await f.models.use([row])
+        let options: [String: JSONValue] = ["effort": .string("max"), "fastMode": .bool(true), "thinking": .bool(false), "contextWindow": .string("1m")]
+        _ = try await f.perform(.configureThread(threadID: thread.id, selection: .init(model: "canonical-claude", options: options)))
+        let configured = try #require(await f.engine.current().snapshot.threads.first { $0.id == thread.id })
+        #expect(configured.model == "canonical-claude" && configured.draft == "Keep latest authored 工作\n " && configured.activeRun == nil && configured.messages.isEmpty)
+        #expect(try AppMCPProviderModelOptions.captured(.init(thread: configured)) == options)
+        let context = try await f.engine.appMCPContext(threadID: f.threadID)
+        let tools = AppMCPTools(client: .init(read: { try await f.engine.appMCPView($0) }, perform: { try await f.engine.performScopedAppMCP($0, context: $1) }))
+        let reported = await tools.call(name: "t3_thread_configuration", arguments: .object(["threadId": .string(thread.id.uuidString)]), context: context)
+        #expect(!reported.isError && reported.structuredContent?["options"].array?.count == 4)
+        _ = try await f.perform(.configureThread(threadID: thread.id, selection: .init(model: "canonical-claude", options: nil)))
+        let inherited = try #require(await f.engine.current().snapshot.threads.first { $0.id == thread.id })
+        #expect(try AppMCPProviderModelOptions.captured(.init(thread: inherited)) == options)
+        await #expect(throws: AppMCPError(.invalidRequest)) { _ = try await f.perform(.configureThread(threadID: thread.id, selection: .init(model: "canonical-claude", options: ["effort": .string("not-advertised")]))) }
+        _ = try await f.perform(.configureThread(threadID: thread.id, selection: .init(model: "canonical-claude", options: [:])))
+        let reset = try #require(await f.engine.current().snapshot.threads.first { $0.id == thread.id })
+        #expect(try AppMCPProviderModelOptions.captured(.init(thread: reset)).isEmpty)
+        #expect(reset.model == "canonical-claude" && reset.draft == configured.draft && reset.activeRun == nil)
+        #expect(await f.peer.sentTexts == ["Opening native run"])
+        await f.close()
+    } catch { await f.close(); throw error }
 }
 private func appMCPFacadeEventually(_ condition: @escaping @Sendable () async -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(8)

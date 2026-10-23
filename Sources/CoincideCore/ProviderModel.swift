@@ -25,24 +25,29 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
     public var museSelection: MuseModelSelection?
     public var museReasoningEfforts: [ProviderReasoningEffortOption]?
     public var museDefaultReasoningEffort: String?
+    public var claudeCapabilities: ClaudeModelCapabilities?
+    public var codexServiceTiers: [CodexModelServiceTier]?
 
     public init(id: String, name: String, reasoningEfforts: [ProviderReasoningEffortOption] = [],
                 defaultReasoningEffort: String? = nil, isDefault: Bool = false, catalogID: String? = nil,
                 openCodeSelection: OpenCodeModelSelection? = nil, openCodeVariants: [String]? = nil,
                 piSelection: PiModelSelection? = nil, piThinkingLevels: [String]? = nil,
                 museSelection: MuseModelSelection? = nil, museReasoningEfforts: [ProviderReasoningEffortOption]? = nil,
-                museDefaultReasoningEffort: String? = nil) {
+                museDefaultReasoningEffort: String? = nil, claudeCapabilities: ClaudeModelCapabilities? = nil,
+                codexServiceTiers: [CodexModelServiceTier]? = nil) {
         self.id = id; self.name = name; self.reasoningEfforts = reasoningEfforts
         self.defaultReasoningEffort = defaultReasoningEffort; self.isDefault = isDefault; self.catalogID = catalogID
         self.openCodeSelection = openCodeSelection; self.openCodeVariants = openCodeVariants
         self.piSelection = piSelection; self.piThinkingLevels = piThinkingLevels
         self.museSelection = museSelection; self.museReasoningEfforts = museReasoningEfforts
         self.museDefaultReasoningEffort = museDefaultReasoningEffort
+        self.claudeCapabilities = claudeCapabilities; self.codexServiceTiers = codexServiceTiers
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, reasoningEfforts, defaultReasoningEffort, isDefault, catalogID, openCodeSelection, openCodeVariants, piSelection, piThinkingLevels
         case museSelection, museReasoningEfforts, museDefaultReasoningEffort
+        case claudeCapabilities, codexServiceTiers
     }
 
     public init(from decoder: any Decoder) throws {
@@ -58,7 +63,9 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
             piThinkingLevels: try values.decodeIfPresent([String].self, forKey: .piThinkingLevels),
             museSelection: try values.decodeIfPresent(MuseModelSelection.self, forKey: .museSelection),
             museReasoningEfforts: try values.decodeIfPresent([ProviderReasoningEffortOption].self, forKey: .museReasoningEfforts),
-            museDefaultReasoningEffort: try values.decodeIfPresent(String.self, forKey: .museDefaultReasoningEffort))
+            museDefaultReasoningEffort: try values.decodeIfPresent(String.self, forKey: .museDefaultReasoningEffort),
+            claudeCapabilities: try values.decodeIfPresent(ClaudeModelCapabilities.self, forKey: .claudeCapabilities),
+            codexServiceTiers: try values.decodeIfPresent([CodexModelServiceTier].self, forKey: .codexServiceTiers))
     }
 }
 
@@ -92,8 +99,37 @@ struct CodexModelCatalogEntry: Equatable {
                 guard previous == option else { throw Self.failure() }
             } else { seen[id] = option; efforts.append(option) }
         }
+        let defaultTier = try Self.string(value["defaultServiceTier"], maximum: 256)
+        if let defaultTier { try CodexServiceTier.validateID(defaultTier) }
+        var tiers: [CodexModelServiceTier]? = nil
+        if value.object?["serviceTiers"] != nil {
+            guard let rows = value["serviceTiers"].array, rows.count <= 64 else { throw Self.failure() }
+            var seen = Set<String>(), parsed: [CodexModelServiceTier] = []
+            for row in rows {
+                guard row.object != nil, let id = try Self.string(row["id"], maximum: 256),
+                      let name = try Self.string(row["name"], maximum: 4_096),
+                      let description = row["description"].string, description.utf8.count <= 16_384,
+                      !description.contains("\0"), seen.insert(id).inserted else { throw Self.failure() }
+                try CodexServiceTier.validateID(id)
+                parsed.append(.init(id: id, name: name, description: description, isDefault: id == defaultTier))
+            }
+            tiers = parsed
+        }
+        if tiers?.isEmpty != false, value.object?["additionalSpeedTiers"] != nil {
+            guard let legacy = value["additionalSpeedTiers"].array, legacy.count <= 64 else { throw Self.failure() }
+            var parsed: [CodexModelServiceTier] = [], seen = Set<String>()
+            for row in legacy {
+                guard let id = try Self.string(row, maximum: 256), seen.insert(id).inserted else { throw Self.failure() }
+                try CodexServiceTier.validateID(id)
+                parsed.append(.init(id: id, name: id == "fast" ? "Fast" : id, description: "", isDefault: id == defaultTier))
+            }
+            tiers = parsed
+        }
+        if tiers?.isEmpty != false, try Self.boolean(value["supportsFastMode"]) {
+            tiers = [.init(id: "fast", name: "Fast", description: "Native fast service tier.", isDefault: defaultTier == "fast")]
+        }
         model = .init(id: wireID, name: name, reasoningEfforts: efforts, defaultReasoningEffort: defaultEffort,
-                      isDefault: try Self.boolean(value["isDefault"]), catalogID: catalogID)
+                      isDefault: try Self.boolean(value["isDefault"]), catalogID: catalogID, codexServiceTiers: tiers)
         hidden = try Self.boolean(value["hidden"])
     }
 

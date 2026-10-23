@@ -1,5 +1,15 @@
 import Foundation
 
+extension ProviderConfiguration {
+    /// Swift String equality folds canonical Unicode spellings. Model-control
+    /// admission compares the complete captured execution value as exact bytes.
+    public func matchesModelControlCapture(_ expected: Self) -> Bool {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        guard let current = try? encoder.encode(self), let original = try? encoder.encode(expected) else { return false }
+        return current == original
+    }
+}
+
 public struct QueuedTurn: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var text: String
@@ -43,6 +53,10 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case resetAgentOptions
     case checkpointPolicy(RunCheckpointPolicy)
     case codexModel(ProviderModel), codexReasoning(model: ProviderModel, effort: String?), codexDefaultModel(CodexDefaultModelSelection)
+    indirect case codexServiceTier(model: ProviderModel, tier: String?, expected: ProviderConfiguration? = nil)
+    case claudeModel(ProviderModel?)
+    indirect case claudeModelOptions(model: ProviderModel, options: ClaudeModelOptions, expected: ProviderConfiguration? = nil)
+    indirect case resetProviderModelOptions(expected: ProviderConfiguration? = nil)
     case openCodeModel(ProviderModel?), openCodeVariant(model: ProviderModel, variant: String?), openCodeAgent(String)
     case openCodeGeneration(OpenCodeGeneration), grokRuntimeMode(GrokACPRuntimeMode)
     case piModel(ProviderModel?), piThinking(model: ProviderModel, level: String?)
@@ -93,6 +107,7 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case resumeQueue(threadID: UUID)
     case addAttachments(threadID: UUID, attachments: [ChatAttachment])
     case removeAttachment(threadID: UUID, attachmentID: UUID)
+    case replaceComposerDraft(ComposerDraftReplacement)
     case saveACPAgent(ACPAgentConfiguration)
     case removeACPAgent(UUID)
     case startProjectClone(project: WorkspaceProject, thread: CodingThread)
@@ -121,6 +136,7 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
 // envelope indirect so decoding and broad switch dispatch copy an owned reference
 // instead of reserving every case's maximum payload on the worker stack.
 indirect enum EngineCommand: Codable, Sendable {
+    case agentSessionImportAccepted(AgentSessionImportAdmission)
     case delegatedTaskAccepted(DelegatedTaskPreparation)
     case delegatedTaskCancel(parentThreadID: UUID, taskID: UUID, reason: String?)
     case delegatedTaskDrained([DelegatedTaskDrainOwner])
@@ -227,6 +243,13 @@ struct WorkspaceDecision: Sendable {
     var cancelPullRequestCheckoutOperation: UUID?
 
     @inline(never)
+    private static func validateModelControlCapture(_ expected: ProviderConfiguration?, thread: CodingThread) throws {
+        if let expected, !ProviderConfiguration(thread: thread).matchesModelControlCapture(expected) {
+            throw WorkspaceCommandError("This conversation's model controls changed. Your current settings and draft were kept.")
+        }
+    }
+
+    @inline(never)
     private static func reducePiRunHistoryPrepared(_ command: EngineCommand, snapshot initial: WorkspaceSnapshot) throws -> Self {
         guard case .piRunHistoryPrepared(let threadID, let runtimeID, let preparation, _) = command else { throw WorkspaceCommandError("This workspace command was routed incorrectly.") }
         var snapshot = initial
@@ -249,6 +272,15 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date, validatingLedger: Bool = true) throws -> Self {
         let reduced: GeneralReduction
         switch command {
+        case .agentSessionImportAccepted(let admission):
+            var decision = Self(snapshot: snapshot)
+            try decision.acceptAgentSessionImport(admission, id: id, now: now)
+            reduced = .init(decision: decision, requiresFinalization: true)
+        case .client(.replaceComposerDraft(let replacement)):
+            var decision = Self(snapshot: snapshot)
+            try decision.prepareClientCommand(.replaceComposerDraft(replacement), commandID: id, now: now)
+            try decision.replaceComposerDraft(replacement)
+            reduced = .init(decision: decision, requiresFinalization: true)
         case .beginWorktreePreparation:
             reduced = .init(decision: try reduceWorktreePreparation(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .piRunHistoryPrepared:
@@ -291,8 +323,10 @@ struct WorkspaceDecision: Sendable {
         default:
             reduced = try makeGeneral(command, id: id, snapshot: snapshot, now: now)
         }
-        guard reduced.requiresFinalization && validatingLedger else { return reduced.decision }
-        return try finalized(reduced.decision)
+        var decision = reduced.decision
+        try decision.snapshot.reconcileAgentSessionImports(previous: snapshot)
+        guard reduced.requiresFinalization && validatingLedger else { return decision }
+        return try finalized(decision)
     }
     /// Only the host's closed remote command adapter uses deferred validation;
     /// every native reducer still checks its own action admission normally.
@@ -503,6 +537,7 @@ struct WorkspaceDecision: Sendable {
     private static func mutateGeneral(_ command: EngineCommand, id: UUID, prepared: Self, snapshot: WorkspaceSnapshot, now: Date) throws -> GeneralReduction {
         var decision = prepared
         switch command {
+        case .agentSessionImportAccepted: throw AgentSessionImportError.invalidRequest
         case .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskDrained, .delegatedTaskObserved, .delegatedTaskWakePolicy, .delegatedTaskCompletionPrepared, .delegatedTaskCompletionCoalesced:
             throw DelegatedTaskError.invalidRequest
         case .contextTransferAccepted, .contextTransferDispatching, .contextTransferNativeReserved, .contextTransferNativeReady, .contextTransferRuntimeRebound, .contextTransferDeferred, .contextTransferSelectionPrepared, .contextTransferDelivered, .contextTransferUncertain, .client(.abandonContextTransfer):
@@ -980,6 +1015,20 @@ struct WorkspaceDecision: Sendable {
                     thread.claudeRuntimeConfiguration = nil; thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
                     thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
+                case .codexServiceTier(let model, let tier, let expected):
+                    try Self.validateModelControlCapture(expected, thread: thread)
+                    try thread.selectCodexServiceTier(model: model, tier: tier)
+                case .claudeModel(let model): try thread.selectClaudeModel(model)
+                case .claudeModelOptions(let model, let options, let expected):
+                    try Self.validateModelControlCapture(expected, thread: thread)
+                    try thread.selectClaudeModelOptions(options, model: model)
+                case .resetProviderModelOptions(let expected):
+                    try Self.validateModelControlCapture(expected, thread: thread)
+                    let key: String
+                    switch thread.provider { case .codex: key = CodexServiceTier.configurationKey; case .claude: key = ClaudeModelControl.configurationKey
+                    default: throw WorkspaceCommandError("Choose a native Codex or Claude conversation before resetting its model controls.") }
+                    thread.agentConfiguration?.removeValue(forKey: key)
+                    if thread.agentConfiguration?.isEmpty == true { thread.agentConfiguration = nil }
                 case .draft(let value): thread.draft = value
                 case .pinned(let value): thread.isPinned = value
                 case .archived(let value):
@@ -1242,7 +1291,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .abandonContextTransfer: break // Routed through its atomic reducer above.
+            case .abandonContextTransfer, .replaceComposerDraft: break // Routed through their atomic reducers above.
             case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
@@ -1718,6 +1767,7 @@ struct WorkspaceDecision: Sendable {
 private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
+        case .replaceComposerDraft(let replacement): replacement.expected.threadID
         case .abandonContextTransfer(let id, _, _): id
         case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
         case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .submitFromAppMCP(let id, _, _), .submitCapturedClaude(let id, _, _), .submitCapturedPi(let id, _, _), .interrupt(let id), .interruptFromAppMCP(let id, _, _), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .replaceQueuedText(let id, _, _, _), .moveQueued(let id, _, _, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id

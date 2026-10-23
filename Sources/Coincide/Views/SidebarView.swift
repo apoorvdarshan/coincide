@@ -6,6 +6,7 @@ struct SidebarView: View {
     let onClone: () -> Void
     let onNewProject: () -> Void
     var onSettle: ((CodingThread) -> Void)? = nil
+    var onImportAgentProjects: (() -> Void)? = nil
     @State private var renaming: SidebarRenameTarget?
     @State private var title = ""
     @State private var removing: ProjectRemovalRequest?
@@ -68,6 +69,7 @@ struct SidebarView: View {
                     Button("New Project…", action: onNewProject)
                     Button("Open Folder…") { store.addProject() }
                     Button("Clone Repository…", action: onClone)
+                    if let onImportAgentProjects { Button("Import Agent Projects…", action: onImportAgentProjects) }
                 } label: { Label("Add Project", systemImage: "folder.badge.plus") }
                     .menuStyle(.borderlessButton).fixedSize()
                 Spacer()

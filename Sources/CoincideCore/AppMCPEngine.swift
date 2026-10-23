@@ -188,7 +188,7 @@ extension WorkspaceEngine {
         selected.applyContextConfiguration(base)
         let requestedModel = selection?.model ?? base.model
         let inherits = sameInstance && requestedModel == context.configuration.model
-        var options = inherits ? appMCPTaskOptions(context.configuration) : [:]
+        var options = inherits ? try appMCPTaskOptions(context.configuration) : [:]
         if let overrides = selection?.options {
             if overrides.isEmpty { options = [:] }
             else { for (id, value) in overrides { options[id] = value } }
@@ -200,20 +200,30 @@ extension WorkspaceEngine {
             _ = try await appMCPView(context)
             let model: ProviderModel
             if let explicit = selection?.model {
-                let matches = catalog.filter { $0.id == explicit || $0.catalogID == explicit }
+                let matches = AppMCPProviderModelOptions.rows(catalog, id: explicit, provider: selected.provider)
                 guard matches.count == 1, let row = matches.first else { throw AppMCPError(.invalidRequest) }; model = row
-            } else if sameInstance, let current = catalog.first(where: { $0.id == base.model || $0.catalogID == base.model }) { model = current }
-            else if let current = catalog.first(where: \.isDefault) ?? catalog.first(where: { $0.id == base.model || $0.catalogID == base.model }) { model = current }
+            } else if sameInstance, let current = catalog.first(where: { AppMCPProviderModelOptions.matches($0, id: base.model, provider: selected.provider) }) { model = current }
+            else if let current = catalog.first(where: \.isDefault) ?? catalog.first(where: { AppMCPProviderModelOptions.matches($0, id: base.model, provider: selected.provider) }) { model = current }
             else { throw AppMCPError(.unavailable) }
             if !inherits { selected.reasoningEffort = nil; selected.codexReasoningPreferences = nil }
             switch selected.provider {
             case .codex:
-                guard options.keys.allSatisfy({ $0 == "reasoningEffort" }) else { throw AppMCPError(.unsupported) }
+                let tier = try AppMCPProviderModelOptions.codexTier(options, model: model, configuration: .init(thread: selected))
                 try selected.selectCodexModel(model)
                 if let value = options["reasoningEffort"] {
                     guard let effort = value.string, model.reasoningEfforts.contains(where: { $0.id == effort }) else { throw AppMCPError(.invalidRequest) }
                     try selected.selectCodexReasoning(model: model, effort: effort)
                 } else { selected.reasoningEffort = nil }
+                try selected.selectCodexServiceTier(model: model, tier: tier)
+                var speedOptions = options; speedOptions.removeValue(forKey: "reasoningEffort")
+                if !speedOptions.isEmpty {
+                    if selected.agentConfiguration == nil { selected.agentConfiguration = [:] }
+                    selected.agentConfiguration?[CodexServiceTier.configurationKey] = .object(speedOptions)
+                }
+            case .claude:
+                let controls = try AppMCPProviderModelOptions.claude(options, model: model)
+                if !AppMCPProviderModelOptions.matches(model, id: selected.model, provider: .claude) { selected.model = model.id }
+                try selected.selectClaudeModelOptions(controls, model: model)
             case .opencode:
                 guard options.keys.allSatisfy({ $0 == "variant" }) else { throw AppMCPError(.unsupported) }
                 try selected.selectOpenCodeModel(model)
@@ -248,21 +258,15 @@ extension WorkspaceEngine {
             sourceConfiguration: sameInstance ? nil : .init(thread: source))
     }
 
-    private func appMCPTaskOptions(_ configuration: ProviderConfiguration) -> [String: JSONValue] {
-        switch configuration.provider {
-        case .codex: return configuration.reasoningEffort.map { ["reasoningEffort": .string($0)] } ?? [:]
-        case .opencode: return configuration.openCodeConfiguration?.model?.variant.map { ["variant": .string($0)] } ?? [:]
-        case .pi: return configuration.piConfiguration?.thinkingLevel.map { ["thinkingLevel": .string($0)] } ?? [:]
-        case .muse: return configuration.museConfiguration?.reasoningEffort.map { ["reasoningEffort": .string($0)] } ?? [:]
-        default: return [:]
-        }
+    private func appMCPTaskOptions(_ configuration: ProviderConfiguration) throws -> [String: JSONValue] {
+        try AppMCPProviderModelOptions.captured(configuration)
     }
     private func appMCPTaskResult(_ value: DelegatedTaskStatusSnapshot) throws -> JSONValue {
         let task = value.task, original = task.result, latest = task.latestTerminalResult
         func preview(_ result: DelegatedTaskResult?) -> JSONValue {
             guard let result else { return .null }; return .string(taskResultPrefix(result.summary, maximumBytes: 32_768))
         }
-        let options = appMCPTaskOptions(task.request.configuration).sorted { $0.key < $1.key }.map { JSONValue.object(["id": .string($0.key), "value": $0.value]) }
+        let options = try appMCPTaskOptions(task.request.configuration).sorted { $0.key < $1.key }.map { JSONValue.object(["id": .string($0.key), "value": $0.value]) }
         let pending = value.pendingApproval.map { request in JSONValue.object(["requestId": request.id,
             "kind": .string("approval"), "runId": appMCPID(value.pendingApprovalRunID ?? task.childRunID)]) } ?? .null
         return .object(["taskId": appMCPID(task.id), "childThreadId": appMCPID(task.childThreadID), "childRunId": appMCPID(task.childRunID),
@@ -349,7 +353,7 @@ extension WorkspaceEngine {
             let rows = bounded.map { row -> JSONValue in
                 var value: [String: JSONValue] = ["id": .string(row.catalogID ?? row.id)]
                 if row.name != row.id { value["label"] = .string(row.name) }
-                let options = appMCPModelOptions(row, provider: thread.provider)
+                let options = AppMCPProviderModelOptions.descriptors(row, configuration: .init(thread: thread))
                 if !options.isEmpty { value["options"] = .array(options) }
                 return .object(value)
             }
@@ -429,19 +433,33 @@ extension WorkspaceEngine {
         guard !requested.isEmpty else { throw AppMCPError(.unsupported) }
         let catalog = try await models(thread: source)
         _ = try await appMCPView(context)
-        let matches = catalog.filter { $0.id == requested || $0.catalogID == requested }
+        let matches = AppMCPProviderModelOptions.rows(catalog, id: requested, provider: thread.provider)
         guard matches.count == 1, let model = matches.first else { throw AppMCPError(.invalidRequest) }
         var result: [WorkspaceCommand] = []
         func edit(_ value: ThreadEdit) { result.append(.editThread(thread.id, value)) }
         let options = selection.options
         switch thread.provider {
         case .codex:
-            guard options?.keys.allSatisfy({ $0 == "reasoningEffort" }) ?? true else { throw AppMCPError(.unsupported) }
             edit(.codexModel(model))
             if let options {
-                let effort = options["reasoningEffort"]?.string
-                guard options.isEmpty || effort != nil, effort == nil || model.reasoningEfforts.contains(where: { $0.id == effort }) else { throw AppMCPError(.invalidRequest) }
-                edit(.codexReasoning(model: model, effort: effort))
+                let inherited = AppMCPProviderModelOptions.matches(model, id: thread.model, provider: .codex) ? try appMCPTaskOptions(.init(thread: thread)) : [:]
+                let merged = AppMCPProviderModelOptions.merged(inherited, overrides: options)
+                let tier = try AppMCPProviderModelOptions.codexTier(merged, model: model, configuration: .init(thread: thread))
+                let effort = merged["reasoningEffort"]?.string
+                guard merged["reasoningEffort"] == nil || effort != nil,
+                      effort == nil || model.reasoningEfforts.contains(where: { $0.id == effort }) else { throw AppMCPError(.invalidRequest) }
+                if !model.reasoningEfforts.isEmpty { edit(.codexReasoning(model: model, effort: effort)) }
+                edit(.codexServiceTier(model: model, tier: tier))
+            } else if !AppMCPProviderModelOptions.matches(model, id: thread.model, provider: .codex) {
+                edit(.codexServiceTier(model: model, tier: nil))
+            }
+        case .claude:
+            let sameModel = AppMCPProviderModelOptions.matches(model, id: thread.model, provider: .claude)
+            if !sameModel || requested != thread.model { edit(.claudeModel(model)) }
+            if options != nil || sameModel {
+                let inherited = sameModel ? try appMCPTaskOptions(.init(thread: thread)) : [:]
+                let merged = AppMCPProviderModelOptions.merged(inherited, overrides: options)
+                edit(.claudeModelOptions(model: model, options: try AppMCPProviderModelOptions.claude(merged, model: model)))
             }
         case .pi:
             guard options?.keys.allSatisfy({ $0 == "thinkingLevel" }) ?? true else { throw AppMCPError(.unsupported) }
@@ -503,19 +521,5 @@ extension WorkspaceEngine {
         .object(["threadId": appMCPID(thread.id), "title": .string(thread.title), "provider": .string(thread.provider.rawValue), "model": .string(thread.model),
             "runId": thread.activeRun.map { appMCPID($0.id) } ?? thread.queuedTurns.first.map { appMCPID($0.id) } ?? .null,
             "status": .string(thread.activeRun == nil && !thread.queuedTurns.isEmpty ? "queued" : thread.state.rawValue)])
-    }
-    private func appMCPModelOptions(_ model: ProviderModel, provider: ProviderKind) -> [JSONValue] {
-        let values: [String], key: String, fallback: String?
-        switch provider {
-        case .codex: key = "reasoningEffort"; values = model.reasoningEfforts.map(\.id); fallback = model.defaultReasoningEffort
-        case .pi: key = "thinkingLevel"; values = model.piThinkingLevels ?? []; fallback = nil
-        case .opencode: key = "variant"; values = model.openCodeVariants ?? []; fallback = nil
-        case .muse: key = "reasoningEffort"; values = (model.museReasoningEfforts ?? []).map(\.id); fallback = model.museDefaultReasoningEffort
-        default: return []
-        }
-        guard !values.isEmpty else { return [] }
-        var value: [String: JSONValue] = ["id": .string(key), "values": .array(values.map(JSONValue.string))]
-        if let fallback { value["default"] = .string(fallback) }
-        return [.object(value)]
     }
 }

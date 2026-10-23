@@ -7,12 +7,13 @@ struct ContentView: View {
     @State private var terminals = TerminalWorkspaceStore()
     @State private var cloneSheetPresented = false
     @State private var newProjectSheetPresented = false
+    @State private var agentSessionImportSheetPresented = false
     @State private var scriptThread: CodingThread?
     @State private var settlementThread: CodingThread?
     var body: some View {
         NavigationSplitView {
             SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true },
-                        onSettle: { settlementThread = $0 })
+                        onSettle: { settlementThread = $0 }, onImportAgentProjects: { agentSessionImportSheetPresented = true })
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
         } detail: {
             NativeInspectorSplit(isPresented: store.inspectorVisible) {
@@ -34,6 +35,7 @@ struct ContentView: View {
                     } actions: {
                         Button("New Project…") { newProjectSheetPresented = true }
                         Button("Add Project…") { store.addProject() }
+                        Button("Import Agent Projects…") { agentSessionImportSheetPresented = true }
                         if !store.snapshot.projects.isEmpty { Button("New Thread") { store.newThread() } }
                     }
                 }
@@ -67,6 +69,7 @@ struct ContentView: View {
         } message: { Text(store.errorMessage ?? "") }
         .sheet(isPresented: $cloneSheetPresented) { CloneRepositorySheet(store: store) }
         .sheet(isPresented: $newProjectSheetPresented) { NewProjectSheet(store: store) }
+        .sheet(isPresented: $agentSessionImportSheetPresented) { AgentSessionImportView(store: store.agentSessionImports) }
         .sheet(item: $settlementThread) { thread in
             SettleConversationSheet(store: store, threadID: thread.id, close: { settlementThread = nil })
         }
@@ -74,9 +77,10 @@ struct ContentView: View {
             ProjectScriptsSheet(store: store, thread: thread, terminals: terminals,
                 didRun: { terminals.panelVisible = true; scriptThread = nil }, close: { scriptThread = nil })
         }
-        .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $cloneSheetPresented)
-        .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $newProjectSheetPresented)
-        .focusedSceneValue(\.settlementPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $settlementThread)
+        .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $cloneSheetPresented)
+        .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $newProjectSheetPresented)
+        .focusedSceneValue(\.settlementPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $settlementThread)
+        .focusedSceneValue(\.agentSessionImportPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil || scriptThread != nil ? nil : $agentSessionImportSheetPresented)
         .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().coincideSurface() } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .disabled(store.isLoading)

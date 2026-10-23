@@ -1,0 +1,8 @@
+{"type":"user","sessionId":"22222222-2222-4222-8222-222222222222","cwd":"__WORKSPACE__","message":{"content":[{"type":"text","text":"Public Claude request"},{"type":"image","data":"Excluded attachment bytes"}]}}
+{"type":"assistant","message":{"model":"claude-captured-model","content":[{"type":"text","text":"Public Claude answer"},{"type":"thinking","thinking":"Excluded private reasoning"}]}}
+{"type":"assistant","isSidechain":true,"message":{"content":"Excluded sidechain text"}}
+{"type":"user","isMeta":true,"message":{"content":"Excluded metadata instruction"}}
+{"type":"assistant","isCompactSummary":true,"message":{"content":"Excluded compact summary"}}
+{"type":"summary","aiTitle":"AI suggestion","customTitle":"Exact user title"}
+{"type":"summary","aiTitle":"Later AI title"}
+{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"tool_result","content":"Excluded tool output"}]}}
