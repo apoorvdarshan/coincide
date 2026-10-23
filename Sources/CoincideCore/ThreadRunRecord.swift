@@ -33,6 +33,9 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
     /// from a file tail, timestamp window or local run UUID.
     public var pi: PiRunHistoryEvidence?
     public var removedByHistoryOperationID: UUID?
+    public var delegatedTaskID: UUID?
+    public var delegatedCompletion: DelegatedTaskCompletionReference?
+    public var delegatedTaskOwnershipRecorded: Bool?
     public var contextTransferIDs: [UUID]?
     public var contextDelivery: ContextTransferDelivery?
 
@@ -42,6 +45,7 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
         status = .running; stopRequested = run.stopRequested
         providerThreadID = run.configuration.nativeThreadID
         turnIDs = run.nativeTurnID.map { [$0] } ?? []
+        delegatedTaskID = run.delegatedTaskID; delegatedCompletion = run.delegatedCompletion; delegatedTaskOwnershipRecorded = run.delegatedTaskOwnershipRecorded
         contextTransferIDs = run.contextTransferIDs; contextDelivery = run.contextDelivery
         if origin == .user, run.configuration.provider == .claude, let runtime = run.configuration.claudeRuntimeConfiguration {
             claude = try? .init(runID: run.id, runtimeIdentity: runtime.runtimeIdentity)

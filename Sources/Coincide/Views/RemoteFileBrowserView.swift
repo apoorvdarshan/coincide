@@ -44,6 +44,9 @@ struct RemoteFileBrowserView: View {
             if let error = model.regexFallbackError { message(error) }
             if model.truncated { Text("Some results were omitted. Narrow your search to see more.").font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
             if let error = model.operationError { message(error) }
+            EditorRecoveryShelf(records: model.recoveredDrafts, active: model.buffer?.recovery, error: model.recoveryError,
+                canRestore: { record in model.buffers[Data(record.relativePath.utf8)]?.isDirty != true },
+                restore: { await model.restoreRecoveredDraft($0) }, discard: { await model.discardRecoveredDraft($0) }, refresh: { await model.refreshRecoveredDrafts() })
             if model.openPaths.count > 1 {
                 Picker("Open remote files", selection: Binding(get: { Data((model.selectedPath ?? "").utf8) }, set: { key in
                     if let path = model.openPaths.first(where: { Data($0.utf8) == key }) { Task { await model.open(path) } }
@@ -68,13 +71,16 @@ struct RemoteFileBrowserView: View {
                 if model.buffer?.hasExternalChanges == true {
                     Text("Remote files may have changed. Your editor text is retained; reload to inspect the latest file.").font(.caption).foregroundStyle(.secondary).padding(.horizontal)
                 }
+                if model.recoveredRootChanged {
+                    Text("This recovered draft belongs to an earlier remote folder identity. Keep or copy its text; it cannot be saved into the current folder.").font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+                }
                 if !model.session.isConnected {
                     Text("Your editor buffer stays open while disconnected. Reconnect to save it.").font(.caption).foregroundStyle(.secondary).padding(.horizontal)
                 }
                 SourceEditor(text: Binding(get: { model.contents }, set: { model.setContents($0) }),
                     path: "remote:\(model.session.target.environmentID):\(model.session.target.threadID):\(model.session.target.rootID?.uuidString ?? "unbound"):\(Data(document.relativePath.utf8).base64EncodedString())",
                     navigation: navigation, isEditable: model.canEdit).padding(.horizontal, 6)
-                if model.isDirty { Button("Discard Local Edits…") { discarding = true }.controlSize(.small).padding(.bottom, 8) }
+                if model.isDirty || model.buffer?.recovery.isDurable == true { Button("Discard Local Edits…") { discarding = true }.controlSize(.small).padding(.bottom, 8) }
             } else {
                 ContentUnavailableView("Select a Remote File", systemImage: "doc.text", description: Text("Open a text file on the connected Mac."))
             }
@@ -83,7 +89,7 @@ struct RemoteFileBrowserView: View {
             do { if !model.query.isEmpty { try await Task.sleep(for: .milliseconds(180)) }; try Task.checkCancellation(); await model.reloadEntries() }
             catch { }
         }
-        .task(id: model.session.isConnected) { if model.session.canRead { await model.reloadEntries() } }
+        .task(id: model.session.isConnected) { await model.refreshRecoveredDrafts(); if model.session.canRead { await model.reloadEntries() } }
         .confirmationDialog("Reload and discard this file's local edits?", isPresented: $reloading) {
             Button("Reload Remote File", role: .destructive) {
                 if let path = model.selectedPath { Task { await model.open(path, reload: true, discardChanges: true) } }

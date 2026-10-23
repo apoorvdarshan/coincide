@@ -2384,6 +2384,9 @@ public actor WorkspaceEngine {
     }
     private let appMCPEnabled: Bool
     private let contextMCPEnabled: Bool
+    private var delegatedTaskDeliveryJob: Task<Void, Never>?
+    private var delegatedTaskWakeGeneration: UInt64 = 0
+    private var delegatedTaskDrains: [UUID: Task<Void, Never>] = [:]
     private var contextTransferReviews: [UUID: ContextTransferReview] = [:]
     private var acceptingContextTransfers: [UUID: Int] = [:]
     private var contextTransfersClosing = false
@@ -2619,7 +2622,7 @@ public actor WorkspaceEngine {
         if let authority = AppMCPTaskContext.authority {
             try Task.checkCancellation()
             switch command {
-            case .client, .promptSteeringAccepted, .conversationHistoryAccepted, .contextTransferAccepted, .beginWorktreePreparation:
+            case .client, .promptSteeringAccepted, .conversationHistoryAccepted, .contextTransferAccepted, .beginWorktreePreparation, .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskObserved, .delegatedTaskWakePolicy:
                 admitted = .appMCP(authority: authority, commands: [command])
             default: admitted = command
             }
@@ -2642,7 +2645,7 @@ public actor WorkspaceEngine {
         do {
             let payload: Data
             if case .remoteEnvironment(let request, _) = envelope.command { payload = try RemoteEnvironmentProtocol.payload(request) }
-            else { payload = try encoder.encode(envelope.command) }
+            else { payload = try taskCommandPayload(envelope.command) }
             if let receipt = try await database.receipt(envelope.id, matching: payload) {
                 envelope.continuation.resume(returning: receipt); return
             }
@@ -2721,9 +2724,9 @@ public actor WorkspaceEngine {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
                 }
-                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError {
+                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError {
                     do {
-                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
+                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)
                         envelope.continuation.resume(returning: receipt); return
                     } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
@@ -2766,6 +2769,10 @@ public actor WorkspaceEngine {
                     if let attemptID = decision.cancelWorktreeAttempt {
                         for (effectID, request) in effectRequests where request.worktreeAttemptID == attemptID { effects[effectID]?.cancel() }
                     }
+                    for (effectID, request) in effectRequests {
+                        if let threadID = request.threadID, let attemptID = request.worktreeAttemptID,
+                           decision.snapshot.threads.contains(where: { $0.id == threadID && $0.workspacePreparation?.id == attemptID && $0.workspacePreparation?.cancelRequested == true }) { effects[effectID]?.cancel() }
+                    }
                     if let operationID = decision.cancelPullRequestCheckoutOperation {
                         for (effectID, request) in effectRequests where request.pullRequestCheckoutOperationID == operationID { effects[effectID]?.cancel() }
                     }
@@ -2778,6 +2785,7 @@ public actor WorkspaceEngine {
                     publish()
                     envelope.continuation.resume(returning: receipt)
                     scheduleEffects()
+                    scheduleDelegatedTaskCompletions()
                     scheduleIdentityRefreshes(previous: base.snapshot)
                     return
                 } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
@@ -3392,6 +3400,7 @@ public actor WorkspaceEngine {
                 if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { return .cancelled }
                 guard ownsWorktree(threadID: threadID, attemptID: attemptID, incarnation: incarnation) else { return .cancelled }
                 try Task.checkCancellation(); try ThreadWorkspacePreparation.validate(plan: plan, request: request)
+                if let task = revision.snapshot.delegatedTasks?.first(where: { $0.childThreadID == threadID && $0.request.isolation == .worktree }) { try await validateTaskIsolation(task, plan: plan) }
                 return .worktreeResolved(plan)
             } catch {
                 if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { throw CancellationError() }
@@ -3401,6 +3410,7 @@ public actor WorkspaceEngine {
         case .prepareWorktree(_, let plan):
             guard state.plan == plan, state.phase == .preparing else { return .cancelled }
             do {
+                if let task = revision.snapshot.delegatedTasks?.first(where: { $0.childThreadID == threadID && $0.request.isolation == .worktree }) { try await validateTaskIsolation(task, plan: plan) }
                 let result = try await session.run(plan)
                 if await waitForRemovalCommit(threadID: threadID, projectID: thread.projectID) { return .cancelled }
                 guard ownsWorktree(threadID: threadID, attemptID: attemptID, incarnation: incarnation) else { return .cancelled }
@@ -3667,6 +3677,8 @@ public actor WorkspaceEngine {
             _ = startCleanup(projectIDs: [inspection.projectID], threadIDs: [inspection.threadID], sessions: [], jobs: [Task { _ = try? await inspection.task.value }])
         }
         for id in Array(runtimes.keys) { await closeRuntime(id) }
+        if let job = delegatedTaskDeliveryJob { await job.value }
+        for job in Array(delegatedTaskDrains.values) { await job.value }
         await closeAppMCPServer()
         await closeAllProjectScripts()
     }
@@ -3764,6 +3776,20 @@ public actor WorkspaceEngine {
         return .init(cwd: current.workspacePath, commands: inventory.commands, skills: inventory.skills,
             problems: inventory.problems, checkedAt: inventory.checkedAt)
     }
+    /// An active caller keeps its captured launch configuration even when the
+    /// user edits future-turn preferences. Neutral metadata ownership avoids
+    /// rebinding this read to that mutable header; all normal account/history/
+    /// workspace locks and owned-session cancellation/drain still apply.
+    func appMCPCapturedTaskModels(thread: CodingThread, context: AppMCPContext) async throws -> [ProviderModel] {
+        _ = try await appMCPView(context)
+        guard thread.id == context.scope.threadID,
+              try TaskOrchestration.payload(ProviderConfiguration(thread: thread)) == TaskOrchestration.payload(context.configuration) else {
+            throw AppMCPError(.staleCaller)
+        }
+        let rows = try await queryModels(thread: thread, owned: false)
+        _ = try await appMCPView(context)
+        return rows
+    }
     private func queryModels(thread: CodingThread, owned: Bool) async throws -> [ProviderModel] {
         try await queryProviderMetadata(thread: thread, owned: owned) { try await $0.models() }
     }
@@ -3854,6 +3880,7 @@ public actor WorkspaceEngine {
         if let initialization { _ = try? await initialization.value }
         guard !closing else { return }
         stoppingEffects = true
+        delegatedTaskDeliveryJob?.cancel()
         if loaded, fatalError == nil { _ = try? await enqueue(.pauseQueues) }
         closing = true
         let pullRequestReadJobs = Array(pullRequestReads.values); for read in pullRequestReadJobs { read.cancel() }
@@ -4605,6 +4632,10 @@ extension WorkspaceEngine {
     }
     private func validateAppMCPPreparedCommand(_ command: EngineCommand) throws {
         switch command {
+        case .delegatedTaskAccepted(let prepared):
+            guard threadIncarnations[prepared.request.parentThreadID] == prepared.parentIncarnation,
+                  runtimes[prepared.request.parentThreadID]?.id == prepared.parentRuntimeID,
+                  prepared.worktree == nil || prepared.worktree?.destinationRoot == worktreesRoot.path else { throw DelegatedTaskError.staleParent }
         case .promptSteeringAccepted(let operation):
             guard threadIncarnations[operation.threadID] == operation.sourceIncarnation,
                   runtimes[operation.threadID]?.id == operation.runtimeID else { throw WorkspaceCommandError(AppMCPError(.staleCaller).localizedDescription) }
@@ -4647,7 +4678,7 @@ extension WorkspaceEngine {
             let registry = mcpRegistry, tools = appMCPTools()
             task = Task { [weak self] in
                 guard let self else { throw AppMCPError(.staleCaller) }
-                return try await MCPHTTPServer.start(registry: registry, tools: tools.descriptors, requestTimeout: .seconds(660), invoke: { [weak self] invocation in
+                return try await MCPHTTPServer.start(registry: registry, tools: tools.descriptors, requestTimeout: .seconds(3_660), invoke: { [weak self] invocation in
                     guard let self else { throw AppMCPError(.staleCaller) }
                     let context = try await self.appMCPContext(scope: invocation.scope)
                     return await tools.call(name: invocation.toolName, arguments: invocation.arguments, context: context)
@@ -5763,5 +5794,249 @@ extension WorkspaceEngine {
     private func awaitContextTransferRetirement(threadID: UUID, deliveryID: UUID) async {
         guard let retired = contextTransferRetirements[deliveryID], retired.threadID == threadID else { return }
         await retired.task.value
+    }
+}
+
+// MARK: - Durable app-owned delegated work
+extension WorkspaceEngine {
+    public func createDelegatedTask(_ request: DelegatedTaskRequest, commandID: UUID = UUID()) async throws -> DelegatedTaskAcceptance {
+        _ = try await load()
+        if let old = revision.snapshot.delegatedTasks?.first(where: { $0.commandID == commandID }) {
+            guard try TaskOrchestration.payload(old.request) == TaskOrchestration.payload(request),
+                  let receipt = try await database.receipt(commandID) else { throw DelegatedTaskError.invalidRequest }
+            return .init(taskID: old.id, childThreadID: old.childThreadID, childRunID: old.childRunID, receipt: receipt)
+        }
+        let prepared = try await prepareDelegatedTask(request, commandID: commandID)
+        return try await dispatchPreparedDelegatedTask(prepared, commandID: commandID)
+    }
+    func prepareDelegatedTask(_ request: DelegatedTaskRequest, commandID: UUID) async throws -> DelegatedTaskPreparation {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              try TaskOrchestration.payload(request).count <= 1_048_576,
+              !request.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              request.task.utf16.count <= 120_000, !request.task.contains("\0"),
+              request.title.map({ $0.utf16.count <= 512 && !$0.contains("\0") }) ?? true,
+              request.configuration.nativeThreadID == nil, request.configuration.claudeLaunchSelection == nil,
+              request.configuration.piFreshSessionIntent == nil,
+              let parent = revision.snapshot.threads.first(where: { $0.id == request.parentThreadID && !$0.isArchived }),
+              let run = parent.activeRun, run.id == request.parentRunID, !run.stopRequested,
+              let incarnation = threadIncarnations[parent.id], let runtime = runtimes[parent.id], runtime.id == parent.runtimeID,
+              try TaskOrchestration.payload(ProviderConfiguration(thread: parent)) == TaskOrchestration.payload(request.expectedConfiguration),
+              request.configuration.workspacePath.utf8.elementsEqual(parent.workspacePath.utf8),
+              AppMCPAdmission.permits(request.configuration.permission, ceiling: parent.permission),
+              AppMCPAdmission.permits(request.configuration.permission, ceiling: run.configuration.permission),
+              let project = revision.snapshot.projects.first(where: { $0.id == parent.projectID }) else { throw DelegatedTaskError.staleParent }
+        let proof = request.isolation == .worktree ? try await TaskIsolationCapture().capture(parentWorkspacePath: parent.workspacePath, projectPath: project.path) : nil
+        if let proof { try await TaskIsolationCapture().validate(proof, requireCurrentHead: true) }
+        guard !closing, !stoppingEffects, threadIncarnations[parent.id] == incarnation,
+              runtimes[parent.id]?.id == runtime.id,
+              revision.snapshot.threads.first(where: { $0.id == parent.id })?.activeRun?.id == run.id,
+              revision.snapshot.threads.first(where: { $0.id == parent.id })?.activeRun?.stopRequested == false else { throw DelegatedTaskError.staleParent }
+        let taskID = TaskOrchestration.derivedID(commandID, "task")
+        let worktree = proof.map { GitWorktreeRequest(id: TaskOrchestration.derivedID(commandID, "checkout"),
+            sourcePath: $0.projectPath, destinationRoot: worktreesRoot.path,
+            selection: .createBranch(name: "coincide-task-" + taskID.uuidString.lowercased(), baseRef: $0.baseCommit),
+            expectedSourceIdentity: $0.projectIdentity) }
+        var child = CodingThread(project: project, model: request.configuration.model)
+        child.id = TaskOrchestration.derivedID(commandID, "child")
+        var configuration = request.configuration
+        configuration.workspacePath = worktree?.sourcePath ?? parent.workspacePath
+        if let runtime = configuration.claudeRuntimeConfiguration { configuration.claudeRuntimeConfiguration = try runtime.replacingWorkspace(configuration.workspacePath) }
+        if let pi = configuration.piConfiguration, let runtime = pi.runtime {
+            configuration.piConfiguration = .init(instanceID: pi.instanceID, executable: pi.executable, model: pi.model, thinkingLevel: pi.thinkingLevel, runtime: try runtime.replacingWorkspace(configuration.workspacePath))
+        }
+        child.applyContextConfiguration(configuration)
+        child.title = request.title ?? "Delegated " + request.role.rawValue
+        child.checkpointPolicy = parent.checkpointPolicy
+        child.delegatedTaskLineage = .init(taskID: taskID, parentThreadID: parent.id, parentRunID: run.id,
+            rootThreadID: parent.delegatedTaskLineage?.rootThreadID ?? parent.id)
+        if let authority = AppMCPTaskContext.authority {
+            child.createdByAppMCP = .init(sessionID: authority.sessionID, threadID: authority.threadID, runID: authority.runID)
+        }
+        return .init(request: request, child: child, parentIncarnation: incarnation, parentRuntimeID: runtime.id, isolation: proof, worktree: worktree)
+    }
+    func dispatchPreparedDelegatedTask(_ prepared: DelegatedTaskPreparation, commandID: UUID) async throws -> DelegatedTaskAcceptance {
+        let receipt = try await enqueue(.delegatedTaskAccepted(prepared), id: commandID)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        guard let task = revision.snapshot.delegatedTasks?.first(where: { $0.commandID == commandID }) else { throw DelegatedTaskError.unavailable }
+        return .init(taskID: task.id, childThreadID: task.childThreadID, childRunID: task.childRunID, receipt: receipt)
+    }
+    public func delegatedTaskStatus(parentThreadID: UUID, taskID: UUID, acknowledge: Bool = true) async throws -> DelegatedTaskStatusSnapshot {
+        _ = try await load()
+        guard let task = revision.snapshot.delegatedTasks?.first(where: { $0.id == taskID && $0.parentThreadID == parentThreadID }) else { throw DelegatedTaskError.notFound }
+        if acknowledge, task.result != nil, ![.acknowledged, .delivered, .disposed].contains(task.completion.state) {
+            let runID = revision.snapshot.threads.first(where: { $0.id == parentThreadID })?.activeRun?.id
+            let receipt = try await enqueue(.delegatedTaskObserved(parentThreadID: parentThreadID, taskID: taskID, observingRunID: runID))
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        }
+        return try delegatedStatus(parentThreadID: parentThreadID, taskID: taskID)
+    }
+    private func delegatedStatus(parentThreadID: UUID, taskID: UUID, timedOut: Bool = false) throws -> DelegatedTaskStatusSnapshot {
+        guard var task = revision.snapshot.delegatedTasks?.first(where: { $0.id == taskID && $0.parentThreadID == parentThreadID }) else { throw DelegatedTaskError.notFound }
+        task.latestTerminalResult = revision.snapshot.delegatedTasks?.last(where: { $0.childThreadID == task.childThreadID && $0.result != nil && $0.result?.runID != task.result?.runID })?.result
+        let child = revision.snapshot.threads.first { $0.id == task.childThreadID }
+        let pending = child?.runtimeRequests.filter { !$0.responding } ?? []
+        let later = child?.queuedTurns.contains { $0.id != task.childRunID && ![task.id].contains($0.delegatedTaskID ?? task.id) } == true ||
+            (child?.activeRun.map { $0.id != task.childRunID && $0.delegatedTaskID != task.id } ?? false)
+        return .init(task: task, hasPendingChildRuns: later && child?.queuePaused != true,
+            pendingQuestions: task.status.isTerminal ? [] : pending.filter { $0.request.isQuestion },
+            pendingApproval: task.status.isTerminal || task.completion.state == .disposed ? nil : pending.first { !$0.request.isQuestion }, waitTimedOut: timedOut, pendingApprovalRunID: task.status.isTerminal || task.completion.state == .disposed ? nil : child?.activeRun?.id)
+    }
+    public func waitForDelegatedTask(parentThreadID: UUID, taskID: UUID, timeoutMilliseconds: Int = TaskOrchestration.defaultWaitMilliseconds) async throws -> DelegatedTaskStatusSnapshot {
+        _ = try await load()
+        guard (0...TaskOrchestration.maximumWaitMilliseconds).contains(timeoutMilliseconds) else { throw DelegatedTaskError.invalidRequest }
+        // Register before inspecting state so a terminal event cannot fall in a
+        // read/subscribe gap. The newest snapshot is authoritative; no polling.
+        let stream = updates()
+        let initial = try delegatedStatus(parentThreadID: parentThreadID, taskID: taskID)
+        if initial.task.result != nil { return try await delegatedTaskStatus(parentThreadID: parentThreadID, taskID: taskID, acknowledge: true) }
+        if timeoutMilliseconds == 0 || !initial.pendingQuestions.isEmpty || initial.pendingApproval != nil {
+            _ = try await enqueue(.delegatedTaskWakePolicy(parentThreadID: parentThreadID, taskID: taskID))
+            return try delegatedStatus(parentThreadID: parentThreadID, taskID: taskID, timedOut: timeoutMilliseconds == 0 && initial.pendingQuestions.isEmpty && initial.pendingApproval == nil)
+        }
+        let winner: Bool
+        do { winner = try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask { [weak self] in
+                for await _ in stream {
+                    try Task.checkCancellation()
+                    guard let self else { throw CancellationError() }
+                    let status = try await self.delegatedStatus(parentThreadID: parentThreadID, taskID: taskID)
+                    if status.task.result != nil || !status.pendingQuestions.isEmpty || status.pendingApproval != nil { return false }
+                }
+                throw CancellationError()
+            }
+            group.addTask { try await Task.sleep(for: .milliseconds(timeoutMilliseconds)); return true }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        } } catch {
+            _ = try? await Task.detached { [weak self] in
+                guard let self else { return }
+                _ = try await self.enqueue(.delegatedTaskWakePolicy(parentThreadID: parentThreadID, taskID: taskID))
+            }.value
+            throw error
+        }
+        let status = try delegatedStatus(parentThreadID: parentThreadID, taskID: taskID, timedOut: winner)
+        if status.task.result == nil {
+            _ = try await enqueue(.delegatedTaskWakePolicy(parentThreadID: parentThreadID, taskID: taskID))
+            return status
+        }
+        return try await delegatedTaskStatus(parentThreadID: parentThreadID, taskID: taskID, acknowledge: true)
+    }
+    public func cancelDelegatedTask(parentThreadID: UUID, taskID: UUID, reason: String? = nil, commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        guard reason.map({ $0.utf16.count <= 2_000 && !$0.contains("\0") }) ?? true else { throw DelegatedTaskError.invalidRequest }
+        let command = EngineCommand.delegatedTaskCancel(parentThreadID: parentThreadID, taskID: taskID, reason: reason)
+        let dedupCommand = AppMCPTaskContext.authority.map { EngineCommand.appMCP(authority: $0, commands: [command]) } ?? command
+        if let receipt = try await database.receipt(commandID, matching: try taskCommandPayload(dedupCommand)) {
+            if let drain = delegatedTaskDrains[commandID] { await drain.value }; return receipt
+        }
+        guard let task = revision.snapshot.delegatedTasks?.first(where: { $0.id == taskID && $0.parentThreadID == parentThreadID }) else { throw DelegatedTaskError.notFound }
+        let tree = revision.snapshot.delegatedTaskTree(task.id)
+        let childIDs = Set(tree.map(\.childThreadID))
+        let owners = childIDs.compactMap { id -> DelegatedTaskDrainOwner? in
+            guard let run = revision.snapshot.threads.first(where: { $0.id == id })?.activeRun else { return nil }
+            return .init(threadID: id, runID: run.id, runtimeID: runtimes[id]?.id)
+        }
+        let owned = childIDs.compactMap { id -> (UUID, UUID)? in runtimes[id].map { (id, $0.id) } }
+        let ownedJobs = effectRequests.compactMap { id, request -> Task<Void, Never>? in
+            guard request.threadID.map({ thread in tree.contains { $0.childThreadID == thread } }) == true else { return nil }; return effects[id]
+        }
+        let receipt = try await enqueue(command, id: commandID)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        let cleanup = cleanupTasks.values.filter { !$0.threadIDs.isDisjoint(with: childIDs) }.map(\.task)
+        let drain = Task { [weak self] in
+            guard let self else { return }
+            for (threadID, runtimeID) in owned { await self.closeRuntime(threadID, matching: runtimeID) }
+            for job in ownedJobs { job.cancel(); await job.value }
+            for job in cleanup { await job.value }
+        }
+        delegatedTaskDrains[commandID] = drain
+        await drain.value
+        _ = try? await enqueue(.delegatedTaskDrained(owners), id: TaskOrchestration.derivedID(commandID, "drained"))
+        delegatedTaskDrains.removeValue(forKey: commandID)
+        return receipt
+    }
+    private func taskCommandPayload(_ command: EngineCommand) throws -> Data {
+        switch command {
+        case .delegatedTaskAccepted(let prepared): return try TaskOrchestration.payload(["delegatedTask": try TaskOrchestration.payload(prepared.request)])
+        case .appMCP(_, let commands) where commands.count == 1:
+            if case .delegatedTaskAccepted = commands[0] { return try taskCommandPayload(commands[0]) }
+            if case .delegatedTaskCancel = commands[0] { return try taskCommandPayload(commands[0]) }
+            return try encoder.encode(command)
+        default: return try encoder.encode(command)
+        }
+    }
+    private func scheduleDelegatedTaskCompletions() {
+        delegatedTaskWakeGeneration &+= 1
+        guard !closing, !stoppingEffects, fatalError == nil, delegatedTaskDeliveryJob == nil else { return }
+        guard revision.snapshot.delegatedTasks?.contains(where: { task in
+            task.result != nil && task.completion.state == .pending && revision.snapshot.threads.contains(where: { $0.id == task.parentThreadID && !$0.isArchived && !$0.queuePaused })
+        }) == true else { return }
+        delegatedTaskDeliveryJob = Task { [weak self] in
+            guard let self else { return }; await self.deliverDelegatedCompletions()
+        }
+    }
+    private func deliverDelegatedCompletions() async {
+        let generation = delegatedTaskWakeGeneration
+        defer {
+            delegatedTaskDeliveryJob = nil
+            // A child can settle while provider capability discovery awaits.
+            // Revisit the latest ledger after this owned offer finishes, rather
+            // than dropping that wake or concurrently offering it twice.
+            if delegatedTaskWakeGeneration != generation { scheduleDelegatedTaskCompletions() }
+        }
+        let pending = (revision.snapshot.delegatedTasks ?? []).filter { $0.result != nil && $0.completion.state == .pending }
+        for parentID in Set(pending.map(\.parentThreadID)) {
+            guard !closing, !stoppingEffects,
+                  let parent = revision.snapshot.threads.first(where: { $0.id == parentID && !$0.isArchived && !$0.queuePaused }) else { continue }
+            // A blocking delegate wait owns terminal delivery while its exact
+            // calling run remains live. Async and lost-wait tasks use the cohort.
+            let tasks = Array(pending.filter { $0.parentThreadID == parentID && ($0.wakePolicy == .always || parent.activeRun?.id != $0.parentRunID) }.prefix(TaskOrchestration.maximumCohortTasks))
+            guard !tasks.isEmpty else { continue }
+            // A previously accepted/unknown notification is not retried, even if
+            // provider support changes or the same helper reconnects.
+            let activeCohorts = (revision.snapshot.delegatedTaskCohorts ?? []).filter { $0.threadID == parentID && $0.state == .claimed }
+            if let queued = activeCohorts.first(where: { cohort in parent.queuedTurns.contains(where: { $0.id == cohort.inputID }) && cohort.steeringOperationID == nil }) {
+                let additions = Array(tasks.prefix(max(0, TaskOrchestration.maximumCohortTasks - queued.taskIDs.count)))
+                if !additions.isEmpty { _ = try? await enqueue(.delegatedTaskCompletionCoalesced(cohortID: queued.id, expectedTaskIDs: queued.taskIDs, taskIDs: additions.map(\.id))) }
+                continue
+            }
+            guard activeCohorts.isEmpty, parent.activeRun?.delegatedCompletion == nil else { continue }
+            let generation = ((revision.snapshot.delegatedTaskCohorts ?? []).filter { $0.threadID == parentID }.map(\.generation).max() ?? 0) + 1
+            let anchor = tasks[0].parentRunID
+            let id = TaskOrchestration.derivedID(anchor, "completion-\(generation)")
+            let inputID = TaskOrchestration.derivedID(id, "input"), taskIDs = tasks.map(\.id)
+            let reference = DelegatedTaskCompletionReference(cohortID: id, parentRunID: anchor, generation: generation, taskIDs: taskIDs)
+            var cohort = DelegatedTaskCohort(id: id, threadID: parentID, parentRunID: anchor, generation: generation,
+                disposition: .open, taskIDs: taskIDs, state: .claimed, inputID: inputID, createdAt: Date(), updatedAt: Date())
+            var operation: PromptSteeringOperation?
+            let availability = await promptSteeringAvailability(threadID: parentID)
+            guard !closing, !stoppingEffects else { return }
+            if availability.canSteer, let thread = revision.snapshot.threads.first(where: { $0.id == parentID }), let run = thread.activeRun,
+               run.id == availability.runID, let target = availability.target, target.matches(run: run),
+               let nativeID = thread.providerThreadID, let incarnation = threadIncarnations[parentID],
+               let runtime = runtimes[parentID], runtime.id == thread.runtimeID {
+                let input = QueuedTurn(id: inputID, text: TaskOrchestration.notice(taskIDs), configuration: run.configuration, createdAt: Date(),
+                    checkpointPolicy: thread.effectiveCheckpointPolicy, preservesTitle: true,
+                    delegatedTaskID: run.delegatedTaskID, delegatedCompletion: reference)
+                operation = .init(id: TaskOrchestration.derivedID(id, "steering"), effectID: TaskOrchestration.derivedID(id, "effect"),
+                    threadID: parentID, projectID: thread.projectID, sourceIncarnation: incarnation,
+                    runtimeID: runtime.id, runID: run.id, nativeThreadID: nativeID, target: target, input: input,
+                    messageID: "user-\(inputID.uuidString)", configuration: run.configuration, preservesComposer: true)
+                cohort.steeringOperationID = operation?.id
+            }
+            if operation == nil, !revision.snapshot.pendingContextTransfers(threadID: parentID).isEmpty { continue }
+            // Cohort/input/effect identities are stable once accepted. A refused
+            // preflight attempt has no effect and must not burn that generation.
+            _ = try? await enqueue(.delegatedTaskCompletionPrepared(cohort, operation))
+        }
+    }
+    private func validateTaskIsolation(_ task: DelegatedTask, plan: GitWorktreePlan) async throws {
+        guard let proof = task.isolationProof else { throw DelegatedTaskError.invalidRequest }
+        try await TaskIsolationCapture().validate(proof)
+        guard plan.sourcePath.utf8.elementsEqual(proof.projectPath.utf8), plan.sourceIdentity == proof.projectIdentity,
+              plan.sourceGitDirectoryPath.utf8.elementsEqual(proof.projectGitDirectoryPath.utf8), plan.sourceGitDirectoryIdentity == proof.projectGitDirectoryIdentity,
+              plan.commonDirectoryPath.utf8.elementsEqual(proof.commonDirectoryPath.utf8), plan.commonDirectoryIdentity == proof.commonDirectoryIdentity,
+              plan.baseCommit == proof.baseCommit else { throw TaskIsolationError.changedRepository }
     }
 }

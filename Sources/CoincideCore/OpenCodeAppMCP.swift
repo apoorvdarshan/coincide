@@ -110,8 +110,8 @@ actor OpenCodeAppMCP {
         // A present failed/disabled server must not be silently replaced. Only
         // absence after this actor's registration permits v2 eviction recovery.
         guard initial[Self.serverName] == nil else { throw Self.failure() }
-        let timeout: JSONValue = generation == .v1 ? .number(660_000) :
-            .object(["startup": .number(10_000), "catalog": .number(10_000), "execution": .number(660_000)])
+        let timeout: JSONValue = generation == .v1 ? .number(3_660_000) :
+            .object(["startup": .number(10_000), "catalog": .number(10_000), "execution": .number(3_660_000)])
         let config: JSONValue = .object(["type": .string("remote"), "url": .string(connection.endpoint.absoluteString),
             "headers": .object(["Authorization": .string(connection.authorizationHeader)]), "oauth": .bool(false), "timeout": timeout])
         let body: JSONValue = generation == .v1 ? .object(["name": .string(Self.serverName), "config": config]) : .object(["config": config])

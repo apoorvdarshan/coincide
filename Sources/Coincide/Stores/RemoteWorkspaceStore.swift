@@ -68,7 +68,8 @@ final class RemoteWorkspaceStore {
         self.clientFactory = clientFactory
         pendingStore = .init(root: root.appendingPathComponent("Pending", isDirectory: true))
         draftStore = .init(root: root.appendingPathComponent("Drafts", isDirectory: true))
-        inspector = .init(pendingStore: .init(root: root.appendingPathComponent("WorkspaceOperations", isDirectory: true)))
+        inspector = .init(pendingStore: .init(root: root.appendingPathComponent("WorkspaceOperations", isDirectory: true)),
+                          recoveryJournal: .init(root: root.appendingPathComponent("EditorRecovery", isDirectory: true)))
         attachments = .init(root: root.appendingPathComponent("Attachments", isDirectory: true))
         pullRequests = .init(root: root.appendingPathComponent("PullRequestDrafts", isDirectory: true))
     }

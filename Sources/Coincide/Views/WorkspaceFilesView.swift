@@ -9,6 +9,7 @@ struct WorkspaceFilesView: View {
     @State private var discard = false
     @State private var creating = false
     @State private var newPath = ""
+    @State private var discardingCurrent = false
     var body: some View {
         VStack(spacing: 8) {
             HStack {
@@ -48,6 +49,9 @@ struct WorkspaceFilesView: View {
             if let error = model.regexFallbackError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal) }
             if model.truncated { Text("Some results were omitted. Narrow your search to see more.").font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
             if let error = model.operationError { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(.horizontal) }
+            EditorRecoveryShelf(records: model.recoveredDrafts, active: model.recovery, error: model.recoveryError,
+                canRestore: { !model.isDirty && !model.isReading && !model.isSaving && $0.scope.matchesNative(model.workspacePath) },
+                restore: { await model.restoreRecoveredDraft($0) }, discard: { await model.discardRecoveredDraft($0) }, refresh: { await model.refreshRecoveredDrafts() })
             if let document = model.document {
                 HStack {
                     Text(document.relativePath).font(.caption).lineLimit(1).truncationMode(.middle)
@@ -67,6 +71,7 @@ struct WorkspaceFilesView: View {
                 }
                 SourceEditor(text: Binding(get: { model.contents }, set: { model.setContents($0) }), path: document.relativePath, navigation: model.navigation, isEditable: model.canWrite)
                     .padding(.horizontal, 6)
+                if model.isDirty || model.recovery.isDurable { Button("Discard Editor Draft…") { discardingCurrent = true }.controlSize(.small) }
             } else {
                 ContentUnavailableView("Select a File", systemImage: "doc.text", description: Text("Open a text file to read or edit it."))
             }
@@ -75,6 +80,10 @@ struct WorkspaceFilesView: View {
             do { if !model.query.isEmpty { try await Task.sleep(for: .milliseconds(180)) }; try Task.checkCancellation(); await model.reloadEntries() }
             catch { }
         }
+        .task { await model.refreshRecoveredDrafts() }
+        .confirmationDialog("Discard this editor's unsaved changes?", isPresented: $discardingCurrent) {
+            Button("Discard Editor Draft", role: .destructive) { model.discardCurrentEdits() }
+        } message: { Text("The workspace file is unchanged. This also removes this editor's saved recovery draft.") }
         .onChange(of: navigation?.id, initial: true) {
             guard let navigation, model.consumeNavigation(navigation) else { return }
             if model.document?.relativePath == navigation.path { model.navigate(navigation) }

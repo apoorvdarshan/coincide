@@ -271,7 +271,7 @@ public enum PiMCPBridge {
           const headers = { accept: "application/json, text/event-stream", "content-type": "application/json",
             authorization: coincideMCPConnection.authorizationHeader, "mcp-protocol-version": coincideMCPProtocol };
           if (coincideMCPSession !== undefined) headers["mcp-session-id"] = coincideMCPSession;
-          const signals = [coincideMCPStop.signal, AbortSignal.timeout(method === "tools/call" ? 660000 : 10000)];
+          const signals = [coincideMCPStop.signal, AbortSignal.timeout(method === "tools/call" ? 3660000 : 10000)];
           if (signal) signals.push(signal);
           let response;
           try {

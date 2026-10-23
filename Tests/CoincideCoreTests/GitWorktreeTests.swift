@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-private struct WorktreeFixture: Sendable {
+struct WorktreeFixture: Sendable {
     let root: URL, source: URL, destinations: URL, git: URL
     var environment: [String: String]
     static func make() async throws -> Self {

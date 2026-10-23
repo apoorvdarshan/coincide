@@ -99,6 +99,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var activeRun: ActiveRun?
     public var runHistory: [ThreadRunRecord]?
     public var checkpointPolicy: RunCheckpointPolicy?
+    public var delegatedTaskLineage: DelegatedTaskLineage?
     public var contextTransferLineage: ContextTransferLineage?
     public var contextProviderBindings: [ContextTransferProviderBinding]?
     public var forkedFromHistoryOperationID: UUID?
@@ -119,6 +120,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
+        case delegatedTaskLineage
         case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, contextTransferLineage, contextProviderBindings, forkedFromHistoryOperationID, createdByAppMCP, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
         case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
@@ -170,6 +172,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         activeRun = try values.decodeIfPresent(ActiveRun.self, forKey: .activeRun)
         runHistory = try values.decodeIfPresent([ThreadRunRecord].self, forKey: .runHistory)
         checkpointPolicy = try values.decodeIfPresent(RunCheckpointPolicy.self, forKey: .checkpointPolicy)
+        delegatedTaskLineage = try values.decodeIfPresent(DelegatedTaskLineage.self, forKey: .delegatedTaskLineage)
         contextTransferLineage = try values.decodeIfPresent(ContextTransferLineage.self, forKey: .contextTransferLineage)
         contextProviderBindings = try values.decodeIfPresent([ContextTransferProviderBinding].self, forKey: .contextProviderBindings)
         forkedFromHistoryOperationID = try values.decodeIfPresent(UUID.self, forKey: .forkedFromHistoryOperationID)
@@ -198,9 +201,12 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var pullRequestCheckouts: [PullRequestCheckoutOperation]?
     public var promptSteerings: [PromptSteeringOperation]?
     public var checkpointRestoreOperations: [RunCheckpointRestoreOperation]?
+    public var delegatedTasks: [DelegatedTask]?
+    public var delegatedTaskCohorts: [DelegatedTaskCohort]?
+    public var delegatedTaskTransfers: [DelegatedTaskResultTransfer]?
     public var contextTransfers: [ContextTransfer]?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings, contextTransfers }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -213,10 +219,14 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         pullRequestCheckouts = try values.decodeIfPresent([PullRequestCheckoutOperation].self, forKey: .pullRequestCheckouts)
         promptSteerings = try values.decodeIfPresent([PromptSteeringOperation].self, forKey: .promptSteerings)
         checkpointRestoreOperations = try values.decodeIfPresent([RunCheckpointRestoreOperation].self, forKey: .checkpointRestoreOperations)
+        delegatedTasks = try values.decodeIfPresent([DelegatedTask].self, forKey: .delegatedTasks)
+        delegatedTaskTransfers = try values.decodeIfPresent([DelegatedTaskResultTransfer].self, forKey: .delegatedTaskTransfers)
+        delegatedTaskCohorts = try values.decodeIfPresent([DelegatedTaskCohort].self, forKey: .delegatedTaskCohorts)
         contextTransfers = try values.decodeIfPresent([ContextTransfer].self, forKey: .contextTransfers)
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        recoverDelegatedTasks()
         for i in (contextTransfers ?? []).indices {
             guard var transfer = contextTransfers?[i], var delivery = transfer.delivery,
                   delivery.status == .dispatching || delivery.status == .reserved else { continue }
@@ -331,6 +341,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
             threads[i].providerActivity = nil
             if !threads[i].queuedTurns.isEmpty { threads[i].queuePaused = true }
         }
+        recoverDelegatedTaskResults()
     }
 }
 

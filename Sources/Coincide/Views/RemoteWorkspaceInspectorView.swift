@@ -5,6 +5,11 @@ struct RemoteWorkspaceInspectorView: View {
     @Bindable var store: RemoteWorkspaceInspectorStore
     var body: some View {
         VStack(spacing: 0) {
+            EditorRecoveryShelf(records: store.recoveredDrafts.filter { record in
+                guard let target = store.selected?.session.target else { return true }
+                return !record.scope.matchesRemote(target, includingOtherRoots: true)
+            }, active: nil, error: store.recoveryError, canRestore: { _ in false }, restore: { _ in },
+                discard: { await store.discardRecoveredDraft($0) }, refresh: { await store.refreshRecoveredDrafts() })
             if !store.retainedEditors.isEmpty {
                 HStack {
                 Menu("Retained Editors") {
@@ -20,6 +25,7 @@ struct RemoteWorkspaceInspectorView: View {
             if let model = store.selected { RemoteWorkspaceInspectorContent(model: model) }
             else { ContentUnavailableView("Remote Workspace", systemImage: "network", description: Text(store.errorMessage ?? "Choose a remote conversation or a retained editor.")) }
         }
+        .task { await store.refreshRecoveredDrafts() }
     }
 }
 

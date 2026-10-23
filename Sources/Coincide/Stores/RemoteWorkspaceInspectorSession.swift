@@ -135,12 +135,15 @@ final class RemoteWorkspaceInspectorSession {
         return result.value
     }
 
-    func perform(_ mutation: RemoteWorkspaceMutation) async {
+    func perform(_ mutation: RemoteWorkspaceMutation,
+                 beforeBegin: (@MainActor (RemoteWorkspaceMutationRequest) async throws -> Void)? = nil) async {
         guard canMutate, let transport else { return }
         let owner = generation, request = RemoteWorkspaceMutationRequest(target: target, mutation: mutation)
         isWorking = true; errorMessage = nil; notice = nil
         defer { if generation == owner { isWorking = false } }
         do {
+            try await beforeBegin?(request)
+            guard generation == owner, !Task.isCancelled else { return }
             // Durable local intent precedes every network write. A lost reply
             // leaves this exact identity/payload available after app restart.
             try await pendingStore.save(request: request)

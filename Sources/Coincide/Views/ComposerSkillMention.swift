@@ -57,7 +57,7 @@ struct ComposerSkillMention: Equatable {
     func replacing(with replacement: String, into latest: String, selection: NSRange) -> (text: String, selection: NSRange)? {
         guard selection == self.selection,
               ComposerUTF16Selection.isValid(selection, in: latest), ComposerUTF16Selection.isValid(range, in: latest),
-              let target = Range(range, in: latest), String(latest[target]) == expectedText else { return nil }
+              let target = Range(range, in: latest), latest[target].utf8.elementsEqual(expectedText.utf8) else { return nil }
         var end = target.upperBound
         if end < latest.endIndex && latest[end] == " " { end = latest.index(after: end) }
         let result = latest.replacingCharacters(in: target.lowerBound..<end, with: replacement)

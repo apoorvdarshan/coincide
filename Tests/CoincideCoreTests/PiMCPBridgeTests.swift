@@ -26,6 +26,7 @@ private func piMCPPrivateRoot() throws -> URL {
     let source = try PiMCPBridge.extensionFragment(configurationPath: sidecar.configurationPath.path,
         extensionPath: root.appendingPathComponent("permission.ts").path)
     #expect(!source.contains(piMCPTestAuthorization) && !source.contains("32145"))
+    #expect(source.contains("method === \"tools/call\" ? 3660000 : 10000"))
     #expect(!String(describing: sidecar).contains(root.path) && Mirror(reflecting: sidecar).children.isEmpty)
     #expect(throws: PiMCPBridgeError.invalidConfiguration) {
         try PiMCPBridge.materialize(endpoint: URL(string: "http://127.0.0.1:32145/mcp")!,

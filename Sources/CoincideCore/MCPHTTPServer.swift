@@ -25,7 +25,7 @@ public actor MCPHTTPServer {
     public static func start(registry: MCPSessionRegistry, tools: [MCPToolDefinition],
                              requestTimeout: Duration = .seconds(30), invoke: @escaping InvocationHandler) async throws -> MCPHTTPServer {
         guard tools.count <= 256, Set(tools.map(\.name)).count == tools.count,
-              requestTimeout > .zero, requestTimeout <= .seconds(900) else { throw MCPError(.invalidConfiguration) }
+              requestTimeout > .zero, requestTimeout <= .seconds(3_660) else { throw MCPError(.invalidConfiguration) }
         for tool in tools { try tool.validate() }
         _ = try MCPProtocol.encode(.object(["tools": .array(tools.map(\.json))]))
         try Task.checkCancellation()

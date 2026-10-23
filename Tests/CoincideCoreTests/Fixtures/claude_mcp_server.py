@@ -126,7 +126,7 @@ def main():
                 assert set(request) == {"subtype", "servers"} and set(request["servers"]) == {"coincide"}
                 server = request["servers"]["coincide"]
                 assert set(server) == {"type", "url", "headers", "timeout"}
-                assert server["type"] == "http" and server["timeout"] == 660000
+                assert server["type"] == "http" and server["timeout"] == 3660000
                 parsed = urllib.parse.urlparse(server["url"])
                 assert parsed.scheme == "http" and parsed.hostname == "127.0.0.1" and parsed.path == "/mcp"
                 assert parsed.port and not parsed.query and not parsed.fragment and not parsed.username and not parsed.password

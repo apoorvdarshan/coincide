@@ -14,6 +14,9 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case promptSteeringsReplaced([PromptSteeringOperation]?)
     case checkpointRestoreOperationsReplaced([RunCheckpointRestoreOperation]?)
     case contextTransfersReplaced([ContextTransfer]?)
+    case delegatedTasksReplaced([DelegatedTask]?)
+    case delegatedTaskCohortsReplaced([DelegatedTaskCohort]?)
+    case delegatedTaskTransfersReplaced([DelegatedTaskResultTransfer]?)
     case threadMetadataUpserted(CodingThread)
     case threadRemoved(UUID)
     case threadsOrdered([UUID])
@@ -23,6 +26,9 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
 
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
+        case .delegatedTaskTransfersReplaced(let values): snapshot.delegatedTaskTransfers = values
+        case .delegatedTasksReplaced(let values): snapshot.delegatedTasks = values
+        case .delegatedTaskCohortsReplaced(let values): snapshot.delegatedTaskCohorts = values
         case .contextTransfersReplaced(let values): snapshot.contextTransfers = values
         case .conversationHistoryOperationsReplaced(let operations): snapshot.conversationHistoryOperations = operations
         case .pullRequestCreationsReplaced(let operations): snapshot.pullRequestCreations = operations
@@ -99,6 +105,7 @@ public enum WorkspaceJournal {
               }) else {
             throw CoincideError("The workspace has invalid or duplicate project, thread, or message identities.")
         }
+        try snapshot.validateDelegatedTasks()
         try snapshot.validatePromptSteerings()
         try snapshot.validateContextTransfers()
         try snapshot.validatePullRequestCheckouts()
@@ -187,6 +194,9 @@ public enum WorkspaceJournal {
     public static func changes(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) throws -> [WorkspaceEvent] {
         try validate(previous); try validate(next)
         var events: [WorkspaceEvent] = []
+        if previous.delegatedTaskTransfers != next.delegatedTaskTransfers { events.append(.delegatedTaskTransfersReplaced(next.delegatedTaskTransfers)) }
+        if previous.delegatedTasks != next.delegatedTasks { events.append(.delegatedTasksReplaced(next.delegatedTasks)) }
+        if previous.delegatedTaskCohorts != next.delegatedTaskCohorts { events.append(.delegatedTaskCohortsReplaced(next.delegatedTaskCohorts)) }
         if previous.contextTransfers != next.contextTransfers { events.append(.contextTransfersReplaced(next.contextTransfers)) }
         if previous.conversationHistoryOperations != next.conversationHistoryOperations { events.append(.conversationHistoryOperationsReplaced(next.conversationHistoryOperations)) }
         if previous.pullRequestCreations != next.pullRequestCreations { events.append(.pullRequestCreationsReplaced(next.pullRequestCreations)) }

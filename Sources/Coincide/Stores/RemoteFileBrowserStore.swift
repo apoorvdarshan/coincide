@@ -8,9 +8,21 @@ final class RemoteFileBuffer {
     var contents: String
     var original: String
     var hasExternalChanges = false
+    let recovery: EditorRecoveryBuffer
+    let recoveryTarget: RemoteWorkspaceTarget?
+    var pendingOperationID: UUID?
     var isDirty: Bool { !contents.utf8.elementsEqual(original.utf8) }
-    init(_ document: RemoteWorkspaceDocument) {
+    init(_ document: RemoteWorkspaceDocument, target: RemoteWorkspaceTarget? = nil,
+         journal: EditorRecoveryJournal? = nil, restored: EditorRecoveryRecord? = nil) {
         self.document = document; contents = document.contents; original = document.contents
+        recoveryTarget = target; recovery = .init(journal: journal, restored: restored)
+        pendingOperationID = restored?.remoteOperationID
+        if let restored { contents = restored.contents; original = restored.original; hasExternalChanges = true }
+    }
+    func persistRecovery(confirmedSave: Bool = false) {
+        guard let target = recoveryTarget else { return }
+        do { recovery.replace(confirmedSave && !isDirty ? nil : try .remote(target: target, document: document, contents: contents, id: recovery.id, operationID: pendingOperationID)) }
+        catch { recovery.failed(error) }
     }
 }
 
@@ -19,6 +31,9 @@ final class RemoteFileBuffer {
 @MainActor @Observable
 final class RemoteFileBrowserStore {
     let session: RemoteWorkspaceInspectorSession
+    let recoveryJournal: EditorRecoveryJournal?
+    private(set) var recoveredDrafts: [EditorRecoveryRecord] = []
+    private(set) var recoveryError: String?
     var directory = ""
     var query = ""
     var searchMode = WorkspaceFileSearchMode.paths
@@ -38,16 +53,19 @@ final class RemoteFileBrowserStore {
     var operationError: String?
     @ObservationIgnored private var listID = UUID()
     @ObservationIgnored private var readID = UUID()
+    @ObservationIgnored private var closed = false
+    @ObservationIgnored private var saveOwners: [UUID: UUID] = [:]
 
-    init(session: RemoteWorkspaceInspectorSession) { self.session = session }
+    init(session: RemoteWorkspaceInspectorSession, recoveryJournal: EditorRecoveryJournal? = nil) { self.session = session; self.recoveryJournal = recoveryJournal }
     var buffer: RemoteFileBuffer? { selectedPath.flatMap { buffers[Data($0.utf8)] } }
     var document: RemoteWorkspaceDocument? { buffer?.document }
     var contents: String { buffer?.contents ?? "" }
     var isDirty: Bool { buffer?.isDirty ?? false }
     var hasUnsavedEdits: Bool { buffers.values.contains(where: \.isDirty) }
     var openPaths: [String] { buffers.values.map(\.document.relativePath).sorted { Data($0.utf8).lexicographicallyPrecedes(Data($1.utf8)) } }
-    var canEdit: Bool { buffer?.document.truncated == false }
-    var canSave: Bool { session.canMutate && !isPreparingSave && isDirty && document?.revision != nil && document?.truncated == false }
+    var canEdit: Bool { !closed && buffer?.document.truncated == false }
+    var recoveredRootChanged: Bool { buffer?.recoveryTarget.map { $0.rootID != session.target.rootID } ?? false }
+    var canSave: Bool { !closed && session.canMutate && !recoveredRootChanged && !isPreparingSave && isDirty && document?.revision != nil && document?.truncated == false }
     var searchRequest: WorkspaceFileSearchRequest {
         .init(directory: directory, query: query, mode: searchMode, caseSensitive: caseSensitive, wholeWord: wholeWord, useRegex: useRegex)
     }
@@ -55,11 +73,44 @@ final class RemoteFileBrowserStore {
     func setContents(_ text: String) {
         guard canEdit, let buffer else { return }
         guard text.utf8.count <= 2_000_000 else { operationError = "Keep remote editor buffers under 2 MB."; return }
-        buffer.contents = text
+        buffer.contents = text; buffer.persistRecovery()
     }
+    func refreshRecoveredDrafts() async {
+        guard !closed, let journal = recoveryJournal else { return }
+        do {
+            let values = try await Task.detached { try journal.load() }.value
+            guard !closed else { return }
+            let openIDs = Set(buffers.values.map { $0.recovery.id })
+            recoveredDrafts = values.filter { $0.scope.matchesRemote(session.target, includingOtherRoots: true) && !openIDs.contains($0.id) }.sorted { $0.updatedAt > $1.updatedAt }
+            recoveryError = nil
+        } catch { recoveryError = error.localizedDescription }
+    }
+    func discardRecoveredDraft(_ record: EditorRecoveryRecord) async {
+        guard let journal = recoveryJournal, record.scope.matchesRemote(session.target, includingOtherRoots: true) else { return }
+        do { try await Task.detached { try journal.remove(id: record.id, expectedVersion: record.version) }.value; await refreshRecoveredDrafts() }
+        catch { recoveryError = error.localizedDescription }
+    }
+    func restoreRecoveredDraft(_ record: EditorRecoveryRecord) async {
+        guard !closed, let journal = recoveryJournal, record.scope.matchesRemote(session.target, includingOtherRoots: true),
+              let document = record.remoteDocument, buffers[Data(record.relativePath.utf8)]?.isDirty != true else { return }
+        let key = Data(record.relativePath.utf8)
+        if buffers[key] == nil, buffers.count >= 16 { operationError = "Save or discard an open file before restoring another draft."; return }
+        if let previous = buffers[key] { await previous.recovery.flush() }
+        guard !closed, !Task.isCancelled, buffers[key]?.isDirty != true else { return }
+        let target: RemoteWorkspaceTarget
+        if case .remote(_, _, _, _, let rootID) = record.scope {
+            let current = session.target
+            target = .init(environmentID: current.environmentID, projectID: current.projectID, threadID: current.threadID, configuration: current.configuration, rootID: rootID)
+        } else { return }
+        buffers[key] = .init(document, target: target, journal: journal, restored: record); selectedPath = record.relativePath
+        await refreshRecoveredDrafts()
+    }
+    func flushRecovery() async { for buffer in buffers.values { await buffer.recovery.flush() } }
+    func prepareForShutdown() { closed = true; listID = UUID(); readID = UUID(); isLoading = false; isReading = false }
+    func cancelShutdown() { closed = false }
 
     func reloadEntries() async {
-        guard session.canRead else { return }
+        guard !closed, session.canRead else { return }
         let owner = UUID(); listID = owner
         let request = searchRequest
         isLoading = true
@@ -86,6 +137,7 @@ final class RemoteFileBrowserStore {
 
     @discardableResult
     func open(_ path: String, reload: Bool = false, discardChanges: Bool = false) async -> Bool {
+        guard !closed else { return false }
         let key = Data(path.utf8)
         if let existing = buffers[key], !reload { selectedPath = existing.document.relativePath; return true }
         guard session.canRead else { operationError = "Reconnect to open a remote file. Existing editor buffers are retained."; return false }
@@ -105,7 +157,13 @@ final class RemoteFileBrowserStore {
                 }
                 buffers.removeValue(forKey: unused.key)
             }
-            buffers[key] = RemoteFileBuffer(value); selectedPath = value.relativePath; operationError = nil
+            if let existing = buffers[key] {
+                if discardChanges { existing.recovery.replace(nil) }
+                await existing.recovery.flush()
+                guard readID == owner, !Task.isCancelled, priorText == Data(existing.contents.utf8) else { return false }
+            }
+            buffers[key] = RemoteFileBuffer(value, target: session.target, journal: recoveryJournal); selectedPath = value.relativePath; operationError = nil
+            await refreshRecoveredDrafts()
             return true
         } catch is CancellationError { return false }
         catch { if readID == owner { operationError = RemoteWorkspaceInspectorSession.safeMessage(error) }; return false }
@@ -116,6 +174,7 @@ final class RemoteFileBrowserStore {
         let path = buffer.document.relativePath, text = buffer.contents, baseline = Data(buffer.original.utf8)
         isPreparingSave = true; defer { isPreparingSave = false }
         do {
+            await buffer.recovery.flush()
             // Revision tokens are intentionally local to the owned host process.
             // Reacquire one after reconnect without discarding the dirty buffer.
             guard case .document(let current) = try await session.read(.readFile(path: path, allowMissing: false, maxBytes: 2_000_000)),
@@ -124,22 +183,31 @@ final class RemoteFileBrowserStore {
                 buffer.hasExternalChanges = true; throw RemoteWorkspaceFailure(.conflict)
             }
             buffer.document = current; buffer.hasExternalChanges = false; operationError = nil
-            await session.perform(.saveFile(path: path, contents: text, revision: revision))
+            await session.perform(.saveFile(path: path, contents: text, revision: revision), beforeBegin: { [weak self, weak buffer] request in
+                guard let self, let buffer, self.buffers[Data(path.utf8)] === buffer,
+                      let captured = buffer.recoveryTarget, RemoteWorkspaceInspectorSession.sameWorkspace(captured, request.target),
+                      captured.rootID == request.target.rootID else { throw RemoteWorkspaceFailure(.staleRoot) }
+                self.saveOwners = [request.id: buffer.recovery.id]
+                buffer.pendingOperationID = request.id; buffer.persistRecovery()
+                await buffer.recovery.flush()
+                if buffer.recovery.journal != nil, !buffer.recovery.isDurable { throw EditorRecoveryError(.unsafeStorage) }
+            })
         } catch is CancellationError { }
         catch { operationError = RemoteWorkspaceInspectorSession.safeMessage(error) }
     }
 
     func createFile(path: String, contents: String = "") async {
-        guard session.canMutate else { return }
+        guard !closed, session.canMutate else { return }
         await session.perform(.createFile(path: path, contents: contents))
     }
 
     func discardCurrentEdits() {
-        guard let buffer else { return }
-        buffer.contents = buffer.original
+        guard !closed, let buffer else { return }
+        buffer.contents = buffer.original; buffer.recovery.replace(nil)
     }
 
     func operationFinished(_ request: RemoteWorkspaceMutationRequest, operation: RemoteWorkspaceOperation) {
+        defer { if operation.state == .finished { saveOwners.removeValue(forKey: request.id) } }
         guard operation.state == .finished, operation.failure == nil else { return }
         switch request.mutation {
         case .saveFile(let path, let text, _), .createFile(let path, let text):
@@ -149,14 +217,22 @@ final class RemoteFileBrowserStore {
             }
             let key = Data(path.utf8)
             if let existing = buffers[key] {
+                guard let captured = existing.recoveryTarget,
+                      RemoteWorkspaceInspectorSession.sameWorkspace(captured, request.target), captured.rootID == request.target.rootID,
+                      existing.pendingOperationID == request.id,
+                      saveOwners[request.id].map({ $0 == existing.recovery.id }) ?? true else {
+                    operationError = "The earlier save was confirmed for a different editor draft. Your current recovered text and its baseline were retained."; return
+                }
                 // Preserve any newer text typed while this save was in flight.
                 existing.document = document; existing.original = text; existing.hasExternalChanges = false
+                existing.pendingOperationID = nil
+                existing.persistRecovery(confirmedSave: true)
             } else if buffers.count < 16 {
-                buffers[key] = RemoteFileBuffer(document)
+                buffers[key] = RemoteFileBuffer(document, target: request.target, journal: recoveryJournal)
                 if selectedPath == nil { selectedPath = path }
             }
             operationError = nil
-            Task { await reloadEntries() }
+            Task { await flushRecovery(); await refreshRecoveredDrafts(); await reloadEntries() }
         case .gitCheckout, .gitCreateBranch, .gitPull:
             for buffer in buffers.values { buffer.hasExternalChanges = true }
             Task { await reloadEntries() }

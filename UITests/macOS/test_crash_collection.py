@@ -374,7 +374,7 @@ class CrashCollectionTests(unittest.TestCase):
         self.assertIn("coincide-test-crashes/*.json", collector)
         self.assertIn("if-no-files-found: ignore", collector)
         self.assertIn("--wait-seconds 30", collector)
-        self.assertIn("swift test --no-parallel", workflow)
+        self.assertIn("swift test --skip-build --no-parallel", workflow)
         self.assertIn("timeout-minutes: 35", workflow)
         self.assertIn("timeout-minutes: 45", workflow)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)

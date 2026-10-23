@@ -147,12 +147,40 @@ class NativeUIConfigurationTests(unittest.TestCase):
         self.assertIn("shell: bash", isolation)
         self.assertIn("--filter codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp", isolation)
         self.assertIn("Test run with 1 tests? in ", isolation)
-        self.assertIn("swift test --no-parallel\n", complete)
+        self.assertIn("swift test --skip-build --no-parallel\n", complete)
+        self.assertIn("swift test --skip-build --no-parallel --filter", direct)
+        self.assertIn("swift test --skip-build --no-parallel --filter", isolation)
         self.assertNotIn("--filter", complete)
         self.assertNotIn("continue-on-error", complete)
         enforced = workflow.split("      - name: Enforce the isolated Codex inspection result", 1)[1].split("      - name: Package", 1)[0]
         self.assertIn("if: always() && (steps.codex_inspection.outcome == 'failure' || steps.codex_direct_inspection.outcome == 'failure')", enforced)
         self.assertIn("exit 1", enforced)
+
+    def test_swift_compile_and_execution_use_the_same_exact_built_cache_and_toolchain(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
+        build = workflow.split("  build:\n", 1)[1].split("  test:\n", 1)[0]
+        tests = workflow.split("  test:\n", 1)[1].split("  native-ui-shard:\n", 1)[0]
+        key = "swift-built-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}"
+        self.assertIn("runs-on: macos-26", build)
+        self.assertIn("timeout-minutes: 35", build)
+        self.assertIn("swift test list >", build)
+        self.assertIn('test -s "$RUNNER_TEMP/coincide-swift-test-list.txt"', build)
+        self.assertNotIn("--filter", build)
+        self.assertIn("swift --version > .build/coincide-swift-toolchain.txt", build)
+        self.assertIn("actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", build)
+        self.assertIn("key: " + key, build)
+        self.assertIn("needs: [build]", tests)
+        self.assertIn("timeout-minutes: 35", tests)
+        self.assertIn("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", tests)
+        self.assertIn("key: " + key, tests)
+        self.assertIn("fail-on-cache-miss: true", tests)
+        self.assertNotIn("restore-keys:", tests)
+        self.assertIn('cmp .build/coincide-swift-toolchain.txt "$RUNNER_TEMP/coincide-swift-toolchain-current.txt"', tests)
+        self.assertLess(tests.index("cmp .build/coincide-swift-toolchain.txt"), tests.index("swift test --skip-build"))
+        self.assertEqual(tests.count("swift test --skip-build --no-parallel"), 3)
+        self.assertNotIn("swift test --no-parallel", tests)
+        self.assertIn("Package the native app", tests)
+        self.assertIn("Verify async default closure contexts", tests)
 
     def test_offline_tools_are_built_signed_and_immutable_inside_the_test_bundle(self):
         directory = Path(__file__).resolve().parent

@@ -10,6 +10,7 @@ struct ChatView: View {
     @State private var worktreeSheet = false
     @State private var referenceFileSheet = false
     @State private var runHistorySheet = false
+    @State private var delegatedTasksSheet = false
     @State private var contextTransferSheet = false
     @State private var contextTransferModel: ContextTransferStore?
     @State private var skillsModel: ProviderSkillsStore?
@@ -46,6 +47,8 @@ struct ChatView: View {
                         ExternalEditorMenu(store: store, workspacePath: thread.workspacePath, title: "Open Workspace in…")
                         Button("Run History…") { runHistorySheet = true }
                             .accessibilityIdentifier("conversation-run-history")
+                        Button("Delegated Tasks…") { delegatedTasksSheet = true }
+                            .accessibilityIdentifier("conversation-delegated-tasks")
                         Button("Fork Context…") { showContextTransfer(.fork) }
                         Button("Switch Provider with Context…") { showContextTransfer(.providerHandoff) }
                         Toggle("Save Run Checkpoints", isOn: Binding(
@@ -193,6 +196,7 @@ struct ChatView: View {
             }
             .task(id: store.skillsScope(threadID: threadID)) { skillsModel = store.skillsStore(threadID: threadID) }
             .sheet(isPresented: $runHistorySheet) { RunHistorySheet(store: store, threadID: threadID) }
+            .sheet(isPresented: $delegatedTasksSheet) { DelegatedTasksPanel(workspace: store, conversationID: threadID) }
             .sheet(isPresented: $contextTransferSheet) {
                 if let contextTransferModel { ContextTransferSheet(model: contextTransferModel, close: { contextTransferSheet = false }) }
             }

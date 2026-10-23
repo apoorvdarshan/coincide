@@ -22,7 +22,7 @@ public struct AppMCPView: Sendable {
 public typealias AppMCPToolDescriptor = MCPToolDefinition
 public typealias AppMCPToolResult = MCPToolResult
 
-public struct AppMCPModelSelection: Sendable, Equatable {
+public struct AppMCPModelSelection: Codable, Sendable, Equatable {
     public let instanceID: UUID?
     public let provider: ProviderKind?
     public let model: String?
@@ -64,6 +64,25 @@ public struct AppMCPProjectCreate: Sendable, Equatable {
 }
 public enum AppMCPSendMode: String, Sendable, Equatable { case auto, queue, steer, restart }
 public enum AppMCPThreadOrganization: String, Sendable, Equatable { case pin, unpin, archive, unarchive, settle, unsettle }
+public struct AppMCPDelegation: Codable, Sendable, Equatable {
+    public let task: String
+    public let title: String?
+    public let target: AppMCPModelSelection?
+    public let permission: PermissionMode?
+    public let role: DelegatedTaskRole
+    public let isolation: DelegatedTaskIsolation
+    public let mode: DelegatedTaskMode
+    public let timeoutMilliseconds: Int
+    public let clientRequestID: String?
+    public init(task: String, title: String? = nil, target: AppMCPModelSelection? = nil, permission: PermissionMode? = nil,
+                role: DelegatedTaskRole = .general, isolation: DelegatedTaskIsolation = .shared,
+                mode: DelegatedTaskMode = .async, timeoutMilliseconds: Int = TaskOrchestration.defaultWaitMilliseconds,
+                clientRequestID: String? = nil) {
+        self.task = task; self.title = title; self.target = target; self.permission = permission
+        self.role = role; self.isolation = isolation; self.mode = mode
+        self.timeoutMilliseconds = timeoutMilliseconds; self.clientRequestID = clientRequestID
+    }
+}
 
 /// Domain actions contain no credentials, authorization headers or launch paths.
 /// The Engine MUST revalidate the live caller and target under its command queue,
@@ -89,6 +108,9 @@ public enum AppMCPAction: Sendable, Equatable {
     case forkThread(threadID: UUID, runID: UUID, title: String?)
     case forkContext(threadID: UUID, sourcePoint: ContextTransferSourcePoint, title: String?)
     case mergeContext(sourceThreadID: UUID, targetThreadID: UUID, sourcePoint: ContextTransferSourcePoint)
+    case delegateTask(AppMCPDelegation)
+    case delegatedTaskStatus(taskID: UUID)
+    case cancelDelegatedTask(taskID: UUID, reason: String?, clientRequestID: String?)
 }
 
 public struct AppMCPError: Error, Sendable, Equatable, LocalizedError {
@@ -109,9 +131,9 @@ public struct AppMCPError: Error, Sendable, Equatable, LocalizedError {
     }
 }
 
-/// Pinned T3 app tools over the native Engine. Unsupported backends (delegation,
+/// Pinned T3 app tools over the native Engine. Unsupported backends (
 /// scheduling, secret requests, browser/device automation, PR monitoring, upload,
-/// merge-back and active worktree handoff) are not advertised as working tools.
+/// and active worktree handoff) are not advertised as working tools.
 public struct AppMCPTools: Sendable {
     public struct Client: Sendable {
         public let read: @Sendable (AppMCPContext) async throws -> AppMCPView
@@ -127,7 +149,7 @@ public struct AppMCPTools: Sendable {
     private let allowedToolNames: Set<String>?
     public init(client: Client, allowedToolNames: Set<String>? = nil) { self.client = client; self.allowedToolNames = allowedToolNames }
 
-    public static let unsupportedCapabilities = ["app_owned_subagents", "scheduled_tasks", "secret_requests", "preview", "device", "html_render", "pull_request_links_and_watch", "review_guides", "attachment_upload", "active_worktree_handoff", "environment_preferences", "queued_steering_input_text_revision", "managed_project_allocation", "missing_workspace_creation", "restart_delivery", "remote_worktree_fetch"]
+    public static let unsupportedCapabilities = ["scheduled_tasks", "secret_requests", "preview", "device", "html_render", "pull_request_links_and_watch", "review_guides", "attachment_upload", "active_worktree_handoff", "environment_preferences", "queued_steering_input_text_revision", "managed_project_allocation", "missing_workspace_creation", "restart_delivery", "remote_worktree_fetch"]
     public var descriptors: [MCPToolDefinition] { Self.catalog.filter { allowedToolNames?.contains($0.name) ?? true } }
 
     public func call(name: String, arguments: JSONValue, context: AppMCPContext) async -> MCPToolResult {
@@ -184,15 +206,25 @@ public struct AppMCPTools: Sendable {
                 let target = try Self.thread(input, view: view, caller: caller)
                 let (start, limit) = try input.page()
                 let transfers = (view.snapshot.contextTransfers ?? []).filter { $0.sourceThreadID == target.id || $0.targetThreadID == target.id }
-                let rows = Array(transfers.dropFirst(start).prefix(limit))
-                value = .object(["transfers": .array(rows.map { transfer in .object([
+                var all: [(Date, String, JSONValue)] = transfers.map { transfer in (transfer.updatedAt, transfer.id.uuidString, .object([
                     "id": Self.id(transfer.id), "type": .string(transfer.review.kind.rawValue),
                     "sourceThreadId": Self.id(transfer.sourceThreadID), "targetThreadId": Self.id(transfer.targetThreadID),
                     "sourceRunId": Self.id(transfer.review.sourcePoint.runID), "status": .string(transfer.status.rawValue),
                     "strategy": .string(transfer.review.strategy.rawValue), "targetRunId": transfer.targetRunID.map(Self.id) ?? .null,
                     "deliveryStatus": transfer.delivery.map { .string($0.status.rawValue) } ?? .null,
-                    "updatedAt": Self.date(transfer.updatedAt)]) }), "totalCount": .number(Double(transfers.count)),
-                    "nextCursor": start + rows.count < transfers.count ? .number(Double(start + rows.count)) : .null])
+                    "updatedAt": Self.date(transfer.updatedAt)])) }
+                all += (view.snapshot.delegatedTaskTransfers ?? []).filter { $0.sourceThreadID == target.id || $0.targetThreadID == target.id }.map { transfer in
+                    (transfer.createdAt, transfer.id.uuidString, .object(["id": Self.id(transfer.id),
+                        "type": .string(transfer.kind == .subagentResult ? "subagent_result" : "subagent_spawn"),
+                        "sourceThreadId": Self.id(transfer.sourceThreadID), "targetThreadId": Self.id(transfer.targetThreadID),
+                        "sourceRunId": Self.id(transfer.sourceRunID), "targetRunId": Self.id(transfer.targetRunID),
+                        "taskId": Self.id(transfer.taskID), "status": .string("consumed"), "createdBy": .string("system"),
+                        "createdAt": Self.date(transfer.createdAt), "consumedAt": Self.date(transfer.consumedAt)]))
+                }
+                all.sort { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
+                let rows = Array(all.dropFirst(start).prefix(limit)).map(\.2)
+                value = .object(["transfers": .array(rows), "totalCount": .number(Double(all.count)),
+                    "nextCursor": start + rows.count < all.count ? .number(Double(start + rows.count)) : .null])
             case "t3_thread_configuration":
                 try input.only(["threadId"])
                 let thread = try Self.thread(input, view: view, caller: caller)
@@ -228,6 +260,24 @@ public struct AppMCPTools: Sendable {
 
     private static func action(_ name: String, input: Input, view: AppMCPView, caller: CodingThread) throws -> AppMCPAction {
         switch name {
+        case "delegate_task":
+            try input.only(["task", "title", "target", "role", "isolation", "mode", "timeoutMs", "clientRequestId", "runtimeMode", "interactionMode"])
+            let task = try input.text("task", maximum: 120_000, required: true)!
+            guard !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let role = DelegatedTaskRole(rawValue: try input.text("role", maximum: 32) ?? "general"),
+                  let isolation = DelegatedTaskIsolation(rawValue: try input.text("isolation", maximum: 32) ?? "shared"),
+                  let mode = DelegatedTaskMode(rawValue: try input.text("mode", maximum: 32) ?? "async") else { throw AppMCPError(.invalidRequest) }
+            return try .delegateTask(.init(task: task, title: input.text("title", maximum: 512), target: selection(input.value["target"]),
+                permission: permission(input), role: role, isolation: isolation, mode: mode,
+                timeoutMilliseconds: input.integer("timeoutMs", default: TaskOrchestration.defaultWaitMilliseconds, range: 0...TaskOrchestration.maximumWaitMilliseconds),
+                clientRequestID: input.text("clientRequestId", maximum: 256)))
+        case "task_status":
+            try input.only(["taskId"])
+            return try .delegatedTaskStatus(taskID: input.uuid("taskId", required: true)!)
+        case "task_cancel":
+            try input.only(["taskId", "reason", "clientRequestId"])
+            return try .cancelDelegatedTask(taskID: input.uuid("taskId", required: true)!, reason: input.text("reason", maximum: 2_000),
+                clientRequestID: input.text("clientRequestId", maximum: 256))
         case "t3_thread_wait":
             try input.only(["threadId", "runId", "timeoutMs"])
             return try .wait(threadID: input.uuid("threadId", required: true)!, runID: input.uuid("runId"), timeoutMilliseconds: input.integer("timeoutMs", default: 600_000, range: 0...600_000))
@@ -603,7 +653,13 @@ public struct AppMCPTools: Sendable {
             .init(name: name, description: description, inputSchema: object(properties, required: required), capability: capability, readOnly: readOnly)
         }
         return [
-            tool("t3_context_read", "Read only immutable context captured for the calling thread's exact active input. transferId must belong to that captured delivery; unrelated threads and later source edits are excluded. Pages and UTF-8 text slices are bounded, with explicit continuation offsets.", ["transferId": uuid, "itemId": string(maximum: 4_096), "afterPosition": integer(minimum: 0), "textOffset": integer(minimum: 0), "limit": integer(minimum: 1, maximum: 100), "maxBytesPerItem": integer(minimum: 1, maximum: 65_536)], required: ["transferId"], capability: .contextRead),
+            tool("delegate_task", "Delegate a self-contained brief to an app-owned child of this active parent. Only the supplied task is sent; parent history is not copied. Prefer provider-native subagent tools when their model/options support the work. This tool supports registered provider profiles and advertised models/options. Shared isolation uses the parent checkout; worktree isolation pins the parent local HEAD, excludes dirty edits and completes discovered project setup before input. Async completion notifies the parent; wait returns on settled result, question, approval or timeout without cancelling the child. Use a distinct clientRequestId for each review round and keep it stable when retrying that round. The backing child thread is not a new delegated review round.",
+                 ["task": text, "title": title, "target": selection, "role": string(values: DelegatedTaskRole.allCases.map(\.rawValue)),
+                  "isolation": string(values: ["shared", "worktree"]), "mode": string(values: ["async", "wait"]),
+                  "timeoutMs": integer(minimum: 0, maximum: TaskOrchestration.maximumWaitMilliseconds), "clientRequestId": string(maximum: 256)].merging(modes) { _, new in new }, required: ["task"], readOnly: false),
+            tool("task_status", "Read a task owned by this parent thread. The original result stays stable; later child runs have separate terminal evidence. Working, waiting for nested children and available results are distinct. Reading a terminal result acknowledges its automatic parent delivery. Pending approval metadata grants no approval authority; open the child's current request before acting.", ["taskId": uuid], required: ["taskId"], readOnly: false),
+            tool("task_cancel", "Stop the task's backing child and its delegated descendants, including later active child runs after the original task completed. Hold other queued work, cancel the task's own queued input, and dispose automatic parent delivery. Published results remain available. A repeated original request never stops a newer runtime.", ["taskId": uuid, "reason": string(maximum: 2_000), "clientRequestId": string(maximum: 256)], required: ["taskId"], readOnly: false),
+            tool("t3_context_read", "Read immutable context captured for this exact active input. A full orchestration caller may also read a saved result transfer from its own delegated task. Context-only sessions retain exact input ownership; unrelated threads, mutable later source edits, private reasoning and native session internals are excluded. Pages and UTF-8 text slices are bounded, with explicit continuation offsets.", ["transferId": uuid, "itemId": string(maximum: 4_096), "afterPosition": integer(minimum: 0), "textOffset": integer(minimum: 0), "limit": integer(minimum: 1, maximum: 100), "maxBytesPerItem": integer(minimum: 1, maximum: 65_536)], required: ["transferId"], capability: .contextRead),
             tool("orchestrator_capabilities", "Read available native providers and models, current permission ceilings, and explicit app capability gaps. An explicit request may refresh provider metadata; listing tools never launches a provider.", ["search": string(maximum: 200)]),
             tool("t3_environment_read", "Read this native app's platform and supported app tools. This does not reveal process environment, account profiles or credentials."),
             tool("t3_project_list", "List registered projects. Pages use a live offset and may shift between requests.", page),

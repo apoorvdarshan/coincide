@@ -4643,3 +4643,88 @@ This is evidence for the initial implementation only. It does not establish
 complete T3 Code parity, all-provider reliability, live tool/approval behavior,
 remote support, long-running stability, accessibility completeness, or support
 on the oldest declared macOS version. CI results remain separate live evidence.
+
+## 2026-10-23 — delegated tasks, Claude filesystem skills and editor recovery
+
+- Native `delegate_task`, `task_status` and `task_cancel` use independent briefs,
+  captured provider/model controls, registered launch profiles, both permission
+  ceilings, durable original command receipts and real spawn/result provenance.
+  Async and bounded wait modes return questions/approval/timeouts without
+  cancelling a child. Original task results remain immutable; explicit later
+  child rounds have separate results. Full stored results use a scoped paged
+  reader; the tool response keeps a bounded UTF-8 preview under the MCP limit.
+- Shared tasks keep the parent cwd. Isolated tasks capture its verified local
+  HEAD and create a project-root worktree without copying staged, unstaged or
+  untracked parent changes. Discovered setup gates the first brief. Recursive
+  cancellation retains unrelated queued drafts paused and captures exact old
+  runtime/job owners so an old receipt cannot close a successor.
+- Completion cohorts acknowledge explicit terminal status reads, steer a
+  compatible exact active parent or queue a continuation. Pending context
+  transfers defer idle automatic notices. Uncertain notification delivery and
+  restart never replay provider effects. Ledger capacity includes worst-case
+  JSON escaping and future result/provenance reservations.
+- A native task panel exposes parent/child navigation, current child requests,
+  original/latest results and explicit cancellation without acknowledging agent
+  result notices. Closing the panel drains an accepted cancellation independently.
+- Claude filesystem skills read captured home/project/ancestor/add-directory/
+  plugin scopes. Full YAML parsing has iterative native preflight limits before
+  recursive composition and bounded alias expansion. Native command and
+  filesystem diagnostics remain separate. Known inline skill mentions lower
+  to native final slash-command blocks while authored text, images and immutable
+  historical context stay separate. Composer insertion checks exact UTF-8 bytes.
+- Native and remote editor recovery use private bounded atomic CAS journals,
+  explicit restore/copy/discard and visible durability errors. Root/path/base
+  revisions stay attached to the recovered record. A remote save durably binds
+  the original operation before sending; late acknowledgements cannot rebase or
+  delete a replacement record at the same path, even with identical text.
+- Focused runtime verification found task-completion stack exhaustion. Compiled
+  prologs showed a 16,144-byte task reducer re-entering a 58,288-byte general
+  reducer. Heavy task request/preparation payloads now use value-semantic heap
+  storage with unchanged flat Codable, and completion steering calls the same
+  guarded native helper directly. Existing steering cases verify the fix without
+  changing stack sizes, deadlines or assertions. The complete run exposed two
+  additional stack-pressure paths: isolated worktree admission and Pi history
+  preparation. New lineage/completion metadata is also heap-backed, and native
+  worktree/Pi preparation now use small dedicated reducers with independently
+  compared, unchanged validation and effect bodies.
+- Hosted run 39942092760 reached its 35-minute job limit after a 721.81-second
+  cold compile and progressing tests; it produced no passing overall result or
+  GUI artifact. Compilation now has a separate 35-minute job. Tests restore only
+  the exact current-SHA build, compare the Swift toolchain and execute all existing
+  isolated probes, full tests, ABI checks, packaging, signature/resource checks
+  and GUI shards. No test deadline or coverage was reduced; hosted verification
+  of this split remains separate from local checks.
+
+Final verification on the frozen Core and corrected App source:
+
+- All 2,136 declarations are covered by final passing target runs: 1,774 Core
+  declarations (1,761 passed, 13 optional installed/live checks skipped) in
+  550.585 seconds; 332 UI/store declarations in 79.976 seconds; 17 terminal
+  declarations in 10.259 seconds; 13 Markdown declarations in 0.130 seconds.
+  This is 2,123 passed declarations plus 13 optional skips. The intact pinned
+  Pi 0.80.5 package acceptance remains enabled with its isolated synthetic stream.
+- The complete run passed Core, terminal and Markdown. Its one UI failure exposed
+  a recovery-inventory await after document publication, allowing fresh contents
+  to appear before write readiness. FileBrowserStore now completes that I/O and
+  rechecks ownership before publication. The complete 332-declaration UI target
+  then passes with unchanged assertions/deadlines. Core source and its passing
+  executable fingerprint are unchanged by this App-only correction. These are
+  separate passing target runs, not a claim that the earlier aggregate exit was
+  successful.
+- The final targeted stack regression passes 23 Core and four UI declarations,
+  including actual private-Git worktree/setup admission and forged Pi history
+  proof handling. UI recovery tests also cover both same-root and replaced-root
+  late save acknowledgements.
+- All 75 Python CI/launcher/crash-collector checks pass in 2.669 seconds. Changed
+  private Python fixtures parse without writing bytecode; workflow YAML and the
+  exact build-cache/toolchain dependency gates validate.
+- The ABI guard inspects 1,138 actual objects (798 Core and 323 App objects),
+  finds zero weak async default records, and accepts three local records.
+- The native GUI runner compiles at the fixed DerivedData path and its offline
+  launcher envelopes pass. No local interactive GUI test, installed app launch,
+  real provider/model/account call or SSH connection is claimed.
+- The native app/helper package builds and passes strict deep signature checking.
+  Compiled and packaged UUIDs agree; bundled Yams/libyaml notices match source.
+
+Installed task/skill execution, broader provider/account acceptance, real remote
+hosts, hosted verification of this commit and full T3 Code parity remain pending.

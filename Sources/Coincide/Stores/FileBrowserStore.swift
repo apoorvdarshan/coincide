@@ -29,6 +29,11 @@ final class FileBrowserStore {
     var workspaceStore: WorkspaceStore? { workspace }
     private let loadDocument: DocumentLoader
     private let editorID = UUID()
+    let recoveryJournal: EditorRecoveryJournal
+    private(set) var recovery: EditorRecoveryBuffer
+    private(set) var recoveredDrafts: [EditorRecoveryRecord] = []
+    private(set) var recoveryError: String?
+    private(set) var recoveredRootUnavailable = false
     var directory = ""
     var query = ""
     var searchMode = WorkspaceFileSearchMode.paths
@@ -62,11 +67,14 @@ final class FileBrowserStore {
     private var closed = false
     private var mutationGeneration = UUID()
     private var mutationSuspended = false
-    var isDirty: Bool { contents != original }
-    var canWrite: Bool { !closed && !mutationSuspended && workspace?.canAccessWorkspaceFiles(workspacePath) == true && document?.revision != nil && document?.truncated == false && !isReading && !isSaving }
+    var isDirty: Bool { !contents.utf8.elementsEqual(original.utf8) }
+    var canWrite: Bool { !closed && !recoveredRootUnavailable && !mutationSuspended && workspace?.canAccessWorkspaceFiles(workspacePath) == true && document?.revision != nil && document?.truncated == false && !isReading && !isSaving }
 
-    init(workspace: WorkspaceStore, path: String, service: WorkspaceFileService, documentLoader: DocumentLoader? = nil) {
+    init(workspace: WorkspaceStore, path: String, service: WorkspaceFileService, documentLoader: DocumentLoader? = nil,
+         recoveryJournal: EditorRecoveryJournal? = nil) {
         self.workspace = workspace; workspacePath = path; self.service = service
+        let journal = recoveryJournal ?? .init(root: workspace.worktreesRoot.deletingLastPathComponent().appendingPathComponent("EditorRecovery", isDirectory: true))
+        self.recoveryJournal = journal; recovery = .init(journal: journal)
         loadDocument = documentLoader ?? { try await service.readFile(relativePath: $0) }
     }
     func start() async {
@@ -80,7 +88,7 @@ final class FileBrowserStore {
                 await self.changedOnDisk()
             }
         }
-        await reloadEntries()
+        await refreshRecoveredDrafts(); await reloadEntries()
     }
     func reloadEntries() async {
         guard !closed, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return }
@@ -116,7 +124,51 @@ final class FileBrowserStore {
     }
     func setContents(_ text: String) {
         guard canWrite else { return }
-        contents = text; updateDirty()
+        guard text.utf8.count <= EditorRecoveryJournal.maximumTextBytes else { operationError = "Keep editor buffers under 2 MB so their unsaved text can be recovered."; return }
+        contents = text; updateDirty(); persistRecovery()
+    }
+    private func persistRecovery() {
+        guard let document else { return }
+        do { recovery.replace(try .native(workspacePath: workspacePath, document: document, contents: contents, id: recovery.id)) }
+        catch { recovery.failed(error) }
+    }
+    func refreshRecoveredDrafts(excluding recordID: UUID? = nil) async {
+        let journal = recoveryJournal
+        do {
+            let values = try await Task.detached { try journal.load() }.value
+            guard !closed else { return }
+            recoveredDrafts = values.filter { if case .native = $0.scope { return $0.id != (recordID ?? recovery.id) }; return false }.sorted { $0.updatedAt > $1.updatedAt }
+            recoveryError = nil
+        } catch { recoveryError = error.localizedDescription }
+    }
+    func discardRecoveredDraft(_ record: EditorRecoveryRecord) async {
+        guard case .native = record.scope else { return }
+        let journal = recoveryJournal
+        do { try await Task.detached { try journal.remove(id: record.id, expectedVersion: record.version) }.value; await refreshRecoveredDrafts() }
+        catch { recoveryError = error.localizedDescription }
+    }
+    func restoreRecoveredDraft(_ record: EditorRecoveryRecord) async {
+        guard !closed, !isDirty, !isSaving, !isReading, record.scope.matchesNative(workspacePath), let saved = record.nativeDocument else { return }
+        let owner = UUID(); readID = owner; isReading = true
+        defer { if readID == owner { isReading = false } }
+        let current = try? await loadDocument(record.relativePath)
+        guard !closed, !Task.isCancelled, readID == owner, !isDirty else { return }
+        await recovery.flush()
+        guard !closed, !Task.isCancelled, readID == owner, !isDirty else { return }
+        await refreshRecoveredDrafts(excluding: record.id)
+        guard !closed, !Task.isCancelled, readID == owner, !isDirty else { return }
+        recovery = .init(journal: recoveryJournal, restored: record)
+        document = saved; contents = record.contents; original = record.original; navigation = nil
+        recoveredRootUnavailable = current.map { !record.matchesNativeRoot($0) } ?? true
+        hasExternalChanges = current?.revision != saved.revision
+        operationError = recoveredRootUnavailable ? "The recovered draft belongs to a missing or replaced workspace folder. Its text is available to copy; it cannot be saved into this folder." : nil
+        updateDirty()
+    }
+    func discardCurrentEdits() {
+        guard !isSaving, !isReading else { return }
+        contents = original; recovery.replace(nil)
+        if recoveredRootUnavailable { document = nil; contents = ""; original = ""; recoveredRootUnavailable = false }
+        updateDirty()
     }
     @discardableResult func open(_ path: String, navigation: FileNavigation? = nil, discardChanges: Bool = false, clearOnFailure: Bool = false) async -> Bool {
         guard !closed, !isSaving, workspace?.canAccessWorkspaceFiles(workspacePath) == true, !isDirty || discardChanges else { return false }
@@ -130,6 +182,17 @@ final class FileBrowserStore {
         do {
             let value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
             guard !closed, !Task.isCancelled, readID == id, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
+            if discardChanges, isDirty { recovery.replace(nil) }
+            await recovery.flush()
+            guard !closed, !Task.isCancelled, readID == id else { return false }
+            let nextRecovery = EditorRecoveryBuffer(journal: recoveryJournal)
+            // Recovery inventory is independent I/O. Complete it before the
+            // fresh file is published so observing those bytes also observes
+            // settlement of this read and its enclosing mutation refresh.
+            await refreshRecoveredDrafts(excluding: nextRecovery.id)
+            guard !closed, !Task.isCancelled, readID == id,
+                  workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
+            recovery = nextRecovery; recoveredRootUnavailable = false
             document = value; contents = value.contents; original = value.contents
             self.navigation = navigation; hasExternalChanges = false; operationError = nil; updateDirty()
             return true
@@ -165,7 +228,10 @@ final class FileBrowserStore {
     }
     @discardableResult private func write(path: String, text: String, condition: WorkspaceFileWriteCondition) async -> Bool {
         guard !closed, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
+        let savingCurrent = document?.relativePath.utf8.elementsEqual(path.utf8) == true
         isSaving = true
+        await recovery.flush()
+        guard !closed, !Task.isCancelled, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { isSaving = false; return false }
         let service = service, task = Task { try await service.writeFile(relativePath: path, contents: text, expected: condition) }
         writeTask = task
         defer { isSaving = false; writeTask = nil }
@@ -174,6 +240,9 @@ final class FileBrowserStore {
             guard !closed, !Task.isCancelled, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
             document = value; contents = value.contents; original = value.contents
             hasExternalChanges = false; operationError = nil; updateDirty()
+            if savingCurrent { recovery.replace(nil); await recovery.flush() }
+            else { recovery = .init(journal: recoveryJournal) }
+            await refreshRecoveredDrafts()
             await reloadEntries()
             return true
         } catch is CancellationError { return false }
@@ -218,5 +287,6 @@ final class FileBrowserStore {
     func shutdown() async {
         prepareForShutdown()
         _ = await listTask?.result; _ = await readTask?.result; _ = await writeTask?.result; await watchTask?.value
+        await recovery.flush()
     }
 }

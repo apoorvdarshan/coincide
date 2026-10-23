@@ -10,10 +10,11 @@ let package = Package(
                .executable(name: "CoincideEnvironment", targets: ["CoincideEnvironment"])],
     dependencies: [.package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.99.1", traits: []),
                    .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.9.0"),
-                   .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3")],
+                   .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3"),
+                   .package(url: "https://github.com/jpsim/Yams.git", exact: "6.2.2")],
     targets: [
         .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
-        .target(name: "CoincideCore", dependencies: ["CSQLite"]),
+        .target(name: "CoincideCore", dependencies: ["CSQLite", .product(name: "Yams", package: "Yams")]),
         .executableTarget(name: "CoincideScriptHelper", dependencies: ["CoincideCore"]),
         .executableTarget(name: "CoincideEnvironment", dependencies: ["CoincideCore", "CoincideTerminal"]),
         .target(name: "CoincideTerminal", dependencies: ["CoincideCore", .product(name: "SwiftTerm", package: "SwiftTerm")]),

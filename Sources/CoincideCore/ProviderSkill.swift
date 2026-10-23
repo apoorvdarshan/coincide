@@ -13,15 +13,17 @@ public struct ProviderSkill: Sendable, Equatable, Identifiable {
     public let scope: String
     public let enabled: Bool
     public let userInvocable: Bool
+    public let userInvocationOnly: Bool
     /// Opaque provider identity, distinct from the skill's advertised name.
     /// It never authorizes opening the display path.
     public let nativeID: String?
     public init(name: String, path: String, displayName: String? = nil, description: String = "",
                 shortDescription: String? = nil, scope: String = "", enabled: Bool = true, userInvocable: Bool = true,
-                nativeID: String? = nil) {
+                nativeID: String? = nil, userInvocationOnly: Bool = false) {
         self.name = name; self.path = path; self.displayName = displayName; self.description = description
         self.shortDescription = shortDescription; self.scope = scope; self.enabled = enabled; self.userInvocable = userInvocable
         self.nativeID = nativeID
+        self.userInvocationOnly = userInvocationOnly
     }
     public var id: String {
         var bytes = Data()

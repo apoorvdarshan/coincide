@@ -276,3 +276,15 @@ func mcpHTTPRejectsHostileTransportWithoutDispatchOrCredentialReflection(fault: 
         peer.close(); await server.close()
     } catch { peer.close(); await server.close(); throw error }
 }
+
+@Test func mcpHTTPLongDelegatedWaitHasBoundedExecutionCeiling() async throws {
+    let registry = MCPSessionRegistry(), scope = httpScope(), calls = MCPHTTPCalls()
+    let credential = try await registry.issue(scope: scope)
+    let server = try await MCPHTTPServer.start(registry: registry, tools: httpTools, requestTimeout: .seconds(3_660)) { await calls.record($0) }
+    do { try await httpInitialize(server, credential: credential, version: "2025-06-18") }
+    catch { await server.close(); throw error }
+    await server.close()
+    await #expect(throws: MCPError(.invalidConfiguration)) {
+        try await MCPHTTPServer.start(registry: registry, tools: httpTools, requestTimeout: .seconds(3_661)) { await calls.record($0) }
+    }
+}

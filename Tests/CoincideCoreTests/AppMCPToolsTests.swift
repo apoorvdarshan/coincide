@@ -7,11 +7,11 @@ import Testing
     let probe = AppMCPToolProbe(view: fixture.view)
     let tools = fixture.tools(probe)
     let names = Set(tools.descriptors.map(\.name))
-    #expect(names.count == 33)
+    #expect(names.count == 36)
     #expect(names.isSuperset(of: ["orchestrator_capabilities", "t3_thread_launch", "create_threads", "t3_thread_read", "t3_thread_fork",
         "t3_queue_edit", "t3_queue_reorder", "t3_queue_promote_to_steer", "t3_pending_request_respond", "t3_project_create", "t3_worktree_status",
-        "t3_context_read", "t3_thread_merge_back", "t3_thread_transfers"]))
-    #expect(names.isDisjoint(with: ["delegate_task", "schedule_task", "request_secret", "preview_open", "device_open", "watch_pull_request", "t3_worktree_handoff"]))
+        "t3_context_read", "t3_thread_merge_back", "t3_thread_transfers", "delegate_task", "task_status", "task_cancel"]))
+    #expect(names.isDisjoint(with: ["schedule_task", "request_secret", "preview_open", "device_open", "watch_pull_request", "t3_worktree_handoff"]))
     #expect(AppMCPTools.unsupportedCapabilities.contains("queued_steering_input_text_revision"))
     for definition in tools.descriptors {
         try definition.validate()

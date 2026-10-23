@@ -15,6 +15,7 @@ final class ProviderSkillsStore {
         let openCodeConfiguration: OpenCodeConfiguration?
         let piConfiguration: PiConfiguration?
         let claudeConfiguration: ClaudeRuntimeConfiguration?
+        let claudeSkills: ClaudeSkillDiscoveryConfiguration?
         let nativeThreadID: String?
         let permission: String?
         init(_ thread: CodingThread) {
@@ -23,6 +24,7 @@ final class ProviderSkillsStore {
             configuration = thread.codexRuntimeConfiguration ?? .init()
             openCodeConfiguration = thread.openCodeConfiguration; piConfiguration = thread.piConfiguration
             claudeConfiguration = thread.claudeRuntimeConfiguration
+            claudeSkills = thread.claudeRuntimeConfiguration.flatMap { try? .init(runtime: $0) }
             nativeThreadID = thread.provider == .codex ? nil : thread.providerThreadID
             permission = thread.provider == .codex ? nil : thread.permission.rawValue
         }
@@ -31,6 +33,7 @@ final class ProviderSkillsStore {
     private enum Discovery: Sendable {
         case skills(ProviderSkillInventory)
         case commands(ProviderCommandInventory)
+        case combined(ProviderSkillInventory, ProviderCommandInventory)
     }
     let id: UUID
     let scope: Scope
@@ -53,8 +56,23 @@ final class ProviderSkillsStore {
          isCurrent: @escaping @MainActor () -> Bool = { true }) {
         self.id = id; self.scope = scope; self.read = { .commands(try await commandRead($0)) }; self.isCurrent = isCurrent
     }
+    init(id: UUID = UUID(), scope: Scope,
+         skillRead: @escaping @Sendable (Bool) async throws -> ProviderSkillInventory,
+         commandRead: @escaping @Sendable (Bool) async throws -> ProviderCommandInventory,
+         isCurrent: @escaping @MainActor () -> Bool = { true }) {
+        self.id = id; self.scope = scope; self.isCurrent = isCurrent
+        read = { force in
+            async let skillValue = skillRead(force)
+            let commands: ProviderCommandInventory
+            do { commands = try await commandRead(force) }
+            catch is CancellationError { throw CancellationError() }
+            catch { commands = .init(cwd: scope.workspacePath, commands: [], skills: [], problems: [.init(component: .commands,
+                message: "Native commands could not be refreshed. Filesystem skill discovery is separate.")]) }
+            return .combined(try await skillValue, commands)
+        }
+    }
     var supportsCommands: Bool { [.pi, .opencode, .claude].contains(scope.provider) }
-    var supportsSkills: Bool { scope.provider != .claude }
+    var supportsSkills: Bool { true }
     var commands: [ProviderCommand] {
         var names = Set<String>()
         return (commandInventory?.commands ?? []).filter {
@@ -64,7 +82,7 @@ final class ProviderSkillsStore {
     var skills: [ProviderSkill] {
         var names = Set<String>()
         return (inventory?.skills ?? []).filter {
-            $0.canInvokeFromComposer && names.insert($0.name.lowercased()).inserted
+            $0.canInvokeFromComposer && names.insert(scope.provider == .claude ? $0.name : $0.name.lowercased()).inserted
         }
     }
     func refresh(forceReload: Bool = false) async {
@@ -86,6 +104,10 @@ final class ProviderSkillsStore {
             let value = try await task.value
             guard !task.isCancelled, !isClosed, currentRead == id, isCurrent() else { return }
             switch value {
+            case .combined(let skills, let commands):
+                guard skills.cwd.utf8.elementsEqual(scope.workspacePath.utf8), commands.cwd.utf8.elementsEqual(scope.workspacePath.utf8) else { return }
+                try skills.validate(); try commands.validate(); commandInventory = commands
+                inventory = skills
             case .skills(let value):
                 guard value.cwd == scope.workspacePath else { return }
                 try value.validate(); inventory = value

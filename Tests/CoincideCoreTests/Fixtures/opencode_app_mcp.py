@@ -84,7 +84,7 @@ class AppMCPFixture:
             if config.get("type") != "remote" or config.get("oauth") is not False or set(config.get("headers", {})) != {"Authorization"}:
                 handler.reply(400, {"error": "invalid remote config"})
                 return True
-            timeout = 660000 if self.generation == 1 else {"startup": 10000, "catalog": 10000, "execution": 660000}
+            timeout = 3660000 if self.generation == 1 else {"startup": 10000, "catalog": 10000, "execution": 3660000}
             if config.get("timeout") != timeout:
                 handler.reply(400, {"error": "app tool execution timeout is not reachable"})
                 return True

@@ -34,7 +34,7 @@ The listener checks the exact loopback Host and rejects a supplied foreign Origi
 Headers are bounded to 16 KiB and bodies/responses to 1 MiB, with bounded JSON
 depth, connections and concurrent invocations. Tool listing returns the complete
 capability-filtered catalogue in one page. The Engine and Pi bridge both allow
-660 seconds for tool calls, making the tool's maximum ten-minute wait reachable;
+3,660 seconds for tool calls, making delegated tasks' bounded one-hour wait reachable;
 Pi discovery has a separate ten-second deadline.
 
 `MCPSessionRegistry` issues 32 random bytes as an opaque Bearer header and retains
@@ -165,7 +165,7 @@ remain unverified. See [OpenCode boundaries](OPENCODE_HTTP.md) and
 
 ## Tools and durable authority
 
-The catalogue contains 30 tools, with supported variants routed to existing
+The catalogue contains 36 tools, with supported variants routed to existing
 Engine services:
 
 | Surface | Implemented boundary |
@@ -197,6 +197,45 @@ alone does not cancel an admitted action. Cancellation is not rollback: a comman
 already durably admitted may finish, and loss of its response is not permission
 to repeat it. Shutdown/revocation joins accepted callbacks and owned networking.
 
+## App-owned delegated tasks
+
+`delegate_task`, `task_status` and `task_cancel` are separate from ordinary
+`create_threads`. Delegation always creates an app-owned child with a self-contained
+brief. It can use a registered provider profile and captured native model options;
+permissions remain within both the current and captured parent ceilings. Native
+provider subagent tools remain preferable when their compatible-model workflow
+needs no app-owned options or inherited controls.
+
+Shared tasks keep the parent cwd. Worktree tasks pin a verified local parent HEAD,
+create a project-root checkout, and honor the discovered setup gate before the
+first prompt. Synchronous setup must finish; configured asynchronous setup releases
+the provider after a successful start. Dirty or untracked parent edits are not
+copied. Task lineage, spawn/result provenance, original request receipts,
+completion cohorts and cancellation/drain evidence are durable. Live runtime
+handles stay process-owned and are never replayed after restart. Later explicit child followups have separate
+results; they never rewrite the original task outcome.
+
+Async mode returns immediately. Wait mode defaults to ten minutes, permits up to
+one hour, and returns on questions, approval or timeout without cancelling the
+child. A terminal `task_status` read acknowledges automatic delivery. Completion
+notices steer a compatible active parent or queue durably; uncertain native
+notification delivery is retained without replay. Cancellation covers the owned
+child and descendants, including later work, while holding unrelated queued input.
+
+Results returned by the task tools contain a bounded UTF-8 preview and actual
+`resultContextTransferId`. The full immutable stored result is paged through
+`t3_context_read` only for its active owning parent with orchestration capability.
+The context-only remote helper remains restricted to context captured for the
+exact active input and does not expose task orchestration.
+
+The ledger is bounded to 4,096 tasks and 128 MiB, with a 4 MiB raw result limit.
+Admission reserves worst-case JSON-escaped result bytes and future metadata.
+The 64-pending-task count ceiling remains subject to this byte budget: even an
+otherwise small ledger can reserve at most five worst-case pending results.
+
+These are native implementation boundaries. Offline tests and installed/hosted
+acceptance are recorded separately in [VALIDATION.md](VALIDATION.md).
+
 ## Remaining parity work
 
 The catalogue is not a promise that every upstream argument variant works.
@@ -206,13 +245,13 @@ Unsupported cases return fixed errors and remain visible through
 - Muse, Antigravity and ACP providers' app-MCP registration,
   external-client authorization and remote access; shared native MCP
   configuration editing and MCP Apps/resources/HTML presentation.
-- Background-run write ownership, delegated/app-owned subagents and wakeups,
-  scheduling, secret requests, preview/browser/device services and review guides.
+- Background-run write ownership, scheduling, secret requests,
+  preview/browser/device services and review guides.
 - Cross-provider or foreign-instance model changes, restart delivery, deferred
   own-run settlement and client-keyed steering without reserved native input IDs.
 - Editing steering-reserved queued text, managed project allocation, creating
   missing workspace directories and remote worktree fetch.
-- Attachment uploads, PR links/watch services, merge-back, active worktree
+- Attachment uploads, PR links/watch services, active worktree
   handoff and environment preferences.
 
 Existing provider-native MCP configuration may still work through that CLI's

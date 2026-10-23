@@ -122,6 +122,15 @@ enum AppMCPAdmission {
             guard authority.permission == .fullAccess, currentCeiling == .fullAccess else { throw AppMCPError(.capabilityDenied) }
         }
         switch command {
+        case .delegatedTaskAccepted(let prepared):
+            guard prepared.request.parentThreadID == authority.threadID, prepared.request.parentRunID == authority.runID else { throw AppMCPError(.staleCaller) }
+            try newThread(prepared.child)
+            try require(prepared.request.configuration.permission, authority: authority, current: currentCeiling)
+        case .delegatedTaskCancel(let parentID, let taskID, _):
+            guard parentID == authority.threadID, let owned = snapshot.delegatedTasks?.first(where: { $0.id == taskID && $0.parentThreadID == parentID }) else { throw AppMCPError(.notFound) }
+            for task in snapshot.delegatedTaskTree(owned.id) { _ = try target(task.childThreadID) }
+        case .delegatedTaskObserved(let parentID, let taskID, _), .delegatedTaskWakePolicy(let parentID, let taskID):
+            guard parentID == authority.threadID, snapshot.delegatedTasks?.contains(where: { $0.id == taskID && $0.parentThreadID == parentID }) == true else { throw AppMCPError(.notFound) }
         case .appMCP: throw AppMCPError(.invalidRequest)
         case .client(let command):
             switch command {

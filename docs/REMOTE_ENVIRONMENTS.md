@@ -481,7 +481,9 @@ The reference is T3 Code
    acceptance does not establish remote network or provider authentication.
 2. Complete remote worktree setup/removal, remaining PR controls and media files,
    provider history, broader checkpoint diffs and provider setup/authentication; add workspace
-   receipt-capacity management and crash recovery for unsaved editor buffers.
+   receipt-capacity management. Private local remote-editor recovery now retains exact
+   environment/project/thread/root/path/revision ownership with explicit restore,
+   copy and discard; broader real-host crash/reconnect acceptance remains pending.
    Preserve the current separation between local and remote paths/services.
 3. Add persistent-host ownership, signed helper provisioning/update and bounded
    durable paginated catch-up beyond the current display views. Ordered journal

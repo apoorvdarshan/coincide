@@ -2107,6 +2107,15 @@ final class WorkspaceStore {
         } else if scope.openCodeConfiguration == nil { return nil }
         return scope
     }
+    func inspectDelegatedTask(parentThreadID: UUID, taskID: UUID) async throws -> DelegatedTaskStatusSnapshot {
+        guard !terminating, let engine else { throw CancellationError() }
+        return try await engine.delegatedTaskStatus(parentThreadID: parentThreadID, taskID: taskID, acknowledge: false)
+    }
+    func cancelDelegatedTask(parentThreadID: UUID, taskID: UUID, commandID: UUID) async throws -> WorkspaceCommandReceipt {
+        guard !terminating, let engine else { throw CancellationError() }
+        return try await engine.cancelDelegatedTask(parentThreadID: parentThreadID, taskID: taskID,
+            reason: "Cancelled from the task panel", commandID: commandID)
+    }
     func skillsStore(threadID: UUID) -> ProviderSkillsStore? {
         guard let scope = skillsScope(threadID: threadID), let thread = thread(threadID), let engine else { return nil }
         if let cached = providerSkills[threadID], cached.scope == scope, !cached.isClosed { return cached }
@@ -2121,6 +2130,11 @@ final class WorkspaceStore {
             model = .init(id: id, scope: scope, read: { forceReload in
                 try await engine.skills(thread: thread, forceReload: forceReload)
             }, isCurrent: isCurrent)
+        } else if thread.provider == .claude, let configuration = scope.claudeSkills {
+            model = .init(id: id, scope: scope, skillRead: { _ in
+                let task = Task.detached { try ClaudeSkillService.discover(configuration: configuration) }
+                return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            }, commandRead: { forceReload in try await engine.commands(thread: thread, forceReload: forceReload) }, isCurrent: isCurrent)
         } else {
             model = .init(id: id, scope: scope, commandRead: { forceReload in
                 try await engine.commands(thread: thread, forceReload: forceReload)

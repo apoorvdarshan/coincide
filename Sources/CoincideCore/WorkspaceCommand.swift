@@ -9,6 +9,9 @@ public struct QueuedTurn: Codable, Sendable, Equatable, Identifiable {
     public var checkpointPolicy: RunCheckpointPolicy? = nil
     public var existingMessageID: String? = nil
     public var preservesTitle: Bool? = nil
+    public var delegatedTaskID: UUID? = nil
+    public var delegatedCompletion: DelegatedTaskCompletionReference? = nil
+    public var delegatedTaskOwnershipRecorded: Bool? = nil
     public var contextTransferIDs: [UUID]? = nil
     public var contextDelivery: ContextTransferDelivery? = nil
 }
@@ -18,6 +21,9 @@ public struct ActiveRun: Codable, Sendable, Equatable, Identifiable {
     public var startedAt: Date
     public var stopRequested = false
     public var nativeTurnID: String?
+    public var delegatedTaskID: UUID? = nil
+    public var delegatedCompletion: DelegatedTaskCompletionReference? = nil
+    public var delegatedTaskOwnershipRecorded: Bool? = nil
     public var contextTransferIDs: [UUID]? = nil
     public var contextDelivery: ContextTransferDelivery? = nil
 }
@@ -115,6 +121,13 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
 // envelope indirect so decoding and broad switch dispatch copy an owned reference
 // instead of reserving every case's maximum payload on the worker stack.
 indirect enum EngineCommand: Codable, Sendable {
+    case delegatedTaskAccepted(DelegatedTaskPreparation)
+    case delegatedTaskCancel(parentThreadID: UUID, taskID: UUID, reason: String?)
+    case delegatedTaskDrained([DelegatedTaskDrainOwner])
+    case delegatedTaskObserved(parentThreadID: UUID, taskID: UUID, observingRunID: UUID?)
+    case delegatedTaskWakePolicy(parentThreadID: UUID, taskID: UUID)
+    case delegatedTaskCompletionPrepared(DelegatedTaskCohort, PromptSteeringOperation?)
+    case delegatedTaskCompletionCoalesced(cohortID: UUID, expectedTaskIDs: [UUID], taskIDs: [UUID])
     case contextTransferAccepted(review: ContextTransferReview, title: String?)
     case contextTransferDispatching(threadID: UUID, runID: UUID, deliveryID: UUID, runtimeID: UUID)
     case contextTransferNativeReserved(threadID: UUID, runID: UUID, deliveryID: UUID, publication: ClaudeTranscriptPublication)
@@ -213,6 +226,18 @@ struct WorkspaceDecision: Sendable {
     var cancelWorktreeAttempt: UUID?
     var cancelPullRequestCheckoutOperation: UUID?
 
+    @inline(never)
+    private static func reducePiRunHistoryPrepared(_ command: EngineCommand, snapshot initial: WorkspaceSnapshot) throws -> Self {
+        guard case .piRunHistoryPrepared(let threadID, let runtimeID, let preparation, _) = command else { throw WorkspaceCommandError("This workspace command was routed incorrectly.") }
+        var snapshot = initial
+        guard let index = snapshot.threads.firstIndex(where: { $0.id == threadID }),
+              snapshot.threads[index].runtimeID == runtimeID,
+              !snapshot.isConversationHistoryLocked(threadID: threadID) else { throw WorkspaceCommandError("The Pi run changed before its native baseline was saved.") }
+        do { try snapshot.threads[index].preparePiRunHistory(preparation) }
+        catch { throw WorkspaceCommandError("The Pi run changed before its native baseline was saved.") }
+        return Self(snapshot: snapshot)
+    }
+
     private struct GeneralReduction {
         let decision: WorkspaceDecision
         let requiresFinalization: Bool
@@ -224,6 +249,12 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date, validatingLedger: Bool = true) throws -> Self {
         let reduced: GeneralReduction
         switch command {
+        case .beginWorktreePreparation:
+            reduced = .init(decision: try reduceWorktreePreparation(command, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .piRunHistoryPrepared:
+            reduced = .init(decision: try reducePiRunHistoryPrepared(command, snapshot: snapshot), requiresFinalization: true)
+        case .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskDrained, .delegatedTaskObserved, .delegatedTaskWakePolicy, .delegatedTaskCompletionPrepared, .delegatedTaskCompletionCoalesced:
+            reduced = .init(decision: try reduceDelegatedTask(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .contextTransferAccepted, .contextTransferDispatching, .contextTransferNativeReserved, .contextTransferNativeReady, .contextTransferRuntimeRebound, .contextTransferDeferred, .contextTransferSelectionPrepared, .contextTransferDelivered, .contextTransferUncertain, .client(.abandonContextTransfer):
             reduced = .init(decision: try reduceContextTransfer(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .remoteEnvironment:
@@ -289,6 +320,7 @@ struct WorkspaceDecision: Sendable {
     @inline(never)
     private static func finalized(_ value: Self) throws -> Self {
         var decision = value
+        try decision.reconcileDelegatedTasks(now: Date())
         decision.snapshot.reconcileGroupingPreferences()
         try WorkspaceJournal.validate(decision.snapshot)
         return decision
@@ -471,6 +503,8 @@ struct WorkspaceDecision: Sendable {
     private static func mutateGeneral(_ command: EngineCommand, id: UUID, prepared: Self, snapshot: WorkspaceSnapshot, now: Date) throws -> GeneralReduction {
         var decision = prepared
         switch command {
+        case .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskDrained, .delegatedTaskObserved, .delegatedTaskWakePolicy, .delegatedTaskCompletionPrepared, .delegatedTaskCompletionCoalesced:
+            throw DelegatedTaskError.invalidRequest
         case .contextTransferAccepted, .contextTransferDispatching, .contextTransferNativeReserved, .contextTransferNativeReady, .contextTransferRuntimeRebound, .contextTransferDeferred, .contextTransferSelectionPrepared, .contextTransferDelivered, .contextTransferUncertain, .client(.abandonContextTransfer):
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
         case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
@@ -488,12 +522,8 @@ struct WorkspaceDecision: Sendable {
              .projectScriptStarted, .projectScriptExited, .projectScriptStopped:
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
         case .promptSteeringAccepted(let operation): try decision.acceptPromptSteering(operation)
-        case .piRunHistoryPrepared(let threadID, let runtimeID, let preparation, _):
-            guard let index = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
-                  decision.snapshot.threads[index].runtimeID == runtimeID,
-                  !decision.snapshot.isConversationHistoryLocked(threadID: threadID) else { throw WorkspaceCommandError("The Pi run changed before its native baseline was saved.") }
-            do { try decision.snapshot.threads[index].preparePiRunHistory(preparation) }
-            catch { throw WorkspaceCommandError("The Pi run changed before its native baseline was saved.") }
+        case .piRunHistoryPrepared:
+            return .init(decision: try reducePiRunHistoryPrepared(command, snapshot: snapshot), requiresFinalization: true)
         case .piSteeringInputPrepared(let operationID, let input, let incarnation):
             guard let operation = decision.snapshot.promptSteering(operationID), operation.sourceIncarnation == incarnation,
                   operation.phase == .dispatching, operation.configuration.provider == .pi,
@@ -536,81 +566,8 @@ struct WorkspaceDecision: Sendable {
                 // Restart already held restored work. Inspection must not override a
                 // newer explicit submit/resume intent, and never starts work itself.
             }
-        case .beginWorktreePreparation(let threadID, let request, let expectedSourcePath, let previousAttemptID, _, let reviewSetup, let claudeRuntimeConfiguration, let piRuntimeConfiguration):
-            guard !snapshot.pullRequestCheckoutReservedIDs.union(snapshot.promptSteeringReservedIDs).contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is reserved by a pull request checkout.") }
-            guard !decision.snapshot.isPullRequestCheckoutLocked(threadID: threadID),
-                  !decision.snapshot.isPullRequestCheckoutLocked(path: request.sourcePath),
-                  !decision.snapshot.isPullRequestCheckoutLocked(path: request.destinationPath),
-                  !decision.snapshot.isPullRequestCreationLocked(threadID: threadID),
-                  !decision.snapshot.isPullRequestCreationLocked(path: request.sourcePath),
-                  !decision.snapshot.isPullRequestCreationLocked(path: request.destinationPath),
-                  !decision.snapshot.isCheckpointRestoreLocked(threadID: threadID),
-                  !decision.snapshot.isCheckpointRestoreLocked(path: request.sourcePath),
-                  !decision.snapshot.isCheckpointRestoreLocked(path: request.destinationPath) else { throw WorkspaceCommandError("A checkpoint restoration is holding these workspace files.") }
-            guard !decision.snapshot.isConversationHistoryLocked(threadID: threadID) else { throw WorkspaceCommandError("Finish or inspect this conversation's history action before changing its workspace.") }
-            do { try request.validate() } catch { throw WorkspaceCommandError("Choose a valid local worktree destination and branch.") }
-            guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
-            var thread = decision.snapshot.threads[i]
-            guard thread.workspacePath == expectedSourcePath, thread.settlement == nil, !thread.isBusy, !thread.isArchived, thread.messages.isEmpty,
-                  decision.snapshot.projects.contains(where: { $0.id == thread.projectID && ($0.clone == nil || $0.clone?.isReady == true) }) else {
-                throw WorkspaceCommandError("Prepare the workspace before the first turn, in an available conversation.")
-            }
-            var history: [ThreadWorkspacePreparationAttempt] = []
-            if let previousAttemptID {
-                guard let old = thread.workspacePreparation, old.id == previousAttemptID, old.canRetry,
-                      old.request.sourcePath == request.sourcePath, old.request.selection == request.selection,
-                      old.request.submodules == request.submodules,
-                      old.request.destinationRoot == request.destinationRoot else { throw WorkspaceCommandError("This workspace preparation changed. Refresh its status before retrying.") }
-                history = old.previousAttempts + [.init(request: old.request, plan: old.plan, setup: old.setup)]
-            } else {
-                guard thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Clear queued messages before choosing another workspace.") }
-                if let old = thread.workspacePreparation {
-                    guard !old.isRunning, request.sourcePath == (old.canRetry ? old.request.sourcePath : expectedSourcePath) else { throw WorkspaceCommandError("Wait for the current workspace preparation to finish or cancel it first.") }
-                    history = old.previousAttempts + [.init(request: old.request, plan: old.plan, setup: old.setup)]
-                } else {
-                    guard request.sourcePath == expectedSourcePath else { throw WorkspaceCommandError("The source workspace changed. Choose the worktree again.") }
-                }
-            }
-            let allIDs = decision.snapshot.threads.compactMap(\.workspacePreparation).flatMap { $0.previousAttempts.map { $0.request.id } + [$0.id] }
-            guard !allIDs.contains(request.id), !decision.snapshot.cloneAttemptIDs.contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is already in use.") }
-            thread.workspacePreparation = .init(request: request, now: now, previousAttempts: history, reviewSetup: reviewSetup)
-            if let previous = thread.claudeRuntimeConfiguration {
-                guard let captured = claudeRuntimeConfiguration,
-                      captured == (try previous.replacingWorkspace(request.destinationPath, physicalPath: captured.workspacePath)) else { throw ClaudeRuntimeConfiguration.invalid() }
-                thread.claudeRuntimeConfiguration = captured
-            } else if claudeRuntimeConfiguration != nil { throw ClaudeRuntimeConfiguration.invalid() }
-            if let selected = thread.piConfiguration, let previous = selected.runtime {
-                let captured: PiRuntimeConfiguration
-                do {
-                    guard let value = piRuntimeConfiguration,
-                          value == (try previous.replacingWorkspace(request.destinationPath, physicalPath: value.workspacePath)) else { throw PiRuntimeConfiguration.invalid() }
-                    captured = value
-                } catch { throw WorkspaceCommandError("The Pi runtime changed before worktree preparation.") }
-                thread.piConfiguration = .init(instanceID: selected.instanceID, executable: selected.executable,
-                    model: selected.model, thinkingLevel: selected.thinkingLevel, runtime: captured)
-            } else if piRuntimeConfiguration != nil { throw WorkspaceCommandError("The Pi runtime changed before worktree preparation.") }
-            thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
-            thread.workspacePath = request.destinationPath; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; thread.runtimeID = nil
-            thread.runtimeRequests = []; thread.providerMetadata = nil; thread.providerActivity = nil
-            for j in thread.queuedTurns.indices {
-                if let previous = thread.queuedTurns[j].configuration.claudeRuntimeConfiguration {
-                    guard let captured = claudeRuntimeConfiguration else { throw ClaudeRuntimeConfiguration.invalid() }
-                    thread.queuedTurns[j].configuration.claudeRuntimeConfiguration = try previous.replacingWorkspace(request.destinationPath, physicalPath: captured.workspacePath)
-                }
-                if let selected = thread.queuedTurns[j].configuration.piConfiguration, let previous = selected.runtime {
-                    guard let captured = piRuntimeConfiguration else { throw WorkspaceCommandError("The queued Pi runtime changed before worktree preparation.") }
-                    let replaced: PiRuntimeConfiguration
-                    do { replaced = try previous.replacingWorkspace(request.destinationPath, physicalPath: captured.workspacePath) }
-                    catch { throw WorkspaceCommandError("The queued Pi runtime changed before worktree preparation.") }
-                    thread.queuedTurns[j].configuration.piConfiguration = .init(instanceID: selected.instanceID, executable: selected.executable,
-                        model: selected.model, thinkingLevel: selected.thinkingLevel, runtime: replaced)
-                }
-                thread.queuedTurns[j].configuration.claudeLaunchSelection = nil
-                thread.queuedTurns[j].configuration.workspacePath = request.destinationPath
-                thread.queuedTurns[j].configuration.nativeThreadID = nil
-            }
-            thread.updatedAt = now; decision.snapshot.threads[i] = thread; decision.closeRuntimes.insert(thread.id)
-            decision.effects.append(.init(id: request.id, request: .resolveWorktree(threadID: threadID, request: request)))
+        case .beginWorktreePreparation:
+            return .init(decision: try reduceWorktreePreparation(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .claudeResumeInspected(let threadID, _, let selection, let run, let result):
             guard let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
                   !decision.snapshot.threads[i].isBusy,
@@ -1405,6 +1362,7 @@ struct WorkspaceDecision: Sendable {
             configuration.piFreshSessionIntent = intent; thread.piFreshConsumerRunID = queued.id
         }
         thread.activeRun = ActiveRun(id: queued.id, configuration: configuration, startedAt: now,
+                                     delegatedTaskID: queued.delegatedTaskID, delegatedCompletion: queued.delegatedCompletion, delegatedTaskOwnershipRecorded: queued.delegatedTaskOwnershipRecorded,
                                      contextTransferIDs: queued.contextTransferIDs, contextDelivery: queued.contextDelivery)
         if thread.messages.isEmpty && queued.preservesTitle != true { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
         var message: ChatMessage

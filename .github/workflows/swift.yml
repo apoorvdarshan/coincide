@@ -27,10 +27,10 @@ jobs:
       - name: Select native UI changes
         id: paths
         run: python3 script/macos_ui_ci.py changes
-  test:
+  build:
     runs-on: macos-26
-    # A cold hosted Swift build took 12m49s before the full test suite started.
-    # Keep every check and allow the build, tests and signed archive to finish.
+    # Cold compilation has its own existing-sized budget. Listing tests builds
+    # every test executable without running or substituting for any test.
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,8 +41,30 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .build
-          key: swift-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
-          restore-keys: swift-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+          key: swift-built-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
+          restore-keys: swift-built-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+      - name: Compile all Swift test executables without running tests
+        run: |
+          swift test list > "$RUNNER_TEMP/coincide-swift-test-list.txt"
+          test -s "$RUNNER_TEMP/coincide-swift-test-list.txt"
+          swift --version > .build/coincide-swift-toolchain.txt
+  test:
+    needs: [build]
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build
+          key: swift-built-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - name: Verify the compiled Swift toolchain matches this runner
+        run: |
+          swift --version > "$RUNNER_TEMP/coincide-swift-toolchain-current.txt"
+          cmp .build/coincide-swift-toolchain.txt "$RUNNER_TEMP/coincide-swift-toolchain-current.txt"
       - name: Begin Swift test diagnostic window
         run: |
           python3 -c 'import os, pathlib, time; pathlib.Path(os.environ["RUNNER_TEMP"], "coincide-swift-tests-started").write_text(str(time.time()))'
@@ -53,7 +75,7 @@ jobs:
         # Compare the public verifier without the installer's default async
         # Inspector closure. A separate helper keeps the observations independent.
         run: |
-          swift test --no-parallel --filter codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstallationClosure 2>&1 | tee "$RUNNER_TEMP/coincide-codex-direct-inspection.log"
+          swift test --skip-build --no-parallel --filter codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstallationClosure 2>&1 | tee "$RUNNER_TEMP/coincide-codex-direct-inspection.log"
           grep -F '✔ Test codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstallationClosure() passed' "$RUNNER_TEMP/coincide-codex-direct-inspection.log"
           grep -E 'Test run with 1 tests? in ' "$RUNNER_TEMP/coincide-codex-direct-inspection.log"
       - name: Isolate the Codex executable inspection crash
@@ -64,7 +86,7 @@ jobs:
         # suite, so neither failure nor success can replace normal coverage.
         continue-on-error: true
         run: |
-          swift test --no-parallel --filter codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp 2>&1 | tee "$RUNNER_TEMP/coincide-codex-inspection.log"
+          swift test --skip-build --no-parallel --filter codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp 2>&1 | tee "$RUNNER_TEMP/coincide-codex-inspection.log"
           grep -F '✔ Test codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp() passed' "$RUNNER_TEMP/coincide-codex-inspection.log"
           grep -E 'Test run with 1 tests? in ' "$RUNNER_TEMP/coincide-codex-inspection.log"
       - name: Build and test
@@ -72,7 +94,7 @@ jobs:
         # Process/PTY and deadline regressions share a small hosted runner. Keep
         # every test, while avoiding simultaneous fixture launches starving timers.
         run: |
-          swift test --no-parallel
+          swift test --skip-build --no-parallel
       - name: Verify async default closure contexts
         if: always()
         # Inspect actual objects from either SwiftPM build system. A weak async

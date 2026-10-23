@@ -17,7 +17,10 @@ final class RemoteWorkspaceInspectorStore {
     private(set) var selected: RemoteWorkspaceInspectorModel?
     private(set) var errorMessage: String?
     private(set) var isShowingRetained = false
+    private(set) var recoveredDrafts: [EditorRecoveryRecord] = []
+    private(set) var recoveryError: String?
     @ObservationIgnored private let pendingStore: RemoteWorkspacePendingStore
+    @ObservationIgnored private let recoveryJournal: EditorRecoveryJournal?
     @ObservationIgnored private var models: [RemoteWorkspaceInspectorKey: RemoteWorkspaceInspectorModel] = [:]
     @ObservationIgnored private var selection = UUID()
     @ObservationIgnored private var closed = false
@@ -25,11 +28,26 @@ final class RemoteWorkspaceInspectorStore {
     @ObservationIgnored private var currentKey: RemoteWorkspaceInspectorKey?
     @ObservationIgnored private var currentInput: (target: RemoteWorkspaceTarget, client: RemoteEnvironmentClient?, canMutate: Bool)?
 
-    init(pendingStore: RemoteWorkspacePendingStore) { self.pendingStore = pendingStore }
+    init(pendingStore: RemoteWorkspacePendingStore, recoveryJournal: EditorRecoveryJournal? = nil) { self.pendingStore = pendingStore; self.recoveryJournal = recoveryJournal }
 
     var hasUnsavedEdits: Bool { models.values.contains(where: \.hasUnsavedEdits) }
     var retainedEditors: [RemoteWorkspaceInspectorModel] {
         models.values.filter(\.hasUnsavedEdits).sorted { Data($0.session.target.workspacePath.utf8).lexicographicallyPrecedes(Data($1.session.target.workspacePath.utf8)) }
+    }
+    func refreshRecoveredDrafts() async {
+        guard let journal = recoveryJournal else { return }
+        do {
+            let values = try await Task.detached { try journal.load() }.value
+            guard !closed else { return }
+            let openIDs = Set(models.values.flatMap { $0.files.buffers.values.map { $0.recovery.id } })
+            recoveredDrafts = values.filter { if case .remote = $0.scope { return !openIDs.contains($0.id) }; return false }.sorted { $0.updatedAt > $1.updatedAt }
+            recoveryError = nil
+        } catch { recoveryError = error.localizedDescription }
+    }
+    func discardRecoveredDraft(_ record: EditorRecoveryRecord) async {
+        guard let journal = recoveryJournal, case .remote = record.scope else { return }
+        do { try await Task.detached { try journal.remove(id: record.id, expectedVersion: record.version) }.value; await refreshRecoveredDrafts(); await selected?.files.refreshRecoveredDrafts() }
+        catch { recoveryError = error.localizedDescription }
     }
 
     func select(environmentID: UUID, thread: CodingThread, client: RemoteEnvironmentClient?, canMutate: Bool) async {
@@ -60,11 +78,14 @@ final class RemoteWorkspaceInspectorStore {
                 }
                 unused.value.session.disconnect(); models.removeValue(forKey: unused.key)
             }
-            model = RemoteWorkspaceInspectorModel(target: target, pendingStore: pendingStore)
+            model = RemoteWorkspaceInspectorModel(target: target, pendingStore: pendingStore, recoveryJournal: recoveryJournal)
             models[key] = model
         }
         if selected !== model { selected?.session.disconnect() }
         selected = model; errorMessage = nil
+        await model.files.refreshRecoveredDrafts()
+        await refreshRecoveredDrafts()
+        guard selection == owner, !closed else { return }
         await model.session.connect(client: client, canMutate: canMutate)
         guard selection == owner, !closed else { return }
     }
@@ -102,9 +123,10 @@ final class RemoteWorkspaceInspectorStore {
 
     func shutdown() async {
         closed = true; selection = UUID(); recoveryClients = [:]
-        for model in models.values { await model.session.shutdown() }
+        for model in models.values { model.files.prepareForShutdown() }
+        for model in models.values { await model.session.shutdown(); await model.files.flushRecovery() }
     }
-    func cancelShutdown() { closed = false }
+    func cancelShutdown() { closed = false; for model in models.values { model.files.cancelShutdown() } }
 }
 
 @MainActor @Observable
@@ -116,10 +138,10 @@ final class RemoteWorkspaceInspectorModel {
     var tab = "Files"
     var hasUnsavedEdits: Bool { files.hasUnsavedEdits || !git.commitMessage.isEmpty || session.hasUnresolvedOperation }
 
-    init(target: RemoteWorkspaceTarget, pendingStore: RemoteWorkspacePendingStore) {
+    init(target: RemoteWorkspaceTarget, pendingStore: RemoteWorkspacePendingStore, recoveryJournal: EditorRecoveryJournal? = nil) {
         let session = RemoteWorkspaceInspectorSession(target: target, pendingStore: pendingStore)
         self.session = session
-        files = RemoteFileBrowserStore(session: session)
+        files = RemoteFileBrowserStore(session: session, recoveryJournal: recoveryJournal)
         git = RemoteGitInspectorStore(session: session)
         git.hasDirtyFiles = { [weak files] in files?.hasUnsavedEdits == true }
         session.operationFinished = { [weak files, weak git] request, operation in

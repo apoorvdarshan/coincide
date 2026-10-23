@@ -10,6 +10,8 @@ public actor ClaudeSession: ProviderSession {
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
     private let runtimeConfiguration: ClaudeRuntimeConfiguration?
+    private let skillDiscoveryConfiguration: ClaudeSkillDiscoveryConfiguration?
+    private var skillReads: [UUID: Task<ProviderSkillInventory, any Error>] = [:]
     private let workspacePath: String
     private let launchSelection: ClaudeResumeSelection?
     private var appMCPConnection: AppMCPConnection?
@@ -102,6 +104,7 @@ public actor ClaudeSession: ProviderSession {
             if arguments == nil, let resumeID { args += ["--resume", resumeID] }
             nativeThreadID = resumeID
         }
+        skillDiscoveryConfiguration = try configuration.map { try .init(runtime: $0, environment: environment ?? ProcessChannel.environment(), launchArguments: args) }
         rpc = try JSONRPCConnection(executable: executable, arguments: args, cwd: cwd, dialect: .claudeControl,
             maximumFrameSize: 128 * 1_024 * 1_024, environment: environment, drainProcessOnClose: true)
     }
@@ -141,7 +144,7 @@ public actor ClaudeSession: ProviderSession {
                         let server: JSONValue = .object(["type": .string("http"),
                             "url": .string(appMCP.endpoint.absoluteString),
                             "headers": .object(["Authorization": .string(appMCP.authorizationHeader)]),
-                            "timeout": .number(660_000)])
+                            "timeout": .number(3_660_000)])
                         let registered = try await rpc.request("mcp_set_servers", params: .object([
                             "servers": .object(["coincide": server])]), timeout: .seconds(90))
                         try Self.validateAppMCPRegistration(registered)
@@ -261,12 +264,9 @@ public actor ClaudeSession: ProviderSession {
             guard ownsPreparing(generation) else { throw CancellationError() }
             let promptID = submittedRunID.map(ClaudeInputIdentity.opening(runID:)) ?? UUID().uuidString
             activeTurnID = promptID
-            var images: [JSONValue] = input.images.map { image in
-                .object(["type": .string("image"), "source": .object(["type": .string("base64"),
-                    "media_type": .string(image.mimeType), "data": .string(image.data.base64EncodedString())])])
-            }
-            images += try input.providerTextBlocks().map { .object(["type": .string("text"), "text": .string($0)]) }
-            let content: JSONValue = input.images.isEmpty && input.historicalContext == nil ? .string(input.text) : .array(images)
+            let plan = try await skillDispatch(input.text)
+            guard ownsPreparing(generation) else { throw CancellationError() }
+            let content = try ClaudeSkillDispatch.content(input: input, plan: plan)
             submittedOpening = true
             try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(promptID),
                 "message": .object(["role": .string("user"), "content": content]), "parent_tool_use_id": .null]))
@@ -301,11 +301,10 @@ public actor ClaudeSession: ProviderSession {
         guard activeRootSubagentTools.isEmpty else { throw ProviderSteeringError(.unsupported) }
         try ProviderSteeringValidation.target(thread, provider: .claude, configuration: activeConfiguration,
             runID: eventRunID, nativeThreadID: activeNativeThreadID, turnID: activeTurnID, expectedTurnID: expectedTurnID)
-        var content: [JSONValue] = input.images.map { image in
-            .object(["type": .string("image"), "source": .object(["type": .string("base64"),
-                "media_type": .string(image.mimeType), "data": .string(image.data.base64EncodedString())])])
-        }
-        if !input.text.isEmpty { content.append(.object(["type": .string("text"), "text": .string(input.text)])) }
+        let plan = try await skillDispatch(input.text)
+        try ProviderSteeringValidation.target(thread, provider: .claude, configuration: activeConfiguration,
+            runID: eventRunID, nativeThreadID: activeNativeThreadID, turnID: activeTurnID, expectedTurnID: expectedTurnID)
+        let content = try ClaudeSkillDispatch.content(input: input, plan: plan)
         // The native UUID is bound to the already-persisted authored row. It is
         // prospective history ownership, never a provider idempotency promise.
         let promptID = try ClaudeInputIdentity.steering(messageID: clientMessageID), id = UUID()
@@ -313,7 +312,7 @@ public actor ClaudeSession: ProviderSession {
         guard attemptedSteeringInputIDs.count < ClaudeRunHistoryEvidence.maximumInputs - 1 else { throw ProviderSteeringError(.unsupported) }
         try historyEvidence?.registerSteering(messageID: clientMessageID)
         let frame: JSONValue = .object(["type": .string("user"), "uuid": .string(promptID), "priority": .string("now"),
-            "message": .object(["role": .string("user"), "content": input.images.isEmpty ? .string(input.text) : .array(content)]),
+            "message": .object(["role": .string("user"), "content": content]),
             "parent_tool_use_id": .null])
         try ProviderSteeringValidation.frame(frame); try Task.checkCancellation()
         let task = Task {
@@ -398,6 +397,7 @@ public actor ClaudeSession: ProviderSession {
         if let closeTask { await closeTask.value; return }
         shuttingDown = true; working = false; pendingApprovals.removeAll()
         connecting?.cancel()
+        let skills = Array(skillReads.values); for task in skills { task.cancel() }
         let rpc = rpc, reading = reader, steering = steeringTask?.task, initializing = connecting,
             redaction = appMCPRedaction, continuation = continuation
         let task = Task {
@@ -405,12 +405,22 @@ public actor ClaudeSession: ProviderSession {
             _ = try? await redaction?.value
             _ = try? await initializing?.value
             _ = try? await steering?.value
+            for task in skills { _ = await task.result }
             reading?.cancel(); await reading?.value
             continuation.finish()
         }
         closeTask = task
         await task.value
         reader = nil; steeringTask = nil; appMCPConnection = nil; appMCPRedaction = nil
+    }
+    private func skillDispatch(_ text: String) async throws -> ClaudeSkillDispatchPlan? {
+        guard text.range(of: #"\p{Sc}"#, options: .regularExpression) != nil, let configuration = skillDiscoveryConfiguration else { return nil }
+        guard !shuttingDown else { throw CancellationError() }
+        let id = UUID(), task = Task.detached { try ClaudeSkillService.discover(configuration: configuration) }; skillReads[id] = task
+        defer { skillReads.removeValue(forKey: id) }
+        let inventory = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !shuttingDown, !Task.isCancelled else { throw CancellationError() }
+        return try ClaudeSkillDispatch.plan(text: text, skills: inventory.skills)
     }
     private func consume(_ event: RPCEvent) async {
         switch event {

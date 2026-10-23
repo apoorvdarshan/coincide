@@ -8,6 +8,18 @@ extension WorkspaceEngine {
         let view = try await appMCPView(context)
         try Task.checkCancellation()
         switch action {
+        case .delegateTask(let request): return try await appMCPDelegate(request, context: context, view: view)
+        case .delegatedTaskStatus(let id):
+            let status = try await delegatedTaskStatus(parentThreadID: context.scope.threadID, taskID: id, acknowledge: true)
+            _ = try await appMCPView(context)
+            return try appMCPTaskResult(status)
+        case .cancelDelegatedTask(let taskID, let reason, let key):
+            guard let runID = context.runID else { throw AppMCPError(.staleCaller) }
+            let commandID = TaskOrchestration.derivedID(runID, "cancel-task:" + context.scope.threadID.uuidString + ":" + taskID.uuidString + ":" + (key ?? UUID().uuidString))
+            _ = try await cancelDelegatedTask(parentThreadID: context.scope.threadID, taskID: taskID, reason: reason, commandID: commandID)
+            _ = try await appMCPView(context)
+            let status = try await delegatedTaskStatus(parentThreadID: context.scope.threadID, taskID: taskID, acknowledge: false)
+            return .object(["taskId": appMCPID(taskID), "childThreadId": appMCPID(status.task.childThreadID), "status": .string(status.task.status.rawValue)])
         case .capabilities(let search): return try await appMCPCapabilities(search: search, context: context, view: view)
         case .wait(let threadID, let runID, let timeout): return try await appMCPWait(threadID: threadID, runID: runID, timeout: timeout, context: context)
         case .createThreads(let requests, let key): return try await appMCPCreateThreads(requests, key: key, context: context, view: view)
@@ -115,6 +127,165 @@ extension WorkspaceEngine {
         }
     }
 
+    private func appMCPDelegate(_ input: AppMCPDelegation, context: AppMCPContext, view: AppMCPView) async throws -> JSONValue {
+        guard let runID = context.runID else { throw AppMCPError(.staleCaller) }
+        let parent = try appMCPThread(context.scope.threadID, in: view)
+        let key = input.clientRequestID ?? UUID().uuidString
+        let commandID = TaskOrchestration.derivedID(runID, "delegate-task:" + parent.id.uuidString + ":" + key)
+        // The wait budget changes observation, not the accepted child intent.
+        let canonical = AppMCPDelegation(task: input.task, title: input.title, target: input.target, permission: input.permission,
+            role: input.role, isolation: input.isolation, mode: input.mode, timeoutMilliseconds: 0, clientRequestID: input.clientRequestID)
+        let digest = try ContextTransferProtocol.digest(canonical)
+        let acceptance: DelegatedTaskAcceptance
+        if let old = view.snapshot.delegatedTasks?.first(where: { $0.commandID == commandID }) {
+            guard old.parentThreadID == parent.id, old.parentRunID == runID, old.request.appMCPRequestDigest == digest else { throw AppMCPError(.invalidRequest) }
+            acceptance = try await createDelegatedTask(old.request, commandID: commandID)
+        } else {
+            let selected = try await appMCPTaskConfiguration(input.target, permission: input.permission, context: context, view: view)
+            _ = try await appMCPView(context)
+            let request = DelegatedTaskRequest(parentThreadID: parent.id, parentRunID: runID,
+                expectedConfiguration: .init(thread: parent), configuration: selected.configuration,
+                task: input.task, title: input.title, role: input.role, isolation: input.isolation, mode: input.mode,
+                clientRequestID: input.clientRequestID, configurationSourceThreadID: selected.sourceThreadID,
+                expectedConfigurationSource: selected.sourceConfiguration, appMCPRequestDigest: digest)
+            acceptance = try await createDelegatedTask(request, commandID: commandID)
+        }
+        let status: DelegatedTaskStatusSnapshot
+        if input.mode == .wait {
+            status = try await waitForDelegatedTask(parentThreadID: parent.id, taskID: acceptance.taskID, timeoutMilliseconds: input.timeoutMilliseconds)
+        } else {
+            status = try await delegatedTaskStatus(parentThreadID: parent.id, taskID: acceptance.taskID, acknowledge: true)
+        }
+        _ = try await appMCPView(context)
+        return try appMCPTaskResult(status)
+    }
+
+    private struct AppMCPTaskConfiguration {
+        let configuration: ProviderConfiguration
+        let sourceThreadID: UUID?
+        let sourceConfiguration: ProviderConfiguration?
+    }
+    private func appMCPTaskConfiguration(_ selection: AppMCPModelSelection?, permission: PermissionMode?,
+                                       context: AppMCPContext, view: AppMCPView) async throws -> AppMCPTaskConfiguration {
+        let parent = try appMCPThread(context.scope.threadID, in: view)
+        let candidates = [parent] + view.snapshot.threads.filter { $0.id != parent.id && !$0.isArchived }
+        var instances: [UUID: CodingThread] = [:]
+        for candidate in candidates {
+            guard let id = try? AppMCPAdmission.instanceID(configuration: .init(thread: candidate)), instances[id] == nil else { continue }
+            instances[id] = candidate
+        }
+        let source: CodingThread
+        if let id = selection?.instanceID {
+            guard let selected = instances[id], selection?.provider == nil || selected.provider == selection?.provider else { throw AppMCPError(.notFound) }
+            source = selected
+        } else if let provider = selection?.provider, provider != context.configuration.provider {
+            let matches = instances.values.filter { $0.provider == provider }
+            guard matches.count == 1, let selected = matches.first else { throw AppMCPError(.invalidRequest) }; source = selected
+        } else { source = parent }
+        let sameInstance = try AppMCPAdmission.instanceID(configuration: .init(thread: source)) == context.scope.providerInstanceID && source.provider == context.configuration.provider
+        let base = sameInstance ? context.configuration : ProviderConfiguration(thread: source)
+        var selected = source
+        selected.applyContextConfiguration(base)
+        let requestedModel = selection?.model ?? base.model
+        let inherits = sameInstance && requestedModel == context.configuration.model
+        var options = inherits ? appMCPTaskOptions(context.configuration) : [:]
+        if let overrides = selection?.options {
+            if overrides.isEmpty { options = [:] }
+            else { for (id, value) in overrides { options[id] = value } }
+        }
+        if selection?.model != nil || selection?.options != nil || !sameInstance {
+            let catalog = sameInstance
+                ? try await appMCPCapturedTaskModels(thread: selected, context: context)
+                : try await models(thread: source)
+            _ = try await appMCPView(context)
+            let model: ProviderModel
+            if let explicit = selection?.model {
+                let matches = catalog.filter { $0.id == explicit || $0.catalogID == explicit }
+                guard matches.count == 1, let row = matches.first else { throw AppMCPError(.invalidRequest) }; model = row
+            } else if sameInstance, let current = catalog.first(where: { $0.id == base.model || $0.catalogID == base.model }) { model = current }
+            else if let current = catalog.first(where: \.isDefault) ?? catalog.first(where: { $0.id == base.model || $0.catalogID == base.model }) { model = current }
+            else { throw AppMCPError(.unavailable) }
+            if !inherits { selected.reasoningEffort = nil; selected.codexReasoningPreferences = nil }
+            switch selected.provider {
+            case .codex:
+                guard options.keys.allSatisfy({ $0 == "reasoningEffort" }) else { throw AppMCPError(.unsupported) }
+                try selected.selectCodexModel(model)
+                if let value = options["reasoningEffort"] {
+                    guard let effort = value.string, model.reasoningEfforts.contains(where: { $0.id == effort }) else { throw AppMCPError(.invalidRequest) }
+                    try selected.selectCodexReasoning(model: model, effort: effort)
+                } else { selected.reasoningEffort = nil }
+            case .opencode:
+                guard options.keys.allSatisfy({ $0 == "variant" }) else { throw AppMCPError(.unsupported) }
+                try selected.selectOpenCodeModel(model)
+                let variant = options["variant"]?.string
+                guard options["variant"] == nil || variant != nil else { throw AppMCPError(.invalidRequest) }
+                try selected.selectOpenCodeVariant(model: model, variant: variant)
+            case .pi:
+                guard options.keys.allSatisfy({ $0 == "thinkingLevel" }) else { throw AppMCPError(.unsupported) }
+                try selected.selectPiModel(model)
+                let level = options["thinkingLevel"]?.string
+                guard options["thinkingLevel"] == nil || level != nil else { throw AppMCPError(.invalidRequest) }
+                try selected.selectPiThinking(model: model, level: level)
+            case .muse:
+                guard options.keys.allSatisfy({ $0 == "reasoningEffort" }) else { throw AppMCPError(.unsupported) }
+                try selected.selectMuseModel(model)
+                let effort = options["reasoningEffort"]?.string
+                guard options["reasoningEffort"] == nil || effort != nil else { throw AppMCPError(.invalidRequest) }
+                try selected.selectMuseReasoning(model: model, effort: effort)
+            default:
+                guard options.isEmpty else { throw AppMCPError(.unsupported) }
+                selected.model = model.id
+                if selected.provider == .antigravity { selected.antigravityConfiguration = selected.antigravityConfiguration?.selecting(model: model.id) }
+                if !inherits { selected.agentConfigValues = nil; selected.agentConfiguration = nil }
+            }
+        }
+        selected.permission = permission ?? context.configuration.permission
+        guard AppMCPAdmission.permits(selected.permission, ceiling: context.configuration.permission),
+              AppMCPAdmission.permits(selected.permission, ceiling: parent.permission),
+              let project = view.snapshot.projects.first(where: { $0.id == parent.projectID }) else { throw AppMCPError(.permissionDenied) }
+        let child = try appMCPNewThread(project: project, workspacePath: parent.workspacePath, configuration: .init(thread: selected), date: Date())
+        return .init(configuration: .init(thread: child), sourceThreadID: sameInstance ? nil : source.id,
+            sourceConfiguration: sameInstance ? nil : .init(thread: source))
+    }
+
+    private func appMCPTaskOptions(_ configuration: ProviderConfiguration) -> [String: JSONValue] {
+        switch configuration.provider {
+        case .codex: return configuration.reasoningEffort.map { ["reasoningEffort": .string($0)] } ?? [:]
+        case .opencode: return configuration.openCodeConfiguration?.model?.variant.map { ["variant": .string($0)] } ?? [:]
+        case .pi: return configuration.piConfiguration?.thinkingLevel.map { ["thinkingLevel": .string($0)] } ?? [:]
+        case .muse: return configuration.museConfiguration?.reasoningEffort.map { ["reasoningEffort": .string($0)] } ?? [:]
+        default: return [:]
+        }
+    }
+    private func appMCPTaskResult(_ value: DelegatedTaskStatusSnapshot) throws -> JSONValue {
+        let task = value.task, original = task.result, latest = task.latestTerminalResult
+        func preview(_ result: DelegatedTaskResult?) -> JSONValue {
+            guard let result else { return .null }; return .string(taskResultPrefix(result.summary, maximumBytes: 32_768))
+        }
+        let options = appMCPTaskOptions(task.request.configuration).sorted { $0.key < $1.key }.map { JSONValue.object(["id": .string($0.key), "value": $0.value]) }
+        let pending = value.pendingApproval.map { request in JSONValue.object(["requestId": request.id,
+            "kind": .string("approval"), "runId": appMCPID(value.pendingApprovalRunID ?? task.childRunID)]) } ?? .null
+        return .object(["taskId": appMCPID(task.id), "childThreadId": appMCPID(task.childThreadID), "childRunId": appMCPID(task.childRunID),
+            "childNodeId": appMCPID(task.id), "status": .string(task.status.rawValue),
+            "workState": .string(task.workState == .working ? "working" : task.workState == .waitingForChildren ? "waiting_for_children" : "result_available"),
+            "hasPendingChildRuns": .bool(value.hasPendingChildRuns), "providerInstanceId": appMCPID(try AppMCPAdmission.instanceID(configuration: task.request.configuration)),
+            "model": task.request.configuration.model.isEmpty ? .null : .string(task.request.configuration.model), "options": .array(options),
+            "summary": preview(original), "summaryTruncated": .bool(original.map { $0.summary.utf8.count > 32_768 || $0.truncated == true } ?? false),
+            "summaryTotalBytes": original.map { .number(Double($0.summary.utf8.count)) } ?? .null,
+            "resultContextTransferId": original.map { appMCPID($0.contextTransferID) } ?? .null,
+            "latestTerminalRunId": latest.map { appMCPID($0.runID) } ?? .null,
+            "latestTerminalStatus": latest.map { .string($0.status.rawValue) } ?? .null,
+            "latestTerminalSummary": latest?.summary == original?.summary ? .null : preview(latest),
+            "latestTerminalResultContextTransferId": latest?.contextTransferID == original?.contextTransferID ? .null : latest.map { appMCPID($0.contextTransferID) } ?? .null,
+            "hasPendingQuestion": .bool(!value.pendingQuestions.isEmpty), "pendingApproval": pending, "waitTimedOut": .bool(value.waitTimedOut)])
+    }
+    private func taskResultPrefix(_ text: String, maximumBytes: Int) -> String {
+        let bytes = Data(text.utf8); guard bytes.count > maximumBytes else { return text }
+        var end = maximumBytes
+        while end > 0, bytes[end] & 0xc0 == 0x80 { end -= 1 }
+        return String(decoding: bytes.prefix(end), as: UTF8.self)
+    }
+
     private func appMCPTransfer(sourceID: UUID, point: ContextTransferSourcePoint, parentID: UUID?, title: String?, context: AppMCPContext) async throws -> JSONValue {
         let view = try await appMCPView(context), source = try appMCPThread(sourceID, in: view)
         let caller = try appMCPThread(context.scope.threadID, in: view)
@@ -166,7 +337,9 @@ extension WorkspaceEngine {
         let candidates = [caller] + view.snapshot.threads.filter { $0.id != caller.id && !$0.isArchived }
         for thread in candidates {
             guard providers.count < 32, let instance = try? AppMCPAdmission.instanceID(configuration: .init(thread: thread)), seen.insert(instance).inserted else { continue }
-            var constraints = ["Creation and configuration support the caller's captured provider instance only. Other catalogs are read-only discovery."]
+            var constraints = ["delegate_task can use this registered launch profile. Thread creation and configuration use the caller's captured instance.",
+                "Child permissions cannot exceed the captured or current parent permission. Independent task briefs do not copy parent history.",
+                "Worktree isolation requires a verified local project repository and pins the parent's local HEAD; dirty edits are not copied."]
             let models: [ProviderModel]
             do { models = try await self.models(thread: thread) }
             catch { try Task.checkCancellation(); models = []; constraints.append("The model catalog is currently unavailable.") }
@@ -181,12 +354,12 @@ extension WorkspaceEngine {
                 return .object(value)
             }
             providers.append(.object(["providerInstanceId": appMCPID(instance), "driverKind": .string(thread.provider.rawValue), "displayName": .string(thread.providerName),
-                "models": .array(rows), "omittedModels": .number(Double(max(0, matching.count - rows.count))), "canRunChildTask": .bool(false),
-                "canRunCrossProviderChildTask": .bool(false), "constraints": .array(constraints.map(JSONValue.string))]))
+                "models": .array(rows), "omittedModels": .number(Double(max(0, matching.count - rows.count))), "canRunChildTask": .bool(true),
+                "canRunCrossProviderChildTask": .bool(true), "constraints": .array(constraints.map(JSONValue.string))]))
         }
         return .object(["parentThreadId": appMCPID(caller.id), "inheritedProviderInstanceId": appMCPID(context.scope.providerInstanceID), "inheritedModel": .string(context.configuration.model),
             "permission": .string(context.configuration.permission.rawValue), "providers": .array(providers), "unsupportedCapabilities": .array(AppMCPTools.unsupportedCapabilities.map(JSONValue.string)),
-            "features": .object(["appOwnedSubagents": .bool(false), "asyncPolling": .bool(true), "cancellation": .bool(true), "batchThreadCreation": .bool(true),
+            "features": .object(["appOwnedSubagents": .bool(true), "asyncPolling": .bool(true), "cancellation": .bool(true), "batchThreadCreation": .bool(true),
                 "threadManagement": .bool(true), "incrementalThreadRead": .bool(true), "scheduledTasks": .bool(false), "maxBatchThreads": .number(20)])])
     }
 
