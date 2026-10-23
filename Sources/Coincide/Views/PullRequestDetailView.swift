@@ -25,6 +25,7 @@ struct PullRequestDetailContent: View {
     let detail: GitHubPullRequestDetail
     var canCheckout = false
     var checkout: (() -> Void)? = nil
+    var actions: PullRequestActionStore? = nil
     private var summary: GitHubPullRequestSummary { detail.summary }
     private let bodyPreviewLimit = 100_000
     var body: some View {
@@ -41,6 +42,7 @@ struct PullRequestDetailContent: View {
                         Button("Open in Conversation…", action: checkout).disabled(!canCheckout)
                             .accessibilityIdentifier("pull-request-checkout")
                     }
+                    if let actions, actions.isAvailable { PullRequestActionBar(actions: actions, reference: summary.reference).padding(.top, 4) }
                 }
                 VStack(alignment: .leading, spacing: 7) {
                     LabeledContent("Head") { Text((summary.headRepository?.nameWithOwner ?? summary.reference.repository.nameWithOwner) + ":" + summary.headBranch).textSelection(.enabled) }

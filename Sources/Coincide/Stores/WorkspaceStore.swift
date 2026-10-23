@@ -203,6 +203,7 @@ final class WorkspaceStore {
     private var gitInspectors: [String: GitInspectorStore] = [:]
     private var pullRequestStores: [String: PullRequestStore] = [:]
     var pullRequestSessionFactory: @Sendable (URL) -> any GitHubPullRequestSession = { GitHubPullRequestService(root: $0) }
+    var gitSync: GitBackgroundSyncStore?
     private var fileServices: [String: WorkspaceFileService] = [:]
     private var fileBrowsers: [String: FileBrowserStore] = [:]
     private var fileServiceCleanupTasks: [String: WorkspaceFileCleanup] = [:]
@@ -1285,6 +1286,7 @@ final class WorkspaceStore {
             selectedProjectID = selectedThread?.projectID ?? snapshot.projects.first?.id
             showArchived = selectedThread?.isArchived ?? false
             hasLoadedWorkspace = true
+            startGitSyncIfEnabled()
         } catch { errorMessage = error.localizedDescription }
     }
     private func apply(_ update: WorkspaceUpdate) {
@@ -3174,6 +3176,7 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        await gitSync?.shutdown()
         await agentSessionImports.shutdown()
         await composerDraftTools.shutdown()
         await notifications.shutdown()

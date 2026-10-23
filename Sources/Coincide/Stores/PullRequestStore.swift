@@ -60,6 +60,9 @@ final class PullRequestStore {
     }
 
     private let session: any GitHubPullRequestSession
+    /// Merge and state actions; derived from the live gh session, injectable for fixtures.
+    var actionSession: (any GitHubPullRequestActionSession)?
+    var canReadActions: Bool { !closed && !readsSuspended && canRead() }
     private let engine: WorkspaceEngine?
     private let owner: @MainActor () -> UUID?
     private let canRead: @MainActor () -> Bool
@@ -98,6 +101,7 @@ final class PullRequestStore {
         self.path = Self.canonical(path); self.session = session; self.engine = engine
         self.owner = owner; self.canRead = canRead; self.canMutate = canMutate; self.updateWorkspace = updateWorkspace
         self.checkoutSupport = checkoutSupport
+        actionSession = (session as? GitHubPullRequestService).map { GitHubPullRequestActionService(base: $0) }
     }
 
     func apply(_ snapshot: WorkspaceSnapshot) {
