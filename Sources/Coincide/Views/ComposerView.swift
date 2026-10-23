@@ -28,6 +28,7 @@ struct ComposerView: View {
     var skills: ProviderSkillsStore? = nil
     var draftTools: ComposerDraftToolsStore? = nil
     var draftThreadID: UUID? = nil
+    var discardDraft: (() -> Void)? = nil
     @FocusState private var editorFocused: Bool
     @State private var dropTargeted = false
     @AppStorage("showSkillsInSlashMenu") private var showSkillsInSlashMenu = true
@@ -129,7 +130,10 @@ struct ComposerView: View {
             }.buttonStyle(.plain).help("Stash prompt (⌘S). With an empty draft, restore the only saved prompt or open the stash.")
                 .accessibilityLabel("Stash prompt").accessibilityIdentifier("composer-stash")
                 .disabled(submitting || historyLocked || draftTools.stopping || draftTools.hasUnresolved(draftThreadID))
-                .contextMenu { Button("Show Stashed Prompts…") { stashMenuOpen = true } }
+                .contextMenu {
+                    Button("Show Stashed Prompts…") { stashMenuOpen = true }
+                    if let discardDraft { Button("Discard Draft", role: .destructive, action: discardDraft).disabled(text.isEmpty && !hasAttachments) }
+                }
                 .popover(isPresented: $stashMenuOpen) { ComposerStashMenu(store: draftTools, threadID: draftThreadID, showing: $stashMenuOpen) }
         }
         if let referenceFile {

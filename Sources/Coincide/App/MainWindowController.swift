@@ -93,7 +93,13 @@ final class MainWindowController {
     let store: WorkspaceStore
     @ObservationIgnored weak var keybindings: KeybindingsStore?
     @ObservationIgnored var presentations = MainWindowPresentations()
-    @ObservationIgnored weak var window: NSWindow?
+    let undoOwnerID = UUID()
+    @ObservationIgnored weak var window: NSWindow? {
+        didSet {
+            if oldValue !== window { store.threadActionUndo.unregister(undoOwnerID) }
+            if let window { store.threadActionUndo.register(window, ownerID: undoOwnerID) }
+        }
+    }
     @ObservationIgnored var pasteboard: NSPasteboard = .general
     @ObservationIgnored var defaults: UserDefaults = .standard
     @ObservationIgnored var focusComposerAction: (@MainActor () -> Void)?
@@ -118,6 +124,10 @@ final class MainWindowController {
         history.visit(store.selectedThreadID)
     }
 
+    func undoLatestThreadAction(expectedIDs: [UUID]? = nil) {
+        guard canHandleInteraction else { return }
+        store.undoLatestThreadAction(ownerID: undoOwnerID, expectedIDs: expectedIDs)
+    }
     var selectedThread: CodingThread? { store.selectedThread }
     var canHandleInteraction: Bool {
         isActive && !store.isLoading && (window == nil || window?.isKeyWindow == true) &&
@@ -191,6 +201,7 @@ final class MainWindowController {
         case .chatFind, .threadCopyReference: return thread != nil
         case .threadPin: return thread != nil
         case .threadStop: return thread.map { store.isBusy($0.id) } ?? false
+        case .threadUndo: return !store.threadActionUndo.group(ownerID: undoOwnerID).isEmpty
         case .threadSettle:
             guard let thread else { return false }
             if let settlement = thread.settlement { return settlement.phase != .resuming }
@@ -262,6 +273,7 @@ final class MainWindowController {
             guard let thread else { return false }
             store.togglePin(thread.id)
             showNotice(thread.isPinned ? String(localized: "Unpinned “\(thread.title)”") : String(localized: "Pinned “\(thread.title)”"))
+        case .threadUndo: undoLatestThreadAction()
         case .threadSettle:
             guard let thread else { return false }
             if let settlement = thread.settlement { store.requestResume(thread.id, generationID: settlement.id) }

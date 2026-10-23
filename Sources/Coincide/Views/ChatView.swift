@@ -177,7 +177,7 @@ struct ChatView: View {
                                  }, stop: { Task { await store.interrupt(threadID) } },
                                  grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode,
                                  setGrokRuntimeMode: { store.setGrokRuntimeMode($0, threadID: threadID) },
-                                 skills: skillsModel, draftTools: store.composerDraftTools, draftThreadID: threadID)
+                                 skills: skillsModel, draftTools: store.composerDraftTools, draftThreadID: threadID, discardDraft: { store.discardComposerDraft(threadID) })
                 }
                 .coincideGlassGroup()
                 .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(minWidth: 0, maxWidth: .infinity)

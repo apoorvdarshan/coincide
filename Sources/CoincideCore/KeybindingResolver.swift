@@ -143,6 +143,7 @@ public enum KeybindingDefaults {
         .init(key: "mod+shift+]", command: .threadNext),
         .init(key: "mod+.", command: .threadStop),
         .init(key: "mod+shift+c", command: .threadCopyReference, when: "!terminalFocus"),
+        .init(key: "mod+z", command: .threadUndo, when: "threadUndoAvailable && !terminalFocus"),
         .init(key: "mod+shift+s", command: .threadSettle, when: "!terminalFocus"),
         .init(key: "mod+shift+p", command: .threadPin, when: "!terminalFocus"),
     ] + KeybindingCommand.threadJumps.enumerated().map { .init(key: "mod+\($0.offset + 1)", command: $0.element, when: "!modelPickerOpen && isDesktop") } + [

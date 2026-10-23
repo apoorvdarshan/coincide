@@ -16,6 +16,7 @@ struct MainWindowKeyboardSupport: ViewModifier {
             .overlay { if let controller { CommandPaletteOverlay(controller: controller) } }
             .overlay(alignment: .bottom) {
                 VStack(spacing: 8) {
+                    if let controller { ThreadActionUndoBanner(controller: controller) }
                     if let keybindings, let warning = keybindings.warning { KeybindingsIssueBanner(message: warning, keybindings: keybindings) }
                     if let text = controller?.notice ?? keybindings?.reloadNotice { KeyboardNoticeHUD(text: text) }
                 }.padding(.bottom, 18).padding(.horizontal, 24)

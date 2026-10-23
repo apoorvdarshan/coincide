@@ -110,6 +110,7 @@ final class WorkspaceStore {
     typealias PiRuntimeCapture = @Sendable (String, String, UUID) throws -> PiRuntimeConfiguration
     let managedProjectsRoot: URL
     let worktreesRoot: URL
+    let threadActionUndo = ThreadActionUndoStore()
     let composerDraftTools: ComposerDraftToolsStore
     let agentSessionImports: AgentSessionImportStore
     let claudeRuntime: ClaudeRuntimeSettingsStore
@@ -1403,6 +1404,7 @@ final class WorkspaceStore {
         projectScriptService?.invalidate(threadIDs: changedScriptThreads)
         let previous = snapshot
         lastSequence = update.sequence; snapshot = update.snapshot
+        threadActionUndo.invalidate(snapshot: snapshot)
         if !terminating { notifications.observe(snapshot, baseline: isLoading, appIsActive: NSApp?.isActive ?? false) }
         acpConnections.invalidate(validAgents: snapshot.acpAgents)
         for model in pullRequestStores.values { model.apply(snapshot) }
@@ -1494,13 +1496,14 @@ final class WorkspaceStore {
     }
     private func enqueuePreparing(_ prepare: @escaping @MainActor () throws -> WorkspaceCommand,
                                   preflight: (@MainActor () throws -> Void)? = nil) -> Task<WorkspaceCommandReceipt, any Error> {
-        let previous = commandTail, engine = engine
+        let previous = commandTail, engine = engine, undoOwner = threadActionUndo.actionOwner
         let task = Task<WorkspaceCommandReceipt, any Error> {
             await previous?.value
             try preflight?()
             guard let engine else { throw CoincideError("The workspace runtime is unavailable.") }
             let receipt = try await engine.dispatch(try prepare())
             apply(await engine.current())
+            await recordThreadActionUndo(receipt, ownerID: undoOwner, engine: engine)
             return receipt
         }
         commandTail = Task { _ = try? await task.value }
@@ -2105,6 +2108,7 @@ final class WorkspaceStore {
     }
     func setDraft(_ text: String, id: UUID) {
         guard !terminating, thread(id) != nil else { return }
+        threadActionUndo.releaseCurrentShortcut()
         draftOverrides[id] = text; pendingDrafts[id] = text
         draftSaveTask?.cancel()
         draftSaveTask = Task { [weak self] in
@@ -2142,6 +2146,37 @@ final class WorkspaceStore {
         }
     }
     func setPermission(_ mode: PermissionMode, id: UUID) { sendCommand(.editThread(id, .permission(mode))) }
+    private func recordThreadActionUndo(_ receipt: WorkspaceCommandReceipt, ownerID: ThreadActionUndoStore.ActionOwner?, engine: WorkspaceEngine) async {
+        guard !terminating, receipt.rejection == nil, let owner = ownerID,
+              let claim = await engine.takeThreadActionUndo(forwardCommandID: receipt.commandID, ownerID: owner.id) else { return }
+        threadActionUndo.record(claim, owner: owner)
+    }
+    func undoLatestThreadAction(ownerID: UUID, expectedIDs: [UUID]? = nil) {
+        guard !terminating, let engine else { return }
+        // All grouped claims leave the notice before the first suspension.
+        flushDrafts()
+        let claims = threadActionUndo.consume(ownerID: ownerID, expectedIDs: expectedIDs)
+        guard !claims.isEmpty else { return }
+        let previous = commandTail
+        let task = Task {
+            await previous?.value
+            for claim in claims {
+                guard !self.terminating else { return }
+                do {
+                    _ = try await engine.undoThreadAction(claim)
+                    self.apply(await engine.current())
+                } catch { if !self.terminating { self.errorMessage = error.localizedDescription } }
+            }
+        }
+        commandTail = task
+    }
+    func discardComposerDraft(_ id: UUID) {
+        guard !terminating, let current = thread(id), !isImportingAttachments(id),
+              !composerDraftTools.blocksSubmission(id), !current.draft.isEmpty || !current.draftAttachments.isEmpty else { return }
+        flushDrafts()
+        let task = enqueue(.discardComposerDraft(.init(thread: current)))
+        Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
+    }
     func togglePin(_ id: UUID) { if let value = thread(id) { sendCommand(.editThread(id, .pinned(!value.isPinned))) } }
     func toggleArchive(_ id: UUID) { if let value = thread(id) { sendCommand(.editThread(id, .archived(!value.isArchived))) } }
     func rename(_ id: UUID, title: String) { sendCommand(.editThread(id, .title(title))) }
@@ -3416,7 +3451,7 @@ final class WorkspaceStore {
         guard !terminating, let engine, let captured = thread(action.threadID), !captured.isArchived,
               removalEditorLocks[captured.projectID] == nil else { throw CancellationError() }
         flushDrafts()
-        let previous = commandTail
+        let previous = commandTail, undoOwner = threadActionUndo.actionOwner
         let task = Task<WorkspaceCommandReceipt, any Error> {
             await previous?.value
             try Task.checkCancellation()
@@ -3426,7 +3461,9 @@ final class WorkspaceStore {
                   self.removalEditorLocks[current.projectID] == nil else { throw CancellationError() }
             let receipt = try await engine.dispatch(.workspaceLifecycle(action))
             if let rejection = receipt.rejection { throw CoincideError(rejection) }
-            self.apply(await engine.current()); return receipt
+            self.apply(await engine.current())
+            await self.recordThreadActionUndo(receipt, ownerID: undoOwner, engine: engine)
+            return receipt
         }
         commandTail = Task { _ = await task.result }
         _ = try await task.value
@@ -3459,7 +3496,7 @@ final class WorkspaceStore {
         operation: @escaping @MainActor (WorkspaceEngine, CodingThread) async throws -> WorkspaceCommandReceipt) async throws {
         guard !terminating, let engine, let captured = thread(id), canEditWorkspace(captured.workspacePath) else { throw CancellationError() }
         flushDrafts()
-        let previous = commandTail
+        let previous = commandTail, undoOwner = threadActionUndo.actionOwner
         let task = Task<WorkspaceCommandReceipt, any Error> {
             await previous?.value
             try Task.checkCancellation()
@@ -3471,6 +3508,7 @@ final class WorkspaceStore {
             let receipt = try await operation(engine, current)
             if let rejection = receipt.rejection { throw CoincideError(rejection) }
             self.apply(await engine.current())
+            await self.recordThreadActionUndo(receipt, ownerID: undoOwner, engine: engine)
             return receipt
         }
         commandTail = Task { _ = await task.result }
@@ -3554,6 +3592,7 @@ final class WorkspaceStore {
         terminating = true
         await gitSync?.shutdown()
         await agentSessionImports.shutdown()
+        await threadActionUndo.shutdown()
         await composerDraftTools.shutdown()
         await notifications.shutdown()
         for model in contextTransferStores.values { await model.shutdown() }

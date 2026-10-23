@@ -109,7 +109,7 @@ public enum KeybindingCatalog {
     private static let available: Set<KeybindingCommand> = Set([
         .sidebarToggle, .navigationBack, .navigationForward, .terminalToggle, .rightPanelToggle, .viewReopenClosed, .diffToggle,
         .commandPaletteToggle, .filePickerToggle, .projectSearchToggle, .themeSelect, .appearanceCycle, .chatNew, .chatNewLocal,
-        .chatFind, .editorOpenFavorite, .threadStop, .threadPrevious, .threadNext, .threadCopyReference, .threadSettle, .threadPin,
+        .chatFind, .editorOpenFavorite, .threadStop, .threadPrevious, .threadNext, .threadCopyReference, .threadSettle, .threadPin, .threadUndo,
         .terminalNew, .terminalClose, .terminalSplit, .terminalSplitVertical,
     ] + KeybindingCommand.threadJumps)
     private static let reserved: Set<KeybindingCommand> = []

@@ -94,7 +94,7 @@ The last rule whose shortcut and condition both match wins, even across commands
 `chat.newLocal` creates a thread directly in the current project context.
 It and `editor.openFavorite` (open the workspace in the preferred
 editor) and `project.import` are available without a default. Other T3 command
-IDs (preview, usage, model picker, composer pickers, `thread.undo` and others)
+IDs (preview, usage, model picker, composer pickers and others)
 are accepted in the file for compatibility but do nothing yet; Settings marks
 them. `script.{id}.run` rules run an action registered in the current main window. Project defaults use the same resolver as global rules; configured rules override a matching script command, and applicable app commands retain precedence. Execution rechecks the original thread, checkout, preparation and script digest. Sheets, IME input and unregistered remote windows retain their existing guards.
 
@@ -144,3 +144,9 @@ menu either; ⌘F in a terminal or the file editor opens that view's own Find. T
 remote window publishes no main-window target, so these commands disable there.
 The dispatcher resolves the event's registered window; a focused remote or
 unregistered window cannot invoke another main window's commands or composer.
+
+## Conversation action Undo
+
+Archive, Unpin, Settle, Snooze and explicit Discard Draft show a five-second Undo notice in the initiating main window. Consecutive actions of the same kind form a group. Undo consumes that group before dispatching its original native commands. `thread.undo` defaults to ⌘Z only while that notice claims the shortcut; typing, another shortcut or marked text returns ⌘Z to native editing. The button remains available for the notice lifetime. Other windows, sheets and the terminal do not acquire the default shortcut.
+
+Undo checks the original conversation birth, project, checkout, configuration and affected metadata at acceptance. It preserves later drafts and attachment references. Settle Undo uses normal Resume and keeps any file changes and script output. Archive Undo restores visibility with its queue paused; it never restarts provider input. Claims expire and are not restored after app restart; an already accepted original command receipt can still be inspected without replay.

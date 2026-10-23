@@ -108,6 +108,8 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case addAttachments(threadID: UUID, attachments: [ChatAttachment])
     case removeAttachment(threadID: UUID, attachmentID: UUID)
     case replaceComposerDraft(ComposerDraftReplacement)
+    case discardComposerDraft(ThreadDraftDiscard)
+    case threadActionUndo(ThreadActionUndoClaim)
     case workspaceLifecycle(WorkspaceLifecycleAction)
     case setWorkspaceLifecyclePolicy(WorkspaceLifecyclePolicy)
     case saveACPAgent(ACPAgentConfiguration)
@@ -296,6 +298,19 @@ struct WorkspaceDecision: Sendable {
             reduced = .init(decision: decision, requiresFinalization: true)
         case .transcriptPlanImplementation(let request):
             reduced = .init(decision: try reduceTranscriptPlanImplementation(request, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .client(.threadActionUndo(let claim)):
+            var decision = Self(snapshot: snapshot)
+            try decision.applyThreadActionUndo(claim, id: id, now: now)
+            reduced = .init(decision: decision, requiresFinalization: true)
+        case .client(.discardComposerDraft(let discard)):
+            guard snapshot.threads.contains(where: { $0.id == discard.expected.threadID && $0.createdAt == discard.threadCreatedAt }) else {
+                throw WorkspaceCommandError("The conversation changed before its draft was discarded.")
+            }
+            let replacement = ComposerDraftReplacement(expected: discard.expected, text: "", attachments: [])
+            var decision = Self(snapshot: snapshot)
+            try decision.prepareClientCommand(.replaceComposerDraft(replacement), commandID: id, now: now)
+            try decision.replaceComposerDraft(replacement)
+            reduced = .init(decision: decision, requiresFinalization: true)
         case .client(.replaceComposerDraft(let replacement)):
             var decision = Self(snapshot: snapshot)
             try decision.prepareClientCommand(.replaceComposerDraft(replacement), commandID: id, now: now)
@@ -1394,7 +1409,7 @@ struct WorkspaceDecision: Sendable {
                 catch { throw WorkspaceCommandError(error.localizedDescription) }
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
-            case .abandonContextTransfer, .replaceComposerDraft, .workspaceLifecycle, .setWorkspaceLifecyclePolicy: break // Routed through their atomic reducers above.
+            case .abandonContextTransfer, .replaceComposerDraft, .discardComposerDraft, .threadActionUndo, .workspaceLifecycle, .setWorkspaceLifecyclePolicy: break // Routed through their atomic reducers above.
             case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
@@ -1458,7 +1473,7 @@ struct WorkspaceDecision: Sendable {
         }
         return .init(decision: decision, requiresFinalization: true)
     }
-    private mutating func prepareClientCommand(_ action: WorkspaceCommand, commandID: UUID, now: Date) throws {
+    mutating func prepareClientCommand(_ action: WorkspaceCommand, commandID: UUID, now: Date) throws {
         try validateContextTransferCommand(action)
         guard !snapshot.conversationHistoryMaintenanceReservedIDs.contains(commandID) else { throw WorkspaceCommandError("This identity is reserved by provider history maintenance.") }
         preventDelayedPromptSteering(action, now: now)
@@ -1881,6 +1896,8 @@ extension WorkspaceCommand {
         case .workspaceLifecycle(let action): action.threadID
         case .setWorkspaceLifecyclePolicy: nil
         case .replaceComposerDraft(let replacement): replacement.expected.threadID
+        case .discardComposerDraft(let discard): discard.expected.threadID
+        case .threadActionUndo(let claim): claim.threadID
         case .abandonContextTransfer(let id, _, _): id
         case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
         case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .submitFromAppMCP(let id, _, _), .submitCapturedClaude(let id, _, _), .submitCapturedPi(let id, _, _), .interrupt(let id), .interruptFromAppMCP(let id, _, _), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .replaceQueuedText(let id, _, _, _), .moveQueued(let id, _, _, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id

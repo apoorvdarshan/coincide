@@ -2852,6 +2852,15 @@ public actor WorkspaceEngine {
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
         return receipt
     }
+    private let threadActionUndos = ThreadActionUndoRegistry()
+    /// Only this Engine's exact committed forward decisions create Undo claims.
+    public func takeThreadActionUndo(forwardCommandID: UUID, ownerID: UUID) -> ThreadActionUndoClaim? {
+        guard !closing, fatalError == nil else { return nil }
+        return threadActionUndos.take(forwardID: forwardCommandID, ownerID: ownerID, now: Date())
+    }
+    public func undoThreadAction(_ claim: ThreadActionUndoClaim) async throws -> WorkspaceCommandReceipt {
+        try await dispatch(.threadActionUndo(claim), id: claim.id)
+    }
     @discardableResult public func dispatch(_ command: WorkspaceCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         guard !stoppingEffects else { throw CancellationError() }
@@ -3005,6 +3014,9 @@ public actor WorkspaceEngine {
                 var decision: WorkspaceDecision
                 do {
                     try envelope.mcpAdmission?.check()
+                    if case .client(.threadActionUndo(let claim)) = envelope.command {
+                        try threadActionUndos.validate(claim, commandID: envelope.id, now: Date())
+                    }
                     let admissionCommands: [EngineCommand]
                     if case .appMCP(let authority, let commands) = envelope.command {
                         try validateAppMCPLiveAuthority(authority)
@@ -3140,6 +3152,11 @@ public actor WorkspaceEngine {
                     }
                     beginDecisionCleanup(decision, previous: base.snapshot, removedEffects: outcome.removedEffects)
                     recordContextTransferRetirement(envelope.command)
+                    threadActionUndos.reconcile(snapshot: decision.snapshot, now: Date())
+                    if let claim = ThreadActionUndoClaim.capture(envelope.command, id: envelope.id, previous: base.snapshot, next: decision.snapshot) {
+                        threadActionUndos.record(claim, now: Date())
+                    }
+                    if case .client(.threadActionUndo(let claim)) = envelope.command { threadActionUndos.consume(claim.id) }
                     committed = true
                     publish()
                     envelope.continuation.resume(returning: receipt)
@@ -4042,6 +4059,7 @@ public actor WorkspaceEngine {
             } ?? []) { await task.value }
     }
     private func infrastructureFailed(_ message: String) async {
+        threadActionUndos.removeAll()
         guard fatalError == nil else { return }
         fatalError = "Workspace execution stopped: \(message)"; publish()
         // A lifecycle worker can be waiting on an envelope behind this failed
@@ -4262,6 +4280,7 @@ public actor WorkspaceEngine {
         return task
     }
     public func shutdown() async {
+        threadActionUndos.removeAll()
         if let shutdownTask { await shutdownTask.value; return }
         let task = Task { await self.stopRuntime() }; shutdownTask = task
         await task.value

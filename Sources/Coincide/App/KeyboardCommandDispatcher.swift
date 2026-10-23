@@ -141,6 +141,7 @@ final class KeyboardCommandDispatcher {
         let store = controller.store, thread = store.selectedThread
         return KeybindingContext([
             "isDesktop": true, "isWeb": false,
+            "threadUndoAvailable": controller.store.threadActionUndo.claimsShortcut(ownerID: controller.undoOwnerID),
             "terminalFocus": focus == .terminal, "terminalOpen": controller.presentations.terminalVisible(),
             "editableFocus": focus.isEditable, "composerFocus": focus == .composer, "fileEditorFocus": focus == .fileEditor,
             "composerDraft": !(thread?.draft.isEmpty ?? true), "turnRunning": thread.map { store.isBusy($0.id) } ?? false,
@@ -206,12 +207,16 @@ final class KeyboardCommandDispatcher {
             return event
         }
         guard event.type == .keyDown, window.attachedSheet == nil else { return event }
-        if let text = window.firstResponder as? NSTextView, text.hasMarkedText() { return event }
+        if let text = window.firstResponder as? NSTextView, text.hasMarkedText() {
+            controller.store.threadActionUndo.releaseShortcut(ownerID: controller.undoOwnerID)
+            return event
+        }
         let stroke = KeyStroke(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
                                command: flags.contains(.command), control: flags.contains(.control), option: flags.contains(.option), shift: flags.contains(.shift))
         let context = context(for: controller, focus: controller.palette != nil ? .editableText : focus)
         let projectDefaults = controller.presentations.projectActions()?.defaults ?? []
         let command = keybindings.resolve(stroke, context: context, projectDefaults: projectDefaults)
+        if command != .threadUndo { controller.store.threadActionUndo.releaseShortcut(ownerID: controller.undoOwnerID) }
         if command?.scriptID != nil {
             if stroke.command, !stroke.control, !stroke.option,
                !stroke.keys.isDisjoint(with: ["c", "x", "v", "a", "z"]),

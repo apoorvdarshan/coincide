@@ -445,6 +445,33 @@ func settlementResumeRetainsSuccessfulBackgroundOwnerUntilCloseBeforeBecomingAct
 }
 
 @Test(.timeLimit(.minutes(1)))
+func threadActionUndoSettlementJoinsItsOriginalBackgroundJobBeforeRestoringReadiness() async throws {
+    let script = try ProjectScript(name: "Undo cleanup", command: "printf retained", runOnSettle: true)
+    try await withSettlementEngine(scripts: [script]) { f in
+        try await f.completeCheckout()
+        let generation = try await f.settle()
+        let claim = try #require(await f.engine.takeThreadActionUndo(forwardCommandID: generation.id, ownerID: UUID()))
+        let run = try await f.awaitingApproval(), peer = try await f.approve(run)
+        peer.acknowledgeStart(); peer.complete(.exited(0)); peer.holdClosure()
+        try await waitSettlement { try await f.currentScript().phase == .succeeded }
+        let checkout = URL(fileURLWithPath: try await f.currentThread().workspacePath)
+        let original = try Data(contentsOf: checkout.appendingPathComponent("t3.json"))
+        let receipt = try await f.engine.undoThreadAction(claim)
+        #expect(receipt.rejection == nil)
+        try await waitSettlement { peer.closes > 0 }
+        let waiting = try await f.currentThread()
+        #expect(waiting.settlement?.id == generation.id && waiting.settlement?.phase == .resuming && !peer.isClosed)
+        #expect(!(await f.engine.current().snapshot.providerReady(for: waiting)))
+        peer.releaseClosure()
+        try await waitSettlement { try await f.currentThread().settlement == nil }
+        let restored = try await f.currentThread()
+        #expect(peer.isClosed && peer.starts == 1 && f.harness.providerSessions(f.thread.id).isEmpty)
+        #expect(await f.engine.current().snapshot.providerReady(for: restored))
+        #expect(try Data(contentsOf: checkout.appendingPathComponent("t3.json")) == original)
+    }
+}
+
+@Test(.timeLimit(.minutes(1)))
 func settlementSubmitCapturesFIFOConfigurationAndWaitsForCleanupDrainBeforeProviderStart() async throws {
     let script = try ProjectScript(name: "Submit while settled", command: "printf cleanup", runOnSettle: true)
     try await withSettlementEngine(scripts: [script]) { f in

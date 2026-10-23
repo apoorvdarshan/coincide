@@ -142,7 +142,7 @@ public struct KeybindingContext: Hashable, Sendable {
         "terminalFocus", "terminalOpen", "isWeb", "isDesktop", "true", "false",
         "composerFocus", "composerDraft", "turnRunning", "editableFocus", "modelPickerOpen",
         "previewFocus", "previewOpen", "usagePageOpen", "rightPanelOpen", "draftThreadRoute",
-        "inspectorOpen", "fileEditorFocus", "commandPaletteOpen", "threadFindOpen",
+        "inspectorOpen", "fileEditorFocus", "commandPaletteOpen", "threadFindOpen", "threadUndoAvailable",
     ]
     public static func unknownIdentifiers(in node: KeybindingWhen?) -> [String] {
         guard let node else { return [] }
