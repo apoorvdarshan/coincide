@@ -5126,3 +5126,68 @@ The optional shell callback remains unwired in the product, and remote Markdown
 never executes through a local terminal. Broader diagram grammars, directive
 actions, media and full T3 parity remain unfinished. No installed app, account,
 provider session, live SSH host or other session's working tree was changed.
+
+
+### Native terminal workspace integration (2026-10-23)
+
+Integrated immutable `claude/terminal` commit `85b20ff` onto `6f6fd0a`, preserving
+main's provider profiles, math/wrap preferences, guarded native UI helper,
+lifecycle controls, usage and reviewed remote scripts. Other worktrees and their
+uncommitted changes remain untouched.
+
+The product adds per-conversation split groups, drawer sizing/visibility,
+terminal focus/menu commands, font/color controls, file/web links, runtime root
+variables, advisory activity and bounded inert styled-history restoration.
+Fresh shells require original conversation birth/project/preparation/path and
+physical folder identity, plus current readiness. Automatic and manual restart
+share the same checks. Legacy proof-free and changed-checkout output stays
+readable without being rebound; mixed old/new checkout panes retain separate
+metadata through save and cold restore. Saved script commands never replay.
+
+Idle closure is explicitly opt-in and defaults off. A supported native prompt,
+unchanged input/output, exact process incarnation and physical executable,
+foreground ownership and absence of children/owned session descendants must
+agree. Native keyboard/text/paste/pointer input invalidates the prior prompt;
+input queued before the first prompt cannot use that initial prompt as an idle
+receipt. A native reset initializes the fresh emulator before process/output
+attachment. Captured physical images cover protected direct `/bin/sh`, its
+validated system selector and Apple's missing-selector Bash default; process
+names do not authorize closure. Unknown evidence leaves shells open. No shell
+configuration is changed.
+
+Local verification on Apple Swift 6.4:
+
+- Final `swift build --build-tests` passes in 14.73 seconds. ABI guard scans
+  **1298 Mach-O objects**, with **zero weak async-default records** and three
+  local records (909 Core, 381 App).
+- Final full **37-declaration Terminal suite passes in 17.405 seconds**. The
+  **31 selected UI/store declarations pass in 26.488 seconds**, covering local
+  restore/split/activity/settlement behavior, original checkout fences, inert
+  replay, remote terminal ownership and the previously timed-out script view.
+- Earlier in this integration, the complete **73-declaration Markdown suite
+  passes in 1.431 seconds** and four terminal link/environment Core declarations
+  pass in 0.003 seconds. The initial whole UI run has 388 declarations with two
+  idle-close failures; those paths pass after the native initialization and
+  executable-identity fixes. A new whole-UI/full-Core aggregate is not claimed.
+- Build-only packaging, strict deep signatures and actual native math resource
+  rendering pass. Compiled/package UUIDs match: Coincide
+  `1E8AD893-614C-3477-A187-B7408B842FF1`, CoincideEnvironment
+  `C44AFCE2-0A87-36EE-A80F-6E4533B1B5F2`, CoincideScriptHelper
+  `51F71B2C-0937-3204-847C-8C2172430C0C`.
+
+Hosted run `39997298835` failed Swift 6.3 type-checking at the Mermaid sequence
+column-gap expression; this integration separates its explicitly typed CGFloat
+steps. Hosted `39993961762` verifies both OpenCode uncertain-loss modes, but its
+2323-declaration run has one offscreen script-view timeout (150.607 seconds under
+an unchanged 60-second limit). That declaration passes locally; bounded fixed
+phase/elapsed diagnostics now distinguish reads, hydration, each appearance's
+banner/sheet layout and shutdown in the next CI run without logging content,
+paths, identities or credentials. No timeout extension, assertion reduction,
+CI aggregate success or native GUI interaction success is claimed; GUI shards
+were skipped behind the failed test gate.
+
+Final logs use `/tmp/coincide-terminal-integration-portable-{build,tests,abi,package}-20261023.log`.
+The installed app was not replaced/opened. No account, provider session, live SSH
+host or shell configuration was changed. Live process reattachment, broader
+remote/script controls, complete terminal compatibility/accessibility and full
+T3 parity remain unfinished.

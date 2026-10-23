@@ -96,6 +96,7 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 ExternalEditorSettings(store: store)
                 MarkdownSettingsSection()
+                TerminalSettingsSection()
                 LabeledContent("Version", value: "0.1.0 (development)")
                 Link("Source Code", destination: URL(string: "https://github.com/apoorvdarshan/coincide")!)
                 Link("T3 Code", destination: URL(string: "https://github.com/pingdotgg/t3code")!)

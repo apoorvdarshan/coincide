@@ -209,9 +209,14 @@ struct MermaidLayout {
         var columns: [String: Int] = [:]
         for (index, participant) in participants.enumerated() { columns[participant.id] = index }
         let headers = participants.map { measure($0.label, width: 150) }
-        let widths = headers.map { max($0.size.width + 26, 76) }
-        let headerHeight = (headers.map(\.size.height).max() ?? lineHeight) + 18
-        var gaps = (0..<max(0, count - 1)).map { widths[$0] / 2 + widths[$0 + 1] / 2 + 30 }
+        let widths: [CGFloat] = headers.map { max($0.size.width + 26, 76) }
+        let headerHeight: CGFloat = (headers.map(\.size.height).max() ?? lineHeight) + 18
+        var gaps: [CGFloat] = []
+        for index in 0..<max(0, count - 1) {
+            let leftHalf: CGFloat = widths[index] / 2
+            let rightHalf: CGFloat = widths[index + 1] / 2
+            gaps.append(leftHalf + rightHalf + 30)
+        }
         var leftExtra: CGFloat = 0, rightExtra: CGFloat = 0
         var measured: [Int: (lines: [String], size: CGSize)] = [:]
         func span(_ a: Int, _ b: Int) -> CGFloat { gaps[min(a, b)..<max(a, b)].reduce(0, +) }

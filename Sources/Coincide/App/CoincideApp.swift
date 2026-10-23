@@ -74,6 +74,7 @@ struct CoincideApp: App {
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
             RemoteWorkspaceCommands()
+            TerminalCommands()
             MainWindowCommands(coordinator: mainWindows) {
                 Button("New Thread") {
                     if let remotePresentation { remotePresentation.newThread.wrappedValue = true }

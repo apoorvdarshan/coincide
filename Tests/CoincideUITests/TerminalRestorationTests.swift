@@ -49,12 +49,12 @@ func nativeTerminalWindowRestoresSelectedTabsAndOutputWithoutReplayingShells() a
     #expect(shell.visibleText.contains("DURABLE_TERMINAL_✓"))
     try first.add(for: thread)
     let secondID = try #require(first.sessions[thread.id]?.last?.id)
-    first.panelVisible = true
+    first.setVisible(true, threadID: thread.id)
     let closed = first.suspend(); await first.waitForPersistence()
     for session in closed { await session.waitForClose() }
     let second = TerminalWorkspaceStore(executable: "/bin/sh", loginShell: false)
     second.restore(from: archive, currentThreads: { [thread] }); await second.waitForRestoration()
-    #expect(second.panelVisible && second.selection[thread.id] == secondID)
+    #expect(second.isVisible(thread.id) && second.selection[thread.id] == secondID)
     #expect(second.sessions[thread.id]?.map(\.id) == [shell.id, secondID])
     #expect(second.sessions[thread.id]?.allSatisfy { $0.isRestored && $0.processID == 0 } == true)
     #expect(second.sessions[thread.id]?.first?.visibleText.contains("DURABLE_TERMINAL_✓") == true)
@@ -68,7 +68,7 @@ func nativeTerminalWindowRestoresSelectedTabsAndOutputWithoutReplayingShells() a
 }
 
 @Test @MainActor
-func nativeTerminalRestorationRejectsRemovedThreadsAndChangedWorkspacesAndSeparatesWindows() async throws {
+func nativeTerminalRestorationRejectsRemovedThreadsKeepsChangedWorkspaceOutputInertAndSeparatesWindows() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-terminal-owners-\(UUID())")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -87,7 +87,10 @@ func nativeTerminalRestorationRejectsRemovedThreadsAndChangedWorkspacesAndSepara
     var moved = thread; moved.workspacePath = root.appendingPathComponent("changed").path
     let three = TerminalWorkspaceStore()
     three.restore(from: archive, currentThreads: { [moved] }); await three.waitForRestoration()
-    #expect(three.sessions.isEmpty)
+    #expect(three.sessions[thread.id]?.count == 1 && three.sessions[removed] == nil)
+    let retained = try #require(three.sessions[thread.id]?.first)
+    #expect(retained.processID == 0 && retained.visibleText.contains("saved"))
+    #expect(retained.originalWorkspacePath == root.path && !three.canResume(retained, thread: moved))
     three.suspend(); await three.waitForPersistence()
 }
 

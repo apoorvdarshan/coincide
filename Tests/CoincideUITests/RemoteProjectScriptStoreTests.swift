@@ -196,23 +196,52 @@ func remoteProjectScriptOutputPollingRequiresDisclosureAndPresentationClosureJoi
 
 @MainActor @Test(.timeLimit(.minutes(1)))
 func remoteProjectScriptOldHelperDoesNotReadOrPollAndOffscreenViewsDoNotApproveCommands() async throws {
+    enum Phase: String {
+        case unsupportedCheck = "unsupported-check", metadata, hydration
+        case lightBanner = "light-banner", lightSheet = "light-sheet"
+        case darkBanner = "dark-banner", darkSheet = "dark-sheet", shutdown
+    }
+    enum Boundary: String { case begin, end }
+    let clock = ContinuousClock(), started = clock.now
+    func trace(_ phase: Phase, _ boundary: Boundary) {
+        let elapsed = started.duration(to: clock.now).components
+        let milliseconds = elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000
+        let line = "remote-script-ui-phase=\(phase.rawValue) boundary=\(boundary.rawValue) elapsed-ms=\(milliseconds)\n"
+        try? FileHandle.standardError.write(contentsOf: Data(line.utf8))
+    }
     let f = ScriptUIFixture(), peer = ScriptUIPeer(f), store = RemoteProjectScriptStore()
+    trace(.unsupportedCheck, .begin)
     updateScriptStore(store, fixture: f, peer: peer, supported: false)
     await store.refresh(); await store.beginReview(); store.setOutputVisible(true); await store.refreshOutput()
     #expect(await peer.reads == 0)
     #expect(await peer.chunks == 0)
     #expect(await peer.outputs == 0)
-    updateScriptStore(store, fixture: f, peer: peer); await store.refresh(); await store.beginReview()
+    trace(.unsupportedCheck, .end)
+    trace(.metadata, .begin)
+    updateScriptStore(store, fixture: f, peer: peer); await store.refresh()
+    trace(.metadata, .end)
+    trace(.hydration, .begin)
+    await store.beginReview()
     let loaded = try #require(store.review), reads = await peer.reads
+    trace(.hydration, .end)
     updateScriptStore(store, fixture: f, peer: peer, supported: false)
     for scheme in [ColorScheme.light, .dark] {
+        let bannerPhase: Phase = scheme == .light ? .lightBanner : .darkBanner
+        let sheetPhase: Phase = scheme == .light ? .lightSheet : .darkSheet
+        trace(bannerPhase, .begin)
         let banner = NSHostingController(rootView: RemoteProjectScriptPanel(store: store).frame(width: 420).environment(\.colorScheme, scheme))
+        let size = banner.sizeThatFits(in: .init(width: 420, height: 1_000))
+        trace(bannerPhase, .end)
+        trace(sheetPhase, .begin)
         let sheet = NSHostingController(rootView: RemoteProjectScriptReviewSheet(store: store, value: loaded).environment(\.colorScheme, scheme))
-        let size = banner.sizeThatFits(in: .init(width: 420, height: 1_000)), review = sheet.sizeThatFits(in: .init(width: 520, height: 1_200))
+        let review = sheet.sizeThatFits(in: .init(width: 520, height: 1_200))
+        trace(sheetPhase, .end)
         #expect(size.width >= 400 && size.height > 40 && size.height < 1_000)
         #expect(review.width >= 500 && review.height > 200 && review.height < 1_200)
     }
     #expect(await peer.reads == reads)
     #expect(await peer.commands.isEmpty)
+    trace(.shutdown, .begin)
     await store.shutdown()
+    trace(.shutdown, .end)
 }

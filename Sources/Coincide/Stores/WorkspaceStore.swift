@@ -1139,9 +1139,11 @@ final class WorkspaceStore {
         return (terminalStores.values.compactMap(\.value).flatMap { $0.sessions.values.flatMap { $0 } } + Array(closingTerminalSessions.values))
             .filter { ids.insert($0.id).inserted }
     }
+    var liveTerminalStores: [TerminalWorkspaceStore] { terminalStores.values.compactMap(\.value) }
     func registerTerminals(_ terminals: TerminalWorkspaceStore) {
         terminalStores[ObjectIdentifier(terminals)] = WeakTerminalStore(terminals)
         terminals.sessionWillClose = { [weak self] in self?.retainClosingTerminal($0) }
+        configureTerminalIntegration(terminals)
     }
     func restoreTerminals(_ terminals: TerminalWorkspaceStore) {
         guard hasLoadedWorkspace, engine != nil, !terminating else { return }
@@ -1515,6 +1517,7 @@ final class WorkspaceStore {
     }
     func canOpenTerminal(for captured: CodingThread) -> Bool {
         guard let current = thread(captured.id), current.projectID == captured.projectID,
+              current.createdAt == captured.createdAt,
               current.workspacePath == captured.workspacePath,
               current.workspacePreparation?.id == captured.workspacePreparation?.id else { return false }
         return workspaceReady(for: current) && canAccessWorkspaceFiles(current.workspacePath)
@@ -3153,9 +3156,15 @@ final class WorkspaceStore {
         _ = try await task.value
     }
     func settleThread(_ id: UUID, reviewScript: Bool = true) async throws {
+        guard let captured = thread(id) else { throw CancellationError() }
         try await performSettlementCommand(for: id) { engine, thread in
             try await engine.settleThread(threadID: id, expectedWorkspacePath: thread.workspacePath, reviewScript: reviewScript)
         }
+        guard let settled = thread(id), settled.projectID == captured.projectID,
+              settled.createdAt == captured.createdAt,
+              settled.workspacePath.utf8.elementsEqual(captured.workspacePath.utf8),
+              settled.workspacePreparation?.id == captured.workspacePreparation?.id else { return }
+        await closeIdleTerminals(for: settled)
     }
     func resumeThread(_ id: UUID, generationID: UUID) async throws {
         guard thread(id)?.settlement?.id == generationID else { throw CancellationError() }
@@ -3179,6 +3188,7 @@ final class WorkspaceStore {
             await previous?.value
             try Task.checkCancellation()
             guard !self.terminating, let current = self.thread(id), current.projectID == captured.projectID,
+                  current.createdAt == captured.createdAt,
                   current.workspacePath == captured.workspacePath, current.settlement?.id == captured.settlement?.id,
                   current.workspacePreparation?.id == captured.workspacePreparation?.id,
                   self.canEditWorkspace(current.workspacePath) else { throw CancellationError() }

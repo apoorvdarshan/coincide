@@ -6,7 +6,11 @@ struct RemoteTerminalPanel: View {
     @Bindable var store: RemoteTerminalStore
     let hide: () -> Void
     @State private var pendingClose: RemoteTerminalTab?
-    @AppStorage("terminalFontSize") private var fontSize = 12.0
+    @AppStorage(TerminalAppearance.fontSizeKey) private var fontSize = TerminalAppearance.defaultFontSize
+    @AppStorage(TerminalAppearance.fontFamilyKey) private var fontFamily = ""
+    @AppStorage(TerminalAppearance.themeKey) private var theme = TerminalAppearance.Theme.system.rawValue
+    @Environment(\.colorScheme) private var colorScheme
+    private var appearance: TerminalAppearance { .init(fontFamily: fontFamily, fontSize: fontSize, theme: theme) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,8 +52,8 @@ struct RemoteTerminalPanel: View {
             Divider()
             if let error = store.errorMessage { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(8) }
             if let tab = store.selected {
-                NativeRemoteTerminalView(session: tab.renderer, fontSize: fontSize).id(tab.renderer.displayGeneration).padding(6)
-                    .background(Color(nsColor: .textBackgroundColor))
+                NativeRemoteTerminalView(session: tab.renderer, appearance: appearance).id(tab.renderer.displayGeneration).padding(6)
+                    .background(Color(nsColor: appearance.backgroundColor(systemIsDark: colorScheme == .dark)))
                 VStack(alignment: .leading, spacing: 6) {
                     Text(tab.status).foregroundStyle(.secondary)
                     if let notice = tab.notice { Text(notice).textSelection(.enabled) }
@@ -91,7 +95,7 @@ struct RemoteTerminalPanel: View {
 
 private struct NativeRemoteTerminalView: NSViewRepresentable {
     let session: RemoteTerminalSession
-    let fontSize: Double
-    func makeNSView(context: Context) -> NSView { session.setFontSize(fontSize); return session.view }
-    func updateNSView(_ view: NSView, context: Context) { session.setFontSize(fontSize) }
+    let appearance: TerminalAppearance
+    func makeNSView(context: Context) -> NSView { session.apply(appearance); return session.view }
+    func updateNSView(_ view: NSView, context: Context) { session.apply(appearance) }
 }
