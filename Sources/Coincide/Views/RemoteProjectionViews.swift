@@ -185,6 +185,7 @@ struct RemoteProjectedConversationView: View {
                 RemoteWorktreeBanner(store: store.worktrees)
                 RemotePullRequestBanner(store: store.pullRequests)
                 RemoteRunCheckpointBanner(store: store.checkpoints)
+                RemoteHistoryBanner(store: store.history)
                 transcript
                 if let request = control.requests.first {
                     ApprovalView(request: request.request, isResponding: request.responding || !store.canWrite,

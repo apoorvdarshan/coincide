@@ -78,7 +78,8 @@ actor RemoteCheckpointService {
         self.environmentID = environmentID; self.engine = engine; self.workspace = workspace
     }
     private func validate(_ target: RemoteWorkspaceTarget, allowLocked: Bool, requireRoot: Bool = true) async throws {
-        guard !closing, target.environmentID == environmentID else { throw RemoteCheckpointFailure(.invalidTarget) }
+        guard target.environmentID == environmentID else { throw RemoteCheckpointFailure(.invalidTarget) }
+        guard !closing else { throw RemoteCheckpointFailure(.unavailable) }
         try await workspace.validateCheckpointTarget(target, allowLocked: allowLocked, requireRoot: requireRoot)
         guard !closing else { throw RemoteCheckpointFailure(.unavailable) }
     }
@@ -88,7 +89,7 @@ actor RemoteCheckpointService {
             let value = try await engine.readRemoteCheckpoint(request)
             try await validate(request.target, allowLocked: true)
             return .init(target: request.target, value: value)
-        } catch { throw Self.safe(error) }
+        } catch { throw closing && request.target.environmentID == environmentID ? RemoteCheckpointFailure(.unavailable) : Self.safe(error) }
     }
     func review(_ request: RemoteCheckpointReviewRequest) async throws -> RemoteCheckpointReview {
         do {
@@ -102,7 +103,7 @@ actor RemoteCheckpointService {
             }
             catch { _ = await engine.discardRemoteCheckpointReview(.init(target: value.target, reviewID: value.id, digest: value.digest)); throw error }
             return value
-        } catch { throw Self.safe(error) }
+        } catch { throw closing && request.target.environmentID == environmentID ? RemoteCheckpointFailure(.unavailable) : Self.safe(error) }
     }
     func discard(_ request: RemoteCheckpointDiscardRequest) async throws -> RemoteCheckpointDiscardResult {
         guard !closing, request.target.environmentID == environmentID else { throw RemoteCheckpointFailure(.invalidTarget) }
@@ -117,7 +118,7 @@ actor RemoteCheckpointService {
             let prepared = try await engine.prepareRemoteCheckpoint(command)
             try await validate(target, allowLocked: locked, requireRoot: action.requiresBoundRoot)
             return prepared
-        } catch { throw Self.safe(error) }
+        } catch { throw closing && target.environmentID == environmentID ? RemoteCheckpointFailure(.unavailable) : Self.safe(error) }
     }
     func close() async { closing = true; await engine.closeRemoteCheckpoints() }
     private static func safe(_ error: Error) -> RemoteCheckpointFailure {

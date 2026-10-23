@@ -39,7 +39,7 @@ private actor RemotePRPeer {
     func makeReview(_ request: RemotePullRequestReviewRequest) async throws -> RemotePullRequestReview { try await review(request) }
     func bind(_ target: RemoteWorkspaceTarget) throws -> RemoteWorkspaceTarget {
         bindCount += 1
-        guard !failBind else { throw RemotePullRequestFailure(.invalidTarget) }
+        guard !failBind, target.rootID == nil || target.rootID == rootID else { throw RemotePullRequestFailure(.invalidTarget) }
         return .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID, configuration: target.configuration, rootID: rootID)
     }
     func context(_ target: RemoteWorkspaceTarget) throws -> GitHubPullRequestContext {
@@ -98,6 +98,28 @@ private actor RemotePRPeer {
     private func discard(_ request: RemotePullRequestDiscardRequest) -> RemotePullRequestDiscardResult {
         discarded.append(request); return .init(request: request, discarded: true)
     }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func remotePullRequestReconnectRebindsTheNewHostAndRetainsItsPrivateDraft() async throws {
+    let f = try RemotePRFixture()
+    do {
+        await f.update(); let model = try f.model()
+        await model.refresh()
+        let oldRoot = try #require(model.target.rootID)
+        model.draft.title = "Retain this newer local PR title"
+        f.store.disconnect()
+        let replacement = try RemotePRPeer()
+        await f.store.select(target: f.target, transport: replacement.transport, snapshot: f.snapshot,
+            supported: true, canWrite: true, canMutate: true, perform: { _ in false }, openConversation: { _ in })
+        await model.refresh()
+        #expect(model.target.rootID != oldRoot && model.target.rootID == replacement.rootID)
+        let binds = await replacement.bindAttempts()
+        #expect(model.page?.items.count == 1 && binds == 1)
+        #expect(model.draft.title == "Retain this newer local PR title")
+        #expect(f.commands.isEmpty)
+        await f.remove()
+    } catch { await f.remove(); throw error }
 }
 
 @MainActor private final class RemotePRFixture {

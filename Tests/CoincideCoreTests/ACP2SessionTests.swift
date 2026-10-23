@@ -29,10 +29,10 @@ private func withV2(_ mode: String, systemFactory: Bool = false, body: (V2Fixtur
         await engine.shutdown()
     } catch { await engine.shutdown(); throw error }
 }
-private func waitV2(_ predicate: () async throws -> Bool) async throws {
+private func waitV2(_ phase: String = "fixture state", _ predicate: () async throws -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(10)
     while try await !predicate() {
-        guard ContinuousClock.now < deadline else { throw CoincideError("ACP v2 fixture timed out") }
+        guard ContinuousClock.now < deadline else { throw CoincideError("ACP v2 fixture timed out waiting for \(phase)") }
         try await Task.sleep(for: .milliseconds(10))
     }
 }
@@ -295,21 +295,27 @@ func installedOpenCodeUsesTheVersionNegotiatedOnItsNativeConnection() async thro
     }
 }
 
-@Test(.timeLimit(.minutes(1))) func acpV2StopDuringSessionConfigurationNeverDispatchesThePromptAfterward() async throws {
-    try await withV2("cancel_setup") { f in
+@Test(.timeLimit(.minutes(1)), arguments: ["cancel_setup", "cancel_setup_quiet"])
+func acpV2StopDuringSessionConfigurationNeverDispatchesThePromptAfterward(mode: String) async throws {
+    try await withV2(mode) { f in
         try await f.engine.dispatch(.editThread(f.thread.id, .model("fixture")))
         let commandID = UUID()
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "must not reach agent"), id: commandID)
-        try await waitV2 { FileManager.default.fileExists(atPath: f.gate.path + ".config") }
+        try await waitV2("held configuration request") { FileManager.default.fileExists(atPath: f.gate.path + ".config") }
         let runID = try #require(await f.engine.current().snapshot.threads[0].activeRun?.id)
+        if mode == "cancel_setup_quiet" { #expect(await f.engine.current().snapshot.threads[0].activeRun?.nativeTurnID == nil) }
         try await f.engine.dispatch(.interrupt(threadID: f.thread.id))
-        try await waitV2 { await f.engine.current().snapshot.threads[0].state == .interrupted }
+        try await waitV2("interrupted run") { await f.engine.current().snapshot.threads[0].state == .interrupted }
         let database = try WorkspaceDatabase(url: f.root.appendingPathComponent("workspace.sqlite"))
-        try await waitV2 {
-            try await database.effects().contains { effect in
+        try await waitV2("cancelled provider-start effect") {
+            guard let effect = try await database.effects().first(where: { effect in
                 guard case .providerStart(let threadID, let effectRunID, _, _, _) = effect.request else { return false }
-                return threadID == f.thread.id && effectRunID == runID && effect.status == .cancelled
+                return threadID == f.thread.id && effectRunID == runID
+            }) else { return false }
+            if effect.status == .failed || effect.status == .succeeded {
+                throw CoincideError("The stopped ACP v2 provider-start effect settled as \(effect.status.rawValue) while awaiting configuration.")
             }
+            return effect.status == .cancelled
         }
         await f.engine.shutdown()
         #expect(!FileManager.default.fileExists(atPath: f.gate.path + ".prompt"))

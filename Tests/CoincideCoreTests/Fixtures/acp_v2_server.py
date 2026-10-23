@@ -107,20 +107,20 @@ for line in sys.stdin:
             entity_id = "resume-tool"
             state("requires_action")
             permit("resume-request")
-        else:
+        elif mode != "cancel_setup_quiet":
             state("running" if mode in ["early_state", "cancel_setup"] else "idle", **({} if mode in ["early_state", "cancel_setup"] else {"stopReason": "end_turn"}))
         result(request, {"sessionId": session, "configOptions": config()})
     elif method == "session/set_config_option":
         key = params["configId"]
         assert params["type"] == ("boolean" if key == "boolean" else "id")
         values[key] = params["value"]
-        if mode == "cancel_setup":
+        if mode in ["cancel_setup", "cancel_setup_quiet"]:
             held_config = request
             open(gate + ".config", "w").close()
             continue
         result(request, {"configOptions": config()})
     elif method == "session/prompt":
-        if mode == "cancel_setup":
+        if mode in ["cancel_setup", "cancel_setup_quiet"]:
             open(gate + ".prompt", "w").close()
         turn += 1
         prompt_id = request["id"]

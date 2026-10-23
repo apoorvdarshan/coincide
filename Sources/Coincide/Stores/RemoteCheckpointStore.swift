@@ -386,6 +386,7 @@ final class RemoteCheckpointWorkspace {
     }
     func disconnect() {
         if let restoreReview, let transport { scheduleDiscard(restoreReview, transport: transport) }
+        target = .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID, configuration: target.configuration)
         generation = UUID(); inventoryRead = UUID(); diffRead = UUID(); reviewRead = UUID()
         connected = false; writesAllowed = false; mutationsAllowed = false; transport = nil; perform = nil; restoreReview = nil
         isLoading = false; isLoadingDiff = false; isReviewing = false

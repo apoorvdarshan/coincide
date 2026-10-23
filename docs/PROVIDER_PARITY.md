@@ -18,15 +18,18 @@ verification, not provider calls repeated for this document. Consult
 
 Remote Codex/Claude conversations also expose captured run-checkpoint policy,
 exact-observation diffs and the existing native reviewed file-restoration flow.
-These controls are provider-independent file workflows; they do not add remote
-provider-history fork/rewind or establish installed-provider/SSH acceptance.
+These controls are provider-independent file workflows; they do not establish
+installed-provider/SSH acceptance.
 See [the remote checkpoint boundaries](REMOTE_ENVIRONMENTS.md#remote-run-checkpoints).
 
 Updated remote helpers also negotiate bounded catalog/control/transcript/run/
 operation views. Current controls hydrate exact typed documents separately from
 pinned history pages; complete provider-history evidence remains host-owned.
-This removes the full-native-snapshot frame dependency for browsing and does not
-add remote provider-history mutations. See [bounded views](REMOTE_ENVIRONMENTS.md#bounded-remote-views).
+This removes the full-native-snapshot frame dependency for browsing. Separate
+reviewed remote history actions now expose recorded-run fork/rewind and explicit
+native recovery with complete proof retained on the host. Remote creation remains
+Codex/Claude only. See [bounded views](REMOTE_ENVIRONMENTS.md#bounded-remote-views)
+and [history boundaries](REMOTE_ENVIRONMENTS.md#remote-conversation-history).
 
 The separate default Liquid Glass requirement also remains mandatory. Provider
 integration work does not satisfy the native chrome, control, accessibility,

@@ -39,6 +39,7 @@ final class RemoteWorkspaceStore {
     let attachments: RemoteAttachmentsStore
     let pullRequests: RemotePullRequestStore
     let checkpoints = RemoteCheckpointStore()
+    let history = RemoteHistoryStore()
     let projection = RemoteProjectionStore()
     private(set) var usesProjection = false
     private(set) var isPreparingSubmission = false
@@ -110,7 +111,7 @@ final class RemoteWorkspaceStore {
         }
     }
     func updatePullRequests() async {
-        guard !stopping else { pullRequests.disconnect(); checkpoints.disconnect(); return }
+        guard !stopping else { pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); return }
         if usesProjection {
             await pullRequests.selectProjected(target: pullRequestTarget, client: isConnected ? client : nil,
                 operations: projection.currentOperations, supported: descriptor?.capabilities.supportsRemotePullRequests == true,
@@ -144,6 +145,38 @@ final class RemoteWorkspaceStore {
             canWrite: canWrite, canMutate: checkpointSelection.canMutate,
             perform: { [weak self] command in await self?.perform(command) ?? false },
             canRestore: { [weak self] review in self?.checkpointFilesStillAllowed(paths: [review.gitReview.currentPlan.repositoryPath, review.gitReview.currentPlan.commonDirectoryPath]) ?? false })
+    }
+    var historySelection: PullRequestSelection {
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: selectedSequence,
+            configuration: selectedConfiguration.flatMap { try? RemoteHistoryProtocol.payload($0) } ?? Data(),
+            generation: generation, connected: isConnected,
+            supported: usesProjection && descriptor?.capabilities.supportsRemoteHistory == true,
+            canWrite: canWrite, canMutate: checkpointSelection.canMutate)
+    }
+    func updateHistory() async {
+        guard !stopping else { history.disconnect(); return }
+        await history.select(target: pullRequestTarget, projection: projection, client: isConnected ? client : nil,
+            supported: usesProjection && descriptor?.capabilities.supportsRemoteHistory == true, canWrite: canWrite,
+            canRestoreFiles: { [weak self] in self?.checkpointFilesStillAllowed(paths: $0) ?? false },
+            perform: { [weak self] in await self?.perform($0) ?? false },
+            openConversation: { [weak self] in self?.selectThread($0) })
+    }
+    private func historyCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        guard case .history(let target, let action) = command else { return true }
+        guard isConnected, !stopping, usesProjection, descriptor?.capabilities.supportsRemoteHistory == true,
+              let current = pullRequestTarget, target.rootID != nil || !action.requiresBoundRoot,
+              current.environmentID == target.environmentID, current.projectID == target.projectID, current.threadID == target.threadID,
+              (try? RemoteHistoryProtocol.payload(current.configuration)) == (try? RemoteHistoryProtocol.payload(target.configuration)) else { return false }
+        if case .begin(let id, let digest, _) = action {
+            guard let review = history.review(id: id), review.digest == digest,
+                  (try? RemoteHistoryProtocol.payload(review.target)) == (try? RemoteHistoryProtocol.payload(target)) else { return false }
+            return checkpointFilesStillAllowed(paths: review.value.mutatingPaths + review.value.coordinationPaths)
+        }
+        if case .clearMaintenance(let id, let reviewID, let digest) = action {
+            guard let claim = history.current?.operationViews[id]?.maintenanceClaim else { return false }
+            return claim.id == reviewID && claim.digest == digest
+        }
+        return true
     }
     private func checkpointFilesStillAllowed(paths: [String]) -> Bool {
         guard let environment = connection?.environmentID, isConnected, !stopping else { return false }
@@ -404,7 +437,7 @@ final class RemoteWorkspaceStore {
         terminals.disconnect()
         worktrees.disconnect()
         attachments.disconnect()
-        pullRequests.disconnect(); checkpoints.disconnect()
+        pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -420,9 +453,10 @@ final class RemoteWorkspaceStore {
         await attachments.shutdown()
         await pullRequests.shutdown()
         await checkpoints.shutdown()
+        await history.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown() }
+    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown(); history.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -442,7 +476,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
-        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection() }
+        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection() }
         selectedThreadID = id
         if usesProjection {
             projection.beginSelection(id)
@@ -470,7 +504,8 @@ final class RemoteWorkspaceStore {
         draftWrites = Task { [weak self, draftStore] in
             _ = await previous?.value
             do {
-                try await draftStore.save(environmentID: environmentID, drafts: value)
+                let latest = self?.connection?.environmentID == environmentID ? self?.drafts ?? value : value
+                try await draftStore.save(environmentID: environmentID, drafts: latest)
                 if self?.generation == owner, self?.connection?.environmentID == environmentID, self?.draftRevision == revision {
                     self?.draftPersistenceFailed = false; self?.draftsSaving = false
                 }
@@ -504,7 +539,7 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Review the draft before sending again."; return false
         }
-        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command) else {
+        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command) else {
             errorMessage = "The remote review or its affected checkout changed. Save edits, close affected terminals, and review it again."; return false
         }
         let changingWorkspace: RemoteWorkspaceTarget?
@@ -517,6 +552,10 @@ final class RemoteWorkspaceStore {
             }
         default: changingWorkspace = nil
         }
+        if case .history(let target, .recallPrompt) = command, drafts[target.threadID] == nil {
+            guard selectedThreadID == target.threadID else { return false }
+            setDraft(draft, threadID: target.threadID)
+        }
         isWorking = true; defer { isWorking = false }
         errorMessage = nil; notice = nil
         let owner = generation
@@ -525,7 +564,7 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Your draft was kept."; return false
         }
-        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command) else {
+        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command) else {
             errorMessage = "The remote review or its affected checkout changed. Your draft was kept."; return false
         }
         if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
@@ -538,7 +577,7 @@ final class RemoteWorkspaceStore {
             try await pendingStore.save(request)
             guard generation == owner, !stopping else { return false }
             pending = request
-            if !pullRequestCommandStillAllowed(command) || !checkpointCommandStillAllowed(command) {
+            if !pullRequestCommandStillAllowed(command) || !checkpointCommandStillAllowed(command) || !historyCommandStillAllowed(command) {
                 try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
                 pending = nil
                 errorMessage = "The remote review or its affected checkout changed. Your draft was kept."
@@ -634,6 +673,11 @@ final class RemoteWorkspaceStore {
 
     private func finish(_ request: RemoteEnvironmentPendingCommand, receipt: WorkspaceCommandReceipt) async throws {
         guard receipt.commandID == request.id else { throw CoincideError("The remote receipt belongs to a different request.") }
+        let owner = generation
+        if receipt.rejection == nil, case .history(let target, .recallPrompt(let operationID)) = request.command {
+            try await finishHistoryRecall(request, target: target, operationID: operationID, owner: owner)
+            guard generation == owner else { throw CancellationError() }
+        }
         let submitted: (UUID, String)?
         switch request.command {
         case .submit(let id, let text, _): submitted = (id, text)
@@ -654,6 +698,55 @@ final class RemoteWorkspaceStore {
         try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
         pending = nil; notice = nil
         if let rejection = receipt.rejection { errorMessage = rejection }
+    }
+
+    private func finishHistoryRecall(_ request: RemoteEnvironmentPendingCommand, target: RemoteWorkspaceTarget,
+                                     operationID: UUID, owner: Int) async throws {
+        guard let client, connection?.environmentID == target.environmentID else { throw CancellationError() }
+        let result = try await client.readHistory(.init(target: target, query: .recall(operationID: operationID)))
+        guard generation == owner, case .recall(let recall) = result.value else { throw CancellationError() }
+        let text: String
+        if let content = recall.text.content {
+            let bytes = try await client.historyDocument(content, binding: recall.binding, target: target, maximumBytes: 4 * 1_024 * 1_024)
+            guard let decoded = String(data: bytes, encoding: .utf8) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            text = decoded
+        } else { text = recall.text.preview }
+        let attachmentBytes = try await client.historyDocument(recall.attachments, binding: recall.binding, target: target)
+        let recalledAttachments = try JSONDecoder().decode([ChatAttachment].self, from: attachmentBytes)
+        try AttachmentLimits.validate(recalledAttachments)
+        guard generation == owner else { throw CancellationError() }
+        await drainDrafts(owner: owner)
+        guard generation == owner, !draftPersistenceFailed else { throw CoincideError("Save the local draft before recovering this recalled prompt.") }
+        let previous = draftWrites
+        draftRevision += 1; let revision = draftRevision
+        draftsSaving = true
+        let write = Task { [weak self, draftStore] in
+            _ = await previous?.value
+            guard let self, self.connection?.environmentID == target.environmentID else { return false }
+            do {
+                let before = self.drafts
+                let merged = try await draftStore.mergeHistoryRecall(environmentID: target.environmentID, threadID: target.threadID,
+                    commandID: request.id, operationID: operationID, text: text, attachmentDigest: recall.attachments.digest, expectedDrafts: before)
+                if self.connection?.environmentID == target.environmentID, merged.appended {
+                    if self.draftRevision == revision { self.drafts = merged.drafts }
+                    else if !text.isEmpty {
+                        let current = self.drafts[target.threadID] ?? ""
+                        self.drafts[target.threadID] = current.isEmpty ? text : current + "\n\n" + text
+                    }
+                }
+                if self.draftRevision == revision { self.draftsSaving = false; self.draftPersistenceFailed = false }
+                return true
+            } catch {
+                self.draftPersistenceFailed = true; self.draftsSaving = false
+                self.errorMessage = "The recalled prompt could not be merged into the saved local draft. Its confirmed request is retained; check the result again after saving is available."
+                return false
+            }
+        }
+        draftWrites = write
+        guard await write.value else { throw CoincideError("The recalled prompt remains pending local draft preservation.") }
+        await drainDrafts(owner: owner)
+        guard generation == owner, !draftPersistenceFailed else { throw CancellationError() }
+        _ = try? await client.readHistory(.init(target: target, query: .release(binding: recall.binding)))
     }
 
     func submit() async {
@@ -700,7 +793,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; projection.disconnect(); inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); notice = message.localizedDescription
+            isConnected = false; projection.disconnect(); inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -718,7 +811,7 @@ final class RemoteWorkspaceStore {
         if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path {
             inspector.clearSelection(); terminals.clearSelection()
             if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID { attachments.clearSelection() }
-            pullRequests.clearSelection(); checkpoints.clearSelection()
+            pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection()
         }
         updateWorktrees()
     }

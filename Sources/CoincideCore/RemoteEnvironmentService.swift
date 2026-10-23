@@ -31,6 +31,7 @@ public actor RemoteEnvironmentService {
     private var attachmentService: RemoteAttachmentService?
     private var pullRequestService: RemotePullRequestService?
     private var checkpointService: RemoteCheckpointService?
+    private var historyService: RemoteHistoryService?
     private var projectionService: RemoteProjectionService?
     private var initializing: Task<WorkspaceEngine, any Error>?
     private var subscriptions: [UUID: Task<Void, Never>] = [:]
@@ -66,7 +67,7 @@ public actor RemoteEnvironmentService {
         self.dataDirectory = dataDirectory; self.label = label; self.options = options; self.providerFactory = providerFactory; self.driverFactory = driverFactory
     }
     public func descriptor() -> RemoteEnvironmentDescriptor {
-        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true))
+        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true, supportsRemoteHistory: true))
     }
     private func require(_ id: UUID) throws {
         guard id == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
@@ -113,7 +114,7 @@ public actor RemoteEnvironmentService {
         try require(request.environmentID)
         do {
             let engine = try await workspace(), receipt = try await engine.remoteEnvironmentReceipt(request)
-            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request) }
+            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request) }
             return .init(environmentID: environmentID, receipt: receipt)
         } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
     }
@@ -122,10 +123,10 @@ public actor RemoteEnvironmentService {
         _ = try RemoteEnvironmentProtocol.payload(request)
         let engine = try await workspace()
         var inspected: RemoteEnvironmentPreparation?
-        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand {
+        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand {
             do {
                 if let receipt = try await engine.remoteEnvironmentReceipt(request) {
-                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request) }
+                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request) }
                     return .init(environmentID: environmentID, receipt: receipt)
                 }
             } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
@@ -136,7 +137,7 @@ public actor RemoteEnvironmentService {
             catch { inspected = .refused }
         }
         let result = try await commitCommand(request, engine: engine, inspected: inspected)
-        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request) }
+        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request) }
         return result
     }
     private func commitCommand(_ request: RemoteEnvironmentCommandRequest, engine: WorkspaceEngine,
@@ -156,6 +157,11 @@ public actor RemoteEnvironmentService {
                 try validate(request.command)
                 if let inspected { preparation = inspected }
                 else { preparation = try await prepare(request.command, engine: engine) }
+                if case .history(let prepared) = preparation {
+                    let workspace = try await workspaceOperations()
+                    try await workspace.validateHistoryTarget(prepared.target, allowLocked: prepared.allowsLockedTarget, requireRoot: prepared.requiresBoundRoot)
+                    try await workspace.admitHistoryScope(prepared.scope)
+                }
                 if case .checkpoint(let prepared) = preparation {
                     let workspace = try await workspaceOperations()
                     try await workspace.validateCheckpointTarget(prepared.target, allowLocked: prepared.allowsLockedTarget, requireRoot: prepared.requiresBoundRoot)
@@ -246,6 +252,29 @@ public actor RemoteEnvironmentService {
         return pair.stream
     }
     private func projectionConnectionOpen() -> Bool { !closing }
+    private func history() async throws -> RemoteHistoryService {
+        let engine = try await workspace(), workspace = try await workspaceOperations()
+        guard !closing else { throw RemoteHistoryFailure(.unavailable) }
+        if let historyService { return historyService }
+        let service = RemoteHistoryService(environmentID: environmentID, engine: engine, workspace: workspace)
+        historyService = service; return service
+    }
+    public func bindHistoryWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        try require(target.environmentID)
+        return try await (try await workspaceOperations()).bindHistoryTarget(target)
+    }
+    public func reviewHistory(_ request: RemoteHistoryReviewRequest) async throws -> RemoteHistoryReview {
+        try require(request.target.environmentID)
+        return try await (try await history()).review(request)
+    }
+    public func readHistory(_ request: RemoteHistoryReadRequest) async throws -> RemoteHistoryReadResult {
+        try require(request.target.environmentID)
+        return try await (try await history()).read(request)
+    }
+    public func discardHistoryReview(_ request: RemoteHistoryDiscardRequest) async throws -> RemoteHistoryDiscardResult {
+        try require(request.target.environmentID)
+        return try await (try await history()).discard(request)
+    }
     private func checkpoints() async throws -> RemoteCheckpointService {
         let engine = try await workspace()
         guard !closing else { throw RemoteCheckpointFailure(.unavailable) }
@@ -441,6 +470,8 @@ public actor RemoteEnvironmentService {
             return try await (try await pullRequests()).prepare(command)
         case .checkpoint:
             return try await (try await checkpoints()).prepare(command)
+        case .history:
+            return try await (try await history()).prepare(command)
         default: return .none
         }
     }
@@ -468,6 +499,11 @@ public actor RemoteEnvironmentService {
             try AttachmentLimits.validate(draft)
             guard draft.count + uploaded.count <= AttachmentLimits.count,
                   Set(uploaded).count == uploaded.count else { throw RemoteEnvironmentError(.invalidRequest) }
+        case .history(let target, let action):
+            guard target.environmentID == environmentID, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteEnvironmentError(.invalidRequest) }
+            try ProviderHistoryValidation.path(target.workspacePath)
+            if case .begin(_, let digest, _) = action, !CheckpointValidation.digest(digest) { throw RemoteEnvironmentError(.invalidRequest) }
+            if case .clearMaintenance(_, _, let digest) = action, !CheckpointValidation.digest(digest) { throw RemoteEnvironmentError(.invalidRequest) }
         case .checkpoint(let target, let action):
             guard target.environmentID == environmentID, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteEnvironmentError(.invalidRequest) }
             try ProviderHistoryValidation.path(target.workspacePath)
@@ -509,11 +545,12 @@ public actor RemoteEnvironmentService {
         closing = true
         let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
         for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
-        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService, checkpointService = checkpointService, projectionService = projectionService
+        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService, checkpointService = checkpointService, historyService = historyService, projectionService = projectionService
         for task in subscriptions { task.cancel() }
         let task = Task {
             await terminalService?.close()
             await projectionService?.close()
+            await historyService?.close()
             await checkpointService?.close()
             await pullRequestService?.close()
             await workspaceService?.close()
@@ -528,6 +565,7 @@ public actor RemoteEnvironmentService {
 }
 
 extension RemoteEnvironmentCommand {
+    var isHistoryCommand: Bool { if case .history = self { return true }; return false }
     var isCheckpointCommand: Bool {
         if case .checkpoint = self { return true }; return false
     }

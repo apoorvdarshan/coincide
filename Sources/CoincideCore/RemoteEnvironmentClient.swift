@@ -67,6 +67,15 @@ public actor RemoteEnvironmentClient {
     }
     private var projectionCursors: [UUID: ProjectionCursorClaim] = [:]
     private var projectionReplies: [Data: (viewID: UUID, digest: String)] = [:]
+    private struct HistoryCursorClaim: Equatable {
+        let query: Data, binding: RemoteHistoryBinding
+        let offset: Int, total: Int
+    }
+    private var historyHostID: UUID?
+    private var historyBindings: [UUID: RemoteHistoryBinding] = [:]
+    private var historyTargets: [UUID: Data] = [:]
+    private var historyCursors: [UUID: HistoryCursorClaim] = [:]
+    private var historyReplies: [Data: (leaseID: UUID, digest: String)] = [:]
     private var sequenceFloor: Int64 = 0
     private var connected = false
     private var subscribing = false
@@ -189,6 +198,14 @@ public actor RemoteEnvironmentClient {
         if command.isCheckpointCommand, descriptor?.capabilities.supportsRemoteCheckpoints != true {
             throw RemoteEnvironmentClientError(.unsupported)
         }
+        if case .history(let target, let action) = command {
+            guard descriptor?.capabilities.supportsRemoteHistory == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            guard target.environmentID == environment, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteHistoryFailure(.invalidTarget) }
+            if case .begin(_, let digest, let title) = action {
+                guard Self.isTerminalDigest(digest), title.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 4_096 && !$0.contains("\0") }) ?? true else { throw RemoteHistoryFailure(.invalidRequest) }
+            }
+            if case .clearMaintenance(_, _, let digest) = action, !Self.isTerminalDigest(digest) { throw RemoteHistoryFailure(.invalidRequest) }
+        }
         if case .checkpoint(let target, let action) = command {
             guard target.environmentID == environment, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteCheckpointFailure(.invalidTarget) }
             if case .beginRestore(_, let digest) = action, !Self.isTerminalDigest(digest) { throw RemoteCheckpointFailure(.invalidRequest) }
@@ -210,7 +227,7 @@ public actor RemoteEnvironmentClient {
         attemptedCommands.insert(id); activeRequests += 1
         defer { activeRequests -= 1 }
         do {
-            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand) ? 120 : 45))
+            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand || command.isHistoryCommand) ? 120 : 45))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             try validateReceipt(result.receipt, environmentID: result.environmentID, commandID: id)
@@ -234,7 +251,7 @@ public actor RemoteEnvironmentClient {
         activeRequests += 1; defer { activeRequests -= 1 }
         do {
             let raw = try await connection.request(RemoteEnvironmentProtocol.receiptMethod,
-                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand) ? 120 : 30))
+                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand || command.isHistoryCommand) ? 120 : 30))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentReceiptResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             guard result.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
@@ -1134,6 +1151,7 @@ public actor RemoteEnvironmentClient {
         pullRequestRepositories.removeAll()
         projectionMode = false; projectionHostID = nil; latestProjectionBinding = nil
         projectionCursors.removeAll(); projectionReplies.removeAll()
+        historyHostID = nil; historyBindings.removeAll(); historyTargets.removeAll(); historyCursors.removeAll(); historyReplies.removeAll()
         let gracefulEnvironment = graceful && connected && descriptor?.environmentID == expectedID ? expectedID : nil
         generation = UUID(); connected = false; subscribing = false
         descriptor = nil; discovery?.cancel(); discovery = nil
@@ -1542,5 +1560,249 @@ extension RemoteEnvironmentClient {
         try validateProjectionAvailability(value.restore)
         if let error = value.error { try validateProjectionText(error) }
         if let warning = value.cleanupWarning { try validateProjectionText(warning) }
+    }
+}
+
+extension RemoteEnvironmentClient {
+    public func bindHistoryWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        let owned = generation
+        let result: RemoteWorkspaceTarget = try await historyRequest(RemoteHistoryProtocol.bindMethod, request: target, target: target)
+        try validateWorkspaceResponse(generation: owned) {
+            let expected = RemoteWorkspaceTarget(environmentID: target.environmentID, projectID: target.projectID,
+                threadID: target.threadID, configuration: target.configuration, rootID: result.rootID)
+            guard result.rootID != nil, target.rootID == nil || target.rootID == result.rootID,
+                  try Self.samePullRequestTarget(result, expected) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    public func reviewHistory(_ request: RemoteHistoryReviewRequest) async throws -> RemoteHistoryReview {
+        guard request.target.rootID != nil, request.kind == .rewindBeforeRun || (request.files == .keep && !request.recallPromptOnSuccess) else { throw RemoteHistoryFailure(.invalidRequest) }
+        let owned = generation
+        let result: RemoteHistoryReview = try await historyRequest(RemoteHistoryProtocol.reviewMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) {
+            guard try Self.samePullRequestTarget(result.target, request.target), result.id == result.binding.objectID,
+                  result.digest == result.binding.digest, Self.isTerminalDigest(result.digest),
+                  result.value.runID == request.runID, result.value.kind == request.kind,
+                  result.value.provider == request.target.configuration.provider,
+                  result.value.workspacePath.utf8.elementsEqual(request.target.workspacePath.utf8),
+                  result.value.reviewedAt.timeIntervalSince1970.isFinite,
+                  result.value.retainedMessageCount >= 0, result.value.removedMessageCount >= 0, result.value.removedRunCount >= 0,
+                  (result.value.targetThreadID != nil) == (request.kind == .forkAfterRun),
+                  (result.value.files != nil) == (request.files == .restore),
+                  result.value.recallPromptOnSuccess == request.recallPromptOnSuccess else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            try Self.validateProjectionReference(result.value.sourceConfiguration, kind: .configuration)
+            try Self.validateProjectionReference(result.value.targetConfiguration, kind: .configuration)
+            try Self.validateProjectionText(result.value.suggestedTitle)
+            try Self.validateProjectionAvailability(result.value.restoreFiles)
+            for path in result.value.mutatingPaths + result.value.coordinationPaths { try ProviderHistoryValidation.path(path) }
+            for warning in result.value.warnings { try Self.validateProjectionText(warning) }
+            for detail in result.value.details { try Self.validateProjectionText(detail.value) }
+            if let files = result.value.files {
+                guard files.affectedPathCount >= 0, request.kind == .rewindBeforeRun else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try Self.validateProjectionText(files.patch)
+            }
+            try rememberHistoryBinding(result.binding, target: request.target)
+        }
+        return result
+    }
+    public func readHistory(_ request: RemoteHistoryReadRequest) async throws -> RemoteHistoryReadResult {
+        let owned = generation
+        var pageClaim: HistoryCursorClaim?, queryKey: Data?, inputCursor: UUID?
+        let key = Data(SHA256.hash(data: try RemoteHistoryProtocol.payload(request)))
+        guard historyReplies[key] != nil || historyReplies.count < 4_096 else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        switch request.query {
+        case .release(let binding): try requireHistoryBinding(binding, target: request.target)
+        case .prefix(let binding, let newest, let cursor):
+            queryKey = try historyQueryKey(target: request.target, query: .prefix(binding: binding, newestFirst: newest, cursor: nil))
+            inputCursor = cursor
+            pageClaim = try historyClaim(binding: binding, target: request.target, query: queryKey!, cursor: cursor)
+        case .paths(let binding, let cursor):
+            queryKey = try historyQueryKey(target: request.target, query: .paths(binding: binding, cursor: nil))
+            inputCursor = cursor
+            pageClaim = try historyClaim(binding: binding, target: request.target, query: queryKey!, cursor: cursor)
+        case .content(let binding, let reference, let offset, let cursor):
+            try requireHistoryBinding(binding, target: request.target)
+            try Self.validateProjectionReference(reference)
+            guard offset >= 0, offset <= reference.totalBytes else { throw RemoteHistoryFailure(.invalidRequest) }
+            queryKey = try historyQueryKey(target: request.target, query: .content(binding: binding, reference: reference, offset: 0, cursor: nil))
+            inputCursor = cursor
+            let claim = try historyClaim(binding: binding, target: request.target, query: queryKey!, cursor: cursor)
+            guard claim.offset == offset, claim.total == -1 || claim.total == reference.totalBytes else { throw RemoteHistoryFailure(.invalidRequest) }
+            pageClaim = claim
+        default: break
+        }
+        let result: RemoteHistoryReadResult = try await historyRequest(RemoteHistoryProtocol.readMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) {
+            guard try Self.samePullRequestTarget(result.target, request.target) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            switch (request.query, result.value) {
+            case (.operation(let id), .operation(let value)), (.maintenance(let id), .operation(let value)):
+                guard value.operation.id == id, value.binding.objectID == id,
+                      value.operation.kind == .conversationHistory, value.operation.threadID == request.target.threadID,
+                      value.operation.projectID == request.target.projectID, value.provider == request.target.configuration.provider,
+                      ConversationHistoryPhase(rawValue: value.operation.phase) != nil,
+                      Self.isTerminalDigest(value.operation.fingerprint), value.operation.updatedAt.timeIntervalSince1970.isFinite else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try Self.validateProjectionText(value.operation.title)
+                if let error = value.operation.error { try Self.validateProjectionText(error) }
+                for availability in value.operation.actions.values { try Self.validateProjectionAvailability(availability) }
+                for path in value.operation.workspacePaths { try ProviderHistoryValidation.path(path) }
+                if let requests = value.piRequests { try Self.validateProjectionReference(requests, kind: .runtimeRequests) }
+                if let claim = value.maintenanceClaim {
+                    guard value.provider == .opencode, Self.isTerminalDigest(claim.digest) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                }
+                try rememberHistoryBinding(value.binding, target: request.target)
+            case (.controls, .controls(let controls)):
+                guard !controls.canInspectClaudeResume || (controls.claudeSelectionID != nil && controls.claudeConsumerRunID != nil),
+                      !controls.canInspectPiFresh || (controls.piIntentID != nil && controls.piConsumerRunID != nil) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            case (.piFresh(let intentID, let consumerRunID), .piFresh(let value)):
+                guard value.intentID == intentID, value.consumerRunID == consumerRunID else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            case (.release, .released): break
+            case (.recall(let id), .recall(let recall)):
+                guard recall.operationID == id, recall.binding.objectID == id, !recall.messageID.isEmpty,
+                      recall.messageID.utf8.count <= 4_096 else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try Self.validateProjectionText(recall.text)
+                try Self.validateProjectionReference(recall.attachments, kind: .attachmentReferences)
+                try rememberHistoryBinding(recall.binding, target: request.target)
+            case (.prefix(let binding, _, _), .messages(let page)):
+                guard let claim = pageClaim, let queryKey, Set(page.items.map(\.id)).count == page.items.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try finishHistoryPage(binding: binding, actual: page.binding, offset: page.offset, count: page.items.count,
+                    total: page.totalCount, complete: page.complete, next: page.nextCursor, input: inputCursor, claim: claim, query: queryKey)
+                for item in page.items {
+                    guard !item.id.isEmpty, item.id.utf8.count <= 4_096, item.createdAt.timeIntervalSince1970.isFinite,
+                          item.attachmentCount >= 0, item.attachmentCount <= AttachmentLimits.count,
+                          item.attachmentCount == 0 || item.attachments != nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                    try Self.validateProjectionText(item.text)
+                    if let attachments = item.attachments { try Self.validateProjectionReference(attachments, kind: .attachmentReferences) }
+                    for text in [item.submissionError, item.title, item.status].compactMap({ $0 }) { try Self.validateProjectionText(text) }
+                }
+                try rememberHistoryReply(key: key, binding: binding, value: result)
+            case (.paths(let binding, _), .paths(let page)):
+                guard let claim = pageClaim, let queryKey, Set(page.items.map { Data($0.utf8) }).count == page.items.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try finishHistoryPage(binding: binding, actual: page.binding, offset: page.offset, count: page.items.count,
+                    total: page.totalCount, complete: page.complete, next: page.nextCursor, input: inputCursor, claim: claim, query: queryKey)
+                for path in page.items { guard !path.isEmpty, path.utf8.count <= 32_768, !path.contains("\0") else { throw RemoteEnvironmentClientError(.invalidResponse) } }
+                try rememberHistoryReply(key: key, binding: binding, value: result)
+            case (.content(let binding, let reference, let offset, _), .content(let content)):
+                guard let claim = pageClaim, let queryKey, content.reference == reference,
+                      content.data.count == min(RemoteHistoryProtocol.maximumContentChunkBytes, reference.totalBytes - offset) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                try finishHistoryPage(binding: binding, actual: content.binding, offset: content.offset, count: content.data.count,
+                    total: reference.totalBytes, complete: content.complete, next: content.nextCursor, input: inputCursor, claim: claim, query: queryKey)
+                try rememberHistoryReply(key: key, binding: binding, value: result)
+            default: throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+        }
+        if case .release(let binding) = request.query {
+            historyBindings.removeValue(forKey: binding.leaseID)
+            historyTargets.removeValue(forKey: binding.leaseID)
+            historyCursors = historyCursors.filter { $0.value.binding.leaseID != binding.leaseID }
+            historyReplies = historyReplies.filter { $0.value.leaseID != binding.leaseID }
+        }
+        return result
+    }
+    public func historyDocument(_ reference: RemoteProjectionContentReference, binding: RemoteHistoryBinding,
+                                target: RemoteWorkspaceTarget, maximumBytes: Int = 32 * 1_024 * 1_024) async throws -> Data {
+        try Self.validateProjectionReference(reference)
+        guard maximumBytes >= 0, maximumBytes <= RemoteHistoryProtocol.maximumCacheBytes, reference.totalBytes <= maximumBytes else { throw RemoteHistoryFailure(.limitExceeded) }
+        let owned = generation
+        var data = Data(), cursor: UUID?
+        repeat {
+            let result = try await readHistory(.init(target: target, query: .content(binding: binding, reference: reference, offset: data.count, cursor: cursor)))
+            guard generation == owned, case .content(let chunk) = result.value else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            data.append(chunk.data); cursor = chunk.nextCursor
+            if chunk.complete { break }
+        } while true
+        try validateWorkspaceResponse(generation: owned) {
+            guard data.count == reference.totalBytes, RemoteProjectionProtocol.digest(data) == reference.digest else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return data
+    }
+    public func discardHistoryReview(_ request: RemoteHistoryDiscardRequest) async throws -> RemoteHistoryDiscardResult {
+        guard Self.isTerminalDigest(request.digest) else { throw RemoteHistoryFailure(.invalidRequest) }
+        let owned = generation
+        let result: RemoteHistoryDiscardResult = try await historyRequest(RemoteHistoryProtocol.discardMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) {
+            guard try RemoteHistoryProtocol.payload(result.request) == RemoteHistoryProtocol.payload(request) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        let leases = Set(historyBindings.values.filter { $0.objectID == request.reviewID && $0.digest == request.digest }.map(\.leaseID))
+        historyBindings = historyBindings.filter { !leases.contains($0.key) }
+        historyTargets = historyTargets.filter { !leases.contains($0.key) }
+        historyCursors = historyCursors.filter { !leases.contains($0.value.binding.leaseID) }
+        historyReplies = historyReplies.filter { !leases.contains($0.value.leaseID) }
+        return result
+    }
+    private func historyRequest<Request: Encodable & Sendable, Response: Decodable & Sendable>(
+        _ method: String, request: Request, target: RemoteWorkspaceTarget
+    ) async throws -> Response {
+        let (connection, owned, environment) = try context()
+        guard target.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
+        guard descriptor?.capabilities.supportsRemoteHistory == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        let bytes = try RemoteHistoryProtocol.payload(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumRequestBytes, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(120))
+            guard generation == owned, rpc != nil else { throw CancellationError() }
+            guard try RemoteHistoryProtocol.payload(raw).count <= RemoteHistoryProtocol.maximumResultBytes else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            do { return try RemoteEnvironmentProtocol.decode(Response.self, from: raw) }
+            catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+        } catch is CancellationError {
+            // Cancelling a display read removes that pending JSON-RPC request;
+            // the owned connection remains usable for current controls.
+            throw CancellationError()
+        } catch {
+            if generation == owned {
+                if let failure = error as? JSONRPCRemoteError, failure.code == -32_007,
+                   let value = failure.data["kind"].string, let kind = RemoteHistoryFailure.Kind(rawValue: value) { throw RemoteHistoryFailure(kind) }
+                if let failure = workspaceRejection(error) { throw failure }
+                if let failure = nativeRejection(error) { throw failure }
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
+            throw error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
+        }
+    }
+    private func requireHistoryBinding(_ binding: RemoteHistoryBinding, target: RemoteWorkspaceTarget) throws {
+        guard binding.environmentID == target.environmentID, binding.threadID == target.threadID,
+              historyHostID == binding.hostID, historyBindings[binding.leaseID] == binding,
+              historyTargets[binding.leaseID] == (try RemoteHistoryProtocol.payload(target)) else { throw RemoteHistoryFailure(.staleReview) }
+    }
+    private func rememberHistoryBinding(_ binding: RemoteHistoryBinding, target: RemoteWorkspaceTarget) throws {
+        let targetBytes = try RemoteHistoryProtocol.payload(target)
+        guard binding.environmentID == expectedID, binding.environmentID == target.environmentID,
+              binding.threadID == target.threadID, Self.isTerminalDigest(binding.digest),
+              historyHostID == nil || historyHostID == binding.hostID,
+              historyBindings[binding.leaseID] == nil || historyBindings[binding.leaseID] == binding,
+              historyTargets[binding.leaseID] == nil || historyTargets[binding.leaseID] == targetBytes else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        guard historyBindings[binding.leaseID] != nil || historyBindings.count < 4_096 else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        historyHostID = binding.hostID; historyBindings[binding.leaseID] = binding; historyTargets[binding.leaseID] = targetBytes
+    }
+    private func historyQueryKey(target: RemoteWorkspaceTarget, query: RemoteHistoryQuery) throws -> Data {
+        Data(SHA256.hash(data: try RemoteHistoryProtocol.payload(RemoteHistoryReadRequest(target: target, query: query))))
+    }
+    private func historyClaim(binding: RemoteHistoryBinding, target: RemoteWorkspaceTarget, query: Data, cursor: UUID?) throws -> HistoryCursorClaim {
+        try requireHistoryBinding(binding, target: target)
+        if let cursor {
+            guard let claim = historyCursors[cursor], claim.query == query, claim.binding == binding else { throw RemoteHistoryFailure(.invalidRequest) }
+            return claim
+        }
+        return .init(query: query, binding: binding, offset: 0, total: -1)
+    }
+    private func finishHistoryPage(binding: RemoteHistoryBinding, actual: RemoteHistoryBinding, offset: Int, count: Int,
+                                   total: Int, complete: Bool, next: UUID?, input: UUID?, claim: HistoryCursorClaim, query: Data) throws {
+        guard actual == binding, offset == claim.offset, offset >= 0, total >= 0, offset <= total,
+              count <= total - offset, claim.total == -1 || total == claim.total,
+              complete == (offset + count == total), complete == (next == nil), complete || count > 0,
+              next == nil || next != input else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        if let next {
+            let value = HistoryCursorClaim(query: query, binding: binding, offset: offset + count, total: total)
+            guard historyCursors[next] == nil || historyCursors[next] == value else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            guard historyCursors[next] != nil || historyCursors.count < 4_096 else { throw RemoteEnvironmentClientError(.limitExceeded) }
+            historyCursors[next] = value
+        }
+    }
+    private func rememberHistoryReply<Value: Encodable>(key: Data, binding: RemoteHistoryBinding, value: Value) throws {
+        let digest = try RemoteHistoryProtocol.digest(value)
+        if let prior = historyReplies[key] { guard prior.leaseID == binding.leaseID, prior.digest == digest else { throw RemoteEnvironmentClientError(.invalidResponse) } }
+        historyReplies[key] = (binding.leaseID, digest)
     }
 }

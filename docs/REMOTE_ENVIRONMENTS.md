@@ -85,10 +85,63 @@ owned scratch; accepted or uncertain recovery evidence is preserved. Reviews
 expire when the owned helper restarts. Old runs with no checkpoint receipt do
 not acquire file restoration support retroactively.
 
-This exposes existing native run-checkpoint workflows remotely. Remote provider
-history/fork/rewind, checkpoint range diffs, portable history/merge-back and
-large-history pagination remain unfinished. Offline peers and local Git fixtures
-do not establish real SSH, installed-provider or remote sign-in acceptance.
+This exposes existing native run-checkpoint workflows remotely. Checkpoint range
+diffs and portable history/merge-back remain unfinished. Offline peers and local
+Git fixtures do not establish real SSH, installed-provider or remote sign-in
+acceptance.
+
+## Remote conversation history
+
+Updated helpers advertise `supportsRemoteHistory`. The recorded-run sheet offers
+**Fork After Run** and **Rewind Before Run** for exact native boundaries. Review
+creation reads the native provider and does not perform the history mutation.
+The review shows retained/removed counts, a paged immutable transcript prefix,
+the target settings and provider-specific boundary behavior. Fork opens the
+reserved resulting conversation after the host confirms it. Rewind offers
+**Keep Changes** and a separately reviewed **Restore Files** choice when a
+verified isolated checkpoint is available. Combined rewind retains the provider
+outcome separately from the subsequent file stage.
+
+Only opaque review identities/digests authorize an accepted command. Complete
+Codex/Claude/OpenCode/Pi evidence, native inventories and restore manifests stay
+on the host. A separate history lease pins display pages and content; those
+values never become native proofs. Responses retain the 256 KiB envelope budget,
+128 KiB exact byte chunks, immutable cursor positions and SHA-256 verification.
+History leases and their prepared native evidence have an independent eight-
+lease/128 MiB limit; explicit release, eviction and host restart invalidate them.
+The UI retains 512 message/path rows and a 1 MiB text display window, with clear
+loaded ranges. Complete typed action documents have the same explicit 32 MiB
+client hydration limit as other remote controls.
+
+Acceptance and its original remote command receipt commit atomically through
+the native Engine. Check Result after a lost reply only looks up that UUID and
+payload; it never starts a second fork, rewind, file restore or provider input.
+Discard/close release unused prepared scratch, while acceptance fences preserve
+accepted and uncertain recovery evidence until the native workflow resolves it.
+File restoration rechecks remote jobs/PTys and this Mac's retained remote editor
+buffers and terminal tabs before admission.
+
+Recovery controls preserve each provider's actual behavior: inspect an uncertain
+provider result; inspect or explicitly keep current files; inspect a reserved
+Claude fork or a terminal run that consumed saved context; verify and keep an
+OpenCode v1/Pi original; review and clear the exact OpenCode v2 maintenance state;
+and inspect a Pi fresh-session consumer. Pi history questions and cancellation
+bind their exact worker/session/request; responding returns after its durable
+marker so cancellation remains reachable while native I/O runs. There is no
+generic provider-history acknowledgement or generic Codex/Claude cancellation.
+
+Recalled input is merged into the latest private local text with a durable
+merge-once marker, keyed to the original confirmed command and history operation,
+before the pending command is cleared. A lost reply/restart cannot append it
+twice. Later local text and imported attachments survive; original recalled
+attachment references remain on the host. Oversized drafts, changed saved local
+data or unavailable storage fail explicitly and retain the pending recovery.
+
+Remote conversation creation still supports Codex and Claude. The closed
+recovery adapter also handles existing host-owned OpenCode/Pi histories; that
+does not add remote creation/authentication for those providers. Latest-stable
+and checkpoint-based fork sources, portable context transfer, merge-back, broader
+checkpoint ranges and live two-Mac/provider acceptance remain separate gaps.
 
 ## Bounded remote views
 
@@ -141,10 +194,10 @@ client rechecks retained buffers and terminals before mutations. Exact captured
 run/runtime/request identities remain usable during streaming invalidations;
 older-history browsing does not freeze Stop, questions or queue controls.
 
-This is bounded display transport and browsing. Remote provider-history
-fork/rewind and provider-specific recovery commands still need implementation;
-portable transfers, broader history/checkpoint ranges, durable paged journal
-catch-up and persistent-host transport remain separate unfinished parity work.
+This is bounded display transport and browsing. Provider-history actions use the
+separate reviewed workflow above. Portable transfers, broader history/checkpoint
+ranges, durable paged journal catch-up and persistent-host transport remain
+separate unfinished parity work.
 
 ## Remote Files and Changes
 

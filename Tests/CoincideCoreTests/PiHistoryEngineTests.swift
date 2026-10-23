@@ -12,6 +12,7 @@ private struct PiNativeHistoryTrace: Sendable {
     var durableCandidates: [PiHistoryCandidate] = []
     var advancedPastCandidates: [PiHistoryCandidate.Stage] = []
     var answeredRequests: [JSONValue] = []
+    var responseEnteredRequests: [JSONValue] = []
 }
 
 /// Synthetic native state; Engine, SQLite admission and recovery are real. No
@@ -72,8 +73,13 @@ private actor PiNativeHistoryWorld {
             }
         } onCancel: { Task { await self.cancel(session) } }
     }
-    func respond(session: UUID, request: ApprovalRequest, allow: Bool) throws {
+    func respond(session: UUID, request: ApprovalRequest, allow: Bool) async throws {
         guard let pending = requests[session], pending.0 == request else { throw ProviderHistoryError(.invalidRequest) }
+        trace.responseEnteredRequests.append(request.id)
+        if mode == "question-held-response" {
+            try await hold(session)
+            guard requests[session]?.0 == request else { throw CancellationError() }
+        }
         requests.removeValue(forKey: session)
         trace.answeredRequests.append(request.id); pending.2.yield(.sessionApprovalDismissed(request.id))
         if allow { pending.1.resume() } else { pending.1.resume(throwing: ProviderHistoryError(.outcomeUncertain)) }
@@ -94,7 +100,7 @@ private actor PiNativeHistoryWorld {
         guard review.operationID == operationID, let source = graphs[review.source.reference.nativeThreadID],
               try snapshot(review.source.reference.nativeThreadID) == review.source else { throw ProviderHistoryError(.historyChanged) }
         trace.mutations += 1
-        if mode == "question" { try await ask(session, sink: sink) }
+        if mode == "question" || mode == "question-held-response" { try await ask(session, sink: sink) }
         var candidates: [PiHistoryCandidate] = []
         let identity = configuration.piConfiguration?.runtimeIdentity ?? review.source.runtimeIdentity
         var parent = review.source.reference.nativeThreadID
@@ -241,7 +247,7 @@ private struct PiNativeHistoryFixture {
     let factoryCount: PiHistoryFactoryCounter
     let engine: WorkspaceEngine
 
-    init(legacy: Bool = false, competingAlias: Bool = false) async throws {
+    init(legacy: Bool = false, competingAlias: Bool = false, canonicalRegistration: Bool = false) async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-pi-history-engine-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         root = URL(fileURLWithPath: try PiRuntimeConfiguration.physical(folder.path)); database = root.appendingPathComponent("workspace.sqlite")
@@ -249,14 +255,17 @@ private struct PiNativeHistoryFixture {
         try FileManager.default.createDirectory(at: native, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let sessionID = "original-native-" + UUID().uuidString.lowercased(); nativeFile = native.appendingPathComponent(sessionID + ".jsonl")
         let instance = UUID()
+        // A registered app workspace follows Foundation's canonical spelling;
+        // Pi's captured native cwd keeps its independently verified realpath.
+        let registeredPath = canonicalRegistration ? root.standardizedFileURL.resolvingSymlinksInPath().path : root.path
         runtime = try .init(instanceID: instance, executable: root.appendingPathComponent("never-executed-pi").path,
-            workspacePath: root.path, homeDirectory: root.path, agentDirectory: root.appendingPathComponent(".pi/agent").path,
+            workspacePath: root.path, registeredWorkspacePath: registeredPath, homeDirectory: root.path, agentDirectory: root.appendingPathComponent(".pi/agent").path,
             agentDirectorySelection: .defaultHome(homeDirectory: root.path))
         let config = PiConfiguration(instanceID: instance, executable: runtime.requestedExecutable,
             model: .init(provider: "fixture", modelID: "current-model"), thinkingLevel: "high", runtime: legacy ? nil : runtime)
-        let project = WorkspaceProject(path: root.path)
+        let project = WorkspaceProject(path: registeredPath)
         var thread = CodingThread(project: project)
-        thread.provider = .pi; thread.workspacePath = root.path; thread.providerThreadID = nativeFile.path
+        thread.provider = .pi; thread.workspacePath = registeredPath; thread.providerThreadID = nativeFile.path
         thread.piConfiguration = config; thread.model = config.model?.catalogID ?? ""; thread.permission = .supervised
         thread.checkpointPolicy = .disabled; thread.isPinned = true; thread.draft = "Unsent latest draft 工作 😀"
         var rows: [JSONValue] = [], records: [ThreadRunRecord] = [], messages: [ChatMessage] = [], ids: [UUID] = [], openings: [String] = []
@@ -547,6 +556,81 @@ func piHistoryEngineLifecycleControlsStayOnExactWorkerAndCancelOrShutdownDrainsW
         #expect(try Data(contentsOf: f.nativeFile) == f.originalBytes)
         let final = await f.world.observations(); #expect(final.mutations == 1 && final.promptSends == 0)
     } catch { await f.finish(); throw error }
+    await f.finish()
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func remoteHistoryPiWorkerResponseUsesOriginalReceiptAndHeldNativeIOStillAllowsExactCancel(holdResponse: Bool) async throws {
+    let f = try await PiNativeHistoryFixture(canonicalRegistration: true)
+    var workspace: RemoteWorkspaceService?, history: RemoteHistoryService?
+    do {
+        await f.world.configure(holdResponse ? "question-held-response" : "question")
+        let hostRoot = f.root.appendingPathComponent("RemoteHost")
+        try FileManager.default.createDirectory(at: hostRoot, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let environmentID = UUID(), files = try RemoteWorkspaceService(environmentID: environmentID, engine: f.engine, dataDirectory: hostRoot)
+        workspace = files
+        let source = try await f.currentSource()
+        #expect(source.id == f.source.id && source.projectID == f.source.projectID)
+        #expect(source.workspacePath.utf8.elementsEqual(URL(fileURLWithPath: source.workspacePath).standardizedFileURL.resolvingSymlinksInPath().path.utf8))
+        let target = try await files.bindHistoryTarget(.init(environmentID: environmentID, projectID: source.projectID,
+            threadID: source.id, configuration: .init(thread: source)))
+        let service = RemoteHistoryService(environmentID: environmentID, engine: f.engine, workspace: files); history = service
+        func request(_ action: RemoteHistoryAction) -> RemoteEnvironmentCommandRequest {
+            .init(environmentID: environmentID, command: .history(target: target, action: action))
+        }
+        func perform(_ request: RemoteEnvironmentCommandRequest) async throws -> WorkspaceCommandReceipt {
+            if let existing = try await f.engine.remoteEnvironmentReceipt(request) { await f.engine.awaitRemoteHistoryCompletion(request); return existing }
+            let captured = try await service.prepare(request.command)
+            if case .history(let value) = captured { try await files.admitHistoryScope(value.scope) }
+            let receipt = try await f.engine.dispatchRemoteEnvironment(request, preparation: captured)
+            if receipt.rejection == nil { await f.engine.awaitRemoteHistoryCompletion(request) }
+            return receipt
+        }
+        let review = try await service.review(.init(target: target, runID: f.runIDs[2], kind: .forkAfterRun))
+        let begin = request(.begin(reviewID: review.id, digest: review.digest, title: "Remote Pi fork")), accepted = try await perform(begin)
+        #expect(accepted.commandID == begin.id && accepted.rejection == nil && begin.id != review.id)
+        try await piNativeHistoryEventually { await f.operation(review.id)?.piControls?.requests.count == 1 }
+        let read = try await service.read(.init(target: target, query: .operation(operationID: review.id)))
+        guard case .operation(let operation) = read.value else { throw CoincideError("Missing remote Pi worker state") }
+        let sessionID = try #require(operation.piSessionID), reference = try #require(operation.piRequests)
+        let document = try await service.read(.init(target: target, query: .content(binding: operation.binding, reference: reference, offset: 0, cursor: nil)))
+        guard case .content(let chunk) = document.value, chunk.complete else { throw CoincideError("Missing bounded worker question document") }
+        let questions = try JSONDecoder().decode([RuntimeRequest].self, from: chunk.data), question = try #require(questions.first)
+        #expect(questions.count == 1 && operation.operation.actions["respondPi"]?.allowed == true)
+        await #expect(throws: RemoteHistoryFailure(.invalidTarget)) {
+            _ = try await service.prepare(request(.respondPi(operationID: review.id, sessionID: UUID(), request: question.request, response: .decision(true))).command)
+        }
+        let foreign = ApprovalRequest(id: .string("foreign-request"), method: question.request.method, params: question.request.params)
+        await #expect(throws: RemoteHistoryFailure(.invalidTarget)) {
+            _ = try await service.prepare(request(.respondPi(operationID: review.id, sessionID: sessionID, request: foreign, response: .decision(true))).command)
+        }
+        let response = request(.respondPi(operationID: review.id, sessionID: sessionID, request: question.request, response: .decision(true)))
+        let receipt = try await perform(response)
+        #expect(receipt.commandID == response.id && receipt.rejection == nil)
+        #expect(try await perform(response) == receipt)
+        try await piNativeHistoryEventually { await f.world.observations().responseEnteredRequests == [question.id] }
+        if holdResponse {
+            let before = await f.world.observations()
+            #expect(before.answeredRequests.isEmpty && before.durableCandidates.isEmpty)
+            let saved = try await WorkspaceDatabase(url: f.database).load()
+            #expect(saved.conversationHistoryOperation(review.id)?.piControls?.requests.first?.responding == true)
+            let cancel = request(.cancelPi(operationID: review.id)), cancelled = try await perform(cancel)
+            #expect(cancelled.commandID == cancel.id && cancelled.rejection == nil)
+            #expect(try await perform(cancel) == cancelled)
+            let after = await f.world.observations(), state = await f.operation(review.id)
+            #expect(state?.phase == .unconfirmed && state?.piControls == nil && state?.result == nil)
+            #expect(after.closedSessions.count > before.closedSessions.count && after.answeredRequests.isEmpty && after.durableCandidates.isEmpty)
+            #expect(after.responseEnteredRequests == [question.id])
+        } else {
+            try await piNativeHistoryEventually { await f.operation(review.id)?.phase == .applied }
+            let after = await f.world.observations()
+            #expect(after.answeredRequests == [question.id] && after.responseEnteredRequests == [question.id])
+        }
+        #expect(try Data(contentsOf: f.nativeFile) == f.originalBytes)
+        let trace = await f.world.observations(); #expect(trace.promptSends == 0 && trace.mutations == 1)
+        #expect(try await WorkspaceDatabase(url: f.database).receipt(review.id) == nil)
+        await service.close(); await files.close()
+    } catch { await history?.close(); await workspace?.close(); await f.finish(); throw error }
     await f.finish()
 }
 

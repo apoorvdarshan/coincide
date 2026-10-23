@@ -210,30 +210,83 @@ public actor RemoteWorkspacePendingStore {
 }
 
 public actor RemoteEnvironmentDraftStore {
-    private struct Document: Codable { var version = 1; let environmentID: UUID; let drafts: [UUID: String] }
+    private struct RecallMarker: Codable {
+        let commandID: UUID, operationID: UUID, threadID: UUID
+        let digest: String
+    }
+    private struct Document: Codable {
+        var version = 1
+        let environmentID: UUID
+        let drafts: [UUID: String]
+        let historyRecalls: [UUID: RecallMarker]?
+    }
+    public struct HistoryRecallResult: Sendable {
+        public let drafts: [UUID: String]
+        public let appended: Bool
+    }
     private let root: URL
     public init(root: URL) { self.root = root }
     public func load(environmentID: UUID) throws -> [UUID: String] {
         try RemotePrivateFiles(root: root).locked(create: false) { files in
             guard let files, let bytes = try files.read(Self.name(environmentID), maximum: 16_777_216) else { return [:] }
-            return try Self.decode(bytes, environmentID: environmentID)
+            return try Self.decode(bytes, environmentID: environmentID).drafts
         }
     }
     public func save(environmentID: UUID, drafts: [UUID: String]) throws {
         try Self.validate(drafts)
         try RemotePrivateFiles(root: root).locked(create: true) { files in
             guard let files else { throw RemoteEnvironmentStorageError(.unsafeFile) }
-            if let bytes = try files.read(Self.name(environmentID), maximum: 16_777_216) { _ = try Self.decode(bytes, environmentID: environmentID) }
-            try files.write(JSONEncoder().encode(Document(environmentID: environmentID, drafts: drafts)),
+            let previous = try files.read(Self.name(environmentID), maximum: 16_777_216).map { try Self.decode($0, environmentID: environmentID) }
+            try files.write(JSONEncoder().encode(Document(environmentID: environmentID, drafts: drafts, historyRecalls: previous?.historyRecalls)),
                 name: Self.name(environmentID), maximum: 16_777_216)
         }
     }
+    /// The prompt merge and its receipt marker share one atomic private write.
+    /// A replay after a lost reply observes the marker without appending again.
+    public func mergeHistoryRecall(environmentID: UUID, threadID: UUID, commandID: UUID, operationID: UUID,
+                                   text: String, attachmentDigest: String, expectedDrafts: [UUID: String]) throws -> HistoryRecallResult {
+        try Self.validate(expectedDrafts)
+        guard CheckpointValidation.digest(attachmentDigest), text.utf16.count <= 120_000 else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+        struct Identity: Encodable { let threadID: UUID; let text: String; let attachmentDigest: String }
+        let digest = try RemoteHistoryProtocol.digest(Identity(threadID: threadID, text: text, attachmentDigest: attachmentDigest))
+        return try RemotePrivateFiles(root: root).locked(create: true) { files in
+            guard let files else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            let old = try files.read(Self.name(environmentID), maximum: 16_777_216).map { try Self.decode($0, environmentID: environmentID) }
+            var markers = old?.historyRecalls ?? [:]
+            if let marker = markers.values.first(where: { $0.commandID == commandID }),
+               marker.operationID != operationID || marker.threadID != threadID || marker.digest != digest {
+                throw RemoteEnvironmentStorageError(.commandChanged)
+            }
+            if let marker = markers[operationID] {
+                guard marker.threadID == threadID, marker.digest == digest else { throw RemoteEnvironmentStorageError(.commandChanged) }
+                return .init(drafts: old?.drafts ?? [:], appended: false)
+            }
+            guard markers.count < 4_096 else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+            let savedDrafts = old?.drafts ?? [:]
+            guard savedDrafts.count == expectedDrafts.count,
+                  savedDrafts.allSatisfy({ id, text in expectedDrafts[id].map { text.utf8.elementsEqual($0.utf8) } == true }) else {
+                throw RemoteEnvironmentStorageError(.commandChanged)
+            }
+            var drafts = expectedDrafts
+            let current = drafts[threadID] ?? ""
+            if !text.isEmpty { drafts[threadID] = current.isEmpty ? text : current + "\n\n" + text }
+            try Self.validate(drafts)
+            markers[operationID] = .init(commandID: commandID, operationID: operationID, threadID: threadID, digest: digest)
+            try files.write(JSONEncoder().encode(Document(environmentID: environmentID, drafts: drafts, historyRecalls: markers)),
+                name: Self.name(environmentID), maximum: 16_777_216)
+            return .init(drafts: drafts, appended: true)
+        }
+    }
     private static func name(_ id: UUID) -> String { "drafts-" + id.uuidString.lowercased() + ".json" }
-    private static func decode(_ bytes: Data, environmentID: UUID) throws -> [UUID: String] {
+    private static func decode(_ bytes: Data, environmentID: UUID) throws -> Document {
         do {
             let value = try JSONDecoder().decode(Document.self, from: bytes)
             guard value.version == 1, value.environmentID == environmentID else { throw RemoteEnvironmentStorageError(.corruptFile) }
-            try validate(value.drafts); return value.drafts
+            try validate(value.drafts)
+            let markers = value.historyRecalls ?? [:]
+            guard markers.count <= 4_096, markers.allSatisfy({ $0.key == $0.value.operationID && CheckpointValidation.digest($0.value.digest) }),
+                  Set(markers.values.map(\.commandID)).count == markers.count else { throw RemoteEnvironmentStorageError(.corruptFile) }
+            return value
         } catch { throw error as? RemoteEnvironmentStorageError ?? RemoteEnvironmentStorageError(.corruptFile) }
     }
     private static func validate(_ drafts: [UUID: String]) throws {

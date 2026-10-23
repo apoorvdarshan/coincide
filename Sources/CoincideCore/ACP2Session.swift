@@ -216,6 +216,9 @@ public actor ACP2Session: ProviderSession {
             try await dispatch.wait()
             announceTurn(token, runID: runID)
         } catch {
+            // Closing an owned runtime cancels its suspended setup before any
+            // prompt was dispatched, including a configuration RPC waiter.
+            if closing, !dispatched { throw CancellationError() }
             if activityID == token, !closing {
                 if interrupted {
                     rejected = true

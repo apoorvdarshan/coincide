@@ -197,6 +197,7 @@ struct RemoteWorkspaceView: View {
         .task(id: store.inspectorSelection) { await store.updateInspector() }
         .task(id: store.attachmentSelection) { await store.updateAttachments() }
         .task(id: store.checkpointSelection) { await store.updateCheckpoints() }
+        .task(id: store.historySelection) { await store.updateHistory() }
         .task(id: store.pullRequestSelection) { await store.updatePullRequests() }
         .task(id: store.terminalSelection) { await store.updateTerminals() }
         .task(id: store.worktreeSelection) { store.updateWorktrees() }
@@ -208,7 +209,8 @@ struct RemoteWorkspaceView: View {
         .sheet(isPresented: $choosingWorktree) {
             RemoteWorktreeSheet(store: store.worktrees, onPrepared: { choosingWorktree = false })
         }
-        .sheet(isPresented: $showingCheckpoints) { RemoteRunCheckpointsSheet(store: store.checkpoints) }
+        .sheet(isPresented: $showingCheckpoints) { RemoteRunCheckpointsSheet(store: store.checkpoints, history: store.history,
+            attachmentAccess: store.attachmentTarget.map { store.attachments.access(target: $0) }) }
         .sheet(isPresented: $showingPullRequests) {
             RemotePullRequestsSheet(store: store.pullRequests, requestPush: {
                 showingPullRequests = false; Task { await store.showPullRequestChanges() }

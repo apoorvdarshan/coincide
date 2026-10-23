@@ -2248,6 +2248,14 @@ public actor WorkspaceEngine {
     }
     private var historyReviews: [UUID: PreparedHistoryReview] = [:]
     private var acceptingHistoryReviews: Set<UUID> = []
+    private var remoteHistoryReviews: [UUID: RemoteHistoryPreparedReview] = [:]
+    private var remoteHistoryMaintenanceReviews: [UUID: RemoteHistoryMaintenanceReview] = [:]
+    private var remoteHistoriesClosing = false
+    private var remoteHistoryOperations = 0
+    private var remoteHistoryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var remoteHistoryCloseTask: Task<Void, Never>?
+    private var remoteHistoryAcceptances: [UUID: Int] = [:]
+    private var remoteHistoryTasks: [UUID: Task<Void, Never>] = [:]
     private struct PreparedCheckpointRestore: Sendable {
         let review: RunCheckpointRestoreReview
         let digest: String
@@ -2640,6 +2648,9 @@ public actor WorkspaceEngine {
                         if case .checkpoint(let captured) = preparation {
                             try validateRemoteCheckpointPreparation(captured, snapshot: base.snapshot)
                         }
+                        if case .history(let captured) = preparation {
+                            try validateRemoteHistoryPreparation(captured, snapshot: base.snapshot)
+                        }
                         if case .pullRequest(let captured) = preparation {
                             try validateRemotePullRequestPreparation(captured)
                         }
@@ -2721,6 +2732,7 @@ public actor WorkspaceEngine {
                     let receipt = outcome.receipt
                     revision = .init(snapshot: decision.snapshot, sequence: receipt.sequence)
                     if case .remoteEnvironment(_, .checkpoint(let captured)) = envelope.command { remoteCheckpointCommitted(captured) }
+                    if case .remoteEnvironment(let request, .history(let captured)) = envelope.command { remoteHistoryCommitted(captured, commandID: request.id) }
                     if case .remoteEnvironment(_, .pullRequest(let captured)) = envelope.command {
                         let reviewID: UUID?
                         switch captured.action {
@@ -4685,12 +4697,21 @@ extension WorkspaceEngine {
             remoteCheckpointAcceptances[review.id, default: 0] += 1
             remoteCheckpointOperations += 1
         } else { fenced = nil }
+        let historyFence: ConversationHistoryReview?
+        if case .history(let captured) = preparation, case .begin(let review, _, _) = captured.action,
+           let native = historyReviews[review.id],
+           try RemoteHistoryProtocol.payload(native.review) == RemoteHistoryProtocol.payload(review), !remoteHistoriesClosing {
+            historyFence = review; acceptingHistoryReviews.insert(review.id)
+            remoteHistoryAcceptances[review.id, default: 0] += 1; remoteHistoryOperations += 1
+        } else { historyFence = nil }
         do {
             let receipt = try await enqueue(.remoteEnvironment(request, preparation: preparation), id: request.id)
             if let fenced { await finishRemoteCheckpointAcceptance(fenced) }
+            if let historyFence { await finishRemoteHistoryAcceptance(historyFence) }
             return receipt
         } catch {
             if let fenced { await finishRemoteCheckpointAcceptance(fenced) }
+            if let historyFence { await finishRemoteHistoryAcceptance(historyFence) }
             throw error
         }
     }
@@ -5066,5 +5087,386 @@ extension WorkspaceEngine {
         let reviews = Array(remoteCheckpointReviews.values)
         remoteCheckpointReviews.removeAll()
         for review in reviews { await discardCheckpointRestoreReview(reviewID: review.id) }
+    }
+}
+
+extension WorkspaceEngine {
+    private func beginRemoteHistoryOperation() throws {
+        guard !closing, !stoppingEffects, !remoteHistoriesClosing, fatalError == nil else { throw RemoteHistoryFailure(.unavailable) }
+        remoteHistoryOperations += 1
+    }
+    private func finishRemoteHistoryOperation() {
+        remoteHistoryOperations -= 1
+        if remoteHistoryOperations == 0 {
+            let waiting = remoteHistoryWaiters; remoteHistoryWaiters = []
+            for waiter in waiting { waiter.resume() }
+        }
+    }
+    // Internal observation for deterministic SQLite contention tests. This
+    // exposes no native proof and does not participate in admission decisions.
+    func remoteHistoryAdmissionState(reviewID: UUID) -> (acceptances: Int, committing: Bool) {
+        (remoteHistoryAcceptances[reviewID] ?? 0, completedDuringCommit != nil)
+    }
+    private func remoteHistoryThread(_ target: RemoteWorkspaceTarget, requireBound: Bool = false) throws -> CodingThread {
+        guard !closing, !stoppingEffects, !remoteHistoriesClosing, fatalError == nil, !requireBound || target.rootID != nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              !thread.isArchived, thread.workspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+              try RemoteHistoryProtocol.payload(ProviderConfiguration(thread: thread)) == RemoteHistoryProtocol.payload(target.configuration) else { throw RemoteHistoryFailure(.invalidTarget) }
+        return thread
+    }
+    func captureRemoteHistory(_ target: RemoteWorkspaceTarget) async throws -> WorkspaceUpdate {
+        try beginRemoteHistoryOperation(); defer { finishRemoteHistoryOperation() }
+        _ = try await load(); _ = try remoteHistoryThread(target)
+        return .init(snapshot: revision.snapshot, sequence: revision.sequence)
+    }
+    func reviewRemoteHistoryMaintenance(target: RemoteWorkspaceTarget, operationID: UUID) async throws -> RemoteHistoryMaintenanceReview {
+        try beginRemoteHistoryOperation(); defer { finishRemoteHistoryOperation() }
+        _ = try await load(); _ = try remoteHistoryThread(target, requireBound: true)
+        guard remoteHistoryMaintenanceReviews.count + remoteHistoryReviews.count < RemoteHistoryProtocol.maximumLeases,
+              let operation = revision.snapshot.conversationHistoryOperation(operationID), operation.review.sourceThreadID == target.threadID,
+              operation.review.projectID == target.projectID else { throw RemoteHistoryFailure(.invalidTarget) }
+        let observed = try await inspectConversationHistoryMaintenance(operationID: operationID)
+        _ = try remoteHistoryThread(target, requireBound: true)
+        guard let current = revision.snapshot.conversationHistoryOperation(operationID),
+              try RemoteHistoryProtocol.payload(current) == RemoteHistoryProtocol.payload(operation) else { throw RemoteHistoryFailure(.staleReview) }
+        struct Bound: Encodable { let target: RemoteWorkspaceTarget; let operation: ConversationHistoryOperation; let expected: OpenCodeV2HistorySnapshot }
+        let bytes = try RemoteHistoryProtocol.payload(Bound(target: target, operation: operation, expected: observed))
+        let value = RemoteHistoryMaintenanceReview(id: UUID(), target: target, operation: operation, expected: observed,
+            digest: RemoteProjectionProtocol.digest(bytes))
+        guard try RemoteHistoryProtocol.payload(value).count <= RemoteHistoryProtocol.maximumCacheBytes - remoteHistoryProofBytes() else { throw RemoteHistoryFailure(.limitExceeded) }
+        remoteHistoryMaintenanceReviews[value.id] = value; return value
+    }
+    func discardRemoteHistoryMaintenance(target: RemoteWorkspaceTarget, claim: RemoteHistoryMaintenanceClaim) {
+        guard let saved = remoteHistoryMaintenanceReviews[claim.id], saved.digest == claim.digest,
+              (try? RemoteHistoryProtocol.payload(saved.target)) == (try? RemoteHistoryProtocol.payload(target)) else { return }
+        remoteHistoryMaintenanceReviews.removeValue(forKey: claim.id)
+    }
+    func remoteHistoryFileRestoreAvailability(_ review: ConversationHistoryReview) throws -> RemoteProjectionAvailability {
+        guard review.kind == .rewindBeforeRun else { return .init(allowed: false, reason: "Only a rewind can restore workspace files.") }
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == review.sourceThreadID }),
+              ownsHistorySource(threadID: thread.id, incarnation: review.sourceIncarnation, fingerprint: review.sourceFingerprint),
+              revision.snapshot.canReviewCheckpointRestore(threadID: thread.id) else { return .init(allowed: false, reason: "Finish other work using this workspace before reviewing file restoration.") }
+        switch try revision.snapshot.conversationHistoryFileTarget(for: review) {
+        case .unavailable(let reason): return .init(allowed: false, reason: reason.message)
+        case .available(let target):
+            return .init(allowed: restoreRuntimeScopeIsolated(thread: thread, path: target.receipt.plan.repositoryPath),
+                reason: restoreRuntimeScopeIsolated(thread: thread, path: target.receipt.plan.repositoryPath) ? nil : "Another runtime owns the saved checkpoint's workspace.")
+        }
+    }
+    private func remoteHistoryProofBytes() throws -> Int {
+        let reviews = try remoteHistoryReviews.values.reduce(0) { try $0 + RemoteHistoryProtocol.payload($1).count }
+        return try remoteHistoryMaintenanceReviews.values.reduce(reviews) { try $0 + RemoteHistoryProtocol.payload($1).count }
+    }
+    func reviewRemoteHistory(_ request: RemoteHistoryReviewRequest) async throws -> RemoteHistoryPreparedReview {
+        try beginRemoteHistoryOperation(); defer { finishRemoteHistoryOperation() }
+        _ = try await load(); _ = try remoteHistoryThread(request.target, requireBound: true)
+        guard request.kind == .rewindBeforeRun || (request.files == .keep && !request.recallPromptOnSuccess),
+              remoteHistoryReviews.count < RemoteHistoryProtocol.maximumLeases else { throw RemoteHistoryFailure(.invalidRequest) }
+        var native = try await reviewConversationHistory(threadID: request.target.threadID, runID: request.runID, kind: request.kind,
+            recallPromptOnSuccess: request.recallPromptOnSuccess)
+        do {
+            if request.files == .restore {
+                let keep = native
+                native = try await reviewConversationHistoryRestoringFiles(keep)
+                await discardConversationHistoryReview(reviewID: keep.id)
+            }
+            _ = try remoteHistoryThread(request.target, requireBound: true); try Task.checkCancellation()
+            struct Bound: Encodable { let target: RemoteWorkspaceTarget; let value: ConversationHistoryReview }
+            let prepared = RemoteHistoryPreparedReview(target: request.target, native: native,
+                digest: try RemoteHistoryProtocol.digest(Bound(target: request.target, value: native)))
+            guard remoteHistoryReviews.count + remoteHistoryMaintenanceReviews.count < RemoteHistoryProtocol.maximumLeases,
+                  try RemoteHistoryProtocol.payload(prepared).count <= RemoteHistoryProtocol.maximumCacheBytes - remoteHistoryProofBytes() else { throw RemoteHistoryFailure(.limitExceeded) }
+            remoteHistoryReviews[native.id] = prepared
+            return prepared
+        } catch { await discardConversationHistoryReview(reviewID: native.id); throw error }
+    }
+    func discardRemoteHistoryReview(_ request: RemoteHistoryDiscardRequest) async -> Bool {
+        remoteHistoryOperations += 1; defer { finishRemoteHistoryOperation() }
+        guard !acceptingHistoryReviews.contains(request.reviewID),
+              let cached = remoteHistoryReviews[request.reviewID], cached.digest == request.digest,
+              (try? RemoteHistoryProtocol.payload(cached.target)) == (try? RemoteHistoryProtocol.payload(request.target)) else { return false }
+        remoteHistoryReviews.removeValue(forKey: request.reviewID)
+        await discardConversationHistoryReview(reviewID: request.reviewID)
+        return true
+    }
+    private func finishRemoteHistoryAcceptance(_ review: ConversationHistoryReview) async {
+        defer { finishRemoteHistoryOperation() }
+        let remaining = (remoteHistoryAcceptances[review.id] ?? 1) - 1
+        if remaining > 0 { remoteHistoryAcceptances[review.id] = remaining; return }
+        remoteHistoryAcceptances.removeValue(forKey: review.id); acceptingHistoryReviews.remove(review.id)
+        if revision.snapshot.conversationHistoryOperation(review.id) == nil {
+            remoteHistoryReviews.removeValue(forKey: review.id)
+            await discardConversationHistoryReview(reviewID: review.id)
+        }
+    }
+    func prepareRemoteHistory(_ command: RemoteEnvironmentCommand) async throws -> RemoteEnvironmentPreparation {
+        try beginRemoteHistoryOperation(); defer { finishRemoteHistoryOperation() }
+        _ = try await load()
+        guard case .history(let target, let action) = command else { throw RemoteHistoryFailure(.invalidRequest) }
+        let thread = try remoteHistoryThread(target, requireBound: action.requiresBoundRoot)
+        guard let incarnation = threadIncarnations[thread.id] else { throw RemoteHistoryFailure(.invalidTarget) }
+        func operation(_ id: UUID) throws -> ConversationHistoryOperation {
+            guard let value = revision.snapshot.conversationHistoryOperation(id), value.review.sourceThreadID == thread.id,
+                  value.review.projectID == thread.projectID else { throw RemoteHistoryFailure(.invalidTarget) }
+            return value
+        }
+        let prepared: RemoteHistoryPreparation.Action
+        switch action {
+        case .begin(let id, let digest, let title):
+            guard let value = remoteHistoryReviews[id], value.digest == digest,
+                  try RemoteHistoryProtocol.payload(value.target) == RemoteHistoryProtocol.payload(target) else { throw RemoteHistoryFailure(.staleReview) }
+            prepared = .begin(value.native, digest: digest, title: title)
+        case .inspectProvider(let id):
+            let value = try operation(id)
+            guard value.phase == .unconfirmed, revision.snapshot.canInspectConversationHistory(operationID: id) else { throw RemoteHistoryFailure(.invalidTarget) }
+            prepared = .reconcile(value, try await prepareRemoteHistoryReconciliation(value, thread: thread, incarnation: incarnation))
+        case .inspectFiles(let id):
+            let value = try operation(id)
+            guard value.phase == .applied, let files = value.files, files.phase == .unconfirmed, files.acknowledgedAt == nil,
+                  restoreRuntimeScopeIsolated(thread: thread, path: files.review.gitReview.currentPlan.repositoryPath) else { throw RemoteHistoryFailure(.invalidTarget) }
+            try revision.snapshot.validateConversationHistoryFilesSource(value)
+            let observed = try await readCheckpointRestore(thread: thread) { try await $0.inspectRestore(review: files.review.gitReview) }
+            prepared = .files(value, observed)
+        case .acknowledgeFiles(let id): prepared = .acknowledge(try operation(id))
+        case .recallPrompt(let id):
+            let value = try operation(id)
+            guard let run = thread.runHistory?.first(where: { $0.id == value.review.runID }), run.origin == .user,
+                  let message = thread.messages.first(where: { $0.id == run.userMessageID && $0.role == .user && $0.runReference == .init(threadID: thread.id, runID: run.id) }) else { throw RemoteHistoryFailure(.invalidTarget) }
+            prepared = .recall(value, message)
+        case .dismissRecall(let id): prepared = .dismiss(try operation(id))
+        case .keepOpenCodeV1Original(let id):
+            let value = try operation(id), observed = try await inspectOpenCodeV1Original(operationID: id)
+            prepared = .reconcile(value, .openCodeV1NotAdopted(observed))
+        case .keepPiOriginal(let id):
+            let value = try operation(id), observed = try await inspectPiOriginal(operationID: id)
+            prepared = .reconcile(value, .piOriginalKept(observed))
+        case .clearMaintenance(let id, let reviewID, let digest):
+            let value = try operation(id)
+            guard let claim = remoteHistoryMaintenanceReviews[reviewID], claim.digest == digest,
+                  try RemoteHistoryProtocol.payload(claim.target) == RemoteHistoryProtocol.payload(target),
+                  try RemoteHistoryProtocol.payload(claim.operation) == RemoteHistoryProtocol.payload(value) else { throw RemoteHistoryFailure(.staleReview) }
+            let observed = try await inspectConversationHistoryMaintenance(operationID: id)
+            guard try RemoteHistoryProtocol.payload(observed) == RemoteHistoryProtocol.payload(claim.expected) else { throw RemoteHistoryFailure(.staleReview) }
+            prepared = .maintenance(value, .init(expected: claim.expected, sourceIncarnation: incarnation), reviewID: reviewID, digest: digest)
+        case .cancelPi(let id):
+            let value = try operation(id)
+            guard value.review.pi != nil, value.isPending else { throw RemoteHistoryFailure(.invalidTarget) }
+            prepared = .cancelPi(value)
+        case .respondPi(let id, let sessionID, let request, let response):
+            let value = try operation(id)
+            guard let job = piHistoryJobs[id], job.id == sessionID, !job.closing, !job.streamFailed,
+                  value.phase == .dispatching, value.piControls?.sessionID == sessionID,
+                  value.piControls?.requests.contains(where: { $0.id == request.id && !$0.responding && (try? RemoteHistoryProtocol.payload($0.request)) == (try? RemoteHistoryProtocol.payload(request)) }) == true else { throw RemoteHistoryFailure(.invalidTarget) }
+            switch response { case .decision, .option, .answers: break; default: throw RemoteHistoryFailure(.invalidRequest) }
+            prepared = .respondPi(value, sessionID: sessionID, request: request, response: response)
+        case .inspectClaudeResume(let selectionID, let consumer):
+            guard revision.snapshot.claudeResumeSelectionNeedsInspection(threadID: thread.id),
+                  let configuration = thread.claudeRuntimeConfiguration, let selection = thread.claudeResumeSelection,
+                  selection.id == selectionID, thread.claudeResumeConsumerRunID == consumer,
+                  let run = thread.runHistory?.first(where: { $0.id == consumer }) else { throw RemoteHistoryFailure(.invalidTarget) }
+            try await drainClaudeHistoryOwners(thread: thread)
+            let result = try await readClaudeHistory(thread: thread) { _ in try ClaudeResumeInspection.inspect(configuration: configuration, selection: selection, run: run) }
+            prepared = .claudeResume(selection, run, result)
+        case .acknowledgePiFreshUnwritten(let intentID, let consumer), .confirmPiFreshPersisted(let intentID, let consumer):
+            guard let intent = thread.piFreshSessionIntent, intent.id == intentID, thread.piFreshConsumerRunID == consumer,
+                  let run = thread.runHistory?.first(where: { $0.id == consumer }) else { throw RemoteHistoryFailure(.invalidTarget) }
+            let result = try await inspectPiFreshSession(threadID: thread.id)
+            switch (action, result) { case (.acknowledgePiFreshUnwritten, .unwritten), (.confirmPiFreshPersisted, .persisted): break; default: throw RemoteHistoryFailure(.invalidTarget) }
+            prepared = .piFresh(intent, run, result)
+        }
+        _ = try remoteHistoryThread(target, requireBound: action.requiresBoundRoot)
+        let result = RemoteHistoryPreparation(target: target, incarnation: incarnation, action: prepared)
+        try validateRemoteHistoryPreparation(result, snapshot: revision.snapshot)
+        return .history(result)
+    }
+    func validateRemoteHistoryPreparation(_ captured: RemoteHistoryPreparation, snapshot: WorkspaceSnapshot) throws {
+        guard !remoteHistoriesClosing, threadIncarnations[captured.target.threadID] == captured.incarnation,
+              let thread = snapshot.threads.first(where: { $0.id == captured.target.threadID }) else { throw RemoteEnvironmentAdmission.stale() }
+        switch captured.action {
+        case .begin(let review, let digest, _):
+            guard let cached = remoteHistoryReviews[review.id], cached.digest == digest,
+                  try RemoteHistoryProtocol.payload(cached.target) == RemoteHistoryProtocol.payload(captured.target),
+                  try RemoteHistoryProtocol.payload(cached.native) == RemoteHistoryProtocol.payload(review),
+                  historyReviews[review.id]?.digest == (try historyReviewDigest(review)),
+                  ownsHistorySource(threadID: thread.id, incarnation: captured.incarnation, fingerprint: review.sourceFingerprint) else { throw RemoteEnvironmentAdmission.stale() }
+            if let files = review.files {
+                try snapshot.validateConversationHistoryFilesReview(review)
+                guard restoreRuntimeScopeIsolated(thread: thread, path: files.gitReview.currentPlan.repositoryPath) else { throw RemoteEnvironmentAdmission.stale() }
+            }
+        case .reconcile(let operation, _), .maintenance(let operation, _, _, _):
+            guard ownsHistorySource(threadID: thread.id, incarnation: captured.incarnation, fingerprint: operation.review.sourceFingerprint) else { throw RemoteEnvironmentAdmission.stale() }
+            if operation.review.claude != nil {
+                guard claudeHistoryScopeIsolated(thread: thread, additionalNativeIDs: Set(operation.claudeForkPublication.map { [$0.target.sessionID] } ?? [])) else { throw RemoteEnvironmentAdmission.stale() }
+            } else if operation.review.pi != nil {
+                let paths = operation.piCandidates?.compactMap(\.nativeSessionFile) ?? []
+                guard piHistoryScopeIsolated(thread: thread, additionalNativeFiles: paths) else { throw RemoteEnvironmentAdmission.stale() }
+            } else if operation.review.openCodeV1 != nil || operation.review.openCodeV2 != nil {
+                guard openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: Set(operation.openCodeV1Candidate.map { [$0.reference.nativeThreadID] } ?? [])) else { throw RemoteEnvironmentAdmission.stale() }
+            }
+        case .files(let operation, _):
+            try snapshot.validateConversationHistoryFilesSource(operation)
+            guard let files = operation.files, restoreRuntimeScopeIsolated(thread: thread, path: files.review.gitReview.currentPlan.repositoryPath) else { throw RemoteEnvironmentAdmission.stale() }
+        case .respondPi(let operation, let id, _, _):
+            guard let job = piHistoryJobs[operation.id], job.id == id, !job.closing, !job.streamFailed else { throw RemoteEnvironmentAdmission.stale() }
+        case .claudeResume:
+            guard claudeHistoryScopeIsolated(thread: thread) else { throw RemoteEnvironmentAdmission.stale() }
+        case .piFresh:
+            guard piHistoryScopeIsolated(thread: thread) else { throw RemoteEnvironmentAdmission.stale() }
+        default: break
+        }
+        if case .maintenance(let operation, let attempt, let id, let digest) = captured.action {
+            guard let claim = remoteHistoryMaintenanceReviews[id], claim.digest == digest,
+                  try RemoteHistoryProtocol.payload(claim.target) == RemoteHistoryProtocol.payload(captured.target),
+                  try RemoteHistoryProtocol.payload(claim.operation) == RemoteHistoryProtocol.payload(operation),
+                  try RemoteHistoryProtocol.payload(claim.expected) == RemoteHistoryProtocol.payload(attempt.expected) else { throw RemoteEnvironmentAdmission.stale() }
+        }
+    }
+    private func remoteHistoryCommitted(_ preparation: RemoteHistoryPreparation, commandID: UUID) {
+        switch preparation.action {
+        case .begin(let review, _, _):
+            remoteHistoryReviews.removeValue(forKey: review.id); historyReviews.removeValue(forKey: review.id)
+        case .maintenance(_, _, let id, _): remoteHistoryMaintenanceReviews.removeValue(forKey: id)
+        case .reconcile(let operation, let result):
+            let applied: Bool; if case .applied = result { applied = true } else { applied = false }
+            if !applied, let files = operation.review.files {
+                remoteHistoryTasks[commandID] = Task {
+                    await self.discardCheckpointRestoreScratch(files.gitReview, threadID: operation.review.sourceThreadID, projectID: operation.review.projectID)
+                    self.remoteHistoryTasks.removeValue(forKey: commandID)
+                }
+            }
+        case .cancelPi(let operation):
+            effects[operation.id]?.cancel()
+            remoteHistoryTasks[commandID] = Task {
+                if let close = self.beginPiHistoryClose(operation.id) { await close.value }
+                if let task = self.effects[operation.id] { await task.value }
+                self.remoteHistoryTasks.removeValue(forKey: commandID)
+            }
+        case .respondPi(let operation, let sessionID, let request, let response):
+            remoteHistoryTasks[commandID] = Task {
+                await self.deliverRemotePiHistoryResponse(operationID: operation.id, sessionID: sessionID, request: request, response: response)
+                self.remoteHistoryTasks.removeValue(forKey: commandID)
+            }
+        default: break
+        }
+    }
+    private func deliverRemotePiHistoryResponse(operationID: UUID, sessionID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse) async {
+        guard let job = piHistoryJobs[operationID], job.id == sessionID, !job.closing, !job.streamFailed,
+              revision.snapshot.conversationHistoryOperation(operationID)?.piControls?.requests.contains(where: { $0.id == request.id && $0.responding }) == true else { return }
+        let token = UUID(), session = job.session
+        let task = Task<Void, any Error> {
+            try Task.checkCancellation()
+            switch response { case .decision(let allow): try await session.respond(request, allow: allow)
+            case .option(let id): try await session.choose(request, optionID: id)
+            case .answers(let values): try await session.answer(request, answers: values)
+            default: throw RemoteHistoryFailure(.invalidRequest) }
+        }
+        piHistoryJobs[operationID]?.responses[token] = task
+        do { try await task.value }
+        catch {
+            piHistoryStreamFailed(operationID: operationID, sessionID: sessionID)
+            if let closing = beginPiHistoryClose(operationID) { await closing.value }
+        }
+        if piHistoryJobs[operationID]?.id == sessionID { piHistoryJobs[operationID]?.responses.removeValue(forKey: token) }
+    }
+    func awaitRemoteHistoryCompletion(_ request: RemoteEnvironmentCommandRequest) async {
+        guard case .history(_, .cancelPi) = request.command else { return }
+        if let task = remoteHistoryTasks[request.id] { await task.value; remoteHistoryTasks.removeValue(forKey: request.id) }
+    }
+    func closeRemoteHistory() async {
+        if let task = remoteHistoryCloseTask { await task.value; return }
+        remoteHistoriesClosing = true
+        let task = Task { await self.finishRemoteHistoryClose() }
+        remoteHistoryCloseTask = task; await task.value
+    }
+    private func finishRemoteHistoryClose() async {
+        let reads = Array(historyReads.values)
+        for read in reads { read.cancel() }
+        for read in reads { await read.drain.value }
+        let fileReads = Array(checkpointReads.values)
+        for read in fileReads { read.cancel() }
+        for read in fileReads { await read.task.value }
+        if remoteHistoryOperations > 0 { await withCheckedContinuation { remoteHistoryWaiters.append($0) } }
+        let reviews = Array(remoteHistoryReviews.values); remoteHistoryReviews.removeAll(); remoteHistoryMaintenanceReviews.removeAll()
+        for cached in reviews { await discardConversationHistoryReview(reviewID: cached.native.id) }
+        for id in piHistoryJobs.keys { if let task = beginPiHistoryClose(id) { await task.value } }
+        let tasks = Array(remoteHistoryTasks.values); remoteHistoryTasks.removeAll()
+        for task in tasks { await task.value }
+    }
+    private func prepareRemoteHistoryReconciliation(_ operation: ConversationHistoryOperation, thread: CodingThread,
+                                                    incarnation: UUID) async throws -> ConversationHistoryReconciliation {
+        let expected = operation.review
+        let result: ConversationHistoryReconciliation
+        if let evidence = expected.claude {
+            let publication = operation.claudeForkPublication
+            try await drainClaudeHistoryOwners(thread: thread)
+            result = try await readClaudeHistory(thread: thread) { service in
+                if evidence.kind == .rewindBeforeRun {
+                    let selected = try service.prepareRewind(review: evidence, selectionID: operation.id)
+                    return .applied(try .init(reference: selected.reference, workspacePath: selected.workspacePath, historyMode: .nativeTranscript, claude: selected))
+                }
+                guard let publication else { throw ProviderHistoryError(.outcomeUncertain) }
+                switch try service.inspectFork(review: evidence, publication: publication) {
+                case .ready(let value): return .applied(try .init(reference: value.reference, workspacePath: value.workspacePath, historyMode: .nativeTranscript, claude: value))
+                case .notStarted: return .claudeForkNotStarted(try service.snapshot(sessionID: evidence.source.reference.nativeThreadID, selection: evidence.source.selection))
+                case .incomplete: throw ProviderHistoryError(.outcomeUncertain)
+                }
+            }
+            guard claudeHistoryScopeIsolated(thread: thread, additionalNativeIDs: Set(publication.map { [$0.target.sessionID] } ?? [])) else { throw ProviderHistoryError(.historyChanged) }
+        } else if let evidence = expected.openCodeV1 {
+            guard let candidate = operation.openCodeV1Candidate else { throw ProviderHistoryError(.boundaryUnavailable) }
+            try evidence.validateCandidate(candidate); try await drainOpenCodeHistoryCleanup(thread: thread)
+            guard openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [candidate.reference.nativeThreadID]) else { throw ProviderHistoryError(.historyChanged) }
+            let observed = try await readHistory(thread: thread, forceOwnedMetadata: true) {
+                try await $0.inspectOpenCodeV1HistoryCandidate(review: evidence, candidate: candidate, configuration: expected.sourceConfiguration)
+            }
+            try expected.validateResult(observed)
+            guard observed.reference == candidate.reference else { throw ProviderHistoryError(.historyChanged) }
+            if let runtime = runtimes[thread.id] { await closeRuntime(thread.id, matching: runtime.id) }
+            guard openCodeHistoryScopeIsolated(thread: thread, additionalNativeIDs: [candidate.reference.nativeThreadID]) else { throw ProviderHistoryError(.historyChanged) }
+            result = .applied(observed)
+        } else if let evidence = expected.openCodeV2 {
+            guard openCodeHistoryScopeIsolated(thread: thread), operation.maintenance?.phase.isWorking != true else { throw ProviderHistoryError(.notIdle) }
+            let fresh = try await readHistory(thread: thread) { try await $0.openCodeV2HistorySnapshot(threadID: expected.sourceReference.nativeThreadID) }
+            let observed = try observedOpenCodeHistory(fresh, operation: operation)
+            guard observed.stage == nil, observed.reference == evidence.source.reference,
+                  observed.runtimeIdentity == evidence.source.runtimeIdentity, observed.workspacePath == evidence.source.workspacePath,
+                  observed.messages.allSatisfy(\.isSettled), openCodeHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.historyChanged) }
+            let original = observed.maintenance.map { $0.priorInventoryDigest == evidence.source.inventoryDigest && Array(observed.messages.dropLast()) == evidence.source.messages }
+                ?? (observed.messages == evidence.source.messages)
+            if original { result = .openCodeV2Unchanged(observed) }
+            else {
+                let provider = try ProviderConversationSnapshot(reference: observed.reference, workspacePath: observed.workspacePath, historyMode: .messageOrdered, openCodeV2: observed)
+                try expected.validateResult(provider); result = .applied(provider)
+            }
+        } else if let evidence = expected.pi {
+            guard let candidate = operation.piCandidates?.last, candidate.stage != .reserved, piHistoryJobs[operation.id] == nil,
+                  piHistoryScopeIsolated(thread: thread, additionalNativeFiles: candidate.nativeSessionFile.map { [$0] } ?? []) else { throw ProviderHistoryError(.boundaryUnavailable) }
+            let configuration = expected.kind == .rewindBeforeRun ? expected.sourceConfiguration : expected.targetConfiguration
+            let observed = try await readHistory(thread: thread, forceOwnedMetadata: true) {
+                try await $0.inspectPiHistoryCandidate(review: evidence, candidate: candidate, configuration: configuration)
+            }
+            try expected.validateResult(observed)
+            guard observed.pi?.candidates == operation.piCandidates,
+                  piHistoryScopeIsolated(thread: thread, additionalNativeFiles: candidate.nativeSessionFile.map { [$0] } ?? []) else { throw ProviderHistoryError(.historyChanged) }
+            if let runtime = runtimes[thread.id] { await closeRuntime(thread.id, matching: runtime.id) }
+            result = .applied(observed)
+        } else {
+            let observed = try await readHistory(thread: thread) { session in
+                let capabilities = try await session.historyCapabilities(threadID: expected.sourceReference.nativeThreadID)
+                guard capabilities.reference == expected.sourceReference, capabilities.canRead, capabilities.canForkHead else { throw ProviderHistoryError(.notIdle) }
+                let first = try await session.conversationSnapshot(threadID: expected.sourceReference.nativeThreadID)
+                let last = try await session.conversationSnapshot(threadID: expected.sourceReference.nativeThreadID)
+                guard first == last, first.reference == expected.sourceReference, first.historyMode == .paginated,
+                      first.workspacePath == expected.sourceConfiguration.workspacePath else { throw ProviderHistoryError(.historyChanged) }
+                return first
+            }
+            if observed.headTurnID == expected.reviewedHeadTurnID { result = .unchanged }
+            else if observed.headTurnID == expected.expectedResultHeadTurnID { result = .applied(observed) }
+            else { throw ProviderHistoryError(.historyChanged) }
+        }
+        guard ownsHistorySource(threadID: thread.id, incarnation: incarnation, fingerprint: expected.sourceFingerprint),
+              let current = revision.snapshot.conversationHistoryOperation(operation.id),
+              try RemoteHistoryProtocol.payload(current) == RemoteHistoryProtocol.payload(operation) else { throw ProviderHistoryError(.historyChanged) }
+        return result
     }
 }

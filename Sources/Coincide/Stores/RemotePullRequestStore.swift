@@ -344,6 +344,7 @@ final class RemotePullRequestWorkspace: Identifiable {
     }
     func disconnect() {
         generation = UUID(); contextRead = UUID(); listRead = UUID(); detailRead = UUID(); reviewRead = UUID()
+        target = .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID, configuration: target.configuration)
         connected = false; writesAllowed = false; mutationsAllowed = false; transport = nil; command = nil; open = nil
         creation = nil; checkout = nil; creationFields = nil
         isLoading = false; isLoadingList = false; isLoadingDetail = false; isPreparing = false

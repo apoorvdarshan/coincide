@@ -43,6 +43,7 @@ private actor RemoteCheckpointPeer {
         return .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID, configuration: target.configuration, rootID: rootID)
     }
     private func read(_ request: RemoteCheckpointReadRequest) async throws -> RemoteCheckpointReadResult {
+        guard request.target.rootID == rootID else { throw RemoteCheckpointFailure(.invalidTarget) }
         reads.append(request)
         let value: RemoteCheckpointValue
         switch request.query {
@@ -84,6 +85,29 @@ private actor RemoteCheckpointPeer {
         if let boundary = discardBoundary { discardBoundary = nil; await boundary.pause() }
         return .init(request: request, discarded: true)
     }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func remoteCheckpointReconnectRebindsTheNewHostBeforeReadingOrReviewingFiles() async throws {
+    let f = try RemoteCheckpointFixture()
+    do {
+        await f.update(); let model = try f.model()
+        await model.refresh()
+        let oldRoot = try #require(model.target.rootID)
+        f.store.disconnect()
+        let replacement = RemoteCheckpointPeer(thread: f.thread)
+        await f.store.select(target: f.target, thread: f.thread, snapshot: f.snapshot, transport: replacement.transport,
+            supported: true, canWrite: true, canMutate: true, perform: { _ in false })
+        await model.refresh()
+        #expect(model.target.rootID != oldRoot && model.target.rootID == replacement.rootID)
+        #expect(model.inventory?.runs.first?.id == f.run.id)
+        let counts = await replacement.counts()
+        #expect(Array(counts.prefix(2)) == [1, 1])
+        _ = await model.prepareRestore(runID: f.run.id, stage: .baseline, attemptID: f.run.checkpoints!.baseline.id)
+        #expect(model.restoreReview?.target.rootID == replacement.rootID)
+        #expect(f.thread.draft == "Keep this unsent remote draft" && f.commands.isEmpty)
+        await f.finish()
+    } catch { await f.finish(); throw error }
 }
 
 @MainActor private final class RemoteCheckpointFixture {

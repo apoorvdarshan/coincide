@@ -117,6 +117,47 @@ actor RemoteWorkspaceService {
     func admitCheckpointScope(_ scope: RemoteCheckpointScope) throws {
         try admitPullRequestScope(.init(mutatingPaths: scope.mutatingPaths, coordinationPaths: scope.coordinationPaths))
     }
+    /// History recovery may inspect its own durable hold. Other workflow holds
+    /// still exclude it, and native inspections require the same physical root.
+    func validateHistoryTarget(_ target: RemoteWorkspaceTarget, allowLocked: Bool, requireRoot: Bool = true) async throws {
+        guard !closing, !journalFailed, target.environmentID == environmentID else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        let update = await engine.current(), snapshot = update.snapshot
+        let standaloneRestore = (snapshot.checkpointRestoreOperations ?? []).contains {
+            $0.locksSource && WorkspaceSnapshot.checkpointRestorePathsOverlap(target.workspacePath, $0.review.gitReview.currentPlan.repositoryPath)
+        }
+        let foreignHistoryRestore = (snapshot.conversationHistoryOperations ?? []).contains { operation in
+            guard operation.locksFiles, let files = operation.files,
+                  WorkspaceSnapshot.checkpointRestorePathsOverlap(target.workspacePath, files.review.gitReview.currentPlan.repositoryPath) else { return false }
+            let owned = operation.review.sourceThreadID == target.threadID && operation.review.projectID == target.projectID &&
+                operation.review.sourceConfiguration.workspacePath.utf8.elementsEqual(target.workspacePath.utf8)
+            return !allowLocked || !owned
+        }
+        guard !closing, !journalFailed, update.error == nil,
+              let thread = snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              !thread.isArchived, snapshot.projects.contains(where: { $0.id == target.projectID }),
+              try RemoteEnvironmentProtocol.encode(ProviderConfiguration(thread: thread)) == RemoteEnvironmentProtocol.encode(target.configuration),
+              samePath(thread.workspacePath, target.workspacePath), snapshot.workspaceReady(for: thread),
+              !hasRunningWorktree(at: target.workspacePath, snapshot: snapshot),
+              !snapshot.isPullRequestCreationLocked(path: target.workspacePath),
+              !snapshot.isPullRequestCheckoutLocked(path: target.workspacePath),
+              !standaloneRestore, !foreignHistoryRestore,
+              allowLocked || !snapshot.isConversationHistoryLocked(threadID: thread.id) else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        if requireRoot {
+            guard let id = target.rootID, let root = roots[id], samePath(root.path, target.workspacePath) else { throw RemoteWorkspaceFailure(.staleRoot) }
+            do { try root.anchor.validate() } catch { throw RemoteWorkspaceFailure(.staleRoot) }
+        }
+    }
+    func bindHistoryTarget(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        try await validateHistoryTarget(target, allowLocked: true, requireRoot: false)
+        let id = try bindPhysicalRoot(path: target.workspacePath, expectedID: target.rootID)
+        let bound = RemoteWorkspaceTarget(environmentID: target.environmentID, projectID: target.projectID,
+            threadID: target.threadID, configuration: target.configuration, rootID: id)
+        try await validateHistoryTarget(bound, allowLocked: true)
+        return bound
+    }
+    func admitHistoryScope(_ scope: RemoteHistoryScope) throws {
+        try admitPullRequestScope(.init(mutatingPaths: scope.mutatingPaths, coordinationPaths: scope.coordinationPaths))
+    }
     func busyPullRequestPaths() async -> [String] {
         Set(busyRoots.keys).union(terminalRoots.values).compactMap { roots[$0]?.path }
     }

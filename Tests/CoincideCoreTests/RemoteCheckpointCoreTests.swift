@@ -135,6 +135,11 @@ func remoteCheckpointMissingRootAcknowledgementIsMetadataOnlyAndPreservesRecover
 func remoteCheckpointInventoryIsReadOnlyAndUnacceptedReviewCloseDisposesExactScratch() async throws {
     let f = try await RemoteCheckpointCoreFixture.make()
     do {
+        let foreign = RemoteWorkspaceTarget(environmentID: UUID(), projectID: f.target.projectID,
+            threadID: f.target.threadID, configuration: f.target.configuration, rootID: f.target.rootID)
+        await #expect(throws: RemoteCheckpointFailure(.invalidTarget)) {
+            _ = try await f.service.read(.init(target: foreign, query: .inventory))
+        }
         let read = try await f.service.read(.init(target: f.target, query: .inventory))
         guard case .inventory(let inventory) = read.value else { throw CoincideError("Missing checkpoint inventory") }
         #expect(inventory.policy == .automatic && inventory.runs.count == 1)
@@ -142,6 +147,16 @@ func remoteCheckpointInventoryIsReadOnlyAndUnacceptedReviewCloseDisposesExactScr
         #expect(await f.peer.reviewed.isEmpty)
         let review = try await f.review()
         await f.service.close(); await f.service.close()
+        await #expect(throws: RemoteCheckpointFailure(.invalidTarget)) {
+            _ = try await f.service.read(.init(target: foreign, query: .inventory))
+        }
+        await #expect(throws: RemoteCheckpointFailure(.unavailable)) {
+            _ = try await f.service.read(.init(target: f.target, query: .inventory))
+        }
+        await #expect(throws: RemoteCheckpointFailure(.unavailable)) { _ = try await f.review() }
+        await #expect(throws: RemoteCheckpointFailure(.unavailable)) {
+            _ = try await f.service.prepare(f.request(.retryPostRun(runID: f.runID, attemptID: f.attemptID)).command)
+        }
         #expect(await f.peer.discarded == [review.id])
         #expect(await f.peer.calls.isEmpty)
     } catch { await f.close(); throw error }

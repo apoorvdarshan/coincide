@@ -1,5 +1,79 @@
 # Validation record
 
+## 2026-10-23 — Reviewed remote conversation history
+
+- Native host/client/UI now expose exact recorded-run fork/rewind with separate
+  keep/restore-files review. Full native proof and sealed file manifests stay on
+  the host; bounded immutable review/operation/recall leases carry paged display
+  values and exact content chunks. Accepted intents and native recovery use only
+  the original remote command receipt identity.
+- Actual-helper offline acceptance passes all seven declarations/sixteen cases:
+  Codex/Claude forks and rewinds, keep/restore files, lost outer reply and native
+  results, native-head/configuration/root/digest/discard changes, provider-applied
+  file-failed recovery, and a workspace larger than the legacy 16 MiB transport.
+  Changed native heads can accept the intent receipt, then fail the guarded
+  native effect before any provider mutation; tests check the saved failed
+  operation and zero mutation requests rather than treating intent acceptance as
+  proof that external work succeeded.
+- Eight Core declarations/fourteen cases cover exact original-UUID receipts,
+  stale authority, bounded UTF-8 prefix/content/cursors, native OpenCode v2
+  maintenance claims, late-review close, accepted scratch preservation and
+  rootless recovery. A private SQLite writer gate verifies both duplicate
+  acceptance references while the real commit is blocked, refuses concurrent
+  discard and joins close without deleting accepted uncertain evidence.
+- Positive remote Pi worker verification passes both normal response and held
+  response/cancel cases in 0.419 seconds after a 14.19-second build. The response
+  commits its exact receipt before held native I/O finishes; separate cancellation
+  drains that worker without replaying a question, candidate mutation or prompt.
+  The private fixture registers Foundation's canonical workspace spelling while
+  preserving Pi's realpath cwd; no production path guard was weakened.
+- Client and private-draft checks cover exact full-target lease ownership,
+  immutable page/content replies and cursor queries, malformed bounded metadata,
+  SHA/byte assembly, old-helper refusal, sanitized live failures, benign read
+  cancellation and atomic recall merge markers. Draft compare-and-swap preserves
+  UTF-8 bytes, including canonically equal but differently encoded Unicode.
+- All ten new UI/store declarations pass, including actual Root lost-receipt
+  recovery with concurrent local typing and a new imported attachment, restart
+  deduplication and intentional later deletion, caller cancellation with owned
+  synchronization, fast-fork navigation, exact maintenance claims, rootless/
+  bound lease reads and disposal, reconnect rebinding, Pi controls, retained-page
+  duplicates and light/dark offscreen layouts. Existing checkpoint/PR reconnect
+  regressions also verify new host anchors without losing private drafts.
+- The previous pushed head `5c85ef4` completed its hosted full run with exactly
+  two issues: an ACP v2 Stop timing failure and checkpoint-close error taxonomy.
+  Every native PR declaration passed there, including checkout local/worktree/
+  reuse in 29.781 seconds. The close service now reports unavailable after close
+  while preserving foreign-target refusal. A deterministic quiet ACP startup
+  reproduces the Stop bug without the early native-running event: an owned
+  runtime close failed suspended setup before prompt dispatch. The narrow fix
+  classifies that pre-dispatch close as cancellation and preserves dispatched
+  uncertainty and unexpected transport failures. Both Stop modes and all 26
+  focused ACP declarations pass. No deadline, retry or no-prompt assertion was
+  relaxed.
+- The final complete serial suite exits zero: 2015 of 2028 declarations pass,
+  with thirteen optional installed/live checks skipped and pinned Pi package
+  acceptance enabled. Core covers 1689 declarations in 489.005 seconds; UI/store
+  309 in 76.698 seconds; terminal seventeen in 10.306 seconds; Markdown thirteen
+  in 0.136 seconds. Build time is 0.62 seconds. No production source changes
+  follow that run.
+- Independent checks pass: all 74 Python cases in 2.716 seconds, and the async
+  default-context guard over 1052 objects (741 Core, 303 app), with zero weak
+  async default records. Build-only packaging and strict deep signature checks
+  pass; compiled/packaged app UUID `44ED5EC2-7D5B-325A-B564-85C5856846E3` and
+  helper UUID `44386421-AAE3-3C2D-8AC4-BB8B649B16D2` match exactly. Native GUI runner
+  build-for-testing and offline Codex/GitHub/Claude launcher envelopes pass without
+  opening a GUI app. A new hosted full/UI run is still required.
+- Final fixture inventory finds no current owned history/client/draft roots or
+  active helper/provider/Git processes. All 64 recorded diagnostic PIDs exited
+  with no open files. Three new history, twelve PR and seven checkpoint
+  diagnostic folders remain preserved; none was deleted.
+
+This establishes the reviewed remote recorded-run workflow with offline native
+peers. It does not establish real SSH, account authentication or installed live
+provider acceptance, latest-stable/checkpoint fork sources, portable transfers,
+merge-back, persistent hosts or complete T3 parity. No installed app was changed
+and no native GUI XCTest was executed locally.
+
 ## 2026-10-23 — Bounded remote state and paged native browsing
 
 - The final complete serial suite passes 1975 of 1988 declarations, with
