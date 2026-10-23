@@ -1,0 +1,147 @@
+import Foundation
+import Testing
+@testable import CoincideCore
+
+private actor RemoteTranscriptPlanPeer: ProviderSession {
+    nonisolated let events: AsyncStream<ProviderEvent>
+    private let sink: AsyncStream<ProviderEvent>.Continuation
+    private(set) var inputs: [String] = []
+    private(set) var permissions: [PermissionMode] = []
+    init() { let pair = AsyncStream<ProviderEvent>.makeStream(); events = pair.stream; sink = pair.continuation }
+    func models() -> [ProviderModel] { [] }
+    func send(text: String, thread: CodingThread) { inputs.append(text); permissions.append(thread.activeRun?.configuration.permission ?? thread.permission) }
+    func interrupt() {}
+    func respond(_ request: ApprovalRequest, allow: Bool) {}
+    func answer(_ request: ApprovalRequest, answers: [String: String]) {}
+    func close() { sink.finish() }
+}
+
+private struct RemoteTranscriptPlanServiceFixture {
+    let root: URL, data: URL, workspace: URL, launchMarker: URL
+    let service: RemoteEnvironmentService
+    let peer: RemoteTranscriptPlanPeer
+    let target: RemoteWorkspaceTarget
+    let binding: RemoteProjectionBinding
+    let message: RemoteMessageSummary
+    let reference: RemoteProjectionContentReference
+    let plan: String
+    let options: RemoteEnvironmentOptions
+
+    static func make() async throws -> Self {
+        let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+        let root = temporary.appendingPathComponent("coincide-remote-plan-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var owned: RemoteEnvironmentService?
+        do {
+            let data = root.appendingPathComponent("Host"), workspace = root.appendingPathComponent("Workspace")
+            try FileManager.default.createDirectory(at: data, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: false)
+            let binary = root.appendingPathComponent("must-not-run-provider"), marker = root.appendingPathComponent("provider-was-launched")
+            try ("#!/bin/sh\nprintf unexpected > " + CLIShim.shellWord(marker.path) + "\nexit 89\n").write(to: binary, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: binary.path)
+            let home = root.appendingPathComponent("PrivateCodexHome")
+            let project = WorkspaceProject(path: workspace.path)
+            var thread = CodingThread(project: project, model: "captured-model")
+            thread.permission = .supervised; thread.checkpointPolicy = .disabled
+            thread.codexRuntimeConfiguration = .init(selection: .custom, executable: binary.path, homeDirectory: home.path)
+            let plan = "# Exact remote plan\r\n\r\nPreserve cafe\u{301} and 🌍.\r\n"
+            var source = ChatMessage(id: "remote-native-plan", role: .tool, text: plan)
+            source.providerEntity = .init(key: .init(sessionID: "native-session", type: "plan", id: "plan"),
+                fields: .object(["content": .string(plan)]))
+            thread.messages = [source]
+            var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
+            // The host intentionally refuses a pre-existing unidentified DB.
+            // Establish its private durable identity before seeding the fixture.
+            _ = try RemoteEnvironmentIdentity.load(dataDirectory: data, expected: nil)
+            try await WorkspaceDatabase(url: data.appendingPathComponent("workspace.sqlite")).save(snapshot, event: "fixture.remote-plan")
+            let peer = RemoteTranscriptPlanPeer(), options = RemoteEnvironmentOptions(codexExecutable: binary.path, codexHome: home.path,
+                claudeExecutable: binary.path, claudeConfigurationDirectory: root.appendingPathComponent("UnusedClaudeHome").path,
+                githubExecutable: binary.path, githubConfigurationDirectory: root.appendingPathComponent("UnusedGitHubHome").path)
+            let service = try RemoteEnvironmentService(dataDirectory: data, options: options, providerFactory: { _ in peer })
+            owned = service
+            let initial = try await service.snapshot(.init(environmentID: service.environmentID))
+            let current = try #require(initial.workspace.threads.first { $0.id == thread.id })
+            let target = try await service.bindWorkspace(.init(environmentID: service.environmentID, projectID: current.projectID,
+                threadID: current.id, configuration: .init(thread: current)))
+            let binding = try await service.openProjection(.init(environmentID: service.environmentID, scope: .thread(thread.id)))
+            let messages = try await service.projectionMessages(.init(binding: binding, threadID: thread.id))
+            let message = try #require(messages.items.first { $0.id == source.id }), reference = try #require(message.presentation)
+            return .init(root: root, data: data, workspace: workspace, launchMarker: marker, service: service, peer: peer,
+                target: target, binding: binding, message: message, reference: reference, plan: plan, options: options)
+        } catch { await owned?.close(); try? FileManager.default.removeItem(at: root); throw error }
+    }
+    func request(id: UUID = UUID(), binding: RemoteProjectionBinding? = nil, reference: RemoteProjectionContentReference? = nil) -> RemoteEnvironmentCommandRequest {
+        .init(environmentID: service.environmentID, id: id,
+            command: .implementTranscriptPlan(target: target, binding: binding ?? self.binding, messageID: message.id, presentation: reference ?? self.reference))
+    }
+    func close() async { await service.close(); try? FileManager.default.removeItem(at: root) }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func remoteTranscriptPlanCommandUsesExactHostSourceOnceAndOriginalReceiptSurvivesRestart() async throws {
+    let f = try await RemoteTranscriptPlanServiceFixture.make(), request = f.request()
+    do {
+        async let first = f.service.command(request)
+        async let concurrent = f.service.command(request)
+        let (accepted, duplicate) = try await (first, concurrent)
+        #expect(f.target.rootID != nil && accepted.receipt.commandID == request.id)
+        try #require(accepted.receipt.rejection == nil)
+        #expect(accepted == duplicate)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await f.peer.inputs.isEmpty {
+            guard ContinuousClock.now < deadline else { throw CoincideError("The synthetic remote plan input did not arrive.") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let inputs = await f.peer.inputs, permissions = await f.peer.permissions
+        #expect(inputs.count == 1 && inputs[0].utf8.elementsEqual(TranscriptPlanText.implementationPrompt(f.plan).utf8))
+        #expect(permissions == [.supervised])
+        #expect(try await f.service.command(request) == accepted)
+        #expect(try await f.service.receipt(request).receipt == accepted.receipt)
+        await f.service.close()
+        let reopened = try RemoteEnvironmentService(dataDirectory: f.data, expectedEnvironmentID: f.service.environmentID,
+            options: f.options, providerFactory: { _ in Issue.record("A saved remote plan receipt cannot restart a provider."); throw CancellationError() })
+        do {
+            #expect(try await reopened.command(request) == accepted)
+            #expect(try await reopened.receipt(request).receipt == accepted.receipt)
+            await reopened.close()
+        } catch { await reopened.close(); throw error }
+        #expect(await f.peer.inputs.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: f.launchMarker.path))
+    } catch { await f.close(); throw error }
+    await f.close()
+}
+
+private enum RemoteTranscriptPlanRefusal: String, CaseIterable, Sendable { case foreignView, changedSourceReference, changedDraft, replacedPhysicalRoot }
+
+@Test(.timeLimit(.minutes(1)), arguments: RemoteTranscriptPlanRefusal.allCases)
+private func remoteTranscriptPlanCommandRefusesStaleClaimsWithoutProviderInput(mode: RemoteTranscriptPlanRefusal) async throws {
+    let f = try await RemoteTranscriptPlanServiceFixture.make()
+    do {
+        var binding = f.binding, reference = f.reference
+        switch mode {
+        case .foreignView:
+            binding = try await f.service.openProjection(.init(environmentID: f.service.environmentID, scope: .thread(f.target.threadID)))
+        case .changedSourceReference:
+            reference = .init(id: reference.id, kind: reference.kind, totalBytes: reference.totalBytes,
+                digest: RemoteProjectionProtocol.digest(Data("Different source revision".utf8)))
+        case .changedDraft:
+            let edit = try await f.service.command(.init(environmentID: f.service.environmentID,
+                command: .editThread(threadID: f.target.threadID, edit: .draft("Keep this authored draft"), expectedConfiguration: f.target.configuration)))
+            #expect(edit.receipt.rejection == nil)
+        case .replacedPhysicalRoot:
+            try FileManager.default.moveItem(at: f.workspace, to: f.root.appendingPathComponent("PreservedOriginalWorkspace"))
+            try FileManager.default.createDirectory(at: f.workspace, withIntermediateDirectories: false)
+        }
+        let request = f.request(binding: binding, reference: reference)
+        let refused = try await f.service.command(request)
+        #expect(refused.receipt.commandID == request.id && refused.receipt.rejection != nil)
+        #expect(try await f.service.receipt(request).receipt == refused.receipt)
+        let current = try await f.service.snapshot(.init(environmentID: f.service.environmentID))
+        let thread = try #require(current.workspace.threads.first { $0.id == f.target.threadID })
+        #expect(thread.messages.count == 1 && thread.activeRun == nil && thread.queuedTurns.isEmpty)
+        if mode == .changedDraft { #expect(thread.draft == "Keep this authored draft") }
+        #expect(await f.peer.inputs.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: f.launchMarker.path))
+    } catch { await f.close(); throw error }
+    await f.close()
+}

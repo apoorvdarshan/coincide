@@ -54,8 +54,13 @@ struct ThreadFindScrolling: ViewModifier {
                 }
             }
             .onChange(of: observed, initial: true) { _, value in find?.update(messages: value) }
-            .onChange(of: find?.scrollGeneration) {
-                guard let id = find?.current?.messageID else { return }
+            .task(id: find?.scrollGeneration) {
+                let generation = find?.scrollGeneration
+                // Let matching folded groups mount their original message
+                // anchors before asking ScrollViewReader to find the row.
+                await Task.yield()
+                guard !Task.isCancelled, find?.threadID == threadID,
+                      find?.scrollGeneration == generation, let id = find?.current?.messageID else { return }
                 withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
             }
     }

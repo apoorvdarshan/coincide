@@ -631,7 +631,7 @@ final class RemoteWorkspaceStore {
     @discardableResult
     func perform(_ command: RemoteEnvironmentCommand) async -> Bool {
         guard canWrite, let client, let connection, let environmentID = connection.environmentID else { return false }
-        guard attachmentSubmissionStillAllowed(command) else {
+        guard attachmentSubmissionStillAllowed(command), transcriptPlanCommandStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Review the draft before sending again."; return false
         }
         guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command), lifecycleCommandStillAllowed(command), projectScriptCommandStillAllowed(command) else {
@@ -656,7 +656,7 @@ final class RemoteWorkspaceStore {
         let owner = generation
         await drainDrafts(owner: owner)
         guard generation == owner, !stopping, !draftPersistenceFailed else { return false }
-        guard attachmentSubmissionStillAllowed(command) else {
+        guard attachmentSubmissionStillAllowed(command), transcriptPlanCommandStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Your draft was kept."; return false
         }
         guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command), lifecycleCommandStillAllowed(command), projectScriptCommandStillAllowed(command) else {
@@ -678,7 +678,7 @@ final class RemoteWorkspaceStore {
                 errorMessage = "The remote review or its affected checkout changed. Your draft was kept."
                 return false
             }
-            if !attachmentSubmissionStillAllowed(command) {
+            if !attachmentSubmissionStillAllowed(command) || !transcriptPlanCommandStillAllowed(command) {
                 try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
                 pending = nil
                 errorMessage = "The selected conversation or its attachments changed. Your draft was kept."
@@ -883,6 +883,99 @@ final class RemoteWorkspaceStore {
         await drainDrafts(owner: owner)
         guard generation == owner, !draftPersistenceFailed else { throw CancellationError() }
         _ = try? await client.readHistory(.init(target: target, query: .release(binding: recall.binding)))
+    }
+
+    func transcriptActionIsCurrent(message: RemoteMessageSummary, binding: RemoteProjectionBinding,
+                                   presentation: RemoteTranscriptMessagePresentation) -> Bool {
+        guard isConnected, !stopping, usesProjection, connection?.environmentID == binding.environmentID,
+              projection.browseBinding == binding, let control = projection.control,
+              control.binding.environmentID == binding.environmentID, control.binding.hostID == binding.hostID,
+              selectedThreadID == presentation.threadID, control.detail.summary.id == presentation.threadID,
+              control.detail.summary.createdAt == presentation.threadCreatedAt,
+              control.detail.summary.projectID == presentation.projectID,
+              control.detail.summary.workspacePath.utf8.elementsEqual(presentation.workspacePath.utf8),
+              presentation.messageID.utf8.elementsEqual(message.id.utf8), presentation.role == message.role,
+              presentation.createdAt == message.createdAt, presentation.runReference == message.runReference,
+              message.removedByHistoryOperationID == nil, message.presentation != nil else { return false }
+        let originals = projection.visibleMessages.lazy.filter { $0.id.utf8.elementsEqual(message.id.utf8) }.prefix(2)
+        return originals.count == 1 && originals.first.map {
+            (try? RemoteProjectionProtocol.payload($0)) == (try? RemoteProjectionProtocol.payload(message))
+        } == true
+    }
+    func canImplementTranscriptPlan(message: RemoteMessageSummary, binding: RemoteProjectionBinding,
+                                    presentation: RemoteTranscriptMessagePresentation) -> Bool {
+        canWrite && transcriptPlanReady(message: message, binding: binding, presentation: presentation)
+    }
+    private func transcriptPlanReady(message: RemoteMessageSummary, binding: RemoteProjectionBinding,
+                                     presentation: RemoteTranscriptMessagePresentation) -> Bool {
+        guard descriptor?.capabilities.supportsTranscriptPlanImplementation == true,
+              transcriptActionIsCurrent(message: message, binding: binding, presentation: presentation),
+              !projection.controlHasNewerState, let control = projection.control,
+              control.detail.submit.allowed, control.detail.workspaceReady, !control.detail.isBusy,
+              control.detail.summary.queueCount == 0, control.detail.requestCount == 0, control.detail.settlementID == nil,
+              draft.isEmpty,
+              control.draft.isEmpty,
+              hostDraftAttachments.isEmpty, !attachments.hasAttachments,
+              !attachments.isLoading, !attachments.isImporting, !attachments.isUploading else { return false }
+        return true
+    }
+    func implementTranscriptPlan(plan: String, message: RemoteMessageSummary, binding: RemoteProjectionBinding,
+                                 presentation: RemoteTranscriptMessagePresentation) async -> Bool {
+        guard !Task.isCancelled, !plan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              canImplementTranscriptPlan(message: message, binding: binding, presentation: presentation),
+              let target = pullRequestTarget, let reference = message.presentation else { return false }
+        let owner = generation
+        await updateInspector()
+        guard generation == owner, !Task.isCancelled,
+              canImplementTranscriptPlan(message: message, binding: binding, presentation: presentation),
+              let bound = inspector.selected?.session.target, bound.rootID != nil,
+              inspector.selected?.session.canRead == true,
+              RemoteWorkspaceInspectorSession.sameWorkspace(bound, target) else { return false }
+        // Send the host-owned reference. The helper resolves the immutable
+        // authored plan and revalidates it in the atomic native reducer.
+        return await perform(.implementTranscriptPlan(target: bound, binding: binding, messageID: message.id, presentation: reference))
+    }
+    private func transcriptPlanCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        guard case .implementTranscriptPlan(let target, let binding, let messageID, let reference) = command else { return true }
+        guard let current = pullRequestTarget, RemoteLifecycleProtocol.same(current.configuration, target.configuration),
+              current.environmentID == target.environmentID, current.projectID == target.projectID, current.threadID == target.threadID,
+              let bound = inspector.selected?.session.target, bound.rootID == target.rootID, target.rootID != nil,
+              RemoteWorkspaceInspectorSession.sameWorkspace(bound, target),
+              let message = projection.visibleMessages.first(where: { $0.id.utf8.elementsEqual(messageID.utf8) }), message.presentation == reference,
+              let control = projection.control, projection.browseBinding == binding,
+              control.binding.hostID == binding.hostID, descriptor?.capabilities.supportsTranscriptPlanImplementation == true,
+              !projection.controlHasNewerState, control.detail.submit.allowed, control.detail.workspaceReady, !control.detail.isBusy,
+              control.detail.summary.queueCount == 0, control.detail.requestCount == 0, control.detail.settlementID == nil,
+              draft.isEmpty,
+              control.draft.isEmpty, hostDraftAttachments.isEmpty,
+              !attachments.hasAttachments, !attachments.isImporting, !attachments.isUploading else { return false }
+        return true
+    }
+    func saveTranscriptPlan(path: String, contents: String, message: RemoteMessageSummary, binding: RemoteProjectionBinding,
+                            presentation: RemoteTranscriptMessagePresentation) async throws {
+        guard !Task.isCancelled, canWrite, transcriptActionIsCurrent(message: message, binding: binding, presentation: presentation),
+              let target = pullRequestTarget else { throw CoincideError("The remote conversation changed. Open Save Plan again from its current message.") }
+        let owner = generation
+        await updateInspector()
+        guard generation == owner, !Task.isCancelled, canWrite,
+              transcriptActionIsCurrent(message: message, binding: binding, presentation: presentation),
+              let model = inspector.selected, RemoteWorkspaceInspectorSession.sameWorkspace(model.session.target, target),
+              model.session.canMutate else { throw CoincideError("This remote workspace is unavailable for saving the plan.") }
+        var saveRequestID: UUID?
+        await model.session.perform(.createFile(path: path, contents: contents), beforeBegin: { [weak self, weak model] request in
+            guard let self, let model, self.generation == owner,
+                  self.transcriptActionIsCurrent(message: message, binding: binding, presentation: presentation),
+                  self.inspector.selected === model, RemoteWorkspaceInspectorSession.sameWorkspace(request.target, target) else { throw CancellationError() }
+            saveRequestID = request.id
+        })
+        guard let saveRequestID, let operation = await model.session.waitForOperation(id: saveRequestID), operation.request.id == saveRequestID,
+              operation.state == .finished, operation.failure == nil,
+              case .createFile(let writtenPath, let writtenText) = operation.request.mutation,
+              writtenPath.utf8.elementsEqual(path.utf8), writtenText.utf8.elementsEqual(contents.utf8),
+              case .document(let document) = operation.result, document.relativePath.utf8.elementsEqual(path.utf8),
+              !document.truncated, document.contents.utf8.elementsEqual(contents.utf8) else {
+            throw CoincideError(model.session.errorMessage ?? "The remote save is unconfirmed. Check its existing operation before trying again.")
+        }
     }
 
     func submit() async {

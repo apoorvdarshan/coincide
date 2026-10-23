@@ -160,6 +160,19 @@ final class RemoteWorkspaceInspectorSession {
         }
     }
 
+    /// Observes the already journaled operation. Leaving this wait never
+    /// creates a second request or implies that the host stopped the write.
+    func waitForOperation(id: UUID, timeout: Duration = .seconds(30)) async -> RemoteWorkspaceOperation? {
+        let owner = generation, deadline = ContinuousClock.now + timeout
+        while !Task.isCancelled, generation == owner {
+            if let operation, operation.request.id == id,
+               operation.state == .finished || operation.state == .uncertain { return operation }
+            guard pending?.id == id, canRead, ContinuousClock.now < deadline else { return nil }
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return nil }
+        }
+        return nil
+    }
+
     func checkResult() async {
         guard canCheckResult, let transport, let request = pending else { return }
         let owner = generation

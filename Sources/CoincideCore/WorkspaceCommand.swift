@@ -138,6 +138,7 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
 // envelope indirect so decoding and broad switch dispatch copy an owned reference
 // instead of reserving every case's maximum payload on the worker stack.
 indirect enum EngineCommand: Codable, Sendable {
+    case transcriptPlanImplementation(TranscriptPlanImplementation)
     case agentSessionImportAccepted(AgentSessionImportAdmission)
     case delegatedTaskAccepted(DelegatedTaskPreparation)
     case delegatedTaskCancel(parentThreadID: UUID, taskID: UUID, reason: String?)
@@ -293,6 +294,8 @@ struct WorkspaceDecision: Sendable {
             var decision = Self(snapshot: snapshot)
             try decision.acceptAgentSessionImport(admission, id: id, now: now)
             reduced = .init(decision: decision, requiresFinalization: true)
+        case .transcriptPlanImplementation(let request):
+            reduced = .init(decision: try reduceTranscriptPlanImplementation(request, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.replaceComposerDraft(let replacement)):
             var decision = Self(snapshot: snapshot)
             try decision.prepareClientCommand(.replaceComposerDraft(replacement), commandID: id, now: now)
@@ -560,6 +563,14 @@ struct WorkspaceDecision: Sendable {
     /// Submitting input must not retain the broad mutation switch's unrelated
     /// captured values while checking readiness and starting a native run.
     @inline(never)
+    private static func reduceTranscriptPlanImplementation(_ request: TranscriptPlanImplementation, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        let action = try request.command(in: snapshot)
+        var decision = try reduceSubmission(.client(action), id: id, snapshot: snapshot, now: now)
+        decision.reconcileWorkspaceLifecycle(previous: snapshot, command: action, now: now)
+        return decision
+    }
+
+    @inline(never)
     private static func reduceSubmission(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         var decision = Self(snapshot: snapshot)
         guard case .client(let action) = command else { throw WorkspaceCommandError("This workspace command was routed incorrectly.") }
@@ -630,6 +641,7 @@ struct WorkspaceDecision: Sendable {
     private static func mutateGeneral(_ command: EngineCommand, id: UUID, prepared: Self, snapshot: WorkspaceSnapshot, now: Date) throws -> GeneralReduction {
         var decision = prepared
         switch command {
+        case .transcriptPlanImplementation: throw WorkspaceCommandError("This plan action was routed incorrectly.")
         case .agentSessionImportAccepted: throw AgentSessionImportError.invalidRequest
         case .client(.workspaceLifecycle), .client(.setWorkspaceLifecyclePolicy):
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)

@@ -68,7 +68,7 @@ enum RemoteProjectionProjector {
             } else if let thread {
                 source.detail = try detail(thread)
                 if case .thread = scope {
-                    source.messages = try thread.messages.map(message)
+                    source.messages = try messages(thread)
                     source.runs = try (thread.runHistory ?? []).reversed().map { try run($0, thread: thread) }
                 }
             }
@@ -153,12 +153,44 @@ enum RemoteProjectionProjector {
             }
             return try row(result)
         }
-        func message(_ value: ChatMessage) throws -> RemoteMessageSummary {
+        func messages(_ thread: CodingThread) throws -> [RemoteMessageSummary] {
+            var records: [UUID: ThreadRunRecord] = [:]
+            for record in thread.activeHistoryRuns where records[record.id] == nil { records[record.id] = record }
+            var terminal: [UUID: String] = [:], latest: [UUID: String] = [:]
+            for message in thread.visibleMessages {
+                guard let reference = message.runReference, reference.threadID == thread.id, records[reference.runID] != nil else { continue }
+                latest[reference.runID] = message.id
+                if message.role == .assistant { terminal[reference.runID] = message.id }
+            }
+            return try thread.messages.map { value in
+                let record = value.runReference.flatMap { $0.threadID == thread.id ? records[$0.runID] : nil }
+                let sourceRecord = value.runReference.flatMap { reference -> ThreadRunRecord? in
+                    guard let original = snapshot.threads.first(where: { $0.id == reference.threadID }) else { return nil }
+                    let matches = original.activeHistoryRuns.filter { $0.id == reference.runID }
+                    return matches.count == 1 ? matches.first : nil
+                }
+                let visible = value.removedByHistoryOperationID == nil
+                let presentation = RemoteTranscriptMessagePresentation(projectID: thread.projectID, threadID: thread.id,
+                    threadCreatedAt: thread.createdAt, workspacePath: thread.workspacePath, messageID: value.id,
+                    role: value.role, createdAt: value.createdAt, sourceText: try text(value.text), providerEntity: value.providerEntity,
+                    runReference: value.runReference, provider: sourceRecord?.configuration.provider ?? (value.runReference == nil ? thread.provider : nil),
+                    runStatus: sourceRecord?.status,
+                    promptSteeringID: value.promptSteeringID,
+                    opensRun: visible && value.role == .user && record?.origin == .user && record?.userMessageID == value.id,
+                    terminalResponse: visible && value.role == .assistant && record?.status.isTerminal == true && record.flatMap { terminal[$0.id] } == value.id,
+                    streaming: visible && value.role == .assistant && record?.id == thread.activeRun?.id && record.flatMap { latest[$0.id] } == value.id,
+                    runActive: record != nil && record?.id == thread.activeRun?.id,
+                    trailing: visible && record?.id == thread.activeRun?.id && record.flatMap { latest[$0.id] } == value.id,
+                    canPairClaudeResult: value.role == .tool && value.providerEntity == nil && sourceRecord?.messageAttributionVersion == 1 && sourceRecord?.configuration.provider == .claude)
+                return try message(value, presentation: json(presentation, kind: .transcriptPresentation))
+            }
+        }
+        func message(_ value: ChatMessage, presentation: RemoteProjectionContentReference) throws -> RemoteMessageSummary {
             try row(.init(id: value.id, role: value.role, createdAt: value.createdAt, text: text(value.providerEntity?.text ?? value.text),
                 attachments: value.attachments.map { try json($0, kind: .attachmentReferences) }, attachmentCount: value.attachments?.count ?? 0,
                 runReference: value.runReference, removedByHistoryOperationID: value.removedByHistoryOperationID,
                 submissionError: value.submissionError.map { try text($0) },
-                title: value.providerEntity?.fields["title"].string.map { try text($0) }, status: value.providerEntity?.fields["status"].string.map { try text($0) }))
+                title: value.providerEntity?.fields["title"].string.map { try text($0) }, status: value.providerEntity?.fields["status"].string.map { try text($0) }, presentation: presentation))
         }
         func attempt(_ value: ThreadRunCheckpointAttempt, stage: RunCheckpointStage, runID: UUID, thread: CodingThread) throws -> RemoteCheckpointAttemptSummary {
             let reason = snapshot.checkpointRestoreUnavailableReason(threadID: thread.id, runID: runID, stage: stage, expectedAttemptID: value.id)

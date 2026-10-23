@@ -73,7 +73,7 @@ public actor RemoteEnvironmentService {
         self.projectScriptFactory = projectScriptFactory
     }
     public func descriptor() -> RemoteEnvironmentDescriptor {
-        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true, supportsRemoteHistory: true, supportsContextTransfers: true, supportsWorkspaceLifecycleControls: true, supportsReviewedSettleScripts: projectScriptFactory != nil))
+        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true, supportsRemoteHistory: true, supportsContextTransfers: true, supportsWorkspaceLifecycleControls: true, supportsReviewedSettleScripts: projectScriptFactory != nil, supportsTranscriptPlanImplementation: true))
     }
     private func require(_ id: UUID) throws {
         guard id == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
@@ -179,6 +179,12 @@ public actor RemoteEnvironmentService {
                     let excluding: UUID?
                     if case .projectScript(_, .retry) = request.command { excluding = prepared.target.threadID } else { excluding = nil }
                     try await workspace.admitProjectScriptScope(target: prepared.target, scope: prepared.scope, excludingManagedScriptThreadID: excluding)
+                }
+                if case .transcriptPlan(let prepared) = preparation {
+                    guard case .implementTranscriptPlan(let target, _, _, _) = request.command else { throw RemoteEnvironmentError(.invalidRequest) }
+                    let workspace = try await workspaceOperations()
+                    try await workspace.validateCheckpointTarget(target, allowLocked: false)
+                    try await workspace.admitConversationCommand(.resumeQueue(threadID: prepared.threadID, expectedConfiguration: prepared.expectedConfiguration))
                 }
                 if case .contextTransfer(let prepared) = preparation { try await (try await contexts()).validatePreparation(prepared) }
                 if case .history(let prepared) = preparation {
@@ -627,6 +633,8 @@ public actor RemoteEnvironmentService {
                 try captured.validate(); thread.codexRuntimeConfiguration = captured
             }
             return .thread(thread)
+        case .implementTranscriptPlan(let target, let binding, let messageID, let presentation):
+            return .transcriptPlan(try await (try await projections()).prepareTranscriptPlanImplementation(target: target, binding: binding, messageID: messageID, presentation: presentation))
         case .prepareWorktree(let target, let sourceRootID, let expectedAttemptID, _, _):
             let identity = try await (try await workspaceOperations()).validateWorktreeSource(target, sourceRootID: sourceRootID, expectedAttemptID: expectedAttemptID)
             return try await engine.prepareRemoteWorktree(command, expectedSourceIdentity: identity)
@@ -668,6 +676,13 @@ public actor RemoteEnvironmentService {
             case .title(let value): try text(value, maximum: 512)
             case .model(let value): try text(value, maximum: 512, allowEmpty: true)
             case .permission, .checkpointPolicy: break }
+        case .implementTranscriptPlan(let target, let binding, let messageID, let presentation):
+            guard target.environmentID == environmentID, binding.environmentID == environmentID,
+                  binding.scope == .thread(target.threadID), presentation.kind == .transcriptPresentation,
+                  presentation.totalBytes > 0, presentation.totalBytes <= RemoteProjectionProtocol.maximumCacheBytes,
+                  RemoteLifecycleProtocol.validDigest(presentation.digest) else { throw RemoteEnvironmentError(.invalidRequest) }
+            try ProviderHistoryValidation.path(target.workspacePath)
+            try text(messageID, maximum: 4_096)
         case .submit(_, let value, _): try text(value, maximum: 120_000)
         case .lifecycle(let capture, let action):
             if action == .settleReviewingScript, projectScriptFactory == nil { throw RemoteEnvironmentError(.unsupported) }

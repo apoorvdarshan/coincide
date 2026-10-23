@@ -25,7 +25,7 @@ public enum RemoteProjectionProtocol {
 }
 public enum RemoteProjectionScope: Codable, Sendable, Equatable { case catalog, thread(UUID), control(UUID) }
 public enum RemoteProjectionContentKind: String, Codable, Sendable {
-    case text, configuration, draft, attachmentReferences, runtimeRequests, queuedTurns, checkpointAttempts, providerUsage
+    case text, configuration, draft, attachmentReferences, runtimeRequests, queuedTurns, checkpointAttempts, providerUsage, transcriptPresentation
 }
 public enum RemoteProjectionCatalogQuery: Codable, Sendable, Equatable {
     case projects
@@ -290,7 +290,8 @@ public struct RemoteMessageSummary: Codable, Sendable, Equatable, Identifiable {
     public let submissionError: RemoteProjectionText?
     public let title: RemoteProjectionText?
     public let status: RemoteProjectionText?
-    public init(id: String, role: MessageRole, createdAt: Date, text: RemoteProjectionText, attachments: RemoteProjectionContentReference? = nil, attachmentCount: Int, runReference: TranscriptRunReference? = nil, removedByHistoryOperationID: UUID? = nil, submissionError: RemoteProjectionText? = nil, title: RemoteProjectionText? = nil, status: RemoteProjectionText? = nil) {
+    public let presentation: RemoteProjectionContentReference?
+    public init(id: String, role: MessageRole, createdAt: Date, text: RemoteProjectionText, attachments: RemoteProjectionContentReference? = nil, attachmentCount: Int, runReference: TranscriptRunReference? = nil, removedByHistoryOperationID: UUID? = nil, submissionError: RemoteProjectionText? = nil, title: RemoteProjectionText? = nil, status: RemoteProjectionText? = nil, presentation: RemoteProjectionContentReference? = nil) {
         self.id = id
         self.role = role
         self.createdAt = createdAt
@@ -302,7 +303,69 @@ public struct RemoteMessageSummary: Codable, Sendable, Equatable, Identifiable {
         self.submissionError = submissionError
         self.title = title
         self.status = status
+        self.presentation = presentation
     }
+}
+
+/// Immutable display data owned by its projection lease. Native history,
+/// checkpoint receipts and runtime configurations remain host-only authority.
+/// Source text is separate from rendered provider-entity text, so Copy keeps
+/// the original authored bytes even for a structured activity row.
+public struct RemoteTranscriptMessagePresentation: Codable, Sendable, Equatable {
+    private struct Payload: Codable, Sendable, Equatable {
+        let projectID: UUID
+        let threadID: UUID
+        let threadCreatedAt: Date
+        let workspacePath: String
+        let messageID: String
+        let role: MessageRole
+        let createdAt: Date
+        let sourceText: RemoteProjectionText
+        let providerEntity: ProviderEntity?
+        let runReference: TranscriptRunReference?
+        let provider: ProviderKind?
+        let runStatus: ThreadRunStatus?
+        let promptSteeringID: UUID?
+        let opensRun: Bool
+        let terminalResponse: Bool
+        let streaming: Bool
+        let runActive: Bool
+        let trailing: Bool
+        let canPairClaudeResult: Bool
+    }
+    private let storage: [Payload]
+    public var projectID: UUID { storage[0].projectID }
+    public var threadID: UUID { storage[0].threadID }
+    public var threadCreatedAt: Date { storage[0].threadCreatedAt }
+    public var workspacePath: String { storage[0].workspacePath }
+    public var messageID: String { storage[0].messageID }
+    public var role: MessageRole { storage[0].role }
+    public var createdAt: Date { storage[0].createdAt }
+    public var sourceText: RemoteProjectionText { storage[0].sourceText }
+    public var providerEntity: ProviderEntity? { storage[0].providerEntity }
+    public var runReference: TranscriptRunReference? { storage[0].runReference }
+    public var provider: ProviderKind? { storage[0].provider }
+    public var runStatus: ThreadRunStatus? { storage[0].runStatus }
+    public var promptSteeringID: UUID? { storage[0].promptSteeringID }
+    public var opensRun: Bool { storage[0].opensRun }
+    public var terminalResponse: Bool { storage[0].terminalResponse }
+    public var streaming: Bool { storage[0].streaming }
+    public var runActive: Bool { storage[0].runActive }
+    public var trailing: Bool { storage[0].trailing }
+    public var canPairClaudeResult: Bool { storage[0].canPairClaudeResult }
+    public init(projectID: UUID, threadID: UUID, threadCreatedAt: Date, workspacePath: String, messageID: String,
+                role: MessageRole, createdAt: Date, sourceText: RemoteProjectionText, providerEntity: ProviderEntity? = nil,
+                runReference: TranscriptRunReference? = nil, provider: ProviderKind? = nil, runStatus: ThreadRunStatus? = nil,
+                promptSteeringID: UUID? = nil, opensRun: Bool = false, terminalResponse: Bool = false, streaming: Bool = false,
+                runActive: Bool = false, trailing: Bool = false, canPairClaudeResult: Bool = false) {
+        storage = [.init(projectID: projectID, threadID: threadID, threadCreatedAt: threadCreatedAt, workspacePath: workspacePath,
+            messageID: messageID, role: role, createdAt: createdAt, sourceText: sourceText, providerEntity: providerEntity,
+            runReference: runReference, provider: provider, runStatus: runStatus, promptSteeringID: promptSteeringID,
+            opensRun: opensRun, terminalResponse: terminalResponse, streaming: streaming, runActive: runActive, trailing: trailing,
+            canPairClaudeResult: canPairClaudeResult)]
+    }
+    public init(from decoder: any Decoder) throws { storage = [try Payload(from: decoder)] }
+    public func encode(to encoder: any Encoder) throws { try storage[0].encode(to: encoder) }
 }
 
 public struct RemoteCheckpointAttemptSummary: Codable, Sendable, Equatable, Identifiable {

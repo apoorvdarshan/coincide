@@ -129,9 +129,27 @@ struct RemoteProjectedMessageView: View {
     let binding: RemoteProjectionBinding
     let store: RemoteProjectionStore
     let source: AttachmentAccess?
+    let transcript: RemoteTranscriptState
+    var workspace: RemoteWorkspaceStore? = nil
+    var result: RemoteMessageSummary? = nil
+    var historyAction: ((UUID, ConversationHistoryKind) -> Void)? = nil
+    var changesAction: ((UUID) -> Void)? = nil
     @State private var reader = RemoteProjectionTextReader()
     @State private var attachments: [ChatAttachment]?
     @State private var attachmentError: String?
+    @State private var expanded = false
+    @State private var hovered = false
+    @AppStorage(TranscriptPreferences.timestampFormatKey) private var timestampFormat = TranscriptTimestampFormat.system.rawValue
+    private var entry: RemoteTranscriptEntry? { transcript.entry(message, binding) }
+    private var displayText: String { reader.offset > 0 ? reader.text : message.text.preview }
+    var copySource: String? {
+        if let entry { return entry.sourceText }
+        return message.presentation == nil && message.text.complete ? message.text.preview : nil
+    }
+    private var current: Bool {
+        guard let workspace, let presentation = entry?.presentation else { return false }
+        return workspace.transcriptActionIsCurrent(message: message, binding: binding, presentation: presentation)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let attachments, let source { AttachmentShelf(source: source, attachments: attachments) }
@@ -141,11 +159,46 @@ struct RemoteProjectedMessageView: View {
             if let attachmentError { Text(attachmentError).font(.caption).foregroundStyle(.secondary) }
             if let title = message.title { RemoteProjectionPreview(text: title).font(.caption.weight(.semibold)) }
             if let status = message.status { RemoteProjectionPreview(text: status).font(.caption).foregroundStyle(.secondary) }
-            if message.role == .tool || message.role == .reasoning {
-                DisclosureGroup(message.role == .tool ? "Tool activity" : "Reasoning") { text.font(.system(.caption, design: .monospaced)) }
+            if message.role == .tool, let card = transcript.card(message, result: result, binding: binding) {
+                if card.kind == .plan, let plan = card.plan {
+                    PlanCardView(plan: plan, expanded: $expanded,
+                        canImplement: entry.map { workspace?.canImplementTranscriptPlan(message: message, binding: binding, presentation: $0.presentation) == true } ?? false,
+                        implement: { plan in
+                            guard let workspace, let entry, current else { return false }
+                            return await workspace.implementTranscriptPlan(plan: plan, message: message, binding: binding, presentation: entry.presentation)
+                        }, save: { path, contents in
+                            guard let workspace, let entry, current else { throw CancellationError() }
+                            try await workspace.saveTranscriptPlan(path: path, contents: contents, message: message, binding: binding, presentation: entry.presentation)
+                        }, saveAvailable: current && workspace?.canWrite == true)
+                } else {
+                    ToolCardView(card: card, entity: entry?.presentation.providerEntity,
+                                 caption: entry.flatMap { TranscriptEntryCaption.copilot($0.message) }, expanded: $expanded)
+                }
+            } else if message.role == .tool {
+                DisclosureGroup(message.title?.preview ?? "Tool activity") { Text(displayText).font(.system(.caption, design: .monospaced)) }
+            } else if message.role == .reasoning {
+                ReasoningRowView(text: displayText, live: entry?.presentation.runActive == true && entry?.presentation.trailing == true,
+                                 duration: nil, expanded: $expanded)
             } else if message.role == .user {
-                HStack { Spacer(minLength: 60); text.padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 18)) }
-            } else { MarkdownView(reader.offset > 0 ? reader.text : message.text.preview, mathEnabled: renderMathInMarkdown) }
+                HStack { Spacer(minLength: 60); UserMessageBody(text: displayText, expanded: $expanded).padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 18)) }
+            } else { MarkdownView(displayText, mathEnabled: renderMathInMarkdown) }
+            if message.role == .user || message.role == .assistant {
+                MessageActionsBar(message: displayMessage, role: message.role, actions: actions,
+                    steered: entry?.presentation.promptSteeringID != nil, streaming: entry?.presentation.streaming == true,
+                    providerName: entry?.presentation.provider?.name ?? "Provider", visible: hovered,
+                    copyAvailable: copySource != nil,
+                    copyUnavailableReason: "Load the complete verified source before copying this message.")
+            }
+            if message.presentation != nil, entry == nil {
+                Button("Load Activity Details") { requestDetails() }.disabled(transcript.loading.contains(.init(message, binding)) || !store.connected)
+                    .help("Load the immutable remote presentation document.")
+            }
+            if entry?.sourceText == nil, entry != nil {
+                Button("Load Complete Source for Actions") { requestDetails(includeSource: true) }
+                    .disabled(transcript.loading.contains(.init(message, binding)) || !store.connected)
+                    .help("Complete source is bounded to 32 MiB; longer content remains available through paged text.")
+            }
+            if let error = transcript.errors[.init(message, binding)] { Text(error).font(.caption).foregroundStyle(.secondary) }
             if !message.text.complete, let reference = message.text.content {
                 HStack {
                     Button(reader.offset == 0 ? "Load Text" : "Load More Text") { Task { await reader.load(reference: reference, binding: binding, store: store) } }
@@ -158,13 +211,44 @@ struct RemoteProjectedMessageView: View {
             }
             if let error = message.submissionError { RemoteProjectionPreview(text: error).font(.caption).foregroundStyle(.red) }
         }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        .onHover { hovered = $0 }
+        .task(id: RemoteTranscriptMessageKey(message, binding)) { requestDetails() }
+        .onChange(of: transcript.binding) {
+            if transcript.binding == binding { requestDetails() }
+        }
     }
-    private var text: Text { Text(reader.offset > 0 ? reader.text : message.text.preview) }
+    private var displayMessage: ChatMessage {
+        if let entry { return entry.message }
+        var value = ChatMessage(id: message.id, role: message.role, text: copySource ?? "")
+        value.createdAt = message.createdAt; return value
+    }
+    private var actions: TranscriptMessageActions {
+        var value = TranscriptMessageActions(timestamps: .init(format: .init(rawValue: timestampFormat) ?? .system))
+        guard let entry, let runID = entry.presentation.runReference?.runID else { return value }
+        if entry.presentation.opensRun {
+            value.editUnavailableReason = !current ? "Select the original remote conversation before reviewing history." : workspace?.history.current?.availability(runID: runID, kind: .rewindBeforeRun).reason
+            value.editFromHere = { if current { historyAction?(runID, .rewindBeforeRun) } }
+            if historyAction == nil || workspace?.history.current?.availability(runID: runID, kind: .rewindBeforeRun).allowed != true { value.editUnavailableReason = value.editUnavailableReason ?? "Load this exact run in remote history first." }
+        }
+        if entry.presentation.terminalResponse {
+            value.forkUnavailableReason = !current ? "Select the original remote conversation before reviewing history." : workspace?.history.current?.availability(runID: runID, kind: .forkAfterRun).reason
+            value.forkFromHere = { if current { historyAction?(runID, .forkAfterRun) } }
+            if historyAction == nil || workspace?.history.current?.availability(runID: runID, kind: .forkAfterRun).allowed != true { value.forkUnavailableReason = value.forkUnavailableReason ?? "Load this exact run in remote history first." }
+            if store.runs.first(where: { $0.id == runID })?.checkpointDiff.allowed == true {
+                value.viewChanges = { if current { changesAction?(runID) } }
+            }
+        }
+        return value
+    }
+    private func requestDetails(includeSource: Bool = false) {
+        guard store.connected else { return }
+        transcript.request(message, binding: binding, includeSource: includeSource) { try await store.document($0, binding: $1) }
+    }
     private func loadAttachments() async {
         guard let reference = message.attachments, reference.kind == .attachmentReferences else { return }
         do {
             let values = try JSONDecoder().decode([ChatAttachment].self, from: await store.document(reference, binding: binding))
-            guard values.count == message.attachmentCount, !Task.isCancelled else { throw RemoteProjectionFailure(.invalidRequest) }
+            guard values.count == message.attachmentCount, !Task.isCancelled, transcript.binding == binding else { throw RemoteProjectionFailure(.invalidRequest) }
             attachments = values; attachmentError = nil
         } catch { attachmentError = error.localizedDescription }
     }
@@ -277,11 +361,7 @@ struct RemoteProjectedConversationView: View {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     if store.projection.canLoadEarlier { Button("Load Earlier Messages") { Task { await store.projection.loadMore(.messages) } } }
                     if let binding = store.projection.browseBinding {
-                        ForEach(store.projection.visibleMessages) { message in
-                            RemoteProjectedMessageView(message: message, binding: binding, store: store.projection,
-                                source: store.attachmentTarget.map { store.attachments.access(target: $0) })
-                                .id(binding.viewID.uuidString + ":" + message.id)
-                        }
+                        RemoteTranscriptRowsView(store: store, binding: binding)
                     }
                     if control?.detail.isBusy == true { Text("\(control?.detail.summary.providerName ?? "Provider") is working on the remote Mac…").font(.caption).foregroundStyle(.secondary) }
                 }.frame(maxWidth: 760, alignment: .leading).padding(24).frame(maxWidth: .infinity)

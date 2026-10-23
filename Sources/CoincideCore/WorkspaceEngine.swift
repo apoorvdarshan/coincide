@@ -2842,6 +2842,13 @@ public actor WorkspaceEngine {
             Task { await service.requestSweep() }
         }
     }
+    @discardableResult public func implementTranscriptPlan(_ request: TranscriptPlanImplementation, commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        guard !stoppingEffects else { throw CancellationError() }
+        let receipt = try await enqueue(.transcriptPlanImplementation(request), id: commandID)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
     @discardableResult public func dispatch(_ command: WorkspaceCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         guard !stoppingEffects else { throw CancellationError() }
@@ -2962,7 +2969,7 @@ public actor WorkspaceEngine {
         if let authority = AppMCPTaskContext.authority {
             try Task.checkCancellation()
             switch command {
-            case .client, .promptSteeringAccepted, .conversationHistoryAccepted, .contextTransferAccepted, .beginWorktreePreparation, .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskObserved, .delegatedTaskWakePolicy:
+            case .client, .transcriptPlanImplementation, .promptSteeringAccepted, .conversationHistoryAccepted, .contextTransferAccepted, .beginWorktreePreparation, .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskObserved, .delegatedTaskWakePolicy:
                 admitted = .appMCP(authority: authority, commands: [command])
             default: admitted = command
             }

@@ -14,6 +14,7 @@ enum RemoteEnvironmentPreparation: Codable, Sendable {
     case contextTransfer(RemoteContextPreparation)
     case lifecycle(RemoteLifecyclePreparation)
     case projectScript(RemoteProjectScriptPreparation)
+    case transcriptPlan(TranscriptPlanImplementation)
 }
 
 enum RemoteEnvironmentAdmission {
@@ -64,12 +65,21 @@ enum RemoteEnvironmentAdmission {
             guard thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
                   thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw stale() }
             return .respond(threadID: id, requestID: request.id, response: response)
-        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest, .checkpoint, .history, .contextTransfer, .lifecycle, .lifecyclePolicy, .projectScript:
+        case .implementTranscriptPlan, .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest, .checkpoint, .history, .contextTransfer, .lifecycle, .lifecyclePolicy, .projectScript:
             throw stale()
         }
     }
     static func commands(_ request: RemoteEnvironmentCommandRequest, preparation: RemoteEnvironmentPreparation,
                          snapshot: WorkspaceSnapshot) throws -> [EngineCommand] {
+        if case .implementTranscriptPlan(let target, let binding, let messageID, _) = request.command {
+            guard case .transcriptPlan(let captured) = preparation,
+                  target.environmentID == request.environmentID, binding.environmentID == request.environmentID,
+                  binding.scope == .thread(target.threadID), captured.threadID == target.threadID,
+                  captured.message.id.utf8.elementsEqual(messageID.utf8),
+                  RemoteLifecycleProtocol.same(captured.expectedConfiguration, target.configuration) else { throw stale() }
+            _ = try captured.command(in: snapshot)
+            return [.transcriptPlanImplementation(captured)]
+        }
         if case .projectScript = request.command {
             return try RemoteProjectScriptAdmission.commands(request, preparation: preparation, snapshot: snapshot)
         }

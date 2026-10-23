@@ -91,6 +91,7 @@ struct SettingsView: View {
                 }
                 Text("Queue waits for the next turn. Steer sends into a supported running turn with that turn's settings. Command-Return uses the alternate action; unavailable steering keeps the message queued.")
                     .font(.caption).foregroundStyle(.secondary)
+                TranscriptSettings()
                 Picker("Group projects", selection: Binding(get: { store.projectGroupingMode }, set: { store.setProjectGroupingMode($0) })) {
                     ForEach(ProjectGroupingMode.allCases) { Text($0.title).tag($0) }
                 }

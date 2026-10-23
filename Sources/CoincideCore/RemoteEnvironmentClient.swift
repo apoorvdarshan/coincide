@@ -183,6 +183,15 @@ public actor RemoteEnvironmentClient {
     }
     public func command(_ command: RemoteEnvironmentCommand, id: UUID = UUID()) async throws -> RemoteEnvironmentCommandResult {
         let (connection, owned, environment) = try context()
+        if case .implementTranscriptPlan(let target, let binding, let messageID, let presentation) = command {
+            guard descriptor?.capabilities.supportsTranscriptPlanImplementation == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            guard target.environmentID == environment, binding.environmentID == environment, target.rootID != nil,
+                  case .thread(let threadID) = binding.scope, threadID == target.threadID,
+                  presentation.kind == .transcriptPresentation else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            try validateProjectionRequest(binding, threadID: target.threadID, requiresHistory: true)
+            try ProviderHistoryValidation.id(messageID)
+            try Self.validateProjectionReference(presentation, kind: .transcriptPresentation)
+        }
         if case .projectScript(let target, let action) = command {
             guard descriptor?.capabilities.supportsReviewedSettleScripts == true else { throw RemoteEnvironmentClientError(.unsupported) }
             guard target.environmentID == environment, !action.requiresBoundRoot || target.rootID != nil else { throw RemoteProjectScriptFailure(.invalidTarget) }
@@ -1460,6 +1469,7 @@ extension RemoteEnvironmentClient {
                 if let error = item.submissionError { try Self.validateProjectionText(error) }
                 if let title = item.title { try Self.validateProjectionText(title) }
                 if let status = item.status { try Self.validateProjectionText(status) }
+                if let presentation = item.presentation { try Self.validateProjectionReference(presentation, kind: .transcriptPresentation) }
             }
         }
         return result

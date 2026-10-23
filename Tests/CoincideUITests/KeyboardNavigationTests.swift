@@ -122,6 +122,16 @@ import Testing
     #expect(model.status.isEmpty && ThreadFindModel.matches(in: [first], query: "  ").isEmpty)
 }
 
+@Test func threadFindIncludesTypedProposedPlansWithoutTreatingToolOutputOrTodoListsAsPlans() {
+    var plan = ChatMessage(id: "typed-plan", role: .tool, text: "")
+    plan.providerEntity = .init(key: .init(sessionID: "private-test", type: "plan", id: "proposal"), fields: .object(["content": .string("# Café implementation\nShip the café changes")]))
+    var todo = ChatMessage(id: "todo", role: .tool, text: "Café")
+    todo.providerEntity = .init(key: .init(sessionID: "private-test", type: "plan", id: "checklist"), fields: .object(["entries": .array([.object(["content": .string("Café"), "status": .string("pending")])])]))
+    let literal = ChatMessage(id: "tool", role: .tool, text: "# Café tool output")
+    let matches = ThreadFindModel.matches(in: [literal, todo, plan], query: "cafe")
+    #expect(matches == [.init(messageID: "typed-plan", occurrence: 0), .init(messageID: "typed-plan", occurrence: 1)])
+}
+
 @Test func paletteRankingPrefersExactThenPrefixThenContainsAndHonorsRecencyAndSecondary() {
     func item(_ id: String, _ terms: [String], recency: Double? = nil, secondary: Bool = false) -> PaletteItem {
         PaletteItem(id: id, title: terms.first ?? id, searchTerms: terms, searchRecency: recency, isSecondary: secondary, kind: .action {})

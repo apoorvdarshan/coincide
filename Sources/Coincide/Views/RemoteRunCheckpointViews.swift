@@ -85,7 +85,7 @@ struct RemoteRunCheckpointHistoryContent: View {
     }
 }
 
-private struct RemoteCheckpointDiffPane: View {
+struct RemoteCheckpointDiffPane: View {
     var model: RemoteCheckpointWorkspace
     let runID: UUID
     let restore: (RunCheckpointStage, UUID) -> Void

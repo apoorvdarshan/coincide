@@ -16,6 +16,65 @@ actor RemoteProjectionService {
         guard binding.hostID == hostID else { throw RemoteProjectionFailure(.staleView) }
         return try cache.view(binding)
     }
+
+    /// Resolve only a host-owned immutable projection document. The client
+    /// supplies references, never a native message or an execution request.
+    /// The native reducer will revalidate this current source at the original
+    /// remote command's durable admission boundary.
+    func prepareTranscriptPlanImplementation(target: RemoteWorkspaceTarget, binding: RemoteProjectionBinding,
+                                             messageID: String, presentation: RemoteProjectionContentReference) async throws -> TranscriptPlanImplementation {
+        try require(target.environmentID)
+        let owned = try view(binding)
+        guard case .thread(let threadID) = binding.scope, threadID == target.threadID,
+              let summary = owned.messages.first(where: { $0.id.utf8.elementsEqual(messageID.utf8) }),
+              summary.removedByHistoryOperationID == nil, summary.presentation == presentation,
+              presentation.kind == .transcriptPresentation else { throw RemoteProjectionFailure(.invalidRequest) }
+        let bytes = try transcriptDocument(presentation, view: owned)
+        let displayed = try JSONDecoder().decode(RemoteTranscriptMessagePresentation.self, from: bytes)
+        guard displayed.messageID.utf8.elementsEqual(messageID.utf8), displayed.threadID == target.threadID,
+              displayed.projectID == target.projectID, displayed.role == summary.role,
+              displayed.createdAt == summary.createdAt, displayed.runReference == summary.runReference else {
+            throw RemoteProjectionFailure(.invalidRequest)
+        }
+        let sourceText: String
+        if displayed.sourceText.complete {
+            guard displayed.sourceText.content == nil else { throw RemoteProjectionFailure(.invalidRequest) }
+            sourceText = displayed.sourceText.preview
+        } else {
+            guard let reference = displayed.sourceText.content, reference.kind == .text,
+                  let value = String(data: try transcriptDocument(reference, view: owned), encoding: .utf8) else {
+                throw RemoteProjectionFailure(.invalidRequest)
+            }
+            sourceText = value
+        }
+        let update = try await engine.captureRemoteProjection()
+        try require(target.environmentID); try Task.checkCancellation()
+        guard try view(binding) === owned,
+              let thread = update.snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              thread.createdAt == displayed.threadCreatedAt,
+              thread.workspacePath.utf8.elementsEqual(displayed.workspacePath.utf8),
+              try RemoteProjectionProtocol.payload(ProviderConfiguration(thread: thread)) == RemoteProjectionProtocol.payload(target.configuration),
+              let message = thread.messages.first(where: { $0.id.utf8.elementsEqual(messageID.utf8) }),
+              message.removedByHistoryOperationID == nil, message.role == displayed.role, message.createdAt == displayed.createdAt,
+              message.runReference == displayed.runReference, message.promptSteeringID == displayed.promptSteeringID,
+              message.text.utf8.elementsEqual(sourceText.utf8),
+              try RemoteProjectionProtocol.payload(message.providerEntity) == RemoteProjectionProtocol.payload(displayed.providerEntity) else {
+            throw RemoteProjectionFailure(.staleView)
+        }
+        // Legacy rows without captured launch profiles need a separate native
+        // capture review; this display document cannot invent that authority.
+        if thread.provider == .claude, thread.claudeRuntimeConfiguration == nil { throw RemoteProjectionFailure(.unavailable) }
+        if thread.provider == .pi, thread.piConfiguration?.runtime == nil { throw RemoteProjectionFailure(.unavailable) }
+        return .init(thread: thread, message: message)
+    }
+
+    private func transcriptDocument(_ reference: RemoteProjectionContentReference, view: RemoteProjectionView) throws -> Data {
+        guard view.references[reference.id] == reference, let bytes = view.contents[reference.id],
+              bytes.count == reference.totalBytes, RemoteProjectionProtocol.digest(bytes) == reference.digest else {
+            throw RemoteProjectionFailure(.invalidRequest)
+        }
+        return bytes
+    }
     func open(_ request: RemoteProjectionOpenRequest) async throws -> RemoteProjectionOpenResult {
         try require(request.environmentID)
         guard request.minimumSequence.map({ $0 >= 0 }) ?? true else { throw RemoteProjectionFailure(.invalidRequest) }

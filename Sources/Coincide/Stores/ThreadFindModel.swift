@@ -8,7 +8,7 @@ struct ThreadFindMatch: Hashable, Sendable {
     let occurrence: Int
 }
 
-/// `chat.find`: searches every visible user and assistant message in the thread,
+/// `chat.find`: searches visible user/assistant messages and typed proposed plans,
 /// ignoring case and diacritics. Enter and Shift-Enter step with wraparound.
 @MainActor @Observable
 final class ThreadFindModel {
@@ -62,12 +62,20 @@ final class ThreadFindModel {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return [] }
         var result: [ThreadFindMatch] = []
-        for message in messages where message.role == .user || message.role == .assistant {
-            var searchRange = message.text.startIndex..<message.text.endIndex, occurrence = 0
-            while let found = message.text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], range: searchRange) {
+        for message in messages {
+            let text: String
+            if message.role == .user || message.role == .assistant { text = message.text }
+            else if message.role == .tool,
+                    message.providerEntity?.key.type == "plan" || message.text.hasPrefix("ExitPlanMode\n") {
+                let card = TranscriptToolPresentation.card(for: message)
+                guard card.kind == .plan, let plan = card.plan else { continue }
+                text = plan
+            } else { continue }
+            var searchRange = text.startIndex..<text.endIndex, occurrence = 0
+            while let found = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], range: searchRange) {
                 result.append(.init(messageID: message.id, occurrence: occurrence)); occurrence += 1
-                guard result.count < maxMatches, found.upperBound < message.text.endIndex else { break }
-                searchRange = found.upperBound..<message.text.endIndex
+                guard result.count < maxMatches, found.upperBound < text.endIndex else { break }
+                searchRange = found.upperBound..<text.endIndex
             }
             if result.count >= maxMatches { break }
         }

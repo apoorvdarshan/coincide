@@ -71,6 +71,11 @@ manual MCP configuration is needed. Installed Codex and Claude checks verify
 thread read/rename and restart persistence; installed OpenCode model acceptance
 remains blocked by provider access.
 
+The [conversation transcript](docs/TRANSCRIPT.md) includes expandable tool cards,
+inline diffs, completed-work folding, source-preserving message actions and typed
+plan controls. Local and remote actions retain their original conversation and
+workspace ownership; remaining plan-mode parity is documented separately.
+
 **Settings → General → Thread notifications** offers notifications, sound, both,
 or Off (the default). Background alerts show the thread name and open its
 conversation; returning to Coincide clears attention counts. See

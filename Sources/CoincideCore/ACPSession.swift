@@ -325,7 +325,10 @@ public actor ACPSession: ProviderSession {
                 do {
                     if GrokACP.planMethod(method) {
                         let text = try ACPIntegrationValidation.string(body["planContent"], maximum: 262_144, multiline: true) ?? "The agent exited plan mode without writing a plan."
-                        emit(.message(.init(role: .tool, text: text)))
+                        var message = ChatMessage(role: .tool, text: text)
+                        message.providerEntity = .init(key: .init(sessionID: sessionID!, type: "plan", id: message.id),
+                                                       fields: .object(["content": .string(text)]))
+                        emit(.message(message))
                         try await rpc.respond(id: id, result: .object(["outcome": .string("abandoned"), "feedback": .string("The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.")]))
                     } else {
                         guard pending.count < 1_024, !cursorWireIDs.values.contains(id) else { throw GrokACP.failure() }

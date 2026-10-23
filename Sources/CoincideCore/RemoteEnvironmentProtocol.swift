@@ -69,7 +69,8 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsContextTransfers: Bool
     public let supportsWorkspaceLifecycleControls: Bool
     public let supportsReviewedSettleScripts: Bool
-    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false, supportsWorkspaceLifecycleControls: Bool = false, supportsReviewedSettleScripts: Bool = false) {
+    public let supportsTranscriptPlanImplementation: Bool
+    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false, supportsWorkspaceLifecycleControls: Bool = false, supportsReviewedSettleScripts: Bool = false, supportsTranscriptPlanImplementation: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
@@ -84,10 +85,11 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         self.supportsContextTransfers = supportsContextTransfers
         self.supportsWorkspaceLifecycleControls = supportsWorkspaceLifecycleControls
         self.supportsReviewedSettleScripts = supportsReviewedSettleScripts
+        self.supportsTranscriptPlanImplementation = supportsTranscriptPlanImplementation
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers, supportsWorkspaceLifecycleControls, supportsReviewedSettleScripts
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers, supportsWorkspaceLifecycleControls, supportsReviewedSettleScripts, supportsTranscriptPlanImplementation
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -110,6 +112,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsContextTransfers = try values.decodeIfPresent(Bool.self, forKey: .supportsContextTransfers) ?? false
         supportsWorkspaceLifecycleControls = try values.decodeIfPresent(Bool.self, forKey: .supportsWorkspaceLifecycleControls) ?? false
         supportsReviewedSettleScripts = try values.decodeIfPresent(Bool.self, forKey: .supportsReviewedSettleScripts) ?? false
+        supportsTranscriptPlanImplementation = try values.decodeIfPresent(Bool.self, forKey: .supportsTranscriptPlanImplementation) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
@@ -146,6 +149,7 @@ public enum RemoteEnvironmentThreadEdit: Codable, Sendable, Equatable {
 /// A closed client command surface. Native launch paths, internal effects and
 /// provider events can never be supplied by a remote command.
 public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
+    case implementTranscriptPlan(target: RemoteWorkspaceTarget, binding: RemoteProjectionBinding, messageID: String, presentation: RemoteProjectionContentReference)
     case addProject(id: UUID, path: String, title: String?)
     case createThread(id: UUID, projectID: UUID, provider: ProviderKind, title: String, model: String, permission: PermissionMode, checkpointPolicy: RunCheckpointPolicy? = nil)
     case editThread(threadID: UUID, edit: RemoteEnvironmentThreadEdit, expectedConfiguration: ProviderConfiguration)

@@ -155,7 +155,9 @@ private actor GrokACPRecord {
         case .approval(let request), .sessionApproval(let request): requests.append(request)
         case .entity(let update): entities[update.key] = try update.apply(to: entities[update.key])
         case .runEntity(let owner, let update): owners.append(owner); entities[update.key] = try update.apply(to: entities[update.key])
-        case .message(let message): notices.append(message.text)
+        case .message(let message):
+            notices.append(message.text)
+            if let entity = message.providerEntity { entities[entity.key] = entity }
         case .configuration(let value): configurations.append(value)
         case .submissionFailed(_, let reason): rejectedInputs.append(reason)
         case .failure(let text): notices.append(text)
@@ -215,6 +217,13 @@ private func withGrokActor(flow: String, requestedVersion: Int, negotiatedVersio
         try await grokEventually { await record.completions.count == 1 }
         let completions = await record.completions
         #expect(completions == [flow == "cancel" ? .interrupted : ["error", "rate_limit", "rpc-reject"].contains(flow) ? .failed : .idle])
+        if flow == "plan" {
+            let entities = await record.entities
+            let plan = try #require(entities.values.first { $0.key.type == "plan" && $0.fields["content"] == .string("# Synthetic proposal") })
+            var message = ChatMessage(role: .tool, text: "# Synthetic proposal"); message.providerEntity = plan
+            let card = TranscriptToolPresentation.card(for: message)
+            #expect(card.kind == .plan && card.plan == "# Synthetic proposal")
+        }
         if flow == "rpc-reject" {
             #expect(await record.rejectedInputs == ["Grok could not complete this turn."])
             #expect(await record.foregroundErrors == [.object(["message": .string("Grok could not complete this turn.")])])

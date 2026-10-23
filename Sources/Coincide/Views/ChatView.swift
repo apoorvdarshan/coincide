@@ -14,6 +14,8 @@ struct ChatView: View {
     @State private var contextTransferSheet = false
     @State private var contextTransferModel: ContextTransferStore?
     @State private var skillsModel: ProviderSkillsStore?
+    @State private var transcriptState = TranscriptViewState()
+    @State private var transcriptSheet: TranscriptSheetRequest?
     @State private var pendingWorktree: (threadID: UUID, selection: GitWorktreeSelection, submodules: ProjectWorktreeSubmoduleMode, reviewSetup: Bool)?
     private var thread: CodingThread? { store.thread(threadID) }
     private var actionsLocked: Bool {
@@ -86,22 +88,9 @@ struct ChatView: View {
                                         .font(.subheadline).foregroundStyle(.secondary)
                                 }.frame(maxWidth: .infinity).padding(.top, 100).padding(.bottom, 60)
                             }
-                            ForEach(thread.visibleMessages) { message in
-                                MessageView(store: store, message: message, providerName: thread.providerName, workspacePath: thread.workspacePath,
-                                            openFile: { url, line in store.openFile(url, line: line, workspacePath: thread.workspacePath) })
-                                    .threadFindHighlight(message.id)
-                            }
-                            if thread.state == .running || thread.state == .awaitingApproval {
-                                HStack(spacing: 8) {
-                                    ProgressView().controlSize(.small)
-                                    Text(RunCheckpointPresentation.preparingBaseline(in: thread)
-                                         ? String(localized: "Preparing workspace snapshot…")
-                                         : thread.state == .awaitingApproval ? String(localized: "Waiting for input…")
-                                         : thread.providerActivity?.state == .idle ? String(localized: "Waiting for agent confirmation…")
-                                         : String(localized: "\(thread.providerName) is working…"))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
+                            TranscriptRowsView(store: store, thread: thread, state: transcriptState, present: { transcriptSheet = $0 })
+                                .id(TranscriptCardScope(thread: thread))
+                            TranscriptWorkingIndicator(thread: thread)
                             Color.clear.frame(height: 1).id("latest")
                         }
                         .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 18)
@@ -199,6 +188,7 @@ struct ChatView: View {
             }
             .task(id: store.skillsScope(threadID: threadID)) { skillsModel = store.skillsStore(threadID: threadID) }
             .sheet(isPresented: $runHistorySheet) { RunHistorySheet(store: store, threadID: threadID) }
+            .sheet(item: $transcriptSheet) { TranscriptSheet(store: store, threadID: threadID, request: $0, close: { transcriptSheet = nil }) }
             .sheet(isPresented: $delegatedTasksSheet) { DelegatedTasksPanel(workspace: store, conversationID: threadID) }
             .sheet(isPresented: $contextTransferSheet) {
                 if let contextTransferModel { ContextTransferSheet(model: contextTransferModel, close: { contextTransferSheet = false }) }

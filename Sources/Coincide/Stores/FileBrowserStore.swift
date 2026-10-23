@@ -222,16 +222,17 @@ final class FileBrowserStore {
         let text = contents
         await write(path: document.relativePath, text: text, condition: .matching(revision))
     }
-    func createFile(path: String) async -> Bool {
-        guard !closed, !mutationSuspended, !isSaving, !isReading, !isDirty, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
-        return await write(path: path, text: "", condition: .missing)
+    func createFile(path: String, contents: String = "", authorize: (() -> Bool)? = nil) async -> Bool {
+        guard !closed, !mutationSuspended, !isSaving, !isReading, !isDirty, authorize?() ?? true,
+              workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
+        return await write(path: path, text: contents, condition: .missing, authorize: authorize)
     }
-    @discardableResult private func write(path: String, text: String, condition: WorkspaceFileWriteCondition) async -> Bool {
+    @discardableResult private func write(path: String, text: String, condition: WorkspaceFileWriteCondition, authorize: (() -> Bool)? = nil) async -> Bool {
         guard !closed, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { return false }
         let savingCurrent = document?.relativePath.utf8.elementsEqual(path.utf8) == true
         isSaving = true
         await recovery.flush()
-        guard !closed, !Task.isCancelled, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { isSaving = false; return false }
+        guard !closed, !Task.isCancelled, authorize?() ?? true, workspace?.canAccessWorkspaceFiles(workspacePath) == true else { isSaving = false; return false }
         let service = service, task = Task { try await service.writeFile(relativePath: path, contents: text, expected: condition) }
         writeTask = task
         defer { isSaving = false; writeTask = nil }

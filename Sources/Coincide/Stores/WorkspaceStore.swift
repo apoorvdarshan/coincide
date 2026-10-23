@@ -2217,6 +2217,72 @@ final class WorkspaceStore {
         }
     }
 
+    func captureTranscriptSource(thread: CodingThread, message: ChatMessage) -> TranscriptActionSource? {
+        guard let project = snapshot.projects.first(where: { $0.id == thread.projectID }),
+              let source = TranscriptActionSource(thread: thread, project: project, message: message),
+              transcriptSourceIsCurrent(source) else { return nil }
+        return source
+    }
+    func transcriptSourceIsCurrent(_ source: TranscriptActionSource) -> Bool {
+        guard !terminating, selectedThreadID == source.threadID, let current = thread(source.threadID),
+              !current.isArchived, let project = snapshot.projects.first(where: { $0.id == source.projectID }),
+              removalEditorLocks[project.id] == nil else { return false }
+        return source.matches(thread: current, project: project)
+    }
+    func canImplementTranscriptPlan(_ source: TranscriptActionSource) -> Bool {
+        guard transcriptSourceIsCurrent(source), let current = thread(source.threadID),
+              workspaceReady(for: current), canEditWorkspace(current.workspacePath), !current.isBusy, !current.isSettled,
+              current.queuedTurns.isEmpty, current.runtimeRequests.isEmpty,
+              current.draft.isEmpty, current.draftAttachments.isEmpty,
+              !preparingWorkspaces.contains(current.id), !isImportingAttachments(current.id),
+              !composerDraftTools.blocksSubmission(current.id), historyRecallDraftOwners[current.id] == nil,
+              !snapshot.isConversationHistoryLocked(threadID: current.id), !acceptingHistoryThreads.contains(current.id),
+              !isCheckpointRestoreLocked(threadID: current.id), !isPullRequestCreationLocked(threadID: current.id),
+              !isPullRequestCheckoutLocked(threadID: current.id), !claudeResumeSelectionNeedsInspection(threadID: current.id) else { return false }
+        return true
+    }
+    func implementTranscriptPlan(_ source: TranscriptActionSource) async -> Bool {
+        guard !Task.isCancelled, canImplementTranscriptPlan(source), let captured = thread(source.threadID), let engine else { return false }
+        do {
+            let claude = captured.provider == .claude && captured.claudeRuntimeConfiguration == nil ? try legacyClaudeRuntimeCapture(captured.workspacePath) : nil
+            let pi: PiRuntimeConfiguration?
+            if captured.provider == .pi, let native = captured.piConfiguration, native.runtime == nil {
+                pi = try piRuntimeCapture(captured.workspacePath, native.executable, native.instanceID)
+            } else { pi = nil }
+            let request = TranscriptPlanImplementation(thread: captured, message: source.message, legacyClaudeConfiguration: claude, piConfiguration: pi)
+            flushDrafts()
+            let previous = commandTail, commandID = UUID()
+            let task = Task<Bool, Never> { [weak self] in
+                await previous?.value
+                guard !Task.isCancelled, let self, self.canImplementTranscriptPlan(source) else { return false }
+                do {
+                    let receipt = try await engine.implementTranscriptPlan(request, commandID: commandID)
+                    self.apply(await engine.current())
+                    if let rejection = receipt.rejection { throw CoincideError(rejection) }
+                    return true
+                } catch {
+                    if !self.terminating { self.errorMessage = error.localizedDescription }
+                    return false
+                }
+            }
+            commandTail = Task { _ = await task.value }
+            return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        } catch {
+            if !terminating { errorMessage = error.localizedDescription }
+            return false
+        }
+    }
+    func saveTranscriptPlan(_ source: TranscriptActionSource, path: String, contents: String) async throws {
+        guard !Task.isCancelled, transcriptSourceIsCurrent(source), let current = thread(source.threadID),
+              canAccessWorkspaceFiles(current.workspacePath) else { throw CoincideError("This conversation changed. Open Save Plan again from its current message.") }
+        // Use the registered editor's save lane: workspace transitions observe
+        // isSaving and shutdown drains this exact write. Existing files stay intact.
+        let browser = try fileBrowser(path: current.workspacePath)
+        guard await browser.createFile(path: path, contents: contents, authorize: { [weak self] in self?.transcriptSourceIsCurrent(source) == true }) else {
+            throw CoincideError(browser.operationError ?? "The plan could not be saved. Keep the workspace available and choose a new file path.")
+        }
+    }
+
     func submit(_ text: String, threadID id: UUID) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
@@ -2700,7 +2766,8 @@ final class WorkspaceStore {
                                                        maxBytes: min(max(maxBytes, 1), 262_144))
         try Task.checkCancellation()
         guard !terminating, let current = thread(threadID), current.projectID == captured.projectID,
-              current.workspacePath == captured.workspacePath, canEditWorkspace(current.workspacePath),
+              current.createdAt == captured.createdAt, current.workspacePreparation?.id == captured.workspacePreparation?.id,
+              current.workspacePath.utf8.elementsEqual(captured.workspacePath.utf8), canEditWorkspace(current.workspacePath),
               let latest = current.runHistory?.first(where: { $0.id == runID })?.checkpoints,
               latest.baseline.receipt == checkpoints.baseline.receipt,
               latest.postRun?.receipt == checkpoints.postRun?.receipt else { throw CancellationError() }
