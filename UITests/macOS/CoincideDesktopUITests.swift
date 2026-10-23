@@ -25,7 +25,7 @@ final class CoincideDesktopUITests: XCTestCase {
         app.menuBars.menuBarItems["Thread"].click()
         XCTAssertFalse(app.menuItems["Stop Turn"].isEnabled)
         XCTAssertTrue(app.menuItems["Resume Queue"].exists)
-        XCTAssertFalse(app.menuItems["Toggle Inspector"].isEnabled)
+        XCTAssertTrue(app.menuItems["Toggle Inspector"].isEnabled, "The remote window owns its Files/Changes inspector control.")
         app.typeKey(.escape, modifierFlags: [])
         let add = window.buttons["remote-add-connection"]
         XCTAssertTrue(add.waitForExistence(timeout: 5)); add.click()

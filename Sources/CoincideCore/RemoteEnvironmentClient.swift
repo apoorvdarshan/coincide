@@ -53,6 +53,8 @@ public actor RemoteEnvironmentClient {
     private var drains: [UUID: Task<Void, Never>] = [:]
     private var attemptedCommands: Set<UUID> = []
     private var activeRequests = 0
+    private var activeWorkspaceBytes = 0
+    private var attemptedWorkspaceOperations: Set<UUID> = []
 
     public init(factory: @escaping ConnectionFactory, expectedEnvironmentID: UUID? = nil) {
         (events, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(8))
@@ -186,6 +188,157 @@ public actor RemoteEnvironmentClient {
             if generation == owned { retire(safe) }
             throw safe
         }
+    }
+    public func bindWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        let owned = generation
+        let result: RemoteWorkspaceTarget = try await workspaceRequest(RemoteEnvironmentProtocol.workspaceBindMethod,
+            request: target, environmentID: target.environmentID)
+        try validateWorkspaceResponse(generation: owned) {
+            guard Self.sameWorkspace(result, target), result.rootID != nil,
+                  target.rootID == nil || target.rootID == result.rootID else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    public func readWorkspace(_ request: RemoteWorkspaceReadRequest) async throws -> RemoteWorkspaceReadResult {
+        guard request.target.rootID != nil else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        let owned = generation
+        let result: RemoteWorkspaceReadResult = try await workspaceRequest(RemoteEnvironmentProtocol.workspaceReadMethod,
+            request: request, environmentID: request.target.environmentID)
+        try validateWorkspaceResponse(generation: owned) {
+            guard Self.sameWorkspace(result.target, request.target), result.target.rootID == request.target.rootID else {
+                throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+            switch (request.query, result.value) {
+            case (.list, .entries), (.searchPaths, .entries), (.searchContents, .contents),
+                 (.gitDiff, .diff), (.gitBranches, .branches), (.gitRemotes, .remotes): break
+            case (.gitStatus, .git(let snapshot)):
+                guard snapshot.repositoryRoot.isFileURL, snapshot.repositoryRoot.path.utf8.elementsEqual(request.target.workspacePath.utf8) else {
+                    throw RemoteEnvironmentClientError(.invalidResponse)
+                }
+            case (.readFile(let path, let allowMissing, let maximum), .document(let document)):
+                guard path.utf8.elementsEqual(document.relativePath.utf8), document.byteLength >= 0,
+                      document.contents.utf8.count <= min(2_000_000, maximum),
+                      document.exists || allowMissing,
+                      !document.exists || document.truncated || document.revision != nil else {
+                    throw RemoteEnvironmentClientError(.invalidResponse)
+                }
+            default: throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+        }
+        return result
+    }
+    public func beginWorkspaceOperation(_ request: RemoteWorkspaceMutationRequest) async throws -> RemoteWorkspaceOperation {
+        guard request.target.rootID != nil else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        _ = try context()
+        guard !attemptedWorkspaceOperations.contains(request.id) else {
+            throw RemoteEnvironmentClientError(.commandAlreadyAttempted, commandID: request.id)
+        }
+        guard attemptedWorkspaceOperations.count < 4_096 else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        _ = try RemoteWorkspaceJournal.payload(request)
+        attemptedWorkspaceOperations.insert(request.id)
+        let owned = generation
+        let result: RemoteWorkspaceOperation = try await workspaceRequest(RemoteEnvironmentProtocol.workspaceBeginMethod,
+            request: request, environmentID: request.target.environmentID, uncertainID: request.id)
+        do { try validateWorkspaceResponse(generation: owned) { try validateWorkspaceOperation(result, request: request) } }
+        catch { throw RemoteEnvironmentClientError(.commandUncertain, commandID: request.id) }
+        return result
+    }
+    /// Lookup consumes this identity locally too: recovery cannot accidentally
+    /// turn a nil result into permission to begin the old request again.
+    public func workspaceOperation(_ request: RemoteWorkspaceMutationRequest) async throws -> RemoteWorkspaceOperation? {
+        try recordWorkspaceAttempt(request)
+        let owned = generation
+        let result: RemoteWorkspaceOperation? = try await workspaceRequest(RemoteEnvironmentProtocol.workspaceOperationMethod,
+            request: request, environmentID: request.target.environmentID)
+        if let result { try validateWorkspaceResponse(generation: owned) { try validateWorkspaceOperation(result, request: request) } }
+        return result
+    }
+    public func cancelWorkspaceOperation(_ request: RemoteWorkspaceMutationRequest) async throws -> RemoteWorkspaceOperation? {
+        try recordWorkspaceAttempt(request)
+        let owned = generation
+        let result: RemoteWorkspaceOperation? = try await workspaceRequest(RemoteEnvironmentProtocol.workspaceCancelMethod,
+            request: request, environmentID: request.target.environmentID)
+        if let result { try validateWorkspaceResponse(generation: owned) { try validateWorkspaceOperation(result, request: request) } }
+        return result
+    }
+    private func recordWorkspaceAttempt(_ request: RemoteWorkspaceMutationRequest) throws {
+        guard attemptedWorkspaceOperations.count < 4_096 || attemptedWorkspaceOperations.contains(request.id) else {
+            throw RemoteEnvironmentClientError(.limitExceeded)
+        }
+        _ = try RemoteWorkspaceJournal.payload(request)
+        attemptedWorkspaceOperations.insert(request.id)
+    }
+    private func workspaceRequest<Request: Encodable & Sendable, Response: Decodable & Sendable>(
+        _ method: String, request: Request, environmentID: UUID, uncertainID: UUID? = nil
+    ) async throws -> Response {
+        let (connection, owned, environment) = try context()
+        guard environment == environmentID else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
+        guard descriptor?.capabilities.supportsWorkspaceFilesAndGit == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let bytes = try encoder.encode(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes,
+              activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else {
+            throw RemoteEnvironmentClientError(.limitExceeded)
+        }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(30))
+            guard generation == owned, rpc != nil else { throw CancellationError() }
+            return try RemoteEnvironmentProtocol.decode(Response.self, from: raw)
+        } catch {
+            if generation == owned, let rejection = workspaceRejection(error) { throw rejection }
+            if generation == owned, let rejection = nativeRejection(error) { throw rejection }
+            let safe = error as? RemoteEnvironmentClientError ?? .init(.disconnected)
+            if generation == owned { retire(safe) }
+            if let uncertainID { throw RemoteEnvironmentClientError(.commandUncertain, commandID: uncertainID) }
+            throw safe
+        }
+    }
+    private func workspaceRejection(_ error: any Error) -> RemoteWorkspaceFailure? {
+        guard let rpcError = error as? JSONRPCRemoteError, rpcError.code == -32_001,
+              let value = rpcError.data["kind"].string, let kind = RemoteWorkspaceFailure.Kind(rawValue: value) else { return nil }
+        return RemoteWorkspaceFailure(kind)
+    }
+    private func validateWorkspaceResponse(generation owned: UUID, _ body: () throws -> Void) throws {
+        guard generation == owned, rpc != nil, !closed else { throw RemoteEnvironmentClientError(.disconnected) }
+        do { try body() }
+        catch {
+            let safe = RemoteEnvironmentClientError(.invalidResponse)
+            retire(safe); throw safe
+        }
+    }
+    private func validateWorkspaceOperation(_ operation: RemoteWorkspaceOperation, request: RemoteWorkspaceMutationRequest) throws {
+        guard try RemoteWorkspaceJournal.payload(operation.request) == RemoteWorkspaceJournal.payload(request),
+              operation.payloadDigest == (try RemoteWorkspaceJournal.digest(request)),
+              operation.createdAt.timeIntervalSince1970.isFinite, operation.updatedAt.timeIntervalSince1970.isFinite,
+              operation.updatedAt >= operation.createdAt else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        switch operation.state {
+        case .accepted, .running:
+            guard operation.result == nil, operation.failure == nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        case .finished:
+            guard (operation.result != nil) != (operation.failure != nil) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            if let result = operation.result {
+                switch request.mutation {
+                case .createFile(let path, let text), .saveFile(let path, let text, _):
+                    guard case .document(let document) = result, document.relativePath.utf8.elementsEqual(path.utf8),
+                          document.contents.utf8.elementsEqual(text.utf8), document.exists, !document.truncated,
+                          document.revision != nil, document.byteLength == text.utf8.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                default:
+                    guard case .git(let snapshot) = result, snapshot.repositoryRoot.isFileURL,
+                          snapshot.repositoryRoot.path.utf8.elementsEqual(request.target.workspacePath.utf8) else {
+                        throw RemoteEnvironmentClientError(.invalidResponse)
+                    }
+                }
+            }
+        case .uncertain:
+            guard operation.result == nil, operation.failure != nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+    }
+    private static func sameWorkspace(_ lhs: RemoteWorkspaceTarget, _ rhs: RemoteWorkspaceTarget) -> Bool {
+        lhs.environmentID == rhs.environmentID && lhs.projectID == rhs.projectID && lhs.threadID == rhs.threadID
+            && lhs.workspacePath.utf8.elementsEqual(rhs.workspacePath.utf8)
     }
     public func reconnect() async throws -> RemoteEnvironmentSnapshot {
         guard !closed else { throw RemoteEnvironmentClientError(.closed) }

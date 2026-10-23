@@ -103,7 +103,8 @@ labels, custom answer and generated notes. The initial verifier rejected a
 model-added period; the same completed fixture's exact response receipt,
 semantic answer/notes and durable restart are verified separately without a
 second model turn. See VALIDATION.md for that boundary and opt-in command.
-Hosted question-form UI acceptance remains unverified. The installed turn exposed
+The native question-form workflow now passes hosted GUI CI on `c1873ef`
+(run 39894730771). The installed turn exposed
 duplicate identical assistant rows when streamed blocks and per-block completed
 envelopes used different array indices. Native reconciliation now preserves the
 streamed block identity across those envelopes, keeps legitimate identical

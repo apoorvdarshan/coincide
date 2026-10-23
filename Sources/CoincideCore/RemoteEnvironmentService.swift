@@ -21,10 +21,30 @@ public actor RemoteEnvironmentService {
     private let options: RemoteEnvironmentOptions
     private let providerFactory: WorkspaceEngine.ProviderFactory
     private var engine: WorkspaceEngine?
+    private var workspaceService: RemoteWorkspaceService?
     private var initializing: Task<WorkspaceEngine, any Error>?
     private var subscriptions: [UUID: Task<Void, Never>] = [:]
     private var closing = false
     private var closeTask: Task<Void, Never>?
+    private var workspaceAdmitting = false
+    private var workspaceAdmissionWaiters: [(UUID, CheckedContinuation<Void, any Error>)] = []
+    private func acquireWorkspaceAdmission() async throws {
+        try Task.checkCancellation()
+        guard !closing else { throw RemoteWorkspaceFailure(.unavailable) }
+        if !workspaceAdmitting { workspaceAdmitting = true; return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { workspaceAdmissionWaiters.append((id, $0)) }
+        } onCancel: { Task { await self.cancelWorkspaceAdmission(id) } }
+    }
+    private func cancelWorkspaceAdmission(_ id: UUID) {
+        guard let index = workspaceAdmissionWaiters.firstIndex(where: { $0.0 == id }) else { return }
+        workspaceAdmissionWaiters.remove(at: index).1.resume(throwing: CancellationError())
+    }
+    private func releaseWorkspaceAdmission() {
+        if workspaceAdmissionWaiters.isEmpty { workspaceAdmitting = false }
+        else { workspaceAdmissionWaiters.removeFirst().1.resume() }
+    }
 
     public init(dataDirectory: URL, label: String = ProcessInfo.processInfo.hostName,
                 expectedEnvironmentID: UUID? = nil, options: RemoteEnvironmentOptions = .init(),
@@ -79,6 +99,9 @@ public actor RemoteEnvironmentService {
         } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
     }
     public func command(_ request: RemoteEnvironmentCommandRequest) async throws -> RemoteEnvironmentCommandResult {
+        try await acquireWorkspaceAdmission()
+        defer { releaseWorkspaceAdmission() }
+        try Task.checkCancellation()
         try require(request.environmentID)
         _ = try RemoteEnvironmentProtocol.payload(request)
         let engine = try await workspace()
@@ -88,6 +111,7 @@ public actor RemoteEnvironmentService {
             if let receipt = try await engine.remoteEnvironmentReceipt(request) { return .init(environmentID: environmentID, receipt: receipt) }
             let preparation: RemoteEnvironmentPreparation
             do {
+                try await workspaceService?.admitConversationCommand(request.command)
                 try validate(request.command)
                 preparation = try await prepare(request.command, engine: engine)
             } catch is CancellationError { throw CancellationError() }
@@ -96,6 +120,36 @@ public actor RemoteEnvironmentService {
             let receipt = try await engine.dispatchRemoteEnvironment(request, preparation: preparation)
             return .init(environmentID: environmentID, receipt: receipt)
         } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
+    }
+    private func workspaceOperations() async throws -> RemoteWorkspaceService {
+        let engine = try await workspace()
+        guard !closing else { throw RemoteWorkspaceFailure(.unavailable) }
+        if let workspaceService { return workspaceService }
+        let service = try RemoteWorkspaceService(environmentID: environmentID, engine: engine, dataDirectory: dataDirectory)
+        workspaceService = service; return service
+    }
+    public func bindWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        try require(target.environmentID)
+        return try await (try await workspaceOperations()).bind(target)
+    }
+    public func readWorkspace(_ request: RemoteWorkspaceReadRequest) async throws -> RemoteWorkspaceReadResult {
+        try require(request.target.environmentID)
+        return try await (try await workspaceOperations()).read(request)
+    }
+    public func beginWorkspaceOperation(_ request: RemoteWorkspaceMutationRequest) async throws -> RemoteWorkspaceOperation {
+        try await acquireWorkspaceAdmission()
+        defer { releaseWorkspaceAdmission() }
+        try Task.checkCancellation()
+        try require(request.target.environmentID)
+        return try await (try await workspaceOperations()).begin(request)
+    }
+    public func workspaceOperation(_ request: RemoteWorkspaceMutationRequest) async throws -> RemoteWorkspaceOperation? {
+        try require(request.target.environmentID)
+        return try await (try await workspaceOperations()).operation(request)
+    }
+    public func cancelWorkspaceOperation(_ request: RemoteWorkspaceMutationRequest) async throws -> RemoteWorkspaceOperation? {
+        try require(request.target.environmentID)
+        return try await (try await workspaceOperations()).cancel(request)
     }
     private func prepare(_ command: RemoteEnvironmentCommand, engine: WorkspaceEngine) async throws -> RemoteEnvironmentPreparation {
         switch command {
@@ -166,9 +220,12 @@ public actor RemoteEnvironmentService {
     public func close() async {
         if let closeTask { await closeTask.value; return }
         closing = true
-        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing
+        let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
+        for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
+        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService
         for task in subscriptions { task.cancel() }
         let task = Task {
+            await workspaceService?.close()
             if let engine { await engine.shutdown() }
             else if let initializing, let value = try? await initializing.value { await value.shutdown() }
             for task in subscriptions { await task.value }

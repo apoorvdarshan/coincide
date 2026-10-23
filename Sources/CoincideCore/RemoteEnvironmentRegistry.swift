@@ -142,6 +142,73 @@ public actor RemoteEnvironmentPendingStore {
     }
 }
 
+/// The exact request is saved before a file/Git mutation is transmitted. A
+/// missing receipt never permits resending it, including after process restart.
+public actor RemoteWorkspacePendingStore {
+    private let root: URL
+    public init(root: URL) { self.root = root }
+    public func load(environmentID: UUID, threadID: UUID) throws -> RemoteWorkspaceMutationRequest? {
+        try RemotePrivateFiles(root: root).locked(create: false) { files in
+            guard let files else { return nil }
+            return try Self.load(environmentID, threadID, files: files)
+        }
+    }
+    public func save(request: RemoteWorkspaceMutationRequest) throws {
+        let bytes = try RemoteWorkspaceJournal.payload(request)
+        guard request.target.rootID != nil else { throw RemoteEnvironmentStorageError(.corruptFile) }
+        try RemotePrivateFiles(root: root).locked(create: true) { files in
+            guard let files else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            if let existing = try Self.load(request.target.environmentID, request.target.threadID, files: files) {
+                guard try RemoteWorkspaceJournal.payload(existing) == bytes else { throw RemoteEnvironmentStorageError(.pendingCommandExists) }
+                return
+            }
+            guard try files.count(prefix: "pending-") < 64 else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+            try files.write(bytes, name: Self.name(request.target.environmentID, request.target.threadID),
+                maximum: RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes)
+        }
+    }
+    public func remove(request: RemoteWorkspaceMutationRequest) throws {
+        try RemotePrivateFiles(root: root).locked(create: false) { files in
+            guard let files, let existing = try Self.load(request.target.environmentID, request.target.threadID, files: files) else { return }
+            guard try RemoteWorkspaceJournal.payload(existing) == RemoteWorkspaceJournal.payload(request) else { throw RemoteEnvironmentStorageError(.commandChanged) }
+            try files.remove(Self.name(request.target.environmentID, request.target.threadID))
+        }
+    }
+    public func archive(request: RemoteWorkspaceMutationRequest) throws {
+        try RemotePrivateFiles(root: root).locked(create: false) { files in
+            guard let files, let existing = try Self.load(request.target.environmentID, request.target.threadID, files: files) else { return }
+            let bytes = try RemoteWorkspaceJournal.payload(request)
+            guard try RemoteWorkspaceJournal.payload(existing) == bytes else { throw RemoteEnvironmentStorageError(.commandChanged) }
+            let name = "abandoned-" + request.target.environmentID.uuidString.lowercased() + "-" + request.id.uuidString.lowercased() + ".json"
+            if let prior = try files.read(name, maximum: RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes) {
+                let archived = try Self.decode(prior, environmentID: request.target.environmentID, threadID: request.target.threadID)
+                guard try RemoteWorkspaceJournal.payload(archived) == bytes else { throw RemoteEnvironmentStorageError(.commandChanged) }
+            } else {
+                guard try files.count(prefix: "abandoned-") < 256 else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+                try files.write(bytes, name: name, maximum: RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes)
+            }
+            try files.remove(Self.name(request.target.environmentID, request.target.threadID))
+        }
+    }
+    private static func name(_ environmentID: UUID, _ threadID: UUID) -> String {
+        "pending-" + environmentID.uuidString.lowercased() + "-" + threadID.uuidString.lowercased() + ".json"
+    }
+    private static func load(_ environmentID: UUID, _ threadID: UUID, files: RemotePrivateFiles.OpenDirectory) throws -> RemoteWorkspaceMutationRequest? {
+        guard let bytes = try files.read(name(environmentID, threadID), maximum: RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes) else { return nil }
+        return try decode(bytes, environmentID: environmentID, threadID: threadID)
+    }
+    private static func decode(_ bytes: Data, environmentID: UUID, threadID: UUID) throws -> RemoteWorkspaceMutationRequest {
+        do {
+            let request = try JSONDecoder().decode(RemoteWorkspaceMutationRequest.self, from: bytes)
+            guard request.target.environmentID == environmentID, request.target.threadID == threadID, request.target.rootID != nil else {
+                throw RemoteEnvironmentStorageError(.corruptFile)
+            }
+            _ = try RemoteWorkspaceJournal.payload(request)
+            return request
+        } catch { throw error as? RemoteEnvironmentStorageError ?? RemoteEnvironmentStorageError(.corruptFile) }
+    }
+}
+
 public actor RemoteEnvironmentDraftStore {
     private struct Document: Codable { var version = 1; let environmentID: UUID; let drafts: [UUID: String] }
     private let root: URL

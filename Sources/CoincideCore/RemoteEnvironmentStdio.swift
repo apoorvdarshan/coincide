@@ -12,6 +12,7 @@ public enum RemoteEnvironmentStdio {
                 expectedEnvironmentID: parsed.expected, options: parsed.options)
             service = current
             let input = try RemoteEnvironmentStdioInput(), writer = try RemoteEnvironmentStdioWriter()
+            let workspaceReads = RemoteWorkspaceReadResponses()
             signal(SIGTERM, SIG_IGN); signal(SIGINT, SIG_IGN); signal(SIGPIPE, SIG_IGN)
             let signals = [SIGTERM, SIGINT].map { number in
                 let source = DispatchSource.makeSignalSource(signal: number, queue: .global(qos: .userInitiated))
@@ -20,7 +21,9 @@ public enum RemoteEnvironmentStdio {
             var subscription: Task<Void, Never>?
             var status: Int32 = 0
             do {
-                requestLoop: for try await frame in input.frames {
+                requestLoop: for try await received in input.frames {
+                    let frame = received.value
+                    input.consumed(received.byteCount)
                     var id: JSONValue = .null
                     do {
                         guard let object = frame.object,
@@ -29,6 +32,12 @@ public enum RemoteEnvironmentStdio {
                               let supplied = object["id"], validID(supplied), let method = frame["method"].string,
                               method.utf8.count <= 128 else { throw RemoteEnvironmentError(.invalidRequest) }
                         id = supplied
+                        let workspaceMethod = [RemoteEnvironmentProtocol.workspaceBindMethod, RemoteEnvironmentProtocol.workspaceReadMethod,
+                            RemoteEnvironmentProtocol.workspaceBeginMethod, RemoteEnvironmentProtocol.workspaceOperationMethod,
+                            RemoteEnvironmentProtocol.workspaceCancelMethod].contains(method)
+                        guard received.byteCount <= (workspaceMethod ? RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes : RemoteEnvironmentProtocol.maximumRequestBytes) else {
+                            throw RemoteEnvironmentError(.limitExceeded)
+                        }
                         let params = object["params"] ?? .object([:])
                         guard params.object != nil else { throw RemoteEnvironmentError(.invalidRequest) }
                         let result: JSONValue
@@ -59,12 +68,34 @@ public enum RemoteEnvironmentStdio {
                         case RemoteEnvironmentProtocol.receiptMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandRequest.self, from: params)
                             result = try RemoteEnvironmentProtocol.encode(try await current.receipt(request))
+                        case RemoteEnvironmentProtocol.workspaceBindMethod:
+                            let target = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceTarget.self, from: params)
+                            result = try RemoteEnvironmentProtocol.encode(try await current.bindWorkspace(target))
+                        case RemoteEnvironmentProtocol.workspaceReadMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceReadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.readWorkspace(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteEnvironmentProtocol.workspaceBeginMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceMutationRequest.self, from: params)
+                            result = try RemoteEnvironmentProtocol.encode(try await current.beginWorkspaceOperation(request))
+                        case RemoteEnvironmentProtocol.workspaceOperationMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceMutationRequest.self, from: params)
+                            result = try RemoteEnvironmentProtocol.encode(try await current.workspaceOperation(request))
+                        case RemoteEnvironmentProtocol.workspaceCancelMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceMutationRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.cancelWorkspaceOperation(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
                         case RemoteEnvironmentProtocol.closeMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentSnapshotRequest.self, from: params)
                             guard request.environmentID == current.environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
                             subscription?.cancel()
                             if let subscription { await subscription.value }
                             subscription = nil
+                            await workspaceReads.close()
                             await current.close()
                             result = try RemoteEnvironmentProtocol.encode(RemoteEnvironmentCloseResult(environmentID: current.environmentID))
                             try await writer.send(response(id: id, result: result))
@@ -73,15 +104,13 @@ public enum RemoteEnvironmentStdio {
                         }
                         try await writer.send(response(id: id, result: result))
                     } catch {
-                        let safe = (error as? RemoteEnvironmentError) ?? RemoteEnvironmentError(.unavailable)
-                        try await writer.send(.object(["jsonrpc": .string("2.0"), "id": id,
-                            "error": .object(["code": .number(-32000), "message": .string(safe.localizedDescription),
-                                              "data": .object(["kind": .string(safe.kind.rawValue)])])]))
+                        try await writer.send(errorResponse(id: id, error: error))
                     }
                 }
             } catch { status = 1 }
             subscription?.cancel()
             input.stop(); await input.join()
+            await workspaceReads.close()
             await current.close()
             if let subscription { await subscription.value }
             for source in signals { source.cancel() }
@@ -113,8 +142,15 @@ public enum RemoteEnvironmentStdio {
         default: false
         }
     }
-    private static func response(id: JSONValue, result: JSONValue) -> JSONValue {
+    fileprivate static func response(id: JSONValue, result: JSONValue) -> JSONValue {
         .object(["jsonrpc": .string("2.0"), "id": id, "result": result])
+    }
+    fileprivate static func errorResponse(id: JSONValue, error: any Error) -> JSONValue {
+        let code: Int, kind: String, message: String
+        if let safe = error as? RemoteWorkspaceFailure { code = -32_001; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        else { let safe = error as? RemoteEnvironmentError ?? .init(.unavailable); code = -32_000; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        return .object(["jsonrpc": .string("2.0"), "id": id, "error": .object([
+            "code": .number(Double(code)), "message": .string(message), "data": .object(["kind": .string(kind)])])])
     }
     private struct Arguments {
         let directory: URL
@@ -149,13 +185,15 @@ public enum RemoteEnvironmentStdio {
     }
 }
 
+private struct RemoteEnvironmentStdioFrame: Sendable { let value: JSONValue; let byteCount: Int }
 private final class RemoteEnvironmentStdioInput: @unchecked Sendable {
-    let frames: AsyncThrowingStream<JSONValue, any Error>
-    private let continuation: AsyncThrowingStream<JSONValue, any Error>.Continuation
+    let frames: AsyncThrowingStream<RemoteEnvironmentStdioFrame, any Error>
+    private let continuation: AsyncThrowingStream<RemoteEnvironmentStdioFrame, any Error>.Continuation
     private let queue = DispatchQueue(label: "com.apoorvdarshan.coincide.remote-stdin")
     private let source: DispatchSourceRead
     private let drained = DispatchGroup()
-    private var decoder = NDJSONDecoder(maximumFrameSize: RemoteEnvironmentProtocol.maximumRequestBytes)
+    private var decoder = NDJSONDecoder(maximumFrameSize: RemoteEnvironmentProtocol.maximumWorkspaceRequestBytes)
+    private var queuedBytes = 0
     private var stopped = false
     init() throws {
         let flags = fcntl(STDIN_FILENO, F_GETFL)
@@ -178,11 +216,11 @@ private final class RemoteEnvironmentStdioInput: @unchecked Sendable {
                 if count > 0 {
                     consumed += count
                     for frame in try decoder.append(Data(bytes.prefix(count))) {
-                        if case .dropped = continuation.yield(frame) { throw RemoteEnvironmentError(.limitExceeded) }
+                        try enqueue(frame)
                     }
                 } else if count == 0 {
                     for frame in try decoder.finish() {
-                        if case .dropped = continuation.yield(frame) { throw RemoteEnvironmentError(.limitExceeded) }
+                        try enqueue(frame)
                     }
                     finish(nil); return
                 } else if errno == EINTR { continue }
@@ -191,12 +229,43 @@ private final class RemoteEnvironmentStdioInput: @unchecked Sendable {
             }
         } catch { finish(RemoteEnvironmentError(.invalidRequest)) }
     }
+    private func enqueue(_ value: JSONValue) throws {
+        let count = try JSONEncoder().encode(value).count
+        guard queuedBytes <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes - count else { throw RemoteEnvironmentError(.limitExceeded) }
+        queuedBytes += count
+        if case .dropped = continuation.yield(.init(value: value, byteCount: count)) { throw RemoteEnvironmentError(.limitExceeded) }
+    }
+    func consumed(_ count: Int) { queue.async { self.queuedBytes = max(0, self.queuedBytes - count) } }
     private func finish(_ error: (any Error)?) {
         guard !stopped else { return }; stopped = true
         continuation.finish(throwing: error); source.cancel()
     }
     func stop() { queue.async { self.finish(nil) } }
     func join() async { await withCheckedContinuation { continuation in drained.notify(queue: .global()) { continuation.resume() } } }
+}
+private actor RemoteWorkspaceReadResponses {
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    private var closed = false
+    func submit(id: JSONValue, operation: @escaping @Sendable () async throws -> JSONValue,
+                writer: RemoteEnvironmentStdioWriter, disconnect: @escaping @Sendable () -> Void) throws {
+        guard !closed, tasks.count < 8 else { throw RemoteWorkspaceFailure(.busy) }
+        let key = UUID()
+        tasks[key] = Task {
+            let response: JSONValue
+            do { response = RemoteEnvironmentStdio.response(id: id, result: try await operation()) }
+            catch { response = RemoteEnvironmentStdio.errorResponse(id: id, error: error) }
+            do { try Task.checkCancellation(); try await writer.send(response) }
+            catch { if !Task.isCancelled { disconnect() } }
+            self.finished(key)
+        }
+    }
+    private func finished(_ id: UUID) { tasks.removeValue(forKey: id) }
+    func close() async {
+        closed = true
+        let owned = Array(tasks.values)
+        for task in owned { task.cancel() }
+        for task in owned { await task.value }
+    }
 }
 private actor RemoteEnvironmentStdioWriter {
     private var writing = false

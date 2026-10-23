@@ -1,0 +1,287 @@
+import CryptoKit
+import Darwin
+import Foundation
+
+/// Owns native workspace anchors and durable, never-replayed mutation attempts.
+/// Its async jobs do not occupy the environment's conversation command lane.
+actor RemoteWorkspaceService {
+    private final class Root: @unchecked Sendable {
+        let id: UUID, path: String, anchor: WorkspaceFileRoot, files: WorkspaceFileService
+        var gitDirectories: [GitWorktreeDirectory]?
+        init(id: UUID, path: String, anchor: WorkspaceFileRoot) {
+            self.id = id; self.path = path; self.anchor = anchor; files = .init(root: URL(fileURLWithPath: path))
+        }
+    }
+    private struct Revision { let rootID: UUID; let path: String; let value: WorkspaceFileRevision }
+    private let environmentID: UUID
+    private let engine: WorkspaceEngine
+    private let journal: RemoteWorkspaceJournal
+    private var roots: [UUID: Root] = [:]
+    private var revisions: [UUID: Revision] = [:]
+    private var jobs: [UUID: Task<Void, Never>] = [:]
+    private var busyRoots: [UUID: UUID] = [:]
+    private var closing = false
+    private var journalFailed = false
+    private var closeTask: Task<Void, Never>?
+
+    init(environmentID: UUID, engine: WorkspaceEngine, dataDirectory: URL) throws {
+        self.environmentID = environmentID; self.engine = engine
+        journal = try .init(directory: dataDirectory)
+    }
+    private func samePath(_ lhs: String, _ rhs: String) -> Bool { lhs.utf8.elementsEqual(rhs.utf8) }
+    private func authorize(_ target: RemoteWorkspaceTarget, mutating: Bool = false) async throws {
+        guard !closing, !journalFailed else { throw RemoteWorkspaceFailure(.unavailable) }
+        guard target.environmentID == environmentID else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        let update = await engine.current(), snapshot = update.snapshot
+        guard !closing, !journalFailed else { throw RemoteWorkspaceFailure(.unavailable) }
+        guard update.error == nil, let thread = snapshot.threads.first(where: { $0.id == target.threadID }),
+              thread.projectID == target.projectID, !thread.isArchived,
+              snapshot.projects.contains(where: { $0.id == target.projectID }),
+              samePath(thread.workspacePath, target.workspacePath), snapshot.workspaceReady(for: thread),
+              !snapshot.isCheckpointRestoreLocked(path: target.workspacePath),
+              !snapshot.isPullRequestCheckoutLocked(path: target.workspacePath),
+              !snapshot.isPullRequestCreationLocked(path: target.workspacePath),
+              !snapshot.isConversationHistoryLocked(threadID: thread.id) else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        if mutating {
+            let owners = snapshot.threads.filter { samePath($0.workspacePath, target.workspacePath) }
+            guard owners.allSatisfy({ !$0.isBusy && $0.activeRun == nil && $0.queuedTurns.isEmpty && $0.runtimeRequests.isEmpty
+                && $0.heldPostRunCheckpoint == nil && snapshot.workspaceReady(for: $0) }) else { throw RemoteWorkspaceFailure(.busy) }
+        }
+    }
+    func bind(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        do { return try await bindRoot(target) }
+        catch { throw safe(error) }
+    }
+    private func bindRoot(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        try await authorize(target)
+        let path = target.workspacePath
+        guard samePath(URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path, path) else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        let anchor = try WorkspaceFileRoot(root: URL(fileURLWithPath: path))
+        let id: UUID
+        do { id = try rootIdentity(anchor) } catch { anchor.close(); throw error }
+        guard target.rootID == nil || target.rootID == id else { anchor.close(); throw RemoteWorkspaceFailure(.staleRoot) }
+        if let existing = roots[id] { anchor.close(); try existing.anchor.validate() }
+        else {
+            guard roots.count < 128 else { anchor.close(); throw RemoteWorkspaceFailure(.limitExceeded) }
+            roots[id] = Root(id: id, path: path, anchor: anchor)
+        }
+        return .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID,
+                     configuration: target.configuration, rootID: id)
+    }
+    private func rootIdentity(_ root: WorkspaceFileRoot) throws -> UUID {
+        var value = stat()
+        guard fstat(root.fd, &value) == 0 else { throw RemoteWorkspaceFailure(.staleRoot) }
+        let text = "\(environmentID.uuidString)|\(root.path)|\(root.device)|\(root.inode)|\(value.st_birthtimespec.tv_sec)|\(value.st_birthtimespec.tv_nsec)"
+        let bytes = Array(SHA256.hash(data: Data(text.utf8)))
+        return UUID(uuid: (bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]))
+    }
+    private func root(_ target: RemoteWorkspaceTarget) async throws -> Root {
+        try await authorize(target)
+        guard let id = target.rootID, let value = roots[id], samePath(value.path, target.workspacePath) else { throw RemoteWorkspaceFailure(.staleRoot) }
+        do { try value.anchor.validate() } catch { throw RemoteWorkspaceFailure(.staleRoot) }
+        return value
+    }
+    func read(_ request: RemoteWorkspaceReadRequest) async throws -> RemoteWorkspaceReadResult {
+        do {
+            let root = try await root(request.target), value: RemoteWorkspaceValue
+            switch request.query {
+            case .list(let path): value = .entries(try await root.files.listEntries(directoryPath: path))
+            case .searchPaths(let query, let limit): value = .entries(try await root.files.searchEntries(query: query, limit: limit))
+            case .searchContents(let query, let limit, let sensitive, let word, let regex):
+                value = .contents(try await root.files.searchContents(query: query, limit: limit, caseSensitive: sensitive, wholeWord: word, useRegex: regex))
+            case .readFile(let path, let missing, let maximum):
+                try await validateFile(path, root: root, allowMissing: missing)
+                value = .document(document(try await root.files.readFile(relativePath: path, allowMissing: missing, maxBytes: maximum), root: root))
+            case .gitStatus: value = .git(try normalizedGitSnapshot(try await git(root).status(), root: root))
+            case .gitDiff(let file, let staged):
+                if let file {
+                    try await validateFile(file.path, root: root, allowMissing: true)
+                    if let previous = file.previousPath { try await validateFile(previous, root: root, allowMissing: true) }
+                }
+                value = .diff(try await git(root).diff(file: file, staged: staged))
+            case .gitBranches: value = .branches(try await git(root).branchDetails())
+            case .gitRemotes: value = .remotes(try await git(root).remotes())
+            }
+            try await authorize(request.target); try root.anchor.validate()
+            _ = try RemoteEnvironmentProtocol.encode(value)
+            return .init(target: request.target, value: value)
+        } catch { throw safe(error) }
+    }
+    private func validateFile(_ path: String, root: Root, allowMissing: Bool) async throws {
+        guard !path.isEmpty else { throw RemoteWorkspaceFailure(.invalidRequest) }
+        do { _ = try await root.files.metadata(relativePath: path) }
+        catch let error as WorkspaceFileError where allowMissing && error.failure == .missing { }
+    }
+    private func document(_ value: WorkspaceTextDocument, root: Root) -> RemoteWorkspaceDocument {
+        var token: UUID?
+        if let revision = value.revision {
+            while revisions.count >= 1_024, let first = revisions.keys.first { revisions.removeValue(forKey: first) }
+            let id = UUID(); revisions[id] = .init(rootID: root.id, path: value.relativePath, value: revision); token = id
+        }
+        return .init(relativePath: value.relativePath, contents: value.contents, byteLength: value.byteLength,
+                     truncated: value.truncated, exists: value.exists, revision: token)
+    }
+    private func git(_ root: Root) async throws -> GitService {
+        try root.anchor.validate()
+        let git = GitService(root: URL(fileURLWithPath: root.path))
+        let paths = try await git.remoteWorkspaceDirectories()
+        guard paths.first.map({ samePath($0, root.path) }) == true else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        if let pinned = root.gitDirectories {
+            guard pinned.count == paths.count, zip(pinned, paths).allSatisfy({ samePath($0.path, $1) }) else { throw RemoteWorkspaceFailure(.staleRoot) }
+            for value in pinned { try value.validate() }
+        } else { root.gitDirectories = try paths.map { try .init(path: $0) } }
+        try root.anchor.validate(); return git
+    }
+    private func normalizedGitSnapshot(_ snapshot: GitSnapshot, root: Root) throws -> GitSnapshot {
+        try root.anchor.validate()
+        for directory in root.gitDirectories ?? [] { try directory.validate() }
+        let resolved = snapshot.repositoryRoot.standardizedFileURL.resolvingSymlinksInPath().path
+        guard samePath(resolved, root.path) else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        var value = snapshot
+        // Git may spell Darwin's /var alias as /private/var. Export only the
+        // already-validated bound spelling; remote clients never resolve it.
+        value.repositoryRoot = URL(fileURLWithPath: root.path)
+        return value
+    }
+    func operation(_ request: RemoteWorkspaceMutationRequest) throws -> RemoteWorkspaceOperation? {
+        guard request.target.environmentID == environmentID else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        guard !journalFailed else { throw RemoteWorkspaceFailure(.unavailable) }
+        return try journal.lookup(request)
+    }
+    func begin(_ request: RemoteWorkspaceMutationRequest) async throws -> RemoteWorkspaceOperation {
+        if let existing = try operation(request) { return existing }
+        let root: Root
+        do {
+            root = try await self.root(request.target)
+            try await authorize(request.target, mutating: true)
+            try validate(request.mutation)
+            guard busyRoots[root.id] == nil, jobs.count < 8 else { throw RemoteWorkspaceFailure(.busy) }
+        } catch { return try journal.insert(request, failure: safe(error)) }
+        let accepted = try journal.insert(request)
+        busyRoots[root.id] = request.id
+        jobs[request.id] = Task { await self.execute(request, root: root) }
+        return accepted
+    }
+    private func validate(_ mutation: RemoteWorkspaceMutation) throws {
+        func text(_ value: String, maximum: Int, empty: Bool = false) throws {
+            guard value.utf8.count <= maximum, !value.contains("\0"), empty || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw RemoteWorkspaceFailure(.invalidRequest) }
+        }
+        func paths(_ values: [String]) throws {
+            guard !values.isEmpty, values.count <= 2_000 else { throw RemoteWorkspaceFailure(.invalidRequest) }
+            for path in values { try text(path, maximum: 4_096); guard !path.hasPrefix("/"), !path.split(separator: "/").contains("..") else { throw RemoteWorkspaceFailure(.invalidRequest) } }
+        }
+        switch mutation {
+        case .createFile(let path, let contents), .saveFile(let path, let contents, _): try paths([path]); try text(contents, maximum: 2_000_000, empty: true)
+        case .gitStage(let values), .gitUnstage(let values): try paths(values)
+        case .gitCommit(let message): try text(message, maximum: 120_000)
+        case .gitInitialize(let branch), .gitCheckout(let branch), .gitPull(let branch): try text(branch, maximum: 512)
+        case .gitCreateBranch(let branch, let tracking): try text(branch, maximum: 512); if let tracking { try text(tracking, maximum: 1_024) }
+        case .gitFetch(let remote): try text(remote, maximum: 512)
+        case .gitPush(let branch, let remote, let remoteBranch, _): try text(branch, maximum: 512); try text(remote, maximum: 512); try text(remoteBranch, maximum: 512)
+        }
+    }
+    private func execute(_ request: RemoteWorkspaceMutationRequest, root: Root) async {
+        defer { jobs.removeValue(forKey: request.id); if busyRoots[root.id] == request.id { busyRoots.removeValue(forKey: root.id) } }
+        var entered = false
+        do {
+            try Task.checkCancellation(); try await authorize(request.target, mutating: true); try root.anchor.validate()
+            guard var state = try journal.lookup(request), state.state == .accepted else { return }
+            // Resolve and validate all native preconditions before marking running.
+            let expected: WorkspaceFileWriteCondition?
+            let gitService: GitService?
+            switch request.mutation {
+            case .saveFile(let path, _, let token):
+                guard let revision = revisions[token], revision.rootID == root.id, samePath(revision.path, path) else { throw RemoteWorkspaceFailure(.conflict) }
+                try await validateFile(path, root: root, allowMissing: false)
+                let current = try await root.files.readFile(relativePath: path, maxBytes: 2_000_000)
+                guard current.revision == revision.value else { throw RemoteWorkspaceFailure(.conflict) }
+                expected = .matching(revision.value); gitService = nil
+            case .createFile(let path, _):
+                do { _ = try await root.files.metadata(relativePath: path); throw RemoteWorkspaceFailure(.conflict) }
+                catch let error as WorkspaceFileError where error.failure == .missing { }
+                expected = .missing; gitService = nil
+            case .gitInitialize: expected = nil; gitService = .init(root: URL(fileURLWithPath: root.path))
+            default:
+                expected = nil; gitService = try await git(root)
+                if case .gitStage(let paths) = request.mutation { for path in paths { try await validateFile(path, root: root, allowMissing: true) } }
+                if case .gitUnstage(let paths) = request.mutation { for path in paths { try await validateFile(path, root: root, allowMissing: true) } }
+            }
+            try Task.checkCancellation(); try await authorize(request.target, mutating: true); try root.anchor.validate()
+            state.state = .running; state.updatedAt = .now; try journal.store(state); entered = true
+            let result: RemoteWorkspaceValue
+            switch request.mutation {
+            case .createFile(let path, let contents), .saveFile(let path, let contents, _):
+                guard let expected else { throw RemoteWorkspaceFailure(.invalidRequest) }
+                result = .document(document(try await root.files.writeFile(relativePath: path, contents: contents, expected: expected), root: root))
+            default:
+                guard let gitService else { throw RemoteWorkspaceFailure(.invalidRequest) }
+                try await performGit(request.mutation, git: gitService)
+                _ = try await git(root); result = .git(try normalizedGitSnapshot(try await gitService.status(), root: root))
+            }
+            try Task.checkCancellation(); try root.anchor.validate(); try await authorize(request.target)
+            state.state = .finished; state.result = result; state.failure = nil; state.updatedAt = .now; try journal.store(state)
+        } catch {
+            do {
+                guard var state = try journal.lookup(request) else { return }
+                state.state = entered ? .uncertain : .finished; state.failure = safe(error); state.updatedAt = .now
+                try journal.store(state)
+            } catch { journalFailed = true }
+        }
+    }
+    private func performGit(_ mutation: RemoteWorkspaceMutation, git: GitService) async throws {
+        switch mutation {
+        case .gitInitialize(let branch): try await git.initialize(branch: branch)
+        case .gitStage(let paths): try await git.stage(paths)
+        case .gitUnstage(let paths): try await git.unstage(paths)
+        case .gitCommit(let message): try await git.commit(message: message)
+        case .gitCheckout(let branch): try await git.checkout(branch: branch)
+        case .gitCreateBranch(let branch, let tracking): try await git.createBranch(branch, tracking: tracking)
+        case .gitFetch(let remote): try await git.fetch(remote: remote)
+        case .gitPull(let branch): try await git.pull(branch: branch)
+        case .gitPush(let branch, let remote, let destination, let upstream): try await git.push(branch: branch, remote: remote, remoteBranch: destination, setUpstream: upstream)
+        default: throw RemoteWorkspaceFailure(.invalidRequest)
+        }
+    }
+    func cancel(_ request: RemoteWorkspaceMutationRequest) async throws -> RemoteWorkspaceOperation? {
+        guard var value = try operation(request) else { return nil }
+        if let job = jobs[request.id] {
+            value.state = .uncertain; value.failure = .init(.interrupted); value.updatedAt = .now
+            try journal.store(value); job.cancel(); await job.value
+            return try operation(request)
+        }
+        return value
+    }
+    /// Called under the environment service's admission gate, before its Engine
+    /// command commits. Mutations reserve busyRoots under that same gate.
+    func admitConversationCommand(_ command: RemoteEnvironmentCommand) async throws {
+        let id: UUID
+        switch command { case .submit(let threadID, _, _), .resumeQueue(let threadID, _): id = threadID
+        default: return }
+        let snapshot = await engine.current().snapshot
+        guard let thread = snapshot.threads.first(where: { $0.id == id }) else { return }
+        guard !busyRoots.keys.contains(where: { roots[$0].map { samePath($0.path, thread.workspacePath) } == true }) else { throw RemoteWorkspaceFailure(.busy) }
+    }
+    private func safe(_ error: any Error) -> RemoteWorkspaceFailure {
+        if let error = error as? RemoteWorkspaceFailure { return error }
+        if error is CancellationError { return .init(.interrupted) }
+        if let error = error as? WorkspaceFileError {
+            switch error.failure { case .conflict: return .init(.conflict)
+            case .rootReplaced, .rootMissing, .rootNotDirectory: return .init(.staleRoot)
+            case .invalidPath, .pathOutsideRoot, .gitMetadata, .invalidQuery, .binary, .invalidUTF8, .notFile: return .init(.invalidRequest)
+            default: break }
+        }
+        return .init(.operationFailed)
+    }
+    func close() async {
+        if let closeTask { await closeTask.value; return }
+        closing = true
+        let jobs = Array(jobs.values), roots = Array(roots.values)
+        for job in jobs { job.cancel() }
+        let task = Task {
+            for job in jobs { await job.value }
+            for root in roots { await root.files.close(); root.anchor.close() }
+        }
+        closeTask = task; await task.value
+        self.roots = [:]; revisions = [:]
+    }
+}

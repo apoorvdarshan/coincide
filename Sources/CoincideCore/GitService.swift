@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ChangedFile: Sendable, Identifiable, Equatable {
+public struct ChangedFile: Codable, Sendable, Identifiable, Equatable {
     public var path: String
     public var previousPath: String?
     public var indexStatus: Character
@@ -10,9 +10,27 @@ public struct ChangedFile: Sendable, Identifiable, Equatable {
     public var isConflicted: Bool { indexStatus == "U" || worktreeStatus == "U" || status == "AA" || status == "DD" }
     public var isStaged: Bool { !isConflicted && indexStatus != " " && indexStatus != "?" }
     public var status: String { String([indexStatus, worktreeStatus]) }
+    private enum CodingKeys: String, CodingKey { case path, previousPath, indexStatus, worktreeStatus }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        path = try values.decode(String.self, forKey: .path)
+        previousPath = try values.decodeIfPresent(String.self, forKey: .previousPath)
+        let index = try values.decode(String.self, forKey: .indexStatus), worktree = try values.decode(String.self, forKey: .worktreeStatus)
+        guard index.count == 1, worktree.count == 1, let x = index.first, let y = worktree.first else { throw RemoteWorkspaceFailure(.invalidRequest) }
+        indexStatus = x; worktreeStatus = y
+    }
+    public func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(path, forKey: .path); try values.encodeIfPresent(previousPath, forKey: .previousPath)
+        try values.encode(String(indexStatus), forKey: .indexStatus); try values.encode(String(worktreeStatus), forKey: .worktreeStatus)
+    }
+    public init(path: String, previousPath: String? = nil, indexStatus: Character, worktreeStatus: Character) {
+        self.path = path; self.previousPath = previousPath; self.indexStatus = indexStatus; self.worktreeStatus = worktreeStatus
+    }
+
 }
 
-public struct GitSnapshot: Sendable, Equatable {
+public struct GitSnapshot: Codable, Sendable, Equatable {
     public var repositoryRoot: URL
     public var branch: String
     public var head: String?
@@ -28,7 +46,7 @@ public struct GitSnapshot: Sendable, Equatable {
     public var displayBranch: String { isDetached ? "Detached at \(head.map { String($0.prefix(10)) } ?? "HEAD")" : branch }
 }
 
-public struct GitBranch: Sendable, Identifiable, Equatable {
+public struct GitBranch: Codable, Sendable, Identifiable, Equatable {
     public var ref: String
     public var upstream: String?
     public var id: String { ref }
@@ -48,6 +66,13 @@ public struct GitService: Sendable {
 
     public func repositoryRoot() async throws -> URL {
         URL(fileURLWithPath: try await line(["rev-parse", "--path-format=absolute", "--show-toplevel"]))
+    }
+    /// Host-only physical anchors for remote repository operations.
+    func remoteWorkspaceDirectories() async throws -> [String] {
+        let repository = try await repositoryRoot()
+        let admin = try await line(["rev-parse", "--path-format=absolute", "--git-dir"], at: repository)
+        let common = try await line(["rev-parse", "--path-format=absolute", "--git-common-dir"], at: repository)
+        return [repository.path, admin, common].map { URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path }
     }
     public func status() async throws -> GitSnapshot {
         let repository = try await repositoryRoot()

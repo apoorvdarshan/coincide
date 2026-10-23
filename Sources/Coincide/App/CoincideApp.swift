@@ -105,8 +105,10 @@ struct CoincideApp: App {
                     .disabled(remotePresentation != nil
                         ? !remoteStore.canWrite || remoteStore.selectedThread?.activeRun == nil || remoteStore.selectedThread?.runtimeID == nil
                         : store.selectedThreadID.map { !store.isBusy($0) } ?? true)
-                Button("Toggle Inspector") { store.inspectorVisible.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
-                    .disabled(remotePresentation != nil)
+                Button("Toggle Inspector") {
+                    if let remotePresentation { remotePresentation.inspectorVisible.wrappedValue.toggle() }
+                    else { store.inspectorVisible.toggle() }
+                }.keyboardShortcut("i", modifiers: [.command, .option])
             }
         }
         Window("Remote Workspaces", id: RemoteWorkspaceStore.sceneID) {
@@ -180,10 +182,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store else { return .terminateNow }
         guard !isQuitting else { return .terminateLater }
-        if store.hasUnsavedFileEdits {
+        if store.hasUnsavedFileEdits || remoteStore?.hasUnsavedWorkspaceEdits == true {
             let alert = NSAlert()
             alert.messageText = String(localized: "Quit with unsaved file edits?")
-            alert.informativeText = String(localized: "Unsaved file edits will be discarded. Cancel to return to your files and save them before quitting.")
+            alert.informativeText = String(localized: "Unsaved file edits and commit messages will be discarded. Cancel to return to your work and save it before quitting. Unconfirmed remote operation records remain available after restart.")
             alert.alertStyle = .warning
             alert.addButton(withTitle: String(localized: "Cancel"))
             alert.addButton(withTitle: String(localized: "Quit and Discard"))

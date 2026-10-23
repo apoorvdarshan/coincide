@@ -6,6 +6,7 @@ import SwiftUI
 struct RemoteWorkspacePresentation {
     var newThread: Binding<Bool>
     var addProject: Binding<Bool>
+    var inspectorVisible: Binding<Bool>
 }
 private struct RemoteWorkspacePresentationKey: FocusedValueKey {
     typealias Value = RemoteWorkspacePresentation
@@ -89,23 +90,37 @@ struct RemoteWorkspaceView: View {
                     }.font(.callout).padding(12).background(.red.opacity(0.08))
                 }
                 if store.needsTrust { trustPanel }
-                else if let thread = store.selectedThread { conversation(thread) }
                 else {
-                    ContentUnavailableView {
-                        Label(store.isConnected ? "Choose a remote project" : "Connect to another Mac", systemImage: "network")
-                    } description: {
-                        Text(store.isConnected ? "Add an existing folder on the remote Mac, then start a conversation." :
-                            "Use an SSH connection and the Coincide environment helper installed on that Mac. Provider sign-in stays on the remote machine.")
-                    } actions: {
-                        if store.isConnected { Button("Add Remote Project…") { addingProject = true }.disabled(!store.canWrite) }
-                        else { Button("Add SSH Connection…") { addingConnection = true }.disabled(store.isWorking) }
+                    HSplitView {
+                        Group {
+                            if let thread = store.selectedThread { conversation(thread) }
+                            else {
+                                ContentUnavailableView {
+                                    Label(store.isConnected ? "Choose a remote project" : "Connect to another Mac", systemImage: "network")
+                                } description: {
+                                    Text(store.isConnected ? "Add an existing folder on the remote Mac, then start a conversation." :
+                                        "Use an SSH connection and the Coincide environment helper installed on that Mac. Provider sign-in stays on the remote machine.")
+                                } actions: {
+                                    if store.isConnected { Button("Add Remote Project…") { addingProject = true }.disabled(!store.canWrite) }
+                                    else { Button("Add SSH Connection…") { addingConnection = true }.disabled(store.isWorking) }
+                                }
+                            }
+                        }.frame(minWidth: 380)
+                        if store.inspectorVisible {
+                            RemoteWorkspaceInspectorView(store: store.inspector)
+                                .frame(minWidth: 320, idealWidth: 390, maxWidth: 600)
+                        }
                     }
                 }
             }
         }
         .navigationTitle("Remote Workspaces")
-        .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject))
+        .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject, inspectorVisible: $store.inspectorVisible))
         .toolbar {
+            ToolbarItem {
+                Button("Toggle Files and Git", systemImage: "sidebar.trailing") { store.inspectorVisible.toggle() }
+                    .accessibilityIdentifier("remote-toggle-inspector")
+            }
             ToolbarItem { Button("Add Remote Project", systemImage: "folder.badge.plus") { addingProject = true }.disabled(!store.canWrite) }
             ToolbarItem {
                 if store.isConnected {
@@ -116,6 +131,7 @@ struct RemoteWorkspaceView: View {
             }
         }
         .task { await store.load() }
+        .task(id: store.inspectorSelection) { await store.updateInspector() }
         .onDisappear { Task { await store.disconnect() } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .sheet(isPresented: $addingConnection) { RemoteConnectionSheet(store: store) }

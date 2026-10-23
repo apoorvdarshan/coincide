@@ -1,10 +1,11 @@
 # Remote environments
 
-Coincide has a first native macOS remote workspace slice: a Swift host, an SSH
+Coincide has native macOS remote workspaces: a Swift host, an SSH
 stdio client and a separate **Remote → Remote Workspaces…** window. It supports
 saved connections, environment identity confirmation, existing remote projects,
 Codex/Claude conversations, streamed snapshots, questions/approvals, queued input
-and exact-run Stop. Full T3 remote parity remains unfinished.
+and exact-run Stop. The Files/Changes inspector adds remote text editing and
+source control. Full T3 remote parity remains unfinished.
 
 The client owns the SSH process and the host it launches. **Disconnecting,
 closing the remote window or quitting stops that host's active work.** Saved
@@ -46,7 +47,44 @@ remote conversation before deciding to send any new input.
 
 Drafts remain editable while disconnected. An acknowledged submit clears only
 the unchanged text it sent, preserving newer typing. Quit drains pending draft
-writes and asks before discarding text if saving fails.
+writes and asks before discarding text if saving fails. Remote file buffers and
+commit drafts survive inspector hiding, conversation changes and disconnects in
+the running app; Quit asks before discarding them. Unsaved editor/commit buffers
+are not crash-persisted.
+
+## Remote Files and Changes
+
+The inspector browses directories, searches paths or text (including regular
+expressions), reads UTF-8 files and creates/saves text files up to 2,000,000
+bytes. Saves require the exact host-issued revision. An external change, a
+replaced workspace root or a stale revision prevents overwriting the file.
+Paths are interpreted only on the host; symlink escapes and Git metadata are
+refused. Opaque revision tokens expire when the helper restarts or its bounded
+revision cache evicts them. Save checks the unchanged remote base and obtains a
+fresh revision without discarding the retained editor text; a changed base
+requires explicit review/reload.
+
+Changes shows status, staged/unstaged diffs, local/remote branches and remotes.
+Controls initialize a repository, stage/unstage paths, commit, create/switch
+branches, fetch, pull clean fast-forward changes and explicitly push one branch.
+Git uses the host's existing noninteractive credentials. It does not prompt for
+new authentication. Branch changes and pulls require saving or discarding dirty
+editor buffers first. Remote worktree management and pull-request actions remain
+unfinished.
+
+Each mutation has an exact UUID and payload recorded privately on both sides.
+The host acknowledges durable admission promptly and runs the operation as owned
+work, leaving conversation Stop available. Check Result polls the original
+record; it never repeats the operation. A lost response, cancellation after work
+begins, or an interrupted host can leave an uncertain result. Inspect files or
+Git status before explicitly dismissing it. Cancel joins the owned Git process;
+this does not prove every arbitrary hook or descendant has exited. Completed
+saves and commits preserve any newer text typed while they were running.
+
+The current host journal retains up to 256 operation records or 64 MiB and
+refuses further mutations at capacity. It does not silently delete receipt
+history or replay interrupted operations. Capacity/recovery management remains a
+follow-up; deleting the journal is not a safe retry procedure.
 
 ## Native service boundary
 
@@ -59,8 +97,11 @@ Accepted and rejected commands use the original UUID/payload fingerprint for
 durable receipt lookup, including preparation failures.
 
 The native JSON-RPC protocol is version **1**, independent of T3's protocol.
-Requests are bounded to 1 MiB, response frames to 16 MiB and in-flight requests
-to 32. Subscription delivery coalesces complete snapshots with a monotonic
+Conversation requests are bounded to 1 MiB. Workspace requests allow 14 MiB to
+carry JSON-escaped 2 MB files; aggregate queued requests are bounded to 32 MiB.
+Response frames are bounded to 16 MiB and in-flight requests to 32, with at most
+eight owned read/cancel replies and eight mutation jobs. The descriptor's
+optional Files/Git capability defaults to unsupported for older helpers. Subscription delivery coalesces complete snapshots with a monotonic
 sequence; it is not a lossless event/delta replay stream. A sequence floor is
 retained across reconnects within the running client/store. It is not a durable
 cross-app-restart rollback attestation. Oversized workspaces require a future
@@ -113,8 +154,9 @@ The reference is T3 Code
 1. Verify a real SSH connection between two Macs, including installed-provider
    execution, interruption, disconnect and reconnect. Controlled local-process
    acceptance does not establish remote network or provider authentication.
-2. Extend the environment boundary to complete remote files, Git/worktrees,
-   attachments, checkpoints/history, provider setup/authentication and PTYs.
+2. Complete remote worktree/PR controls, media files, attachments,
+   checkpoints/history, provider setup/authentication and PTYs; add workspace
+   receipt-capacity management and crash recovery for unsaved editor buffers.
    Preserve the current separation between local and remote paths/services.
 3. Add persistent-host ownership, signed helper provisioning/update and bounded
    paginated projections with explicit incomplete-history state. Ordered journal
@@ -130,7 +172,11 @@ The reference is T3 Code
    without weakening provider-specific origin or credential rules.
 5. Complete PTY create/input/resize/replay. `LocalTerminalSession` couples AppKit with process
    creation; remote terminal support needs a headless host PTY service and a
-   separate SwiftTerm display adapter. Add private-route discovery, relay
+   separate SwiftTerm display adapter. A Core driver protocol can inject SwiftTerm
+   `LocalProcess` from `CoincideTerminal`; the client should render through
+   `TerminalView` without creating a local shell. Keep byte-sequenced terminal
+   output on a separate bounded channel with explicit gaps; restored output must
+   not send input, terminal-query responses or clipboard operations. Add private-route discovery, relay
    behavior and Linux/Windows portability before calling remote parity complete.
    Current Core services depend on Darwin and Security.
 

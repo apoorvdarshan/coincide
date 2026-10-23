@@ -1,7 +1,7 @@
 import Foundation
 
-public enum WorkspaceEntryKind: String, Sendable, Equatable { case file, directory }
-public struct WorkspaceEntry: Identifiable, Sendable, Equatable {
+public enum WorkspaceEntryKind: String, Codable, Sendable, Equatable { case file, directory }
+public struct WorkspaceEntry: Codable, Identifiable, Sendable, Equatable {
     public let path: String
     public let kind: WorkspaceEntryKind
     public let ignored: Bool?
@@ -10,7 +10,7 @@ public struct WorkspaceEntry: Identifiable, Sendable, Equatable {
     public var isDirectory: Bool { kind == .directory }
     public init(path: String, kind: WorkspaceEntryKind, ignored: Bool? = nil) { self.path = path; self.kind = kind; self.ignored = ignored }
 }
-public struct WorkspaceEntryPage: Sendable, Equatable {
+public struct WorkspaceEntryPage: Codable, Sendable, Equatable {
     public let entries: [WorkspaceEntry]
     public let truncated: Bool
     public init(entries: [WorkspaceEntry], truncated: Bool) { self.entries = entries; self.truncated = truncated }

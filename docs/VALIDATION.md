@@ -1,5 +1,61 @@
 # Validation record
 
+## 2026-10-23 — Remote Files and Git inspector
+
+- The full serial run passes 1815 of 1828 declarations, with thirteen optional
+  installed/live checks skipped. Pinned Pi package acceptance is enabled. Core
+  covers 1570 declarations in 368.438 seconds; native view/store covers 234 in
+  72.807 seconds, terminal eleven in 1.417 seconds and Markdown thirteen in
+  0.140 seconds. No source changes follow this full run.
+- Build-only packaging, deep strict bundle/helper signatures and native math
+  resource rendering pass. Packaged app/helper Mach-O UUIDs match the compiled
+  products. The signed packaged environment helper advertises the Files/Git
+  capability and exits gracefully on EOF without opening SQLite or a provider;
+  its private fixture is removed after exit. The installed app is neither
+  replaced nor launched. The development bundle is `dist/Coincide.app`.
+- Final focused integration passes all 35 declarations: 27 Core in 3.580 seconds
+  and eight native view/store declarations in 0.012 seconds. The incremental
+  build takes 19.50 seconds. These checks include the production native helper,
+  JSON-RPC client/codec, private SQLite, real files and local Git repositories.
+- Native acceptance verifies directory/path/content search, file creation,
+  revision-checked saves, conflicts, symlink/path/Git-metadata refusal and physical
+  root replacement. Git checks stage, diff, commit, exact content/head readback,
+  durable result lookup and refusal to replay completed operations. A held Git
+  hook proves provider admission stays refused while the mutation owns the
+  workspace, and Cancel/Close join the exact owned Git process. Fixture-owned
+  hooks are separately released/joined; arbitrary descendants are not claimed
+  drained. No network fetch/pull/push, model call or real SSH host is exercised.
+- Client regressions use a private stdio peer through the production codec.
+  Malformed result types, wrong document paths/bytes, missing revisions and
+  malformed read replies retire the transport while retaining exact private
+  pending requests. Nil receipt lookup across reconnect never permits replay.
+  Private intent checks preserve corrupt/unsafe records and distinguish exact
+  Unicode bytes instead of Swift's canonically equivalent String equality.
+- Native view/store checks retain dirty buffers across files, conversations,
+  model changes, inspector hiding and disconnects; preserve newer text across
+  saves, reloads and commit receipts; and expose older retained workspaces without
+  granting them file/Git access. Saving reacquires an opaque revision only when
+  the remote base is unchanged. Old-worktree receipt recovery cannot update the
+  current worktree's editor or commit draft. These are offscreen checks, not
+  rendered remote-inspector acceptance.
+- Independent review finds response-shape validation outside the client's
+  transport-retirement path; it now retires malformed responses and checks the
+  exact successful mutation result. The stricter guard then catches Git exposing
+  `/private/var` while a bound workspace uses `/var`. The host verifies the same
+  physical root before exporting the exact bound path. The client never resolves
+  remote paths on this Mac. All three initially failing native Git cases pass
+  after this host-only fix; their exact processes drain and three resolved
+  synthetic failure fixtures are removed after bounded evidence capture.
+- All 72 Python harness/configuration checks pass in 2.590 seconds. The 27-case
+  native GUI runner compiles with the remote inspector menu now enabled; no local
+  GUI execution occurs. The async-default ABI guard checks 962 Mach-O objects,
+  including 652 Core and 257 app objects, with zero weak records.
+- Earlier commit `c1873ef` now has complete hosted success in run
+  [39894730771](https://github.com/apoorvdarshan/coincide/actions/runs/39894730771):
+  Core/package, all four GUI shards and the aggregate gate pass, covering its
+  26 native workflows exactly once without skips. This does not establish
+  hosted acceptance for the new remote inspector or a real two-Mac SSH setup.
+
 ## 2026-10-23 — Native SSH environment host and remote workspace window
 
 - The complete serial run passes 1793 of 1806 declarations, with thirteen

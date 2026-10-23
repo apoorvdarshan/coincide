@@ -4,6 +4,9 @@ public enum RemoteEnvironmentProtocol {
     public static let version = 1
     public static let maximumFrameBytes = 16 * 1_024 * 1_024
     public static let maximumRequestBytes = 1 * 1_024 * 1_024
+    /// A native 2 MB text file may require six JSON bytes per input byte.
+    public static let maximumWorkspaceRequestBytes = 14 * 1_024 * 1_024
+    public static let maximumQueuedRequestBytes = 32 * 1_024 * 1_024
     public static let maximumPendingRequests = 32
     public static let describeMethod = "remoteEnvironment.describe"
     public static let snapshotMethod = "remoteEnvironment.snapshot"
@@ -12,6 +15,11 @@ public enum RemoteEnvironmentProtocol {
     public static let subscribeMethod = "remoteEnvironment.subscribe"
     public static let closeMethod = "remoteEnvironment.close"
     public static let snapshotNotification = "remoteEnvironment.snapshotChanged"
+    public static let workspaceBindMethod = "remoteEnvironment.workspace.bind"
+    public static let workspaceReadMethod = "remoteEnvironment.workspace.read"
+    public static let workspaceBeginMethod = "remoteEnvironment.workspace.begin"
+    public static let workspaceOperationMethod = "remoteEnvironment.workspace.operation"
+    public static let workspaceCancelMethod = "remoteEnvironment.workspace.cancel"
     public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let bytes = try encoder.encode(value)
@@ -41,10 +49,28 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsExactRunStop: Bool
     public let supportsRequestResponses: Bool
     public let persistentDaemon: Bool
+    public let supportsWorkspaceFilesAndGit: Bool
     public init(providers: [ProviderKind] = [.codex, .claude]) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
+        supportsWorkspaceFilesAndGit = true
+    }
+    private enum CodingKeys: String, CodingKey {
+        case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit
+    }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        providers = try values.decode([ProviderKind].self, forKey: .providers)
+        supportsCommandReceipts = try values.decode(Bool.self, forKey: .supportsCommandReceipts)
+        supportsSubscriptions = try values.decode(Bool.self, forKey: .supportsSubscriptions)
+        supportsProjectRegistration = try values.decode(Bool.self, forKey: .supportsProjectRegistration)
+        supportsConversationCreation = try values.decode(Bool.self, forKey: .supportsConversationCreation)
+        supportsExactRunStop = try values.decode(Bool.self, forKey: .supportsExactRunStop)
+        supportsRequestResponses = try values.decode(Bool.self, forKey: .supportsRequestResponses)
+        persistentDaemon = try values.decode(Bool.self, forKey: .persistentDaemon)
+        supportsWorkspaceFilesAndGit = try values.decodeIfPresent(Bool.self, forKey: .supportsWorkspaceFilesAndGit) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {

@@ -33,6 +33,8 @@ final class RemoteWorkspaceStore {
     private(set) var isLoaded = false
     private(set) var draftsSaving = false
     private(set) var draftPersistenceFailed = false
+    let inspector: RemoteWorkspaceInspectorStore
+    var inspectorVisible = true
     var selectedThreadID: UUID?
     var selectedProjectID: UUID?
     var errorMessage: String?
@@ -55,6 +57,7 @@ final class RemoteWorkspaceStore {
         self.clientFactory = clientFactory
         pendingStore = .init(root: root.appendingPathComponent("Pending", isDirectory: true))
         draftStore = .init(root: root.appendingPathComponent("Drafts", isDirectory: true))
+        inspector = .init(pendingStore: .init(root: root.appendingPathComponent("WorkspaceOperations", isDirectory: true)))
     }
 
     var projects: [WorkspaceProject] { snapshot?.workspace.projects ?? [] }
@@ -63,6 +66,30 @@ final class RemoteWorkspaceStore {
     var canWrite: Bool { isConnected && !isWorking && pending == nil && !stopping }
     var draft: String { selectedThread.map { drafts[$0.id] ?? $0.draft } ?? "" }
     var hasUnsavedDrafts: Bool { draftsSaving || draftPersistenceFailed }
+    var hasUnsavedWorkspaceEdits: Bool { inspector.hasUnsavedEdits }
+    struct InspectorSelection: Hashable {
+        let environmentID: UUID?, threadID: UUID?, path: Data
+        let generation: Int
+        let connected: Bool, canMutate: Bool
+    }
+    var inspectorSelection: InspectorSelection {
+        let thread = selectedThread
+        let available = thread.map { snapshot?.workspace.workspaceReady(for: $0) == true } ?? false
+        let busy = thread.map { selected in threads.contains {
+            $0.workspacePath.utf8.elementsEqual(selected.workspacePath.utf8) &&
+                ($0.isBusy || !$0.runtimeRequests.isEmpty || !$0.queuedTurns.isEmpty || $0.settlement != nil)
+        } } ?? true
+        return .init(environmentID: connection?.environmentID, threadID: thread?.id,
+            path: Data((thread?.workspacePath ?? "").utf8), generation: generation,
+            connected: isConnected, canMutate: canWrite && available && !busy)
+    }
+    func updateInspector() async {
+        guard !stopping, let environmentID = connection?.environmentID, let thread = selectedThread else {
+            inspector.clearSelection(); return
+        }
+        await inspector.select(environmentID: environmentID, thread: thread,
+            client: isConnected ? client : nil, canMutate: inspectorSelection.canMutate)
+    }
 
     func load() async {
         guard !isLoaded else { return }
@@ -157,6 +184,7 @@ final class RemoteWorkspaceStore {
 
     private func disconnectTransport(owner: Int) async {
         isConnected = false; needsTrust = false
+        inspector.disconnect()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -166,9 +194,10 @@ final class RemoteWorkspaceStore {
     func shutdown() async {
         stopping = true
         await disconnect()
+        await inspector.shutdown()
     }
 
-    func cancelShutdown() { stopping = false }
+    func cancelShutdown() { stopping = false; inspector.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -188,6 +217,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
+        if selectedThreadID != id { inspector.clearSelection() }
         selectedThreadID = id
         if let thread = selectedThread { selectedProjectID = thread.projectID }
     }
@@ -322,7 +352,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; notice = message.localizedDescription
+            isConnected = false; inspector.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -330,10 +360,13 @@ final class RemoteWorkspaceStore {
     private func accept(_ value: RemoteEnvironmentSnapshot) {
         guard value.environmentID == connection?.environmentID,
               snapshot.map({ $0.environmentID != value.environmentID || value.sequence >= $0.sequence }) ?? true else { return }
+        let previousSelection = inspectorSelection
         snapshot = value
         minimumSequences[value.environmentID] = max(minimumSequences[value.environmentID] ?? 0, value.sequence)
         if !threads.contains(where: { $0.id == selectedThreadID }) { selectedThreadID = threads.first?.id }
         if let selectedThread { selectedProjectID = selectedThread.projectID }
         else if !projects.contains(where: { $0.id == selectedProjectID }) { selectedProjectID = projects.first?.id }
+        let nextSelection = inspectorSelection
+        if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path { inspector.clearSelection() }
     }
 }

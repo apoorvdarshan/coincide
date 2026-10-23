@@ -1,12 +1,12 @@
 import Foundation
 
-public struct WorkspaceContentMatchRange: Sendable, Equatable {
+public struct WorkspaceContentMatchRange: Codable, Sendable, Equatable {
     /// Zero-based UTF-16 offsets into the original line; end is exclusive.
     public let start: Int
     public let end: Int
     public init(start: Int, end: Int) { self.start = start; self.end = end }
 }
-public struct WorkspaceContentMatch: Sendable, Equatable {
+public struct WorkspaceContentMatch: Codable, Sendable, Equatable {
     public let path: String
     public let lineNumber: Int
     public let lineContent: String
@@ -15,7 +15,7 @@ public struct WorkspaceContentMatch: Sendable, Equatable {
         self.path = path; self.lineNumber = lineNumber; self.lineContent = lineContent; self.matchRanges = matchRanges
     }
 }
-public struct WorkspaceContentSearchResult: Sendable, Equatable {
+public struct WorkspaceContentSearchResult: Codable, Sendable, Equatable {
     public let matches: [WorkspaceContentMatch]
     public let truncated: Bool
     /// Native syntax/engine differences are not fff fallback-result compatibility.
