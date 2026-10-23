@@ -29,6 +29,9 @@ struct ProviderMenu: View {
         }
         if thread.provider == .pi, let level = thread.piConfiguration?.thinkingLevel { parts.append("Thinking: \(level)") }
         if thread.provider == .muse, let effort = thread.museConfiguration?.reasoningEffort { parts.append("Reasoning: \(effort)") }
+        if thread.provider == .codex, let mode = thread.agentModeID {
+            parts.append(mode == "plan" ? String(localized: "Mode: Plan") : mode == "default" ? String(localized: "Mode: Default") : String(localized: "Mode needs attention"))
+        }
         parts += controls.summaryComponents
         return parts.joined(separator: " · ")
     }
@@ -67,7 +70,7 @@ struct ProviderMenu: View {
                 reasoningMenu(model)
             }
             if thread.provider == .claude { claudeOptions }
-            if thread.provider == .codex { codexServiceTierOptions }
+            if thread.provider == .codex { codexInteractionOptions; codexServiceTierOptions }
             if thread.provider == .opencode {
                 openCodeOptions
             }
@@ -146,6 +149,26 @@ struct ProviderMenu: View {
         .accessibilityValue(summary)
         .accessibilityIdentifier("provider-model-menu")
         .help(summary)
+    }
+    @ViewBuilder private var codexInteractionOptions: some View {
+        let model = store.models(for: thread).first { $0.id.utf8.elementsEqual(thread.model.utf8) }
+        if CodexModeSelection.isAvailable(for: thread, model: model) {
+            Divider()
+            Menu("Interaction Mode") {
+                if thread.agentModeID == nil { Text("CLI default (not overridden)") }
+                Button { store.setCodexInteractionMode(.init(thread: thread, mode: .default, model: model)) } label: {
+                    choice("Default", selected: thread.agentModeID == "default")
+                }
+                Button { store.setCodexInteractionMode(.init(thread: thread, mode: .plan, model: model)) } label: {
+                    choice("Plan", selected: thread.agentModeID == "plan")
+                }
+            }
+            .disabled(!store.workspaceReady(for: thread))
+            .accessibilityIdentifier("codex-interaction-mode-menu")
+            .help("Applies to future turns. Steering keeps the active turn's captured mode. Permissions stay unchanged.")
+        } else if thread.agentModeID != nil {
+            Text("Refresh a supported Codex model to change its interaction mode.")
+        }
     }
     @ViewBuilder private var claudeOptions: some View {
         if let model = controls.model, controls.claudeOptions != nil {

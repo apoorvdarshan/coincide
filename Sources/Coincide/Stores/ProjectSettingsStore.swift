@@ -40,15 +40,19 @@ final class ProjectSettingsStore {
     @ObservationIgnored private var iconScopes: [Data: ProjectSettingsPresentationScope] = [:]
     private static let lastInvokedKey = "projectActions.lastInvoked"
     private static let appEnvironmentKey = "projectDefaults.threadEnvironmentMode"
+    private static let originKey = "newWorktreesStartFromOrigin"
     private static let appSubmodulesKey = "projectDefaults.worktreeSubmodules"
 
     init(root: URL, defaults: UserDefaults = .standard,
          reader: Reader? = nil, writer: Writer? = nil) {
         self.root = root; self.defaults = defaults; self.reader = reader ?? Self.readDefault; self.writer = writer ?? Self.writeDefault
         nativeStorage = reader == nil && writer == nil
+        newWorktreesStartFromOrigin = defaults.object(forKey: Self.originKey) as? Bool ?? true
         appThreadEnvironmentMode = defaults.string(forKey: Self.appEnvironmentKey).flatMap(ProjectThreadEnvironmentMode.init(rawValue:))
         appWorktreeSubmodules = defaults.string(forKey: Self.appSubmodulesKey).flatMap(ProjectWorktreeSubmoduleMode.init(rawValue:))
     }
+
+    var newWorktreesStartFromOrigin: Bool { didSet { defaults.set(newWorktreesStartFromOrigin, forKey: Self.originKey) } }
 
     /// App-wide defaults; nil is Inherit (t3.json, then T3's built-in value).
     var appThreadEnvironmentMode: ProjectThreadEnvironmentMode? {

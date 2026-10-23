@@ -27,6 +27,7 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
     public var museDefaultReasoningEffort: String?
     public var claudeCapabilities: ClaudeModelCapabilities?
     public var codexServiceTiers: [CodexModelServiceTier]?
+    public var codexInteractionModes: [CodexInteractionMode]?
 
     public init(id: String, name: String, reasoningEfforts: [ProviderReasoningEffortOption] = [],
                 defaultReasoningEffort: String? = nil, isDefault: Bool = false, catalogID: String? = nil,
@@ -34,7 +35,7 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
                 piSelection: PiModelSelection? = nil, piThinkingLevels: [String]? = nil,
                 museSelection: MuseModelSelection? = nil, museReasoningEfforts: [ProviderReasoningEffortOption]? = nil,
                 museDefaultReasoningEffort: String? = nil, claudeCapabilities: ClaudeModelCapabilities? = nil,
-                codexServiceTiers: [CodexModelServiceTier]? = nil) {
+                codexServiceTiers: [CodexModelServiceTier]? = nil, codexInteractionModes: [CodexInteractionMode]? = nil) {
         self.id = id; self.name = name; self.reasoningEfforts = reasoningEfforts
         self.defaultReasoningEffort = defaultReasoningEffort; self.isDefault = isDefault; self.catalogID = catalogID
         self.openCodeSelection = openCodeSelection; self.openCodeVariants = openCodeVariants
@@ -42,12 +43,13 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
         self.museSelection = museSelection; self.museReasoningEfforts = museReasoningEfforts
         self.museDefaultReasoningEffort = museDefaultReasoningEffort
         self.claudeCapabilities = claudeCapabilities; self.codexServiceTiers = codexServiceTiers
+        self.codexInteractionModes = codexInteractionModes
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, reasoningEfforts, defaultReasoningEffort, isDefault, catalogID, openCodeSelection, openCodeVariants, piSelection, piThinkingLevels
         case museSelection, museReasoningEfforts, museDefaultReasoningEffort
-        case claudeCapabilities, codexServiceTiers
+        case claudeCapabilities, codexServiceTiers, codexInteractionModes
     }
 
     public init(from decoder: any Decoder) throws {
@@ -65,7 +67,8 @@ public struct ProviderModel: Codable, Sendable, Equatable, Identifiable {
             museReasoningEfforts: try values.decodeIfPresent([ProviderReasoningEffortOption].self, forKey: .museReasoningEfforts),
             museDefaultReasoningEffort: try values.decodeIfPresent(String.self, forKey: .museDefaultReasoningEffort),
             claudeCapabilities: try values.decodeIfPresent(ClaudeModelCapabilities.self, forKey: .claudeCapabilities),
-            codexServiceTiers: try values.decodeIfPresent([CodexModelServiceTier].self, forKey: .codexServiceTiers))
+            codexServiceTiers: try values.decodeIfPresent([CodexModelServiceTier].self, forKey: .codexServiceTiers),
+            codexInteractionModes: try values.decodeIfPresent([CodexInteractionMode].self, forKey: .codexInteractionModes))
     }
 }
 

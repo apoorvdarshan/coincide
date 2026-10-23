@@ -112,43 +112,82 @@ public actor KeybindingsConfigStore {
         let slots = max(0, KeybindingResolver.maxRules - custom.count)
         let appended = Array(missing.prefix(slots)), skipped = Array(missing.dropFirst(slots))
         if !skipped.isEmpty { warnings.append("Skipped \(skipped.count) default keybindings at the \(KeybindingResolver.maxRules)-rule limit.") }
-        if !appended.isEmpty { try write(appended + custom, expected: original) }
+        if !appended.isEmpty {
+            let document = try KeybindingsJSONCDocument(validated: original)
+            let edited = try document.prepending(Self.encodedBody(appended))
+            try writeEdited(edited, expected: original, rules: appended + custom)
+        }
         let settled = pendingLate.filter { late in !skipped.contains(late.rule) }
         if !settled.isEmpty { try recordMigrations(applied.union(settled.map(\.id))) }
     }
 
-    /// Adds `rule`, replacing `replacing` (and any identical rule). Writes atomically,
-    /// keeps the newest 256 rules and drops entries that cannot be decoded, like T3.
+    /// Adds `rule`, replacing `replacing` (and any identical rule). Known rules
+    /// retain newest-256 precedence. Unknown entries, comments and untouched raw
+    /// bytes survive; the original revision and private file lock still gate writes.
     @discardableResult
     public func upsert(_ rule: KeybindingRule, replacing: KeybindingRule? = nil, expectedRevision: KeybindingsConfigRevision? = nil) throws -> KeybindingsConfigState {
         try Self.validate(rule)
-        let current = try writableRules(expectedRevision: expectedRevision)
-        var next = current.rules.filter { !$0.isSame(as: rule) && !(replacing.map($0.isSame(as:)) ?? false) }
-        next.append(rule)
-        if next.count > KeybindingResolver.maxRules { next = Array(next.suffix(KeybindingResolver.maxRules)) }
-        let written = try write(next, expected: current.data)
-        return .init(keybindings: KeybindingResolver.merge(KeybindingResolver.compile(next), defaults: defaultResolved), fileRules: next, revision: .init(data: written))
+        let current = try writableDocument(expectedRevision: expectedRevision)
+        var removing = Set(current.rulesByIndex.compactMap { index, existing in
+            existing.isSame(as: rule) || (replacing.map(existing.isSame(as:)) ?? false) ? index : nil
+        })
+        let retained = current.rulesByIndex.keys.sorted().filter { !removing.contains($0) }
+        if retained.count >= KeybindingResolver.maxRules {
+            removing.formUnion(retained.prefix(retained.count + 1 - KeybindingResolver.maxRules))
+        }
+        let next = current.rulesByIndex.keys.sorted().filter { !removing.contains($0) }.compactMap { current.rulesByIndex[$0] } + [rule]
+        let edited = try current.document.editing(removing: removing, appending: Self.encodedBody([rule]))
+        return try writeEdited(edited, expected: current.data, rules: next)
     }
 
     @discardableResult
     public func remove(_ rule: KeybindingRule, expectedRevision: KeybindingsConfigRevision? = nil) throws -> KeybindingsConfigState {
-        let current = try writableRules(expectedRevision: expectedRevision)
-        let next = current.rules.filter { !$0.isSame(as: rule) }
-        let written = try write(next, expected: current.data)
-        return .init(keybindings: KeybindingResolver.merge(KeybindingResolver.compile(next), defaults: defaultResolved), fileRules: next, revision: .init(data: written))
+        let current = try writableDocument(expectedRevision: expectedRevision)
+        let removing = Set(current.rulesByIndex.compactMap { $0.value.isSame(as: rule) ? $0.key : nil })
+        let next = current.rulesByIndex.keys.sorted().filter { !removing.contains($0) }.compactMap { current.rulesByIndex[$0] }
+        return try writeEdited(current.document.editing(removing: removing), expected: current.data, rules: next)
     }
 
-    private func writableRules(expectedRevision: KeybindingsConfigRevision?) throws -> (data: Data?, rules: [KeybindingRule]) {
+    private struct WritableDocument {
+        let data: Data?
+        let document: KeybindingsJSONCDocument
+        let rulesByIndex: [Int: KeybindingRule]
+    }
+    private func writableDocument(expectedRevision: KeybindingsConfigRevision?) throws -> WritableDocument {
         let original = try storage.read(fileURL.lastPathComponent, maximum: Self.maximumFileBytes)
         if let expectedRevision, expectedRevision != KeybindingsConfigRevision(data: original) {
             throw CoincideError("The shortcuts file changed. Reload it before saving this edit.")
         }
-        guard let data = original else { return (nil, []) }
+        let data = original ?? Self.encode([])
         let decoded = Self.decode(data)
         if decoded.issues.contains(where: { $0.kind == .malformedConfig }) {
             throw CoincideError("keybindings.json is not a JSON array. Fix or remove the file before changing shortcuts here.")
         }
-        return (data, decoded.rules)
+        let document = try KeybindingsJSONCDocument(validated: data)
+        let invalid = Set(decoded.issues.compactMap(\.index))
+        var rules = decoded.rules.makeIterator(), indexed: [Int: KeybindingRule] = [:]
+        for index in document.entries.indices where !invalid.contains(index) {
+            guard let rule = rules.next() else { throw CoincideError("The shortcuts file changed. Reload it before editing.") }
+            indexed[index] = rule
+        }
+        guard rules.next() == nil, document.entries.count == decoded.rules.count + invalid.count else {
+            throw CoincideError("The shortcuts file changed. Reload it before editing.")
+        }
+        return .init(data: original, document: document, rulesByIndex: indexed)
+    }
+
+    @discardableResult private func writeEdited(_ data: Data, expected: Data?, rules: [KeybindingRule]) throws -> KeybindingsConfigState {
+        let decoded = Self.decode(data)
+        guard decoded.rules == rules, !decoded.issues.contains(where: { $0.kind == .malformedConfig }) else {
+            throw CoincideError("The shortcuts edit could not preserve the original file. It was not written.")
+        }
+        try storage.write(data, name: fileURL.lastPathComponent, maximum: Self.maximumFileBytes, expected: expected)
+        return state(data: data)
+    }
+    private static func encodedBody(_ rules: [KeybindingRule]) -> Data {
+        // encode is a controlled format: [ + newline, body, newline + ] + newline.
+        let data = encode(rules)
+        return rules.isEmpty ? Data() : Data(data.dropFirst(2).dropLast(3))
     }
 
     private var storage: KeybindingsPrivateFiles { .init(root: fileURL.deletingLastPathComponent()) }

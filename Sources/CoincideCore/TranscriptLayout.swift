@@ -102,7 +102,8 @@ public enum TranscriptLayout {
             let id: Data
         }
         func pairKey(_ message: ChatMessage, result: Bool) -> ToolPairKey? {
-            guard message.role == .tool, message.providerEntity == nil,
+            guard message.role == .tool,
+                  message.providerEntity == nil || (result && ClaudeToolResultMetadata.matches(message, rootOnly: true)),
                   let source = message.runReference, let record = records[source.runID],
                   record.messageAttributionVersion == 1, record.configuration.provider == .claude else { return nil }
             let identifier = result ? String(message.id.dropFirst(7)) : message.id

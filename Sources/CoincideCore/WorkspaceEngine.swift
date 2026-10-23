@@ -591,7 +591,7 @@ extension WorkspaceEngine {
             guard receipt.rejection == nil, revision.snapshot.checkpointRestoreOperation(operationID)?.phase == .dispatching,
                   ownsCheckpointRestoreSource(threadID: threadID, incarnation: incarnation, fingerprint: review.sourceFingerprint),
                   restoreRuntimeScopeIsolated(thread: thread, path: review.gitReview.currentPlan.repositoryPath) else { throw CancellationError() }
-            try Task.checkCancellation(); dispatched = true
+            try Task.checkCancellation(); try validateScratchHistorySource(thread); dispatched = true
             let result = try await session.restore(review: review.gitReview)
             try result.validate()
             guard result.review == review.gitReview,
@@ -647,6 +647,7 @@ extension WorkspaceEngine {
               record.configuration.workspacePath == thread.workspacePath else {
             throw WorkspaceCommandError("Finish this conversation's work and select a run with verified provider history before continuing.")
         }
+        if thread.scratchWorkspace != nil { try scratchWorkspaces.validate(thread: thread) }
         let fingerprint = try revision.snapshot.historySourceFingerprint(threadID: threadID)
         let rawPrefix = try thread.transcriptPrefix(runID: runID, boundary: kind == .forkAfterRun ? .afterRun : .beforeRun)
         var prefix = kind == .forkAfterRun && thread.provider != .claude && thread.provider != .pi ? try revision.snapshot.verifiedForkPrefix(rawPrefix) : rawPrefix
@@ -793,6 +794,16 @@ extension WorkspaceEngine {
     @discardableResult public func beginConversationHistory(_ review: ConversationHistoryReview, title: String? = nil) async throws -> WorkspaceCommandReceipt {
         _ = try await load(); try Task.checkCancellation(); try review.validate()
         guard !closing, !stoppingEffects, fatalError == nil else { throw CancellationError() }
+        if let payload = try scratchWorkspaces.submission(review.id) {
+            guard let recorded = try? JSONDecoder().decode(EngineCommand.self, from: payload),
+                  let (original, originalTitle, grant) = capturedScratchHistory(recorded), grant?.operationID == review.id,
+                  original == review, ContextTransferProtocol.same(title, originalTitle) else { throw WorkspaceCommitError.commandIDCollision }
+            if let receipt = try await database.receipt(review.id, matching: payload) {
+                if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
+            }
+            let receipt = try await enqueue(recorded, id: review.id)
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
+        }
         if let existing = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == review.id }) {
             guard existing.review == review, let receipt = try await database.receipt(review.id) else { throw ProviderHistoryError(.historyChanged) }
             return receipt // A repeated acceptance observes the one durable action.
@@ -808,7 +819,13 @@ extension WorkspaceEngine {
         acceptingHistoryReviews.insert(review.id)
         defer { acceptingHistoryReviews.remove(review.id); historyReviews.removeValue(forKey: review.id) }
         do {
-            let receipt = try await enqueue(.conversationHistoryAccepted(review: review, title: title), id: review.id)
+            let grant = try prepareScratchHistoryFork(review, commandID: review.id)
+            let native = EngineCommand.conversationHistoryAccepted(review: review, title: title, scratchFork: grant)
+            let command: EngineCommand
+            if let authority = AppMCPTaskContext.authority { command = .appMCP(authority: authority, commands: [native]) }
+            else { command = native }
+            try recordScratchHistoryFork(grant, commandID: review.id, originalPayload: taskCommandPayload(command))
+            let receipt = try await enqueue(command, id: review.id)
             if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
             return receipt
         } catch {
@@ -830,6 +847,8 @@ extension WorkspaceEngine {
               let incarnation = threadIncarnations[thread.id], !thread.isBusy, thread.queuedTurns.isEmpty,
               thread.runtimeRequests.isEmpty,
               try revision.snapshot.historySourceFingerprint(threadID: thread.id) == operation.review.sourceFingerprint else { throw ProviderHistoryError(.historyChanged) }
+        try validateScratchHistorySource(thread)
+        if let grant = operation.scratchFork { try validateScratchHistoryFork(grant, review: operation.review, snapshot: revision.snapshot) }
         let expected = operation.review
         if expected.pi != nil { return try await reconcilePiHistory(operation: operation, thread: thread, incarnation: incarnation) }
         if expected.claude != nil { return try await reconcileClaudeHistory(operation: operation, thread: thread, incarnation: incarnation) }
@@ -942,13 +961,14 @@ extension WorkspaceEngine {
             guard let operation = revision.snapshot.conversationHistoryOperation(id) else { return false }
             return operation.review.sourceIncarnation == incarnation && threadIncarnations[operation.review.sourceThreadID] == incarnation
         case .claudeResumeInspected(let thread, let incarnation, _, _, _): return threadIncarnations[thread] == incarnation
-        case .conversationHistoryAccepted(let review, _):
+        case .conversationHistoryAccepted(let review, _, _):
             return threadIncarnations[review.sourceThreadID] == review.sourceIncarnation
         case .conversationHistoryDispatching(let thread, _, let incarnation): return threadIncarnations[thread] == incarnation
         case .conversationHistoryCandidateObserved(let id, _, let incarnation), .conversationHistoryClaudeForkReserved(let id, _, let incarnation):
             guard let operation = revision.snapshot.conversationHistoryOperation(id) else { return false }
             return operation.review.sourceIncarnation == incarnation && threadIncarnations[operation.review.sourceThreadID] == incarnation
         case .conversationHistoryEffectResult(let request, _, let incarnation): return request.threadID.map { threadIncarnations[$0] == incarnation } ?? false
+        case .conversationHistoryScratchForkHeld(let held): return held.request.threadID.map { threadIncarnations[$0] == held.incarnation } ?? false
         case .conversationHistoryReconciled(let id, let incarnation, _):
             guard let operation = revision.snapshot.conversationHistoryOperations?.first(where: { $0.id == id }) else { return false }
             return threadIncarnations[operation.review.sourceThreadID] == incarnation
@@ -973,6 +993,7 @@ extension WorkspaceEngine {
         guard !closing, !stoppingEffects, fatalError == nil, !isCodexAuthenticationLocked(.init(thread: thread)),
               !openCodeHistoryScopeOwnedElsewhere(thread: thread),
               let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
+        try validateScratchHistorySource(thread)
         let token = UUID(), metadataID: UUID?, session: any ProviderSession
         if !forceOwnedMetadata, let runtime = runtimes[thread.id], runtime.id == thread.runtimeID, runtime.provider == thread.provider,
            runtime.path == thread.workspacePath, runtime.acpAgent == thread.acpAgent, runtime.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, runtime.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, runtime.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, runtime.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, runtime.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeRuntimeMatches(runtime, thread: thread) {
@@ -983,6 +1004,7 @@ extension WorkspaceEngine {
                 configured.activeRun = nil; configured.runtimeID = nil; configured.runtimeRequests = []
                 configured.providerActivity = nil; configured.state = .idle
             }
+            try validateScratchHistorySource(thread)
             let id = UUID(); metadataID = id; session = try factory(configured)
             metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: thread.id, projectID: thread.projectID, configuration: .init(thread: thread), launchConfiguration: .init(thread: configured))
         }
@@ -1072,6 +1094,10 @@ extension WorkspaceEngine {
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
               ownsHistorySource(threadID: threadID, incarnation: incarnation, fingerprint: operation.review.sourceFingerprint) else { return .cancelled }
         let review = operation.review
+        do {
+            try validateScratchHistorySource(thread)
+            if let grant = operation.scratchFork { try validateScratchHistoryFork(grant, review: review, snapshot: revision.snapshot) }
+        } catch { return .failed(ConversationHistoryOperation.failureMessage) }
         if review.pi != nil { return await performPiConversationHistory(operation: operation, thread: thread, incarnation: incarnation) }
         if review.claude != nil { return await performClaudeConversationHistory(request, operation: operation, thread: thread, incarnation: incarnation) }
         if review.openCodeV1 != nil || review.openCodeV2 != nil {
@@ -1101,10 +1127,14 @@ extension WorkspaceEngine {
                 guard let project = revision.snapshot.projects.first(where: { $0.id == thread.projectID }) else { return .cancelled }
                 configured = CodingThread(project: project, model: review.targetConfiguration.model)
                 configured.id = review.targetThreadID!; configured.workspacePath = review.targetConfiguration.workspacePath
+                if let grant = operation.scratchFork {
+                    configured.scratchWorkspace = grant.allocation.receipt; configured.createdAt = grant.allocation.receipt.createdAt
+                }
                 configured.provider = review.targetConfiguration.provider; configured.reasoningEffort = review.targetConfiguration.reasoningEffort; configured.permission = review.targetConfiguration.permission
                 configured.acpAgent = review.targetConfiguration.acpAgent; configured.openCodeConfiguration = review.targetConfiguration.openCodeConfiguration; configured.piConfiguration = review.targetConfiguration.piConfiguration; configured.museConfiguration = review.targetConfiguration.museConfiguration; configured.antigravityConfiguration = review.targetConfiguration.antigravityConfiguration; configured.codexRuntimeConfiguration = review.targetConfiguration.codexRuntimeConfiguration; configured.agentModeID = review.targetConfiguration.agentModeID
                 configured.agentConfigValues = review.targetConfiguration.agentConfigValues; configured.agentConfiguration = review.targetConfiguration.agentConfiguration
             }
+            try validateScratchHistorySource(thread)
             let id = UUID(); metadataID = id; session = try factory(configured)
             metadataSessions[id] = .init(session: session, path: configured.workspacePath, threadID: threadID, projectID: thread.projectID, configuration: .init(thread: thread), launchConfiguration: .init(thread: configured))
         }
@@ -1217,6 +1247,7 @@ extension WorkspaceEngine {
         operation: @escaping @Sendable (PiHistoryService) throws -> Value) async throws -> Value {
         guard !closing, !stoppingEffects, fatalError == nil, let configuration = thread.piConfiguration?.runtime,
               let incarnation = threadIncarnations[thread.id], piHistoryScopeIsolated(thread: thread) else { throw ProviderHistoryError(.notIdle) }
+        try validateScratchHistorySource(thread)
         let service = try PiHistoryService(configuration: configuration), token = UUID()
         let task = Task.detached { try Task.checkCancellation(); return try operation(service) }
         historyReads[token] = .init(threadID: thread.id, projectID: thread.projectID,
@@ -1379,6 +1410,7 @@ extension WorkspaceEngine {
                     configured.id = target; configured.provider = .pi; configured.workspacePath = review.targetConfiguration.workspacePath
                     configured.permission = review.targetConfiguration.permission; configured.piConfiguration = review.targetConfiguration.piConfiguration
                 }
+                try validateScratchHistorySource(thread)
                 session = try factory(configured); reused = nil; reader = nil
             }
             let id = UUID(); jobID = id
@@ -2715,6 +2747,7 @@ public actor WorkspaceEngine {
     private var mcpServer: MCPHTTPServer?
     private var mcpServerStart: Task<MCPHTTPServer, any Error>?
     private let database: WorkspaceDatabase
+    private let scratchWorkspaces: ScratchWorkspaceService
     public nonisolated let attachments: AttachmentStore
     public nonisolated let worktreesRoot: URL
     private let worktreeFactory: WorktreeFactory
@@ -2783,6 +2816,7 @@ public actor WorkspaceEngine {
         agentSessionDataRoot = url.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
+        scratchWorkspaces = .init(dataRoot: url.deletingLastPathComponent())
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
         factory = providerFactory
         self.cloneFactory = cloneFactory
@@ -2892,14 +2926,231 @@ public actor WorkspaceEngine {
         return try await dispatch(.scheduledTask(.fire(fire)), id: commandID)
     }
 
+    public func validateScratchWorkspace(threadID: UUID, workspacePath: String) async throws {
+        _ = try await load()
+        guard !closing, !stoppingEffects, let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              thread.workspacePath.utf8.elementsEqual(workspacePath.utf8) else { throw ScratchWorkspaceError() }
+        if thread.scratchWorkspace != nil { try scratchWorkspaces.validate(thread: thread) }
+    }
+    public func prepareScratchWorkspace(commandID: UUID, threadID: UUID, namingText: String = "") async throws -> ScratchWorkspaceAllocation {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil else { throw CancellationError() }
+        if let authority = AppMCPTaskContext.authority { try validateAppMCPLiveAuthority(authority) }
+        return try scratchWorkspaces.prepare(commandID: commandID, threadID: threadID, namingText: namingText)
+    }
+    public func prepareScratchWorkspaceReuse(sourceThreadID: UUID, destinationThreadID: UUID, commandID: UUID) async throws -> ScratchWorkspaceAllocation {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let source = revision.snapshot.threads.first(where: { $0.id == sourceThreadID }), !source.isArchived,
+              let receipt = source.scratchWorkspace, revision.snapshot.workspaceReady(for: source) else { throw ScratchWorkspaceError() }
+        if let authority = AppMCPTaskContext.authority { try validateAppMCPLiveAuthority(authority) }
+        return try scratchWorkspaces.reuse(source: receipt, commandID: commandID, threadID: destinationThreadID)
+    }
+    @discardableResult public func createScratchThread(_ creation: ScratchThreadCreation, commandID: UUID) async throws -> WorkspaceCommandReceipt {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil, creation.allocation.receipt.commandID == commandID else { throw ScratchWorkspaceError() }
+        let command: EngineCommand
+        if let authority = AppMCPTaskContext.authority {
+            command = .appMCP(authority: authority, commands: [.scratchThreadAccepted(creation)])
+        } else { command = .scratchThreadAccepted(creation) }
+        let payload = try taskCommandPayload(command)
+        if let receipt = try await database.receipt(commandID, matching: payload) {
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
+        }
+        try scratchWorkspaces.recordSubmission(creation, payload: payload)
+        try Task.checkCancellation()
+        let receipt = try await enqueue(command, id: commandID)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+    public func scratchWorkspaceRecoveries(limit: Int = 64, offset: Int = 0) async throws -> [ScratchWorkspaceRecovery] {
+        _ = try await load()
+        let entries = try scratchWorkspaces.allocations(limit: limit, offset: offset)
+        var result: [ScratchWorkspaceRecovery] = []
+        for (id, allocation, cancelled) in entries {
+            if let payload = try scratchWorkspaces.submission(id) {
+                let receipt = try await database.receipt(id, matching: payload)
+                let phase: ScratchWorkspaceRecoveryPhase
+                if cancelled { phase = .cancelled }
+                else if let receipt {
+                    if receipt.rejection != nil { phase = .rejected }
+                    else if let history = revision.snapshot.conversationHistoryOperations?.first(where: { $0.scratchFork?.allocation.receipt.commandID == id }),
+                            history.phase != .applied || !revision.snapshot.threads.contains(where: { $0.id == history.review.targetThreadID }) {
+                        phase = .acceptedHistoryPending
+                    } else { phase = .accepted }
+                }
+                else { phase = .uncertain }
+                result.append(.init(id: id, allocation: allocation, phase: phase, receipt: receipt))
+            } else { result.append(.init(id: id, allocation: allocation, phase: cancelled ? .cancelled : allocation == nil ? .incomplete : .prepared)) }
+        }
+        return result
+    }
+    /// Never retries a first input. Absence is atomically sealed as an original-
+    /// UUID rejection before any still-empty unaccepted folder can be removed.
+    public func discardEmptyScratchAllocation(commandID: UUID) async throws -> Bool {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects else { throw CancellationError() }
+        if let payload = try scratchWorkspaces.submission(commandID) {
+            guard let receipt = try await inspectedCommandReceipt(commandID, payload: payload, resolvingAbsent: true), receipt.rejection != nil else {
+                throw ScratchWorkspaceError("This scratch conversation was accepted. Its folder and user files must be kept.")
+            }
+        }
+        return try scratchWorkspaces.discardEmpty(commandID)
+    }
+    func prepareScratchHistoryFork(_ review: ConversationHistoryReview, commandID: UUID) throws -> ScratchHistoryForkGrant? {
+        guard review.kind == .forkAfterRun,
+              let source = revision.snapshot.threads.first(where: { $0.id == review.sourceThreadID }),
+              let receipt = source.scratchWorkspace else { return nil }
+        try revision.snapshot.validateConversationHistorySource(review)
+        guard let targetID = review.targetThreadID else { throw ScratchWorkspaceError() }
+        try scratchWorkspaces.validate(thread: source)
+        let allocation = try scratchWorkspaces.reuse(source: receipt, commandID: commandID, threadID: targetID)
+        let grant = ScratchHistoryForkGrant(operationID: review.id, source: receipt, allocation: allocation)
+        try grant.validate(review: review); return grant
+    }
+    func recordScratchHistoryFork(_ grant: ScratchHistoryForkGrant?, commandID: UUID, originalPayload: Data) throws {
+        guard let grant else { return }
+        guard grant.allocation.receipt.commandID == commandID else { throw ScratchWorkspaceError() }
+        try scratchWorkspaces.recordPayload(allocation: grant.allocation, payload: originalPayload)
+    }
+    private func capturedScratchHistory(_ command: EngineCommand) -> (ConversationHistoryReview, String?, ScratchHistoryForkGrant?)? {
+        switch command {
+        case .conversationHistoryAccepted(let review, let title, let grant): return (review, title, grant)
+        case .appMCP(_, let commands) where commands.count == 1:
+            if case .conversationHistoryAccepted(let review, let title, let grant) = commands[0] { return (review, title, grant) }; return nil
+        default: return nil
+        }
+    }
+    private func validateScratchHistorySource(_ thread: CodingThread) throws {
+        if thread.scratchWorkspace != nil { try scratchWorkspaces.validate(thread: thread) }
+    }
+    private func validateScratchHistoryFork(_ grant: ScratchHistoryForkGrant, review: ConversationHistoryReview, snapshot: WorkspaceSnapshot) throws {
+        try grant.validate(review: review)
+        guard let source = snapshot.threads.first(where: { $0.id == review.sourceThreadID }),
+              source.scratchWorkspace == grant.source else { throw ScratchWorkspaceError() }
+        try scratchWorkspaces.validate(thread: source)
+        try scratchWorkspaces.validate(grant.allocation)
+    }
+    private func scratchHistoryPublication(_ command: EngineCommand, snapshot: WorkspaceSnapshot) -> EngineCommand {
+        guard case .conversationHistoryEffectResult(let request, .conversationHistoryConfirmed(let acknowledgment), let incarnation) = command,
+              case .conversationHistory(_, let operationID) = request,
+              let operation = snapshot.conversationHistoryOperation(operationID), let grant = operation.scratchFork else { return command }
+        do { try validateScratchHistoryFork(grant, review: operation.review, snapshot: snapshot); return command }
+        catch { return .conversationHistoryScratchForkHeld(.init(request: request, acknowledgment: acknowledgment, incarnation: incarnation)) }
+    }
+    private func validateScratchAdmission(_ command: EngineCommand, id: UUID, payload: Data, snapshot: WorkspaceSnapshot) throws {
+        switch command {
+        case .conversationHistoryAccepted(let review, _, let grant):
+            if let source = snapshot.threads.first(where: { $0.id == review.sourceThreadID }) { try validateScratchHistorySource(source) }
+            if let grant {
+                try validateScratchHistoryFork(grant, review: review, snapshot: snapshot)
+                guard grant.allocation.receipt.commandID == id, try scratchWorkspaces.submission(id) == payload else { throw ScratchWorkspaceError() }
+            } else if review.kind == .forkAfterRun, snapshot.threads.first(where: { $0.id == review.sourceThreadID })?.scratchWorkspace != nil { throw ScratchWorkspaceError() }
+        case .conversationHistoryDispatching(_, let operationID, _), .conversationHistoryReconciled(let operationID, _, _):
+            if let operation = snapshot.conversationHistoryOperation(operationID) {
+                if let source = snapshot.threads.first(where: { $0.id == operation.review.sourceThreadID }) { try validateScratchHistorySource(source) }
+                if let grant = operation.scratchFork { try validateScratchHistoryFork(grant, review: operation.review, snapshot: snapshot) }
+            }
+        case .contextTransferAccepted(let review, _, let allocation):
+            if let allocation {
+                guard review.kind == .fork, allocation.receipt.commandID == id,
+                      allocation.threadID == review.targetThreadID, allocation.project.id == review.projectID,
+                      allocation.workspacePath.utf8.elementsEqual(review.targetConfiguration.workspacePath.utf8),
+                      try scratchWorkspaces.submission(id) == payload else { throw ScratchWorkspaceError() }
+                try scratchWorkspaces.validate(allocation)
+            } else if review.kind == .fork, snapshot.projects.first(where: { $0.id == review.projectID })?.scratch != nil { throw ScratchWorkspaceError() }
+        case .transcriptPlanImplementation(let request):
+            if request.scratchSource != nil {
+                guard let source = snapshot.threads.first(where: { $0.id == request.threadID }) else { throw ScratchWorkspaceError() }
+                try scratchWorkspaces.validate(thread: source)
+            }
+            if let grant = request.scratchAllocation {
+                _ = try request.command(in: snapshot)
+                try scratchWorkspaces.validate(grant)
+                guard grant.receipt.commandID == id, try scratchWorkspaces.submission(id) == payload else { throw ScratchWorkspaceError() }
+            }
+        case .scratchThreadAccepted(let creation):
+            try creation.validate(); try scratchWorkspaces.validate(creation.allocation)
+            guard creation.allocation.receipt.commandID == id, try scratchWorkspaces.submission(id) == payload else { throw ScratchWorkspaceError() }
+        case .client(let action):
+            let paths: [String]
+            switch action {
+            case .addProject(let project): paths = [project.path]
+            case .addProjectWithThread(let project, let thread), .startProjectClone(let project, let thread): paths = [project.path, thread.workspacePath]
+            case .createThread(let thread): paths = [thread.workspacePath]
+            case .editThread(let threadID, let edit):
+                if snapshot.threads.first(where: { $0.id == threadID })?.scratchWorkspace != nil { return }
+                switch edit { case .workspacePath(let path): paths = [path]
+                case .claudeWorkspace(let value): paths = [value.registeredWorkspacePath]
+                case .piWorkspace(let value): paths = [value.registeredWorkspacePath]
+                default: paths = [] }
+            default: paths = []
+            }
+            let root = scratchWorkspaces.root.path
+            guard !paths.contains(where: { path in
+                let physical = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+                return physical == root || physical.hasPrefix(root + "/")
+            }) else { throw ScratchWorkspaceError("Create this conversation through the owned scratch allocator.") }
+        case .beginWorktreePreparation(let threadID, _, _, _, _, _, _, _):
+            guard snapshot.threads.first(where: { $0.id == threadID })?.scratchWorkspace == nil else { throw ScratchWorkspaceError("Scratch folders are not Git worktrees. Choose a project to prepare a worktree.") }
+        default: break
+        }
+    }
+    /// Adds a host-owned grant without recapturing any original source, draft,
+    /// configuration or destination UUID from a newer selection.
+    func prepareTranscriptPlanImplementation(_ request: TranscriptPlanImplementation, commandID: UUID) async throws -> TranscriptPlanImplementation {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil else { throw CancellationError() }
+        guard let destination = request.destination, request.scratchSource != nil else { return request }
+        _ = try request.command(in: revision.snapshot, allowUnpreparedScratch: true)
+        guard let source = revision.snapshot.threads.first(where: { $0.id == request.threadID }),
+              let receipt = source.scratchWorkspace else { throw ScratchWorkspaceError() }
+        try scratchWorkspaces.validate(thread: source)
+        let grant = try scratchWorkspaces.reuse(source: receipt, commandID: commandID, threadID: destination.threadID)
+        guard request.scratchAllocation == nil || request.scratchAllocation == grant else { throw ScratchWorkspaceError() }
+        return request.usingScratchAllocation(grant)
+    }
+    func recordScratchTranscriptPlan(_ request: TranscriptPlanImplementation, commandID: UUID, originalPayload: Data) throws {
+        guard let allocation = request.scratchAllocation else { return }
+        guard allocation.receipt.commandID == commandID else { throw ScratchWorkspaceError() }
+        try scratchWorkspaces.recordPayload(allocation: allocation, payload: originalPayload)
+        _ = try request.command(in: revision.snapshot)
+    }
+    private func capturedScratchPlan(_ command: EngineCommand) -> TranscriptPlanImplementation? {
+        switch command {
+        case .transcriptPlanImplementation(let value): return value
+        case .appMCP(_, let commands) where commands.count == 1:
+            if case .transcriptPlanImplementation(let value) = commands[0] { return value }; return nil
+        default: return nil
+        }
+    }
     @discardableResult public func implementTranscriptPlan(_ request: TranscriptPlanImplementation, commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         guard !stoppingEffects else { throw CancellationError() }
-        let receipt = try await enqueue(.transcriptPlanImplementation(request), id: commandID)
+        let command: EngineCommand
+        if request.destination != nil, request.scratchSource != nil,
+           let payload = try scratchWorkspaces.submission(commandID) {
+            guard let recorded = try? JSONDecoder().decode(EngineCommand.self, from: payload),
+                  let original = capturedScratchPlan(recorded), original.scratchAllocation?.receipt.commandID == commandID,
+                  request.matchesOriginalCapture(original) else { throw WorkspaceCommitError.commandIDCollision }
+            if let receipt = try await database.receipt(commandID, matching: payload) {
+                if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
+            }
+            command = recorded
+        } else {
+            let prepared = try await prepareTranscriptPlanImplementation(request, commandID: commandID)
+            let native = EngineCommand.transcriptPlanImplementation(prepared)
+            if let authority = AppMCPTaskContext.authority { command = .appMCP(authority: authority, commands: [native]) }
+            else { command = native }
+            try recordScratchTranscriptPlan(prepared, commandID: commandID, originalPayload: taskCommandPayload(command))
+        }
+        let receipt = try await enqueue(command, id: commandID)
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
         return receipt
     }
     private let threadActionUndos = ThreadActionUndoRegistry()
+    private var remoteThreadActionDrains: [UUID: (UUID, Task<Void, Never>)] = [:]
+    private var remoteThreadActionOwners: [UUID: RemoteThreadActionBinding] = [:]
     /// Only this Engine's exact committed forward decisions create Undo claims.
     public func takeThreadActionUndo(forwardCommandID: UUID, ownerID: UUID) -> ThreadActionUndoClaim? {
         guard !closing, fatalError == nil else { return nil }
@@ -2913,6 +3164,18 @@ public actor WorkspaceEngine {
         guard !stoppingEffects else { throw CancellationError() }
         if case .scheduledTask(.fire(let fire)) = command, !fire.managedRoot.utf8.elementsEqual(worktreesRoot.path.utf8) { throw ScheduledTaskError.sourceChanged }
         if case .scheduledTask(.mcp(let request)) = command, !request.managedRoot.utf8.elementsEqual(worktreesRoot.path.utf8) { throw ScheduledTaskError.sourceChanged }
+        if case .submitDefaultWorktree(let input) = command {
+            guard AppMCPTaskContext.authority == nil else { throw WorkspaceCommandError("Use the native draft’s explicit Send action for its captured workspace choice.") }
+            let request = GitWorktreeRequest(id: DefaultWorktreeIdentity.preparationID(commandID: id), sourcePath: input.intent.sourcePath,
+                destinationRoot: worktreesRoot.path,
+                selection: .createBranch(name: "coincide/" + id.uuidString.lowercased(), baseRef: "refs/heads/" + input.intent.baseBranch),
+                submodules: input.intent.submodules, expectedSourceIdentity: input.intent.sourceProof.sourceIdentity,
+                automaticBase: .init(intent: input.intent))
+            try request.validate()
+            let receipt = try await enqueue(.defaultWorktreeSubmission(input, request), id: id)
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+            return receipt
+        }
         if case .setWorkspaceLifecyclePolicy(let policy) = command { try policy.validate() }
         if case .workspaceLifecycle(let action) = command { try action.validateEncoding() }
         var capturedCommand = command
@@ -3019,8 +3282,16 @@ public actor WorkspaceEngine {
             }
         }
         guard ownsWorktree(threadID: threadID, attemptID: state.id, incarnation: incarnation) else { throw CancellationError() }
+        if state.request.automaticBase != nil {
+            guard AppMCPTaskContext.authority == nil else { throw WorkspaceCommandError("Retry this captured draft workspace explicitly in the native app.") }
+            // Same original input, branch, folder and request; known plans are
+            // inspected above. Unproven partial bytes are never removed/overwritten.
+            let receipt = try await enqueue(.retryDefaultWorktree(threadID: threadID, attemptID: state.id))
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+            return receipt
+        }
         let request = GitWorktreeRequest(sourcePath: state.request.sourcePath, destinationRoot: worktreesRoot.path, selection: state.request.selection, submodules: state.request.submodules,
-            expectedSourceIdentity: state.request.expectedSourceIdentity)
+            expectedSourceIdentity: state.request.expectedSourceIdentity, automaticBase: state.request.automaticBase)
         let receipt = try await enqueue(.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: thread.workspacePath, previousAttemptID: state.id, incarnation: incarnation, reviewSetup: state.setup != nil, claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true)), piRuntimeConfiguration: try thread.piConfiguration?.runtime?.replacingWorkspace(request.destinationPath, physicalPath: PiRuntimeConfiguration.physical(request.destinationPath, allowMissing: true))))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }; return receipt
     }
@@ -3030,7 +3301,7 @@ public actor WorkspaceEngine {
         if let authority = AppMCPTaskContext.authority {
             try Task.checkCancellation()
             switch command {
-            case .client, .transcriptPlanImplementation, .promptSteeringAccepted, .conversationHistoryAccepted, .contextTransferAccepted, .beginWorktreePreparation, .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskObserved, .delegatedTaskWakePolicy:
+            case .client, .transcriptPlanImplementation, .scratchThreadAccepted, .promptSteeringAccepted, .conversationHistoryAccepted, .contextTransferAccepted, .beginWorktreePreparation, .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskObserved, .delegatedTaskWakePolicy:
                 admitted = .appMCP(authority: authority, commands: [command])
             default: admitted = command
             }
@@ -3072,6 +3343,11 @@ public actor WorkspaceEngine {
                         try AppMCPAdmission.validate(authority: authority, snapshot: base.snapshot, commands: commands)
                         admissionCommands = commands
                     } else if case .remoteEnvironment(let request, let preparation) = envelope.command {
+                        if let owner = request.undoOwner { try validateRemoteThreadActionOwner(owner) }
+                        if case .threadAction(let action) = request.command {
+                            switch action { case .setPinned, .setArchived: guard request.undoOwner == action.binding else { throw RemoteEnvironmentAdmission.stale() }; case .undo: break }
+                        }
+                        if case .threadActions(let prepared) = preparation { try validateRemoteThreadActions(prepared, snapshot: base.snapshot) }
                         if case .checkpoint(let captured) = preparation {
                             try validateRemoteCheckpointPreparation(captured, snapshot: base.snapshot)
                         }
@@ -3085,7 +3361,14 @@ public actor WorkspaceEngine {
                         }
                         if case .worktree(let captured) = preparation,
                            threadIncarnations[captured.threadID] != captured.incarnation { throw RemoteEnvironmentAdmission.stale() }
-                        if case .attachments(let captured) = preparation {
+                        if case .steering(let captured) = preparation { try validateRemoteSteeringPreparation(captured, snapshot: base.snapshot) }
+                        let attachmentCapture: RemoteAttachmentSubmission?
+                        switch preparation {
+                        case .attachments(let value): attachmentCapture = value
+                        case .steering(let value): attachmentCapture = .init(target: .init(environmentID: value.target.environmentID, projectID: value.target.projectID, threadID: value.target.threadID), incarnation: value.incarnation, records: value.records)
+                        default: attachmentCapture = nil
+                        }
+                        if let captured = attachmentCapture {
                             guard threadIncarnations[captured.target.threadID] == captured.incarnation else { throw RemoteEnvironmentAdmission.stale() }
                             for expected in captured.records {
                                 guard let actual = try await database.remoteAttachment(captured.target, id: expected.attachment.id),
@@ -3097,13 +3380,14 @@ public actor WorkspaceEngine {
                         admissionCommands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: base.snapshot)
                     } else { admissionCommands = [envelope.command] }
                     for command in admissionCommands {
+                        try validateScratchAdmission(command, id: envelope.id, payload: payload, snapshot: base.snapshot)
                         if case .pullRequestCreationAccepted(let operation) = command { try validatePullRequestCreationThread(operation) }
                         if case .pullRequestActionAccepted(let operation) = command { try validatePullRequestActionThread(operation) }
                         if case .client(.workspaceLifecycle(.automaticallySettle(let proposal))) = command {
                             try validateOwnedWorkspaceLifecycleProposal(proposal, commandID: envelope.id, snapshot: base.snapshot)
                         }
                         if case .agentSessionImportAccepted(let admission) = command { try await validateAgentSessionImportAdmission(admission, snapshot: base.snapshot) }
-                        if case .contextTransferAccepted(let review, _) = command { try validateContextTransferAcceptance(review, snapshot: base.snapshot) }
+                        if case .contextTransferAccepted(let review, _, _) = command { try validateContextTransferAcceptance(review, snapshot: base.snapshot) }
                         try validateCodexDefaultCommand(command, snapshot: base.snapshot)
                         try validateAntigravityAdmission(command, snapshot: base.snapshot)
                         try validateCodexAuthenticationAdmission(command, snapshot: base.snapshot)
@@ -3125,7 +3409,7 @@ public actor WorkspaceEngine {
                        threadIncarnations[review.threadID] != review.sourceIncarnation {
                         throw WorkspaceCommandError("This conversation changed. Review its files again before restoring.")
                     }
-                    if case .conversationHistoryAccepted(let review, _) = envelope.command,
+                    if case .conversationHistoryAccepted(let review, _, _) = envelope.command,
                        threadIncarnations[review.sourceThreadID] != review.sourceIncarnation {
                         throw WorkspaceCommandError("This conversation changed. Review its current history before continuing.")
                     }
@@ -3141,11 +3425,14 @@ public actor WorkspaceEngine {
                     } else if case .repositoryIdentityResolved(let projectID, let path, let incarnation, let requestID, _) = envelope.command,
                        !ownsIdentityRefresh(projectID: projectID, path: path, incarnation: incarnation, requestID: requestID) {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
-                    } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
+                    } else {
+                        let admitted = scratchHistoryPublication(envelope.command, snapshot: base.snapshot)
+                        decision = try WorkspaceDecision.make(admitted, id: envelope.id, snapshot: base.snapshot, now: Date())
+                    }
                 }
-                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError || error is ScheduledTaskError || error is RemoteLifecycleFailure || error is RemoteProjectScriptFailure || error is GitHubPullRequestActionError {
+                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError || error is ScheduledTaskError || error is ScratchWorkspaceError || error is RemoteLifecycleFailure || error is RemoteProjectScriptFailure || error is GitHubPullRequestActionError {
                     do {
-                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? (error as? WorkspaceLifecycleError)?.localizedDescription ?? (error as? ScheduledTaskError)?.localizedDescription ?? (error as? GitHubPullRequestActionError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
+                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? (error as? WorkspaceLifecycleError)?.localizedDescription ?? (error as? ScheduledTaskError)?.localizedDescription ?? (error as? ScratchWorkspaceError)?.localizedDescription ?? (error as? GitHubPullRequestActionError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)
                         envelope.continuation.resume(returning: receipt); return
                     } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
@@ -3163,6 +3450,7 @@ public actor WorkspaceEngine {
                     defer { finishCommitFence(removed: committed) }
                     let attachmentClaims: [RemoteAttachmentRecord]
                     if case .remoteEnvironment(_, .attachments(let captured)) = envelope.command { attachmentClaims = captured.records }
+                    else if case .remoteEnvironment(_, .steering(let captured)) = envelope.command { attachmentClaims = captured.records }
                     else { attachmentClaims = [] }
                     let outcome = try await database.commitWithRemovedEffects(decision.snapshot, event: "workspace.command", commandID: envelope.id,
                         expectedSequence: base.sequence, effects: decision.effects, deduplicationPayload: payload, attachmentClaims: attachmentClaims)
@@ -3201,9 +3489,16 @@ public actor WorkspaceEngine {
                     }
                     beginDecisionCleanup(decision, previous: base.snapshot, removedEffects: outcome.removedEffects)
                     recordContextTransferRetirement(envelope.command)
+                    recordRemoteThreadActionDrain(envelope.command, id: envelope.id)
                     threadActionUndos.reconcile(snapshot: decision.snapshot, now: Date())
                     if let claim = ThreadActionUndoClaim.capture(envelope.command, id: envelope.id, previous: base.snapshot, next: decision.snapshot) {
                         threadActionUndos.record(claim, now: Date())
+                        if case .remoteEnvironment(let request, _) = envelope.command, let owner = request.undoOwner, remoteThreadActionOwners[owner.leaseID] == owner {
+                            _ = threadActionUndos.take(forwardID: envelope.id, ownerID: owner.leaseID, now: Date())
+                        }
+                    }
+                    if case .remoteEnvironment(_, .threadActions(let prepared)) = envelope.command {
+                        for claim in prepared.claims { threadActionUndos.consume(claim.id) }
                     }
                     if case .client(.threadActionUndo(let claim)) = envelope.command { threadActionUndos.consume(claim.id) }
                     committed = true
@@ -3390,6 +3685,7 @@ public actor WorkspaceEngine {
         if await waitForRemovalCommit(projectID: projectID) { throw CancellationError() }
         try Task.checkCancellation()
         guard let project = revision.snapshot.projects.first(where: { $0.id == projectID }), let incarnation = projectIncarnations[projectID] else { throw CancellationError() }
+        if project.scratch != nil { return nil }
         let task = try startIdentityRefresh(projectID: projectID)
         return try await withTaskCancellationHandler {
             do {
@@ -3468,7 +3764,7 @@ public actor WorkspaceEngine {
     private func scheduleIdentityRefreshes(previous: WorkspaceSnapshot?) {
         guard loaded, !closing, !stoppingEffects, fatalError == nil else { return }
         let old = Dictionary(uniqueKeysWithValues: (previous?.projects ?? []).map { ($0.id, $0) })
-        for project in revision.snapshot.projects where project.clone == nil || project.clone?.isReady == true {
+        for project in revision.snapshot.projects where project.scratch == nil && (project.clone == nil || project.clone?.isReady == true) {
             let prior = old[project.id]
             if prior == nil || prior?.path != project.path || (prior?.clone != nil && prior?.clone?.isReady != true) {
                 _ = try? startIdentityRefresh(projectID: project.id)
@@ -3635,6 +3931,7 @@ public actor WorkspaceEngine {
         switch request {
         case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let capturedConfiguration, let prompt, let references):
+            if thread.scratchWorkspace != nil { try scratchWorkspaces.validate(thread: thread) }
             var configuration = capturedConfiguration
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false, !isCodexAuthenticationLocked(configuration) else { return .cancelled }
             guard !providerHistoryScopeLocked(configuration: configuration,
@@ -3748,6 +4045,7 @@ public actor WorkspaceEngine {
                       committed.runHistory?.first(where: { $0.id == runID })?.pi?.preparation == preparation,
                       revision.snapshot.workspaceReady(for: committed) else { if contextDelivery != nil { throw CancellationError() }; return .cancelled }
                 configured.runHistory = committed.runHistory; configured.providerThreadID = preparation.nativeSessionFile
+                if configured.scratchWorkspace != nil { try scratchWorkspaces.validate(thread: configured) }
                 try await runtime.session.sendPreparedPi(input: input, thread: configured, preparation: preparation)
             } else {
                 if configuration.provider == .claude, runtimes[thread.id]?.id == runtime.id {
@@ -3755,6 +4053,7 @@ public actor WorkspaceEngine {
                     // the attempt so clearing effort still recreates its actor.
                     runtimes[thread.id]?.claudeModelOptions = try ClaudeModelControl.options(in: configuration)
                 }
+                if configured.scratchWorkspace != nil { try scratchWorkspaces.validate(thread: configured) }
                 try await runtime.session.send(input: input, thread: configured)
             }
             if let delivery = contextDelivery {
@@ -4043,6 +4342,8 @@ public actor WorkspaceEngine {
     private func validateAntigravityAdmission(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
         let threadID: UUID
         switch command {
+        case .defaultWorktreeSubmission(let input, _): threadID = input.threadID
+        case .retryDefaultWorktree(let id, _): threadID = id
         case .client(.submit(let id, _)), .client(.submitFromAppMCP(let id, _, _)), .client(.resumeQueue(let id)): threadID = id
         default: return
         }
@@ -4108,7 +4409,7 @@ public actor WorkspaceEngine {
             } ?? []) { await task.value }
     }
     private func infrastructureFailed(_ message: String) async {
-        threadActionUndos.removeAll()
+        threadActionUndos.removeAll(); remoteThreadActionOwners.removeAll()
         guard fatalError == nil else { return }
         fatalError = "Workspace execution stopped: \(message)"; publish()
         // A lifecycle worker can be waiting on an envelope behind this failed
@@ -4252,6 +4553,7 @@ public actor WorkspaceEngine {
     }
     private func queryProviderMetadata<Value: Sendable>(thread: CodingThread, owned: Bool, joinOperation: Bool = false,
                                                        operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
+        if thread.scratchWorkspace != nil { try scratchWorkspaces.validate(thread: thread) }
         guard !isCodexAuthenticationLocked(.init(thread: thread)) else { throw Self.codexChanging() }
         guard !isAntigravityAuthenticationLocked(thread) else { throw WorkspaceCommandError("Wait for the Antigravity account change before refreshing models.") }
         if owned {
@@ -4329,7 +4631,7 @@ public actor WorkspaceEngine {
         return task
     }
     public func shutdown() async {
-        threadActionUndos.removeAll()
+        threadActionUndos.removeAll(); remoteThreadActionOwners.removeAll()
         if let shutdownTask { await shutdownTask.value; return }
         let task = Task { await self.stopRuntime() }; shutdownTask = task
         await task.value
@@ -4377,6 +4679,7 @@ public actor WorkspaceEngine {
             let tasks = cleanupTasks.values.map(\.task)
             for task in tasks { await task.value }
         }
+        while !remoteThreadActionDrains.isEmpty { for task in remoteThreadActionDrains.values.map(\.1) { await task.value } }
         for prepared in unusedRestoreReviews where revision.snapshot.checkpointRestoreOperation(prepared.review.id) == nil {
             _ = try? await checkpointFactory(URL(fileURLWithPath: prepared.review.workspacePath)).discardRestoreReview(prepared.review.gitReview)
         }
@@ -4880,6 +5183,14 @@ extension WorkspaceEngine {
         isCodexAuthenticationLocked(.init(thread: thread)) || thread.activeRun.map { isCodexAuthenticationLocked($0.configuration) } == true
     }
     private func validateCodexAuthenticationAdmission(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
+        if case .defaultWorktreeSubmission(let input, _) = command {
+            try validateCodexAuthenticationAdmission(.client(.submit(threadID: input.threadID, text: input.text)), snapshot: snapshot)
+            return
+        }
+        if case .retryDefaultWorktree(let id, _) = command {
+            try validateCodexAuthenticationAdmission(.client(.resumeQueue(threadID: id)), snapshot: snapshot)
+            return
+        }
         var configurations: [ProviderConfiguration] = []
         switch command {
         case .client(.submit(let id, _)), .client(.submitFromAppMCP(let id, _, _)):
@@ -4921,7 +5232,7 @@ extension WorkspaceEngine {
                 }
             }
         case .promptSteeringAccepted(let operation): configurations = [operation.configuration]
-        case .conversationHistoryAccepted(let review, _): configurations = [review.sourceConfiguration, review.targetConfiguration]
+        case .conversationHistoryAccepted(let review, _, _): configurations = [review.sourceConfiguration, review.targetConfiguration]
         case .provider(let id, let runtimeID, _):
             if let runtime = runtimes[id], runtime.id == runtimeID, let binding = runtime.codexBinding,
                binding.authenticationMode == .ownedChatGPT, codexAuthenticationLeases[binding.instanceID] != nil { throw Self.codexChanging() }
@@ -5278,7 +5589,7 @@ extension WorkspaceEngine {
         case .promptSteeringAccepted(let operation):
             guard threadIncarnations[operation.threadID] == operation.sourceIncarnation,
                   runtimes[operation.threadID]?.id == operation.runtimeID else { throw WorkspaceCommandError(AppMCPError(.staleCaller).localizedDescription) }
-        case .conversationHistoryAccepted(let review, _):
+        case .conversationHistoryAccepted(let review, _, _):
             guard threadIncarnations[review.sourceThreadID] == review.sourceIncarnation else { throw WorkspaceCommandError(AppMCPError(.staleCaller).localizedDescription) }
         case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation, _, _, _):
             guard threadIncarnations[threadID] == incarnation, request.destinationRoot == worktreesRoot.path else { throw WorkspaceCommandError(AppMCPError(.staleCaller).localizedDescription) }
@@ -5390,7 +5701,12 @@ extension WorkspaceEngine {
         return reference
     }
     func prepareRemoteAttachmentSubmission(_ command: RemoteEnvironmentCommand) async throws -> RemoteEnvironmentPreparation {
-        guard case .submitWithAttachments(let target, _, _, _, let ids) = command else { throw RemoteAttachmentFailure(.invalidRequest) }
+        let target: RemoteAttachmentTarget, ids: [UUID]
+        switch command {
+        case .submitWithAttachments(let value, _, _, _, let uploads): target = value; ids = uploads
+        case .submitComposerDraft(let input): target = input.target; ids = input.uploadedAttachmentIDs
+        default: throw RemoteAttachmentFailure(.invalidRequest)
+        }
         _ = try await remoteAttachmentThread(target)
         guard ids.count <= AttachmentLimits.count, Set(ids).count == ids.count,
               let incarnation = threadIncarnations[target.threadID] else { throw RemoteAttachmentFailure(.invalidRequest) }
@@ -5474,14 +5790,14 @@ extension WorkspaceEngine {
             remoteCheckpointOperations += 1
         } else { fenced = nil }
         let historyFence: ConversationHistoryReview?
-        if case .history(let captured) = preparation, case .begin(let review, _, _) = captured.action,
+        if case .history(let captured) = preparation, case .begin(let review, _, _, _) = captured.action,
            let native = historyReviews[review.id],
            try RemoteHistoryProtocol.payload(native.review) == RemoteHistoryProtocol.payload(review), !remoteHistoriesClosing {
             historyFence = review; acceptingHistoryReviews.insert(review.id)
             remoteHistoryAcceptances[review.id, default: 0] += 1; remoteHistoryOperations += 1
         } else { historyFence = nil }
         let contextFence: ContextTransferReview?
-        if case .contextTransfer(let captured) = preparation, case .review(let review, _) = captured.action,
+        if case .contextTransfer(let captured) = preparation, case .review(let review, _, _) = captured.action,
            let cached = contextTransferReviews[review.id], ContextTransferProtocol.same(cached, review), !contextTransfersClosing {
             contextFence = review; acceptingContextTransfers[review.id, default: 0] += 1; contextTransferOperations += 1
         } else { contextFence = nil }
@@ -5982,7 +6298,7 @@ extension WorkspaceEngine {
             await discardConversationHistoryReview(reviewID: review.id)
         }
     }
-    func prepareRemoteHistory(_ command: RemoteEnvironmentCommand) async throws -> RemoteEnvironmentPreparation {
+    func prepareRemoteHistory(_ command: RemoteEnvironmentCommand, commandID: UUID? = nil, originalPayload: Data? = nil) async throws -> RemoteEnvironmentPreparation {
         try beginRemoteHistoryOperation(); defer { finishRemoteHistoryOperation() }
         _ = try await load()
         guard case .history(let target, let action) = command else { throw RemoteHistoryFailure(.invalidRequest) }
@@ -5998,7 +6314,15 @@ extension WorkspaceEngine {
         case .begin(let id, let digest, let title):
             guard let value = remoteHistoryReviews[id], value.digest == digest,
                   try RemoteHistoryProtocol.payload(value.target) == RemoteHistoryProtocol.payload(target) else { throw RemoteHistoryFailure(.staleReview) }
-            prepared = .begin(value.native, digest: digest, title: title)
+            let grant: ScratchHistoryForkGrant?
+            if let commandID {
+                grant = try prepareScratchHistoryFork(value.native, commandID: commandID)
+                if grant != nil {
+                    guard let originalPayload else { throw RemoteHistoryFailure(.invalidRequest) }
+                    try recordScratchHistoryFork(grant, commandID: commandID, originalPayload: originalPayload)
+                }
+            } else { grant = nil }
+            prepared = .begin(value.native, digest: digest, title: title, scratchFork: grant)
         case .inspectProvider(let id):
             let value = try operation(id)
             guard value.phase == .unconfirmed, revision.snapshot.canInspectConversationHistory(operationID: id) else { throw RemoteHistoryFailure(.invalidTarget) }
@@ -6066,7 +6390,7 @@ extension WorkspaceEngine {
         guard !remoteHistoriesClosing, threadIncarnations[captured.target.threadID] == captured.incarnation,
               let thread = snapshot.threads.first(where: { $0.id == captured.target.threadID }) else { throw RemoteEnvironmentAdmission.stale() }
         switch captured.action {
-        case .begin(let review, let digest, _):
+        case .begin(let review, let digest, _, _):
             guard let cached = remoteHistoryReviews[review.id], cached.digest == digest,
                   try RemoteHistoryProtocol.payload(cached.target) == RemoteHistoryProtocol.payload(captured.target),
                   try RemoteHistoryProtocol.payload(cached.native) == RemoteHistoryProtocol.payload(review),
@@ -6106,7 +6430,7 @@ extension WorkspaceEngine {
     }
     private func remoteHistoryCommitted(_ preparation: RemoteHistoryPreparation, commandID: UUID) {
         switch preparation.action {
-        case .begin(let review, _, _):
+        case .begin(let review, _, _, _):
             remoteHistoryReviews.removeValue(forKey: review.id); historyReviews.removeValue(forKey: review.id)
         case .maintenance(_, _, let id, _): remoteHistoryMaintenanceReviews.removeValue(forKey: id)
         case .reconcile(let operation, let result):
@@ -6359,15 +6683,52 @@ extension WorkspaceEngine {
         contextTransferReviews.removeValue(forKey: id)
         if let native = review.nativeReview { await discardConversationHistoryReview(reviewID: native.id) }
     }
+    func prepareScratchContextTransfer(_ review: ContextTransferReview, commandID: UUID) throws -> ScratchWorkspaceAllocation? {
+        guard review.kind == .fork, revision.snapshot.projects.first(where: { $0.id == review.projectID })?.scratch != nil else { return nil }
+        try validateContextTransferAcceptance(review, snapshot: revision.snapshot)
+        guard let owner = revision.snapshot.threads.first(where: {
+            $0.projectID == review.projectID && !$0.isArchived && $0.scratchWorkspace != nil &&
+            $0.workspacePath.utf8.elementsEqual(review.targetConfiguration.workspacePath.utf8)
+        }), let source = owner.scratchWorkspace else { throw ScratchWorkspaceError() }
+        try scratchWorkspaces.validate(thread: owner)
+        return try scratchWorkspaces.reuse(source: source, commandID: commandID, threadID: review.targetThreadID)
+    }
+    func recordScratchContextTransfer(_ allocation: ScratchWorkspaceAllocation?, commandID: UUID, originalPayload: Data) throws {
+        guard let allocation else { return }
+        guard allocation.receipt.commandID == commandID else { throw ScratchWorkspaceError() }
+        try scratchWorkspaces.recordPayload(allocation: allocation, payload: originalPayload)
+    }
+    private func capturedScratchContext(_ command: EngineCommand) -> (ContextTransferReview, String?, ScratchWorkspaceAllocation?)? {
+        switch command {
+        case .contextTransferAccepted(let review, let title, let allocation): return (review, title, allocation)
+        case .appMCP(_, let commands) where commands.count == 1:
+            if case .contextTransferAccepted(let review, let title, let allocation) = commands[0] { return (review, title, allocation) }; return nil
+        default: return nil
+        }
+    }
     @discardableResult public func acceptContextTransfer(reviewID: UUID, digest: String, title: String? = nil, commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        if let payload = try scratchWorkspaces.submission(commandID) {
+            guard let recorded = try? JSONDecoder().decode(EngineCommand.self, from: payload),
+                  let (original, originalTitle, allocation) = capturedScratchContext(recorded), allocation?.receipt.commandID == commandID,
+                  original.id == reviewID, original.digest == digest, ContextTransferProtocol.same(title, originalTitle) else { throw WorkspaceCommitError.commandIDCollision }
+            if let receipt = try await database.receipt(commandID, matching: payload) { return receipt }
+            return try await enqueue(recorded, id: commandID)
+        }
         if let saved = revision.snapshot.contextTransfers?.first(where: { $0.commandID == commandID && $0.id == reviewID && $0.review.digest == digest }) {
             return try await enqueue(.contextTransferAccepted(review: saved.review, title: title), id: commandID)
         }
         let review = try await prepareContextTransferAcceptance(reviewID: reviewID, digest: digest)
+        let allocation = try prepareScratchContextTransfer(review, commandID: commandID)
+        let native = EngineCommand.contextTransferAccepted(review: review, title: title, scratchAllocation: allocation)
+        let command: EngineCommand
+        if let authority = AppMCPTaskContext.authority { command = .appMCP(authority: authority, commands: [native]) }
+        else { command = native }
+        try recordScratchContextTransfer(allocation, commandID: commandID, originalPayload: taskCommandPayload(command))
         acceptingContextTransfers[review.id, default: 0] += 1
         contextTransferOperations += 1
         do {
-            let receipt = try await enqueue(.contextTransferAccepted(review: review, title: title), id: commandID)
+            let receipt = try await enqueue(command, id: commandID)
             await finishContextTransferAcceptance(review)
             return receipt
         } catch { await finishContextTransferAcceptance(review); throw error }
@@ -6795,5 +7156,181 @@ extension WorkspaceEngine {
         guard !closing, !stoppingEffects, !agentSessionImportsClosing, generation == agentSessionScannerGeneration,
               agentSessionImportReviews[admission.review.id] == admission,
               projectIncarnations[admission.review.projectID] == admission.projectIncarnation else { throw AgentSessionImportError.changed }
+    }
+}
+
+extension WorkspaceEngine {
+    func readRemoteSteering(_ target: RemoteWorkspaceTarget) async throws -> RemoteSteeringNativeRead {
+        _ = try await load()
+        func current() throws -> CodingThread {
+            guard !closing, !stoppingEffects, fatalError == nil,
+                  let thread = revision.snapshot.threads.first(where: { $0.id == target.threadID }), !thread.isArchived,
+                  thread.projectID == target.projectID, thread.workspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+                  RemoteLifecycleProtocol.same(ProviderConfiguration(thread: thread), target.configuration) else { throw RemoteEnvironmentAdmission.stale() }
+            return thread
+        }
+        let captured = try current(), incarnation = threadIncarnations[captured.id]
+        let availability = await promptSteeringAvailability(threadID: captured.id)
+        let thread = try current()
+        guard let incarnation, threadIncarnations[thread.id] == incarnation,
+              thread.activeRun?.id == captured.activeRun?.id, thread.runtimeID == captured.runtimeID,
+              let project = revision.snapshot.projects.first(where: { $0.id == thread.projectID }) else { throw RemoteEnvironmentAdmission.stale() }
+        return .init(sequence: revision.sequence, thread: thread, project: project, incarnation: incarnation, availability: availability,
+                     operations: (revision.snapshot.promptSteerings ?? []).filter { $0.threadID == thread.id })
+    }
+    func prepareRemoteSteering(commandID: UUID, target: RemoteWorkspaceTarget, action: RemoteSteeringAction, incarnation: UUID) async throws -> RemoteSteeringPreparation {
+        let source = try await readRemoteSteering(target), thread = source.thread, capture = action.capture
+        guard source.incarnation == incarnation, thread.createdAt == capture.threadCreatedAt, source.project.createdAt == capture.projectCreatedAt else { throw RemoteEnvironmentAdmission.stale() }
+        if case .acknowledge(_, let id, let digest) = action {
+            guard let operation = source.operations.first(where: { $0.id == id }), operation.isUnconfirmed,
+                  try RemoteSteeringProtocol.digest(operation) == digest else { throw RemoteEnvironmentAdmission.stale() }
+            return .init(target: target, capture: capture, incarnation: incarnation, action: action)
+        }
+        guard thread.activeRun?.id == capture.runID, thread.runtimeID == capture.runtimeID,
+              try thread.activeRun.map({ try RemoteSteeringProtocol.digest($0.configuration) }) == capture.activeConfigurationDigest else { throw RemoteEnvironmentAdmission.stale() }
+        switch action {
+        case .removeQueued(_, let id, let digest):
+            guard let queued = thread.queuedTurns.first(where: { $0.id == id }), try RemoteSteeringProtocol.digest(queued) == digest else { throw RemoteEnvironmentAdmission.stale() }
+            return .init(target: target, capture: capture, incarnation: incarnation, action: action, queueOrder: thread.queuedTurns.map(\.id))
+        case .moveQueued(_, let id, let beforeID, let revision):
+            guard capture.queueRevision == revision, try RemoteSteeringProtocol.queueRevision(thread.queuedTurns) == revision,
+                  thread.queuedTurns.contains(where: { $0.id == id }), beforeID != id, beforeID == nil || thread.queuedTurns.contains(where: { $0.id == beforeID }) else { throw RemoteEnvironmentAdmission.stale() }
+            return .init(target: target, capture: capture, incarnation: incarnation, action: action, queueOrder: thread.queuedTurns.map(\.id))
+        default: break
+        }
+        let attachmentTarget = RemoteAttachmentTarget(environmentID: target.environmentID, projectID: thread.projectID, threadID: thread.id)
+        var records: [RemoteAttachmentRecord] = []
+        let ids = action.uploadedIDs
+        guard ids.count <= AttachmentLimits.count, Set(ids).count == ids.count else { throw RemoteAttachmentFailure(.invalidRequest) }
+        for id in ids {
+            guard let record = try await database.remoteAttachment(attachmentTarget, id: id), !record.cancelled, record.claimedBy == nil else { throw RemoteAttachmentFailure(.notFound) }
+            records.append(record)
+        }
+        if case .editQueued(_, let id, let digest, let text, let selected, _, let ordered) = action {
+            guard let queued = thread.queuedTurns.first(where: { $0.id == id }), try RemoteSteeringProtocol.digest(queued) == digest,
+                  queued.existingMessageID == nil, queued.contextDelivery == nil, text.utf16.count <= 120_000, !text.contains("\0") else { throw RemoteEnvironmentAdmission.stale() }
+            let originals = queued.attachments ?? []
+            guard Set(selected).count == selected.count, selected.allSatisfy({ id in originals.contains { $0.id == id } }) else { throw RemoteEnvironmentAdmission.stale() }
+            let all = originals.filter { selected.contains($0.id) } + records.map(\.attachment)
+            guard Set(all.map(\.id)).count == all.count, Set(ordered).count == ordered.count, Set(ordered) == Set(all.map(\.id)) else { throw RemoteEnvironmentAdmission.stale() }
+            let attachments = ordered.compactMap { id in all.first { $0.id == id } }
+            try AttachmentLimits.validate(attachments)
+            return .init(target: target, capture: capture, incarnation: incarnation, action: action, records: records,
+                         queuedEdit: .init(thread: thread, queued: queued, text: text, attachments: attachments))
+        }
+        guard source.availability.canSteer, let run = thread.activeRun, let native = thread.providerThreadID,
+              let runtime = thread.runtimeID, let nativeTarget = source.availability.target else { throw WorkspaceCommandError(source.availability.unavailableReason ?? "The active turn cannot be steered.") }
+        let input: QueuedTurn, queuedID: UUID?
+        switch action {
+        case .steerComposer(_, let value):
+            try value.validate()
+            guard value.target == attachmentTarget, value.threadCreatedAt == thread.createdAt, value.projectCreatedAt == source.project.createdAt,
+                  RemoteLifecycleProtocol.same(value.expectedConfiguration, target.configuration),
+                  RemoteComposerSubmission.textDigest(thread.draft) == value.expectedHostDraftDigest,
+                  ComposerDraftSnapshot.sameAttachments(thread.draftAttachments, value.expectedDraftAttachments) else { throw RemoteEnvironmentAdmission.stale() }
+            let originals = thread.draftAttachments.filter { value.selectedDraftAttachmentIDs.contains($0.id) } + records.map(\.attachment)
+            let selected = value.orderedAttachmentIDs.compactMap { id in originals.first { $0.id == id } }
+            guard selected.count == value.orderedAttachmentIDs.count else { throw RemoteEnvironmentAdmission.stale() }
+            input = .init(id: TaskOrchestration.derivedID(commandID, "remote-steering-input"), text: value.text.trimmingCharacters(in: .whitespacesAndNewlines), configuration: run.configuration, createdAt: Date(), attachments: selected.isEmpty ? nil : selected, checkpointPolicy: thread.effectiveCheckpointPolicy)
+            queuedID = nil
+        case .steerQueued(_, let id, let digest):
+            guard revision.snapshot.promptSteeringTargetReason(threadID: thread.id, queuedID: id) == nil,
+                  let queued = thread.queuedTurns.first(where: { $0.id == id }), try RemoteSteeringProtocol.digest(queued) == digest else { throw RemoteEnvironmentAdmission.stale() }
+            input = queued; queuedID = id
+        default: throw RemoteEnvironmentAdmission.stale()
+        }
+        let operation = PromptSteeringOperation(id: RemoteSteeringProtocol.operationID(commandID), effectID: TaskOrchestration.derivedID(commandID, "remote-steering-effect"),
+            threadID: thread.id, projectID: thread.projectID, sourceIncarnation: incarnation, runtimeID: runtime, runID: run.id,
+            nativeThreadID: native, target: nativeTarget, input: input, messageID: "user-\(input.id.uuidString)", queuedID: queuedID, configuration: run.configuration)
+        return .init(target: target, capture: capture, incarnation: incarnation, action: action, operation: operation, records: records)
+    }
+    func validateRemoteSteeringPreparation(_ prepared: RemoteSteeringPreparation, snapshot: WorkspaceSnapshot) throws {
+        guard !closing, !stoppingEffects, threadIncarnations[prepared.target.threadID] == prepared.incarnation,
+              let thread = snapshot.threads.first(where: { $0.id == prepared.target.threadID }), thread.createdAt == prepared.capture.threadCreatedAt,
+              thread.projectID == prepared.target.projectID, thread.workspacePath.utf8.elementsEqual(prepared.target.workspacePath.utf8),
+              snapshot.projects.first(where: { $0.id == thread.projectID })?.createdAt == prepared.capture.projectCreatedAt,
+              RemoteLifecycleProtocol.same(ProviderConfiguration(thread: thread), prepared.target.configuration) else { throw RemoteEnvironmentAdmission.stale() }
+        if case .acknowledge = prepared.action { return }
+        guard thread.activeRun?.id == prepared.capture.runID, thread.runtimeID == prepared.capture.runtimeID,
+              try thread.activeRun.map({ try RemoteSteeringProtocol.digest($0.configuration) }) == prepared.capture.activeConfigurationDigest else { throw RemoteEnvironmentAdmission.stale() }
+        if prepared.queueOrder != nil {
+            guard try RemoteSteeringProtocol.queueRevision(thread.queuedTurns) == prepared.capture.queueRevision else { throw RemoteEnvironmentAdmission.stale() }
+        }
+        if let operation = prepared.operation {
+            guard runtimes[thread.id]?.id == operation.runtimeID, thread.activeRun.map(operation.matchesActiveRun) == true else { throw RemoteEnvironmentAdmission.stale() }
+        }
+    }
+}
+
+public extension WorkspaceEngine {
+    func replaceQueuedInput(_ replacement: QueuedInputReplacement, commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        let receipt = try await enqueue(.queuedInputReplaced(replacement), id: commandID)
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+}
+
+extension WorkspaceEngine {
+    func registerRemoteThreadActionOwner(_ binding: RemoteThreadActionBinding) {
+        guard !closing, !stoppingEffects, remoteThreadActionOwners.count < 16 else { return }
+        remoteThreadActionOwners[binding.leaseID] = binding
+    }
+    func releaseRemoteThreadActionOwner(_ binding: RemoteThreadActionBinding) {
+        guard remoteThreadActionOwners[binding.leaseID] == binding else { return }
+        remoteThreadActionOwners.removeValue(forKey: binding.leaseID)
+        threadActionUndos.remove(ownerID: binding.leaseID)
+    }
+    func readRemoteThreadUndo(_ binding: RemoteThreadActionBinding) async throws -> RemoteThreadUndoNativeRead {
+        _ = try await load()
+        try validateRemoteThreadActionOwner(binding)
+        threadActionUndos.reconcile(snapshot: revision.snapshot, now: Date())
+        let native = threadActionUndos.owned(by: binding.leaseID, now: Date())
+        return .init(sequence: revision.sequence, claims: native.claims, deadline: native.deadline)
+    }
+    func readRemoteThreadAction(_ target: RemoteWorkspaceTarget) async throws -> RemoteThreadActionNativeRead {
+        _ = try await load()
+        guard !closing, !stoppingEffects, let thread = revision.snapshot.threads.first(where: { $0.id == target.threadID }),
+              thread.projectID == target.projectID, thread.workspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+              RemoteLifecycleProtocol.same(target.configuration, ProviderConfiguration(thread: thread)),
+              let project = revision.snapshot.projects.first(where: { $0.id == thread.projectID }), let incarnation = threadIncarnations[thread.id] else { throw RemoteEnvironmentAdmission.stale() }
+        return .init(sequence: revision.sequence, incarnation: incarnation, state: .init(thread: thread, project: project, draft: false), runID: thread.activeRun?.id, runtimeID: thread.runtimeID)
+    }
+    private func validateRemoteThreadActionOwner(_ binding: RemoteThreadActionBinding) throws {
+        guard !closing, !stoppingEffects, fatalError == nil, remoteThreadActionOwners[binding.leaseID] == binding else { throw RemoteEnvironmentAdmission.stale() }
+    }
+    private func validateRemoteThreadActions(_ prepared: RemoteThreadActionsPreparation, snapshot: WorkspaceSnapshot) throws {
+        try validateRemoteThreadActionOwner(prepared.binding)
+        if let capture = prepared.capture {
+            guard capture.target.environmentID == prepared.binding.environmentID, threadIncarnations[capture.target.threadID] == prepared.incarnation else { throw RemoteEnvironmentAdmission.stale() }
+        } else {
+            guard !prepared.claims.isEmpty, prepared.claims.count <= 128, prepared.deadline.map({ $0 > Date() }) == true else { throw RemoteEnvironmentAdmission.stale() }
+            for claim in prepared.claims {
+                try threadActionUndos.validate(claim, commandID: claim.id, now: Date())
+                guard claim.ownerID == prepared.binding.leaseID, claim.isApplicable(to: snapshot) else { throw RemoteEnvironmentAdmission.stale() }
+            }
+        }
+    }
+}
+
+extension WorkspaceEngine {
+    private func recordRemoteThreadActionDrain(_ command: EngineCommand, id: UUID) {
+        guard case .remoteEnvironment(let request, let preparation) = command else { return }
+        var ids: Set<UUID> = [], settlements: Set<UUID> = []
+        if case .threadAction(.setArchived(let capture, true)) = request.command { ids.insert(capture.target.threadID) }
+        if case .threadActions(let prepared) = preparation {
+            for claim in prepared.claims where claim.kind == .settle { ids.insert(claim.threadID); if let settlement = claim.after.settlementID { settlements.insert(settlement) } }
+        }
+        let jobs = cleanupTasks.values.filter { !$0.threadIDs.isDisjoint(with: ids) }.map(\.task) + settlements.compactMap { settlementClosures[$0] }
+        guard !jobs.isEmpty else { return }
+        let token = UUID()
+        let task = Task { [weak self] in for job in jobs { await job.value }; await self?.remoteThreadActionDrained(id, token: token) }
+        remoteThreadActionDrains[id] = (token, task)
+    }
+    private func remoteThreadActionDrained(_ id: UUID, token: UUID) { if remoteThreadActionDrains[id]?.0 == token { remoteThreadActionDrains.removeValue(forKey: id) } }
+    func awaitRemoteThreadActionsCompletion(_ request: RemoteEnvironmentCommandRequest) async {
+        // Only the exact original owned retirement task; receipt replay never
+        // looks up or drains a replacement runtime.
+        if let task = remoteThreadActionDrains[request.id]?.1 { await task.value }
     }
 }

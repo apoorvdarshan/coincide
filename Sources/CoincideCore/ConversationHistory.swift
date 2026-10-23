@@ -265,6 +265,7 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
     public var claudeForkPublication: ClaudeTranscriptPublication?
     public var piCandidates: [PiHistoryCandidate]?
     public var piControls: PiHistoryControlState?
+    public var scratchFork: ScratchHistoryForkGrant?
     public var id: UUID { review.id }
     public init(review: ConversationHistoryReview, phase: ConversationHistoryPhase = .accepted, updatedAt: Date? = nil,
                 targetTitle: String? = nil, result: ProviderConversationSnapshot? = nil, error: String? = nil, recalledAt: Date? = nil,
@@ -272,7 +273,8 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
                 maintenance: ConversationHistoryMaintenanceAttempt? = nil,
                 previousMaintenanceAttempts: [ConversationHistoryMaintenanceAttempt]? = nil,
                 openCodeV1Candidate: OpenCodeV1HistoryCandidate? = nil, claudeForkPublication: ClaudeTranscriptPublication? = nil,
-                piCandidates: [PiHistoryCandidate]? = nil, piControls: PiHistoryControlState? = nil) {
+                piCandidates: [PiHistoryCandidate]? = nil, piControls: PiHistoryControlState? = nil,
+                scratchFork: ScratchHistoryForkGrant? = nil) {
         self.review = review; self.phase = phase; self.updatedAt = updatedAt ?? review.reviewedAt
         self.targetTitle = targetTitle; self.result = result; self.error = error; self.recalledAt = recalledAt
         self.files = files ?? review.files.map { .init(review: $0, updatedAt: updatedAt ?? review.reviewedAt) }
@@ -280,7 +282,7 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
         self.maintenance = maintenance; self.previousMaintenanceAttempts = previousMaintenanceAttempts
         self.openCodeV1Candidate = openCodeV1Candidate
         self.claudeForkPublication = claudeForkPublication
-        self.piCandidates = piCandidates; self.piControls = piControls
+        self.piCandidates = piCandidates; self.piControls = piControls; self.scratchFork = scratchFork
     }
     public static let failureMessage = "The conversation history action was not completed. No provider work was replayed."
     public static let unconfirmedMessage = "The provider history outcome could not be confirmed. Inspect it before continuing; the action was not repeated."
@@ -305,6 +307,7 @@ public struct ConversationHistoryOperation: Codable, Sendable, Equatable, Identi
     public var locksSource: Bool { isPending || (phase == .unconfirmed && (review.kind == .rewindBeforeRun || review.claude != nil || review.pi != nil)) || locksFiles || needsPromptRecall }
     public func validate() throws {
         try review.validate()
+        try scratchFork?.validate(review: review)
         if let candidates = piCandidates {
             guard let evidence = review.pi, phase != .accepted, !candidates.isEmpty, candidates.count <= 3 else { throw ProviderHistoryError(.invalidResponse) }
             var previous: [PiHistoryCandidate] = []
@@ -731,6 +734,10 @@ extension WorkspaceSnapshot {
             }
             if let targetID = operation.review.targetThreadID, let target = threads.first(where: { $0.id == targetID }) {
                 guard operation.phase == .applied, target.forkedFromHistoryOperationID == operation.id else { throw CoincideError("A fork target is already owned by another conversation.") }
+                if let grant = operation.scratchFork {
+                    guard target.scratchWorkspace == grant.allocation.receipt,
+                          target.createdAt == grant.allocation.receipt.createdAt else { throw ScratchWorkspaceError() }
+                }
             }
         }
         try OpenCodeV1HistoryReviewEvidence.validateAdoptionLedger(in: self)
@@ -830,7 +837,7 @@ extension WorkspaceDecision {
         guard locked.isDisjoint(with: targets) else { throw WorkspaceCommandError("Finish or inspect the pending conversation history action before changing this conversation.") }
     }
 
-    mutating func acceptConversationHistory(_ review: ConversationHistoryReview, title: String?, now: Date) throws {
+    mutating func acceptConversationHistory(_ review: ConversationHistoryReview, title: String?, scratchFork: ScratchHistoryForkGrant? = nil, commandID: UUID, now: Date) throws {
         let checkoutIDs = snapshot.pullRequestCheckoutReservedIDs.union(snapshot.promptSteeringReservedIDs).union(snapshot.conversationHistoryMaintenanceReservedIDs)
         guard !([review.id] + (review.targetThreadID.map { [$0] } ?? []) + (review.files.map { [$0.id] } ?? [])).contains(where: { checkoutIDs.contains($0) }) else { throw WorkspaceCommandError("This history identity is reserved by a pull request checkout.") }
         guard snapshot.conversationHistoryOperation(review.id) == nil,
@@ -852,7 +859,12 @@ extension WorkspaceDecision {
             do { try AttachmentLimits.validate(attachments) }
             catch { throw WorkspaceCommandError("The recalled attachments exceed the draft limit. Remove some attachments before rewinding.") }
         }
-        let operation = ConversationHistoryOperation(review: review, updatedAt: now, targetTitle: title)
+        if let source = snapshot.threads.first(where: { $0.id == review.sourceThreadID }), source.scratchWorkspace != nil, review.kind == .forkAfterRun {
+            guard let scratchFork, scratchFork.source == source.scratchWorkspace,
+                  scratchFork.allocation.receipt.commandID == commandID else { throw ScratchWorkspaceError() }
+            try scratchFork.validate(review: review)
+        } else if scratchFork != nil { throw ScratchWorkspaceError() }
+        let operation = ConversationHistoryOperation(review: review, updatedAt: now, targetTitle: title, scratchFork: scratchFork)
         do { try operation.validate() } catch { throw WorkspaceCommandError("Choose a valid conversation title and reviewed history boundary.") }
         if snapshot.conversationHistoryOperations == nil { snapshot.conversationHistoryOperations = [] }
         let original = snapshot
@@ -1103,7 +1115,16 @@ extension WorkspaceDecision {
             target.agentConfiguration = configuration.agentConfiguration; target.providerThreadID = result.reference.nativeThreadID
             target.messages = review.prefix; target.forkedFromHistoryOperationID = operation.id
             target.checkpointPolicy = snapshot.threads[sourceIndex].checkpointPolicy
-            target.createdAt = now; target.updatedAt = now
+            if project.scratch != nil {
+                guard let grant = operation.scratchFork else { throw ScratchWorkspaceError() }
+                try grant.validate(review: review)
+                guard grant.source == snapshot.threads[sourceIndex].scratchWorkspace else { throw ScratchWorkspaceError() }
+                target.scratchWorkspace = grant.allocation.receipt; target.createdAt = grant.allocation.receipt.createdAt
+            } else {
+                guard operation.scratchFork == nil else { throw ScratchWorkspaceError() }
+                target.createdAt = now
+            }
+            target.updatedAt = now
             snapshot.threads.append(target)
         case .rewindBeforeRun:
             var source = snapshot.threads[sourceIndex]

@@ -274,6 +274,15 @@ struct ProjectSettingsSheet: View {
                 ForEach(ProjectThreadEnvironmentMode.allCases, id: \.self) { Text(Self.title($0)).tag(Optional($0)) }
             }.font(.caption).accessibilityLabel("New thread workspace for all projects").accessibilityIdentifier("project-settings-app-thread-mode")
             resolved(Self.title(environment.value), source: environment.source).accessibilityIdentifier("project-settings-thread-mode-resolved")
+            Picker("Worktree starting point", selection: Binding(get: { document.newWorktreesStartFromOrigin }, set: { value in change { $0.newWorktreesStartFromOrigin = value } })) {
+                Text("Inherit").tag(Bool?.none)
+                Text("Remote branch").tag(Optional(true))
+                Text("Local branch").tag(Optional(false))
+            }.accessibilityIdentifier("project-settings-worktree-origin")
+            Toggle("Use remote branch for all projects", isOn: Binding(get: { settings.newWorktreesStartFromOrigin }, set: { settings.newWorktreesStartFromOrigin = $0 }))
+                .accessibilityIdentifier("new-worktrees-start-from-origin")
+            Text("Captured for new drafts. On Send, fetch the selected branch’s configured upstream (or an available origin); without a configured remote, use the local branch. A failed fetch keeps the input queued.")
+                .font(.caption).foregroundStyle(.secondary)
             Picker("Worktree submodules", selection: Binding(get: { document.worktreeSubmodules }, set: { value in change { $0.worktreeSubmodules = value } })) {
                 Text("Inherit").tag(ProjectWorktreeSubmoduleMode?.none)
                 ForEach(ProjectWorktreeSubmoduleMode.allCases, id: \.self) { Text(Self.title($0)).tag(Optional($0)) }

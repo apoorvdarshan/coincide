@@ -33,6 +33,8 @@ struct TranscriptToolStatusView: View {
                 .padding(.horizontal, 5).padding(.vertical, 1).background(Color.red.opacity(0.12), in: Capsule())
         } else if status == .failed {
             Label("Failed", systemImage: "exclamationmark.circle.fill").labelStyle(.iconOnly).foregroundStyle(.red).help("This tool call failed")
+        } else if status == .declined {
+            Label("Declined", systemImage: "hand.raised").labelStyle(.iconOnly).foregroundStyle(.secondary).help("This tool call was declined")
         } else if status == .cancelled {
             Label("Stopped", systemImage: "stop.circle").labelStyle(.iconOnly).foregroundStyle(.secondary).help("This tool call was stopped")
         }
@@ -105,6 +107,7 @@ struct ToolCardView: View {
         case .running: parts.append(String(localized: "running"))
         case .failed: parts.append(String(localized: "failed"))
         case .cancelled: parts.append(String(localized: "stopped"))
+        case .declined: parts.append(String(localized: "declined"))
         default: if let code = card.exitCode, code != 0 { parts.append(String(localized: "exit code \(code)")) }
         }
         return parts.joined(separator: ", ")

@@ -122,6 +122,10 @@ enum AppMCPAdmission {
             guard authority.permission == .fullAccess, currentCeiling == .fullAccess else { throw AppMCPError(.capabilityDenied) }
         }
         switch command {
+        case .scratchThreadAccepted(let creation):
+            guard !creation.selectsConversation,
+                  creation.thread.createdByAppMCP == AppMCPThreadOrigin(sessionID: authority.sessionID, threadID: authority.threadID, runID: authority.runID) else { throw AppMCPError(.invalidRequest) }
+            try newThread(creation.thread); created[creation.thread.id] = creation.thread
         case .delegatedTaskAccepted(let prepared):
             guard prepared.request.parentThreadID == authority.threadID, prepared.request.parentRunID == authority.runID else { throw AppMCPError(.staleCaller) }
             try newThread(prepared.child)
@@ -186,7 +190,7 @@ enum AppMCPAdmission {
             _ = try target(operation.threadID)
             try require(operation.configuration.permission, authority: authority, current: currentCeiling)
             try require(operation.input.configuration.permission, authority: authority, current: currentCeiling)
-        case .contextTransferAccepted(let review, _):
+        case .contextTransferAccepted(let review, _, _):
             _ = try target(review.request.sourceThreadID)
             try require(review.targetConfiguration.permission, authority: authority, current: currentCeiling)
             switch review.kind {
@@ -195,7 +199,7 @@ enum AppMCPAdmission {
                       !snapshot.threads.contains(where: { $0.id == review.targetThreadID }) else { throw AppMCPError(.invalidRequest) }
             case .mergeBack, .providerHandoff: _ = try target(review.targetThreadID)
             }
-        case .conversationHistoryAccepted(let review, _):
+        case .conversationHistoryAccepted(let review, _, _):
             _ = try target(review.sourceThreadID)
             try require(review.sourceConfiguration.permission, authority: authority, current: currentCeiling)
             try require(review.targetConfiguration.permission, authority: authority, current: currentCeiling)

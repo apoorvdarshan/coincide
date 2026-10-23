@@ -6,6 +6,7 @@ public struct WorkspaceProject: Codable, Identifiable, Sendable, Equatable {
     public var path: String
     public var clone: ProjectCloneState?
     public var repositoryIdentity: RepositoryIdentity?
+    public var scratch: ScratchProjectReceipt?
     public var createdAt: Date?
     public var updatedAt: Date?
     public init(path: String) {
@@ -63,7 +64,9 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var projectID: UUID
     public var title: String
     public var workspacePath: String
+    public var draftWorkspaceIntent: DraftWorkspaceIntent?
     public var workspacePreparation: ThreadWorkspacePreparation?
+    public var scratchWorkspace: ScratchWorkspaceReceipt?
     public var settlement: ThreadSettlement?
     public var workspaceLifecycle: ThreadWorkspaceLifecycle?
     public var providerThreadID: String?
@@ -105,6 +108,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var contextProviderBindings: [ContextTransferProviderBinding]?
     public var forkedFromHistoryOperationID: UUID?
     public var createdByAppMCP: AppMCPThreadOrigin?
+    public var transcriptPlanSource: TranscriptPlanSourceLink?
     public var pullRequestCheckoutOperationID: UUID?
     public var runtimeID: UUID?
     public var steeringCapabilityRevision: UInt64?
@@ -122,7 +126,8 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
         case delegatedTaskLineage
-        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, contextTransferLineage, contextProviderBindings, forkedFromHistoryOperationID, createdByAppMCP, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement, workspaceLifecycle
+        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, contextTransferLineage, contextProviderBindings, forkedFromHistoryOperationID, createdByAppMCP, transcriptPlanSource, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, scratchWorkspace, settlement, workspaceLifecycle
+        case draftWorkspaceIntent
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
         case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
         case piFreshSessionIntent, piFreshConsumerRunID, piFreshContextResolutions
@@ -137,7 +142,9 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         projectID = try values.decode(UUID.self, forKey: .projectID)
         title = try values.decode(String.self, forKey: .title)
         workspacePath = try values.decode(String.self, forKey: .workspacePath)
+        draftWorkspaceIntent = try values.decodeIfPresent(DraftWorkspaceIntent.self, forKey: .draftWorkspaceIntent)
         workspacePreparation = try values.decodeIfPresent(ThreadWorkspacePreparation.self, forKey: .workspacePreparation)
+        scratchWorkspace = try values.decodeIfPresent(ScratchWorkspaceReceipt.self, forKey: .scratchWorkspace)
         settlement = try values.decodeIfPresent(ThreadSettlement.self, forKey: .settlement)
         workspaceLifecycle = try values.decodeIfPresent(ThreadWorkspaceLifecycle.self, forKey: .workspaceLifecycle)
         providerThreadID = try values.decodeIfPresent(String.self, forKey: .providerThreadID)
@@ -179,6 +186,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         contextProviderBindings = try values.decodeIfPresent([ContextTransferProviderBinding].self, forKey: .contextProviderBindings)
         forkedFromHistoryOperationID = try values.decodeIfPresent(UUID.self, forKey: .forkedFromHistoryOperationID)
         createdByAppMCP = try values.decodeIfPresent(AppMCPThreadOrigin.self, forKey: .createdByAppMCP)
+        transcriptPlanSource = try values.decodeIfPresent(TranscriptPlanSourceLink.self, forKey: .transcriptPlanSource)
         pullRequestCheckoutOperationID = try values.decodeIfPresent(UUID.self, forKey: .pullRequestCheckoutOperationID)
         runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
         steeringCapabilityRevision = try values.decodeIfPresent(UInt64.self, forKey: .steeringCapabilityRevision)

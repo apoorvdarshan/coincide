@@ -12,7 +12,9 @@ struct PlanCardView: View {
     var workspacePath: String?
     @Binding var expanded: Bool
     var canImplement = false
+    var canImplementInNewConversation = false
     var implement: ((String) async -> Bool)?
+    var implementInNewConversation: ((String) async -> Bool)?
     var save: ((String, String) async throws -> Void)?
     var saveAvailable: Bool? = nil
     var openFile: (URL, Int?) -> Void = { _, _ in }
@@ -54,6 +56,23 @@ struct PlanCardView: View {
                             .disabled(!canImplement || implementing || saving)
                             .help(canImplement ? String(localized: "Start an implementation turn in this conversation using its current settings.")
                                   : String(localized: "Implementation is unavailable while the conversation or draft needs attention."))
+                    }
+                    if implementInNewConversation != nil {
+                        Button(implementing ? "Starting Implementation…" : "Implement in New Conversation") {
+                            guard canImplementInNewConversation, !implementing, !saving else { return }
+                            implementing = true; status = nil
+                            let owner = actionGeneration
+                            Task {
+                                let started = await requestImplementationInNewConversation()
+                                guard owner == actionGeneration else { return }
+                                implementing = false
+                                status = started ? String(localized: "Implementation accepted in a new conversation.")
+                                    : String(localized: "The new implementation could not be confirmed. Inspect the conversation before taking another action.")
+                            }
+                        }
+                        .disabled(!canImplementInNewConversation || implementing || saving)
+                        .help("Start with fresh provider context and the current settings. This conversation's draft and attachments stay here.")
+                        .accessibilityIdentifier("plan-implement-new-conversation")
                     }
                 } label: { Image(systemName: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -99,6 +118,11 @@ struct PlanCardView: View {
     func requestImplementation() async -> Bool {
         guard canImplement, let implement else { return false }
         return await implement(plan)
+    }
+
+    func requestImplementationInNewConversation() async -> Bool {
+        guard canImplementInNewConversation, let implementInNewConversation else { return false }
+        return await implementInNewConversation(plan)
     }
 
     private func write() async {

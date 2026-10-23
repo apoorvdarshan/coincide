@@ -46,7 +46,9 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
         case .createBranch(let name, let baseRef):
             try await checkBranch(name, context: context)
             try await requireAvailableBranch(name, creating: true, context: context, inventory: inventory)
-            let commit = try await commit(baseRef, context: context)
+            let commit: String
+            if let base = request.automaticBase { commit = try await automaticCommit(base, context: context) }
+            else { commit = try await self.commit(baseRef, context: context) }
             return try plan(request, context: context, branch: name, commit: commit)
         case .existingBranch(let name):
             try await checkBranch(name, context: context)
@@ -174,6 +176,53 @@ public struct GitWorktreeService: WorkspaceWorktreeSession, Sendable {
         guard result.status == 0 else { throw GitWorktreeError(.branchMissing, "The selected commit is not available locally. Choose an existing local ref; no fetch was performed.") }
         let value = try line(result.output); try WorktreeValidation.commit(value); return value
     }
+    /// Uses a real captured branch and configured upstream. A failed fetch never
+    /// falls back to a stale tracking ref or the source checkout.
+    private func automaticCommit(_ base: GitWorktreeAutomaticBase, context: Context) async throws -> String {
+        let capture: TaskIsolationCapture
+        if let environment = command.environment { capture = .init(environment: environment, gitExecutable: command.executable) }
+        else { capture = .init() }
+        try await capture.validate(base.sourceProof)
+        guard context.source.path.utf8.elementsEqual(base.sourceProof.sourcePath.utf8),
+              context.common.path.utf8.elementsEqual(base.sourceProof.commonDirectoryPath.utf8),
+              context.common.identity == base.sourceProof.commonDirectoryIdentity,
+              context.admin.path.utf8.elementsEqual(base.sourceProof.sourceGitDirectoryPath.utf8),
+              context.admin.identity == base.sourceProof.sourceGitDirectoryIdentity else { throw TaskIsolationError.changedRepository }
+        try await checkBranch(base.branch, context: context)
+        guard base.startFromOrigin else { return try await commit("refs/heads/" + base.branch, context: context) }
+        let remoteData = try await output(["remote"], at: context.source, context: context)
+        guard let remoteText = String(data: remoteData, encoding: .utf8) else { throw TaskIsolationError.changedRepository }
+        let remotes = remoteText.split(separator: "\n").map(String.init)
+        func config(_ key: String) async throws -> String? {
+            let result = try await command.run(["config", "--get", key], cwdFD: context.source.fd,
+                gitDirectory: context.admin.path, commonDirectory: context.common.path, workTree: context.source.path)
+            try await validateMapping(context)
+            if result.status == 1 { return nil }
+            guard result.status == 0 else { throw TaskIsolationError.changedRepository }
+            return try line(result.output)
+        }
+        let upstream = try await config("branch." + base.branch + ".remote")
+        let merge = try await config("branch." + base.branch + ".merge")
+        let remote: String, branch: String
+        if let upstream, remotes.contains(upstream), let merge, merge.hasPrefix("refs/heads/") {
+            remote = upstream; branch = String(merge.dropFirst("refs/heads/".count))
+        } else if remotes.contains("origin") { remote = "origin"; branch = base.branch }
+        else { return try await commit("refs/heads/" + base.branch, context: context) }
+        guard !remote.isEmpty, !remote.hasPrefix("-"), remote.utf8.count <= 1_024,
+              !remote.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw TaskIsolationError.changedRepository }
+        try WorktreeValidation.branch(branch)
+        return try await GitOperationGate.shared.perform(key: context.common.path) {
+            try await validateMapping(context)
+            let result = try await command.run(["fetch", "--no-recurse-submodules", "--no-prune", "--no-tags", "--", remote,
+                "+refs/heads/" + branch + ":refs/remotes/" + remote + "/" + branch], cwdFD: context.source.fd,
+                timeout: timeout, gitDirectory: context.admin.path, commonDirectory: context.common.path,
+                workTree: context.source.path, allowedProtocols: command.inheritedProtocolAllowlist ?? "https:http:ssh:git:file")
+            try await validateMapping(context)
+            guard result.status == 0 else { throw GitWorktreeError(.commandFailed, "Fetching the configured worktree base failed. The input remains queued; no base-checkout turn was sent.") }
+            return try await commit("refs/remotes/" + remote + "/" + branch, context: context)
+        }
+    }
+
     private func optionalBranchCommit(_ branch: String, context: Context) async throws -> String? {
         let result = try await command.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "refs/heads/" + branch + "^{commit}"], cwdFD: context.source.fd,
                                            gitDirectory: context.admin.path, commonDirectory: context.common.path, workTree: context.source.path)

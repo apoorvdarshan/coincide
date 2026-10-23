@@ -29,6 +29,8 @@ public actor CodexSession: ProviderSession {
     /// clears that sticky native setting without changing an untouched default.
     private var requestedServiceTier: String?
     private var serviceTierHistoryObserved = false
+    private var requestedInteractionMode: CodexInteractionMode?
+    private var planProjection = CodexPlanProjection()
     private var steeringTask: ProviderSteeringTask?
     private var accountRevision = UUID()
     private var accountReadID: UUID?
@@ -301,10 +303,12 @@ public actor CodexSession: ProviderSession {
                     }
                 }
                 guard let next = try CodexModelCatalogEntry.string(response["nextCursor"], maximum: 4_096) else {
-                    if runtimeConfiguration?.authenticationMode == .ownedChatGPT {
-                        return models.map { model in var value = model; value.codexServiceTiers = nil; return value }
+                    let supportedModes: [CodexInteractionMode]? = CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile ? [.default, .plan] : nil
+                    return models.map { model in
+                        var value = model; value.codexInteractionModes = supportedModes
+                        if runtimeConfiguration?.authenticationMode == .ownedChatGPT { value.codexServiceTiers = nil }
+                        return value
                     }
-                    return models
                 }
                 guard seenCursors.insert(next).inserted else { throw CodexModelCatalogEntry.failure() }
                 cursor = next
@@ -375,6 +379,7 @@ public actor CodexSession: ProviderSession {
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         let selectedServiceTier = try CodexServiceTier.selected(in: captured)
+        let selectedInteractionMode = try CodexInteractionMode.selected(in: captured)
         try validateRuntimeBinding(captured)
         guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
         guard !working, !historyMutationInFlight else { throw CoincideError("A turn or conversation history operation is already running in this thread.") }
@@ -408,6 +413,31 @@ public actor CodexSession: ProviderSession {
             }
             try await connect()
             try requireSend(generation)
+            var metadata = thread.providerMetadata?.object ?? [:]
+            let modesSupported = CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile
+            metadata["codexInteractionModes"] = .object([
+                "supported": .bool(modesSupported), "profile": modesSupported ? .string("codex-0.163") : .null,
+                "modes": .array(modesSupported ? [.string("default"), .string("plan")] : [])
+            ])
+            emit(.configuration(.object(metadata)))
+            let effectiveInteractionMode = selectedInteractionMode ?? (requestedInteractionMode == nil ? nil : .default)
+            var collaborationMode: JSONValue?
+            if let mode = effectiveInteractionMode {
+                guard CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile else {
+                    throw CoincideError("This Codex app-server profile does not support the reviewed Plan and Default controls.")
+                }
+                var model = captured.model, effort = captured.reasoningEffort
+                if model.isEmpty {
+                    let resolved = try await codexDefaultModelSelection()
+                    try requireSend(generation)
+                    guard URL(fileURLWithPath: resolved.workspacePath).standardizedFileURL.resolvingSymlinksInPath()
+                        == URL(fileURLWithPath: captured.workspacePath).standardizedFileURL.resolvingSymlinksInPath() else {
+                        throw CodexModelCatalogEntry.failure()
+                    }
+                    model = resolved.model; effort = effort ?? resolved.reasoningEffort
+                }
+                collaborationMode = try mode.wire(model: model, effort: effort)
+            }
             if let selectedServiceTier {
                 let catalog = try await readModelCatalog(deadline: ContinuousClock.now + .seconds(30))
                 try requireSend(generation)
@@ -467,11 +497,13 @@ public actor CodexSession: ProviderSession {
                 "sandboxPolicy": captured.permission.sandbox(cwd: captured.workspacePath), "summary": .string("detailed")]
             if !captured.model.isEmpty { params["model"] = .string(captured.model) }
             if let effort = captured.reasoningEffort { params["effort"] = .string(effort) }
+            if let collaborationMode { params["collaborationMode"] = collaborationMode }
             if let selectedServiceTier { params["serviceTier"] = .string(selectedServiceTier) }
             else if requestedServiceTier != nil { params["serviceTier"] = .null }
             // Keep an uncertain start's tier capture: if its response is lost,
             // the next explicit default must still clear our prior override.
             requestedServiceTier = selectedServiceTier
+            if let effectiveInteractionMode { requestedInteractionMode = effectiveInteractionMode }
             promptAttempted = true
             let response = try await rpc.request("turn/start", params: .object(params))
             guard let id = response["turn"]["id"].string else { throw CoincideError("Codex did not return a turn id.") }
@@ -691,6 +723,8 @@ public actor CodexSession: ProviderSession {
                 if let id = params["turn"]["id"].string, !completedTurnIDs.contains(id), working {
                     rememberNativeRun(id, runID: eventRunID); turnID = id; emit(.turn(id))
                 }
+            case "item/plan/delta", "turn/plan/updated":
+                projectPlan(method: method, params: params)
             case "item/agentMessage/delta", "item/reasoning/summaryTextDelta", "item/commandExecution/outputDelta":
                 guard let id = params["itemId"].string, let delta = params["delta"].string else { return }
                 let role: MessageRole = method.contains("reasoning") ? .reasoning : method.contains("commandExecution") ? .tool : .assistant
@@ -698,7 +732,9 @@ public actor CodexSession: ProviderSession {
             case "item/started", "item/completed":
                 let item = params["item"]
                 guard let id = item["id"].string, let type = item["type"].string else { return }
-                if type == "agentMessage", method == "item/completed", let text = item["text"].string {
+                if type == "plan" {
+                    projectPlan(method: method, params: params)
+                } else if type == "agentMessage", method == "item/completed", let text = item["text"].string {
                     emit(.message(.init(id: id, role: .assistant, text: text)))
                 } else if type == "commandExecution" {
                     let command = item["command"].string ?? "Command"
@@ -716,6 +752,9 @@ public actor CodexSession: ProviderSession {
                 // Preserve its real boundary before retiring the local active run.
                 if turnID == nil { emit(.turn(completedID)) }
                 rememberNativeRun(completedID, runID: eventRunID)
+                if let owner = nativeRunOwners[completedID] {
+                    for update in planProjection.terminal(turnID: completedID) { emitPlan(update, owner: owner) }
+                }
                 mcpApprovals = mcpApprovals.filter { $0.value.codexMCPApproval?.turnID != completedID }
                 working = false
                 completedTurnIDs.append(completedID)
@@ -737,6 +776,25 @@ public actor CodexSession: ProviderSession {
         if nativeRunOwners[nativeTurnID] == nil { nativeRunOwnerOrder.append(nativeTurnID) }
         nativeRunOwners[nativeTurnID] = runID
         if nativeRunOwnerOrder.count > 128 { nativeRunOwners.removeValue(forKey: nativeRunOwnerOrder.removeFirst()) }
+    }
+    private func projectPlan(method: String, params: JSONValue) {
+        guard let session = threadID, params["threadId"].string?.utf8.elementsEqual(session.utf8) == true,
+              let nativeTurn = params["turnId"].string,
+              let originalTurn = nativeRunOwnerOrder.first(where: { $0.utf8.elementsEqual(nativeTurn.utf8) }),
+              let owner = nativeRunOwners[originalTurn] else { return }
+        do {
+            if let update = try planProjection.project(method, params: params, sessionID: session) { emitPlan(update, owner: owner) }
+        } catch {
+            // Lost/malformed plan state cannot be repaired by guessing a final
+            // message or replaying input. Close only this owned transport.
+            working = false; historyMutationUncertain = true
+            continuation.yield(.connectionClosed("The Codex plan stream could not be represented safely. Reopen the conversation before continuing."))
+            Task { await self.close() }
+        }
+    }
+    private func emitPlan(_ update: ProviderEntityUpdate, owner: UUID) {
+        if working, eventRunID == owner { emit(.entity(update), runID: owner) }
+        else { continuation.yield(.runEntity(runID: owner, update: update)) }
     }
     private func projectMCPTool(_ item: JSONValue, params: JSONValue) {
         guard let session = threadID, let nativeTurn = params["turnId"].string, let runID = nativeRunOwners[nativeTurn],

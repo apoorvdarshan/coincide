@@ -162,10 +162,14 @@ struct RemoteProjectedMessageView: View {
             if message.role == .tool, let card = transcript.card(message, result: result, binding: binding) {
                 if card.kind == .plan, let plan = card.plan {
                     PlanCardView(plan: plan, expanded: $expanded,
-                        canImplement: entry.map { workspace?.canImplementTranscriptPlan(message: message, binding: binding, presentation: $0.presentation) == true } ?? false,
+                        canImplement: card.status == .completed && (entry.map { workspace?.canImplementTranscriptPlan(message: message, binding: binding, presentation: $0.presentation) == true } ?? false),
+                        canImplementInNewConversation: card.status == .completed && (entry.map { workspace?.canImplementTranscriptPlan(message: message, binding: binding, presentation: $0.presentation, inNewConversation: true) == true } ?? false),
                         implement: { plan in
                             guard let workspace, let entry, current else { return false }
                             return await workspace.implementTranscriptPlan(plan: plan, message: message, binding: binding, presentation: entry.presentation)
+                        }, implementInNewConversation: { plan in
+                            guard let workspace, let entry, current else { return false }
+                            return await workspace.implementTranscriptPlanInNewConversation(plan: plan, message: message, binding: binding, presentation: entry.presentation)
                         }, save: { path, contents in
                             guard let workspace, let entry, current else { throw CancellationError() }
                             try await workspace.saveTranscriptPlan(path: path, contents: contents, message: message, binding: binding, presentation: entry.presentation)
@@ -370,7 +374,6 @@ struct RemoteProjectedConversationView: View {
     }
     private func composer(_ value: RemoteProjectionControl) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            RemoteDraftAttachmentShelf(store: store.attachments)
             if store.draftExceedsLocalLimit {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("This host draft exceeds the local limit of 120,000 UTF-16 characters. Copy it, then replace it with a shorter local draft before sending. The host draft stays unchanged.").font(.caption).foregroundStyle(.secondary)
@@ -381,23 +384,19 @@ struct RemoteProjectedConversationView: View {
                     }
                 }
             } else {
-                TextEditor(text: Binding(get: { store.draft }, set: { store.setDraft($0, threadID: value.detail.summary.id) }))
-                    .font(.body).scrollContentBackground(.hidden).frame(minHeight: 72, maxHeight: 120).accessibilityLabel("Remote message")
-                    .onPasteCommand(of: [UTType.fileURL, UTType.image]) { store.attachments.importAttachments(providers: $0) }
-            }
-            HStack {
-                Button("Attach Files…", systemImage: "paperclip") { store.attachments.chooseAttachments() }.disabled(!store.attachments.canImport)
-                if store.isPreparingSubmission || store.attachments.isUploading { ProgressView().controlSize(.small) }
-                Text(store.draftExceedsLocalLimit ? "Host draft · not saved locally" : store.draftPersistenceFailed ? "Draft could not be saved" : store.draftsSaving ? "Saving draft…" : "Drafts stay on this Mac").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if value.detail.isBusy { Button("Stop") { Task { await store.stopProjected() } }.disabled(!store.canWrite || value.detail.runtimeID == nil) }
-                Button(value.detail.isBusy ? "Queue" : "Send") { Task { await store.submit() } }
-                    .keyboardShortcut(.return, modifiers: .command).buttonStyle(.borderedProminent).disabled(!store.canSubmit)
+                RemoteComposerView(store: store, threadID: value.detail.summary.id, provider: value.detail.summary.provider,
+                    providerName: value.detail.summary.providerName, permission: value.detail.summary.permission,
+                    busy: value.detail.isBusy, canStop: store.canWrite && value.detail.runtimeID != nil,
+                    stop: { Task { await store.stopProjected() } })
             }
             if !value.detail.submit.allowed, let reason = value.detail.submit.reason { Text(reason).font(.caption).foregroundStyle(.secondary) }
         }.padding(14).coincideSurface(cornerRadius: 20).padding(18)
         .onDrop(of: [UTType.fileURL.identifier, UTType.image.identifier], isTargeted: nil) { providers in
-            guard store.attachments.canImport else { return false }; store.attachments.importAttachments(providers: providers); return true
+            if store.composerSupported, let scope = store.remoteComposerScope {
+                        guard store.composer.canOperate else { return false }
+                        store.composer.tools?.importProviders(providers, threadID: scope.threadID); return true
+                    }
+                    guard store.attachments.canImport else { return false }; store.attachments.importAttachments(providers: providers); return true
         }
     }
     private func respond(_ request: ApprovalRequest, _ response: ProviderApprovalResponse) { Task { await store.respondProjected(request, response: response) } }

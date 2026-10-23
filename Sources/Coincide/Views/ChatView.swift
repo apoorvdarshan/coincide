@@ -66,7 +66,7 @@ struct ChatView: View {
                         } else if let onSettle {
                             Button("Settle Conversation…") { onSettle(thread) }.disabled(!store.canSettle(thread))
                         }
-                        if thread.messages.isEmpty {
+                        if thread.messages.isEmpty && thread.scratchWorkspace == nil {
                             Button("Choose Worktree…") { worktreeSheet = true }
                                 .disabled(thread.isSettled || thread.isBusy || !thread.queuedTurns.isEmpty || thread.workspacePreparation?.isRunning == true ||
                                           actionsLocked ||

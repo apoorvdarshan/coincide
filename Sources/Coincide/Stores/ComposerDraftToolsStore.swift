@@ -13,6 +13,8 @@ enum ComposerDraftToolsOutcome: Sendable, Equatable { case applied, rejected, un
     var verify: (ChatAttachment) async throws -> Void
     var canOperate: (UUID) -> Bool = { _ in true }
     var reportError: (UUID, String) -> Void = { _, _ in }
+    var captureScope: (UUID) -> Data? = { _ in nil }
+    var isCurrentScope: (UUID, Data?) -> Bool = { _, _ in true }
 }
 
 struct ComposerAttachmentImport: Identifiable {
@@ -40,6 +42,8 @@ final class ComposerDraftToolsStore {
     @ObservationIgnored private var document = ComposerDraftToolsDocument()
     @ObservationIgnored private var metadataTail: Task<Void, any Error>?
     @ObservationIgnored private var jobs: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var jobScopes: [UUID: Data] = [:]
+    @ObservationIgnored private var importScopes: [UUID: Data] = [:]
     @ObservationIgnored private var jobOwners: [UUID: UUID] = [:]
     @ObservationIgnored private var suspendedThreads: Set<UUID> = []
     @ObservationIgnored private var activeThreads: [UUID: Int] = [:]
@@ -78,7 +82,7 @@ final class ComposerDraftToolsStore {
         // would make the saved prompt look complete when it is not.
         guard importItems(threadID).isEmpty else { errorMessage = "Retry or remove unfinished attachments before stashing this prompt."; return nil }
         let entry = ComposerStashEntry(id: UUID(), createdAt: Date(), draft: captured)
-        let operation = ComposerPendingMutation(id: UUID(), purpose: .stash(entry.id), replacement: .init(expected: captured, text: "", attachments: []))
+        let operation = ComposerPendingMutation(id: UUID(), purpose: .stash(entry.id), replacement: .init(expected: captured, text: "", attachments: []), ownerScope: transport.captureScope(threadID))
         return own(threadID) { [self] owner in
             do {
                 var evicted = false
@@ -118,7 +122,7 @@ final class ComposerDraftToolsStore {
                 }
                 try AttachmentLimits.validate(attachments)
                 let text = entry.draft.text.isEmpty ? latest.text : latest.text.isEmpty ? entry.draft.text : latest.text + "\n\n" + entry.draft.text
-                let operation = ComposerPendingMutation(id: UUID(), purpose: .restore(entryID), replacement: .init(expected: latest, text: text, attachments: attachments))
+                let operation = ComposerPendingMutation(id: UUID(), purpose: .restore(entryID), replacement: .init(expected: latest, text: text, attachments: attachments), ownerScope: jobScopes[owner])
                 try await updateDocument { value in
                     guard value.entries.contains(where: { $0.id == entryID }) else { throw CoincideError("This saved prompt was already restored or removed.") }
                     value.pending.append(operation)
@@ -133,6 +137,37 @@ final class ComposerDraftToolsStore {
         guard !stopping, let entry = entries.first(where: { $0.id == entryID }), !pending.contains(where: { $0.purpose == .restore(entryID) || $0.purpose == .stash(entryID) }) else { return nil }
         return own(entry.draft.threadID) { [self] _ in
             do { try await updateDocument { $0.entries.removeAll { $0.id == entryID } } }
+            catch { errorMessage = Self.message(error) }
+        }
+    }
+
+    /// Local adapters share the original-ID pending journal for selection and
+    /// text expansion, without fabricating a CodingThread or native proof.
+    @discardableResult func replaceSelection(_ replacement: ComposerDraftReplacement) -> Task<Void, Never>? {
+        let id = replacement.expected.threadID
+        guard allowed(id), !isWorking(id), !hasUnresolved(id), transport?.snapshot(id).map({ replacement.expected.matches($0) }) == true else { return nil }
+        let operation = ComposerPendingMutation(id: UUID(), purpose: .attachment(UUID()), replacement: replacement, ownerScope: transport?.captureScope(id))
+        return own(id) { [self] owner in
+            do { try await updateDocument { $0.pending.append(operation) }; await dispatch(operation, owner: owner) }
+            catch { errorMessage = Self.message(error) }
+        }
+    }
+    @discardableResult func expandTextAttachment(_ reference: ChatAttachment, threadID: UUID,
+        read: @escaping @MainActor (ChatAttachment) async throws -> Data) -> Task<Void, Never>? {
+        guard allowed(threadID), !isWorking(threadID), !hasUnresolved(threadID), !reference.isImage,
+              reference.byteCount <= 8 * 1_024 * 1_024, let expected = transport?.snapshot(threadID),
+              expected.attachments.contains(where: { ComposerDraftSnapshot.sameAttachments([$0], [reference]) }) else { return nil }
+        return own(threadID) { [self] owner in
+            do {
+                let bytes = try await read(reference)
+                guard bytes.count == reference.byteCount, let text = String(data: bytes, encoding: .utf8),
+                      allowed(threadID), transport?.snapshot(threadID).map({ expected.matches($0) }) == true else { throw CoincideError("The draft changed, or this attachment is not complete UTF-8 text. Its reference was kept.") }
+                let expanded = expected.text.isEmpty ? text : expected.text + "\n\n" + text
+                guard expanded.utf16.count <= ComposerPastePolicy.maximumInputLength else { throw CoincideError("This text exceeds the inline draft limit. Keep it attached or copy a smaller excerpt.") }
+                let replacement = ComposerDraftReplacement(expected: expected, text: expanded, attachments: expected.attachments.filter { $0.id != reference.id })
+                let operation = ComposerPendingMutation(id: UUID(), purpose: .attachment(UUID()), replacement: replacement, ownerScope: jobScopes[owner])
+                try await updateDocument { $0.pending.append(operation) }; await dispatch(operation, owner: owner)
+            } catch is CancellationError { }
             catch { errorMessage = Self.message(error) }
         }
     }
@@ -211,7 +246,7 @@ final class ComposerDraftToolsStore {
     }
     @discardableResult func retryImport(_ id: UUID) -> Task<Void, Never>? {
         guard let item = imports.first(where: { $0.id == id && $0.state == .failed }), allowed(item.threadID),
-              let original = importOwners[id],
+              let original = importOwners[id], transport?.isCurrentScope(item.threadID, importScopes[id]) == true,
               payloads[id] != nil || references[id] != nil else { return nil }
         setState(id, .importing, nil)
         return own(item.threadID) { [self] owner in await prepareImport(id, captured: original, owner: owner) }
@@ -283,14 +318,15 @@ final class ComposerDraftToolsStore {
             var attachments = latest.attachments
             if !attachments.contains(where: { $0.id == reference.id }) { attachments.append(reference) }
             try AttachmentLimits.validate(attachments)
-            let operation = ComposerPendingMutation(id: UUID(), purpose: .attachment(id), replacement: .init(expected: latest, text: text, attachments: attachments))
+            let operation = ComposerPendingMutation(id: UUID(), purpose: .attachment(id), replacement: .init(expected: latest, text: text, attachments: attachments), ownerScope: jobScopes[owner])
             try await updateDocument { $0.pending.append(operation) }
             await dispatch(operation, owner: owner)
         } catch is CancellationError { fail(id, message: "Attachment import was interrupted. Its captured bytes are kept until you remove it.") }
         catch { fail(id, message: Self.message(error), report: true) }
     }
     private func dispatch(_ operation: ComposerPendingMutation, owner: UUID) async {
-        guard let transport, allowed(operation.replacement.expected.threadID), !Task.isCancelled else {
+        guard let transport, allowed(operation.replacement.expected.threadID), !Task.isCancelled,
+              transport.isCurrentScope(operation.replacement.expected.threadID, operation.ownerScope) else {
             // The command has never been handed to admission, so this is a
             // known refusal, not an unknown provider/draft outcome.
             try? await settle(operation, result: .rejected); return
@@ -340,8 +376,9 @@ final class ComposerDraftToolsStore {
     }
     @discardableResult private func own(_ threadID: UUID, _ body: @escaping @MainActor (UUID) async -> Void) -> Task<Void, Never> {
         let id = UUID(); activeThreads[threadID, default: 0] += 1; jobOwners[id] = threadID
+        jobScopes[id] = transport?.captureScope(threadID)
         let task = Task { [self] in
-            defer { jobs.removeValue(forKey: id); jobOwners.removeValue(forKey: id); activeThreads[threadID, default: 1] -= 1 }
+            defer { jobs.removeValue(forKey: id); jobOwners.removeValue(forKey: id); jobScopes.removeValue(forKey: id); activeThreads[threadID, default: 1] -= 1 }
             await body(id)
         }
         jobs[id] = task; return task
@@ -355,7 +392,7 @@ final class ComposerDraftToolsStore {
         return true
     }
     private func addImport(_ threadID: UUID, name: String, owner: ComposerDraftSnapshot) -> UUID {
-        let id = UUID(); importOwners[id] = owner
+        let id = UUID(); importOwners[id] = owner; importScopes[id] = transport?.captureScope(threadID)
         imports.append(.init(id: id, threadID: threadID, name: name, state: .importing)); return id
     }
     private func retain(_ data: Data, id: UUID) throws {
@@ -364,7 +401,7 @@ final class ComposerDraftToolsStore {
     }
     private func release(_ id: UUID) {
         if let data = payloads.removeValue(forKey: id) { reservedBytes -= data.count }
-        references.removeValue(forKey: id); pasteAnchors.removeValue(forKey: id); importOwners.removeValue(forKey: id); imports.removeAll { $0.id == id }
+        references.removeValue(forKey: id); importScopes.removeValue(forKey: id); pasteAnchors.removeValue(forKey: id); importOwners.removeValue(forKey: id); imports.removeAll { $0.id == id }
     }
     private func rename(_ id: UUID, to name: String) {
         guard let index = imports.firstIndex(where: { $0.id == id }) else { return }
@@ -389,7 +426,7 @@ final class ComposerDraftToolsStore {
             let prior = Set(operation.replacement.expected.attachments.map(\.id))
             guard let reference = operation.replacement.attachments.first(where: { !prior.contains($0.id) }) else { continue }
             let owner = operation.replacement.expected
-            importOwners[id] = owner; references[id] = reference
+            importOwners[id] = owner; importScopes[id] = operation.ownerScope; references[id] = reference
             imports.append(.init(id: id, threadID: owner.threadID, name: reference.name, state: .unconfirmed,
                 message: "Check Result before retrying. This import has not been repeated."))
         }

@@ -78,19 +78,22 @@ public struct ProjectSettingsDocument: Codable, Sendable, Equatable {
     public var actions: [ProjectAction]?
     public var defaultThreadEnvMode: ProjectThreadEnvironmentMode?
     public var worktreeSubmodules: ProjectWorktreeSubmoduleMode?
+    public var newWorktreesStartFromOrigin: Bool?
     public var icon: ProjectIconOverride?
     public init(key: String, actions: [ProjectAction]? = nil, defaultThreadEnvMode: ProjectThreadEnvironmentMode? = nil,
-                worktreeSubmodules: ProjectWorktreeSubmoduleMode? = nil, icon: ProjectIconOverride? = nil) {
+                worktreeSubmodules: ProjectWorktreeSubmoduleMode? = nil, icon: ProjectIconOverride? = nil,
+                newWorktreesStartFromOrigin: Bool? = nil) {
         self.key = key; self.actions = actions; self.defaultThreadEnvMode = defaultThreadEnvMode
         self.worktreeSubmodules = worktreeSubmodules; self.icon = icon
+        self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
     }
-    public var isEmpty: Bool { actions == nil && defaultThreadEnvMode == nil && worktreeSubmodules == nil && icon == nil }
+    public var isEmpty: Bool { actions == nil && defaultThreadEnvMode == nil && worktreeSubmodules == nil && icon == nil && newWorktreesStartFromOrigin == nil }
     public func validate() throws {
         guard !key.isEmpty, key.utf8.count <= 65_536, !key.contains("\0") else { throw ProjectSettingsFiles.invalid }
         if let actions { try ProjectActions.validate(actions) }
         try icon?.validate()
     }
-    private enum CodingKeys: String, CodingKey { case version, key, actions, defaultThreadEnvMode, worktreeSubmodules, icon }
+    private enum CodingKeys: String, CodingKey { case version, key, actions, defaultThreadEnvMode, worktreeSubmodules, icon, newWorktreesStartFromOrigin }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         guard try c.decode(Int.self, forKey: .version) <= Self.currentVersion else {
@@ -101,6 +104,7 @@ public struct ProjectSettingsDocument: Codable, Sendable, Equatable {
         actions = try c.decodeIfPresent([ProjectAction].self, forKey: .actions)
         defaultThreadEnvMode = try c.decodeIfPresent(ProjectThreadEnvironmentMode.self, forKey: .defaultThreadEnvMode)
         worktreeSubmodules = try c.decodeIfPresent(ProjectWorktreeSubmoduleMode.self, forKey: .worktreeSubmodules)
+        newWorktreesStartFromOrigin = try c.decodeIfPresent(Bool.self, forKey: .newWorktreesStartFromOrigin)
         icon = try c.decodeIfPresent(ProjectIconOverride.self, forKey: .icon)
         try validate()
     }
@@ -109,6 +113,7 @@ public struct ProjectSettingsDocument: Codable, Sendable, Equatable {
         try c.encode(Self.currentVersion, forKey: .version); try c.encode(key, forKey: .key)
         try c.encodeIfPresent(actions, forKey: .actions); try c.encodeIfPresent(defaultThreadEnvMode, forKey: .defaultThreadEnvMode)
         try c.encodeIfPresent(worktreeSubmodules, forKey: .worktreeSubmodules); try c.encodeIfPresent(icon, forKey: .icon)
+        try c.encodeIfPresent(newWorktreesStartFromOrigin, forKey: .newWorktreesStartFromOrigin)
     }
 }
 

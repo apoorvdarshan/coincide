@@ -26,8 +26,10 @@ private func json(_ object: [String: JSONValue]) -> String { JSONValue.object(ob
 
 @Test func claudeToolUseCardsPairResultsAndClassifyEveryBuiltInTool() throws {
     let context = TranscriptToolContext(provider: .claude, workspacePath: "/repo")
+    var bashResult = tool("result-toolu_1", "On branch main")
+    bashResult.providerEntity = ClaudeToolResultMetadata.entity(block: .object(["tool_use_id": .string("toolu_1"), "is_error": .bool(false)]), sessionID: "native-session", parent: nil)
     let bash = TranscriptToolPresentation.card(for: tool("toolu_1", "Bash\n" + json(["command": .string("git status"), "description": .string("Show status")])),
-                                               result: tool("result-toolu_1", "On branch main"), context: context)
+                                               result: bashResult, context: context)
     #expect(bash.kind == .command && bash.subject == "git status" && bash.detail == "Show status" && bash.output == "On branch main" && bash.status == .completed)
     let failed = TranscriptToolPresentation.card(for: tool("toolu_2", "Read\n" + json(["file_path": .string("/repo/missing.swift")])),
                                                  result: tool("result-toolu_2", "<tool_use_error>File does not exist.</tool_use_error>"), context: context)
@@ -39,7 +41,8 @@ private func json(_ object: [String: JSONValue]) -> String { JSONValue.object(ob
         .object(["old_string": .string("x"), "new_string": .string("y")]), .object(["old_string": .string("p\nq"), "new_string": .string("p")])])])), context: context)
     // p\nq → p also removes p's LF terminator, so its literal diff rewrites p.
     #expect(multi.changes.count == 1 && multi.changes[0].hunks.count == 2 && multi.stat == .init(files: 1, additions: 2, deletions: 3))
-    let write = TranscriptToolPresentation.card(for: tool("t5", "Write\n" + json(["file_path": .string("/repo/new.md"), "content": .string("# A\nB\n")])), context: context)
+    let write = TranscriptToolPresentation.card(for: tool("t5", "Write\n" + json(["file_path": .string("/repo/new.md"), "content": .string("# A\nB\n")])),
+        result: tool("result-t5", "File created successfully at: /repo/new.md"), context: context)
     #expect(write.title == "Wrote new.md" && write.stat?.additions == 2)
     let cases: [(String, [String: JSONValue], TranscriptToolKind, String)] = [
         ("Grep", ["pattern": .string("TODO"), "path": .string("/repo/src")], .search, "Searched for TODO"),

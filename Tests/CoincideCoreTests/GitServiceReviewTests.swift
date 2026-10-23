@@ -164,9 +164,11 @@ func streamingGitKeepsItsOperationScopeUntilTheExactChildAndReadersDrain(mode: S
     def stopping(*_):
         (root / "terminating").write_text("received")
     signal.signal(signal.SIGTERM, stopping)
+    pending_pid = root / "pid.pending"
+    pending_pid.write_text(str(os.getpid()))
+    pending_pid.replace(root / "pid")
     if mode == "input-error":
         os.close(0)
-    (root / "pid").write_text(str(os.getpid()))
     if mode == "limit":
         os.write(1, b"x" * 4096)
     while not (root / "release").exists():

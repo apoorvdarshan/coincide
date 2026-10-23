@@ -67,7 +67,11 @@ root=Path(sys.argv[1]);os.umask(0o077)
 assert root.name.startswith('coincide-attachment-client-') and os.stat(root).st_mode & 0o077 == 0
 with (root/'peer-pids.txt').open('a') as out:out.write(str(os.getpid())+'\n')
 state=json.loads((root/'state.json').read_text());mode=state['mode'];different='00000000-0000-0000-0000-000000000001'
-if mode=='old-helper':state['descriptor']['capabilities'].pop('supportsRemoteAttachments',None)
+if mode=='old-helper':
+    state['descriptor']['capabilities'].pop('supportsRemoteAttachments',None)
+    state['descriptor']['capabilities'].pop('supportsRemotePromptSteering',None)
+    state['descriptor']['capabilities'].pop('supportsRemoteThreadActions',None)
+    state['descriptor']['capabilities'].pop('supportsRemoteQueueManagement',None)
 for line in sys.stdin:
     frame=json.loads(line);method=frame['method']
     # Log method names only. Inline bytes, authored text and frames are omitted.
@@ -226,4 +230,66 @@ func remoteAttachmentClientUnknownSubmitRetainsExactPendingIdentityAndNilReceipt
         #expect(try peer.count(RemoteAttachmentProtocol.beginMethod) == 0 && peer.count(RemoteAttachmentProtocol.finalizeMethod) == 0)
         try await peer.finish(client)
     } catch { await client.close(); peer.retained(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func remoteSteeringOldHelperCapabilityRefusesReadAndWriteWithoutAnRPCOrSubmitFallback() async throws {
+    let peer = try AttachmentClientPeer(mode: "old-helper"), client = peer.client()
+    do {
+        _ = try await client.connect()
+        let target = RemoteWorkspaceTarget(environmentID: peer.upload.target.environmentID, projectID: peer.upload.target.projectID,
+            threadID: peer.upload.target.threadID, configuration: .init(thread: CodingThread(project: WorkspaceProject(path: "/private-offline-remote"))))
+        let capture = RemoteSteeringCapture(binding: .init(environmentID: target.environmentID, hostID: UUID(), viewID: UUID(), threadID: target.threadID, digest: String(repeating: "a", count: 64)),
+            threadCreatedAt: .now, projectCreatedAt: nil, runID: UUID(), runtimeID: UUID(), activeConfigurationDigest: String(repeating: "b", count: 64))
+        await #expect(throws: RemoteEnvironmentClientError(.unsupported)) { _ = try await client.readSteering(.init(target: target)) }
+        await #expect(throws: RemoteEnvironmentClientError(.unsupported)) { _ = try await client.command(.promptSteering(target: target, action: .steerQueued(capture: capture, queuedID: UUID(), digest: String(repeating: "c", count: 64)))) }
+        #expect(try peer.count(RemoteSteeringProtocol.readMethod) == 0)
+        #expect(try peer.count(RemoteEnvironmentProtocol.commandMethod) == 0)
+        #expect(await client.isConnected())
+        try await peer.finish(client)
+    } catch { await client.close(); peer.retained(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func remoteThreadAndQueueControlsOlderHelperRefusesWithoutAnyMutationOrReadRPC() async throws {
+    let peer = try AttachmentClientPeer(mode: "old-helper"), client = peer.client()
+    do {
+        _ = try await client.connect()
+        let project = WorkspaceProject(path: "/private/offline-metadata"), thread = CodingThread(project: project)
+        let environment = peer.upload.target.environmentID
+        let binding = RemoteThreadActionBinding(environmentID: environment, hostID: UUID(), leaseID: UUID(), digest: String(repeating: "a", count: 64))
+        let target = RemoteWorkspaceTarget(environmentID: environment, projectID: project.id, threadID: thread.id, configuration: .init(thread: thread))
+        let capture = RemoteThreadActionCapture(id: UUID(), binding: binding, target: target, threadCreatedAt: thread.createdAt, projectCreatedAt: project.createdAt,
+            runID: nil, runtimeID: nil, expectedPinned: false, expectedArchived: false, digest: String(repeating: "b", count: 64))
+        await #expect(throws: RemoteEnvironmentClientError(.unsupported)) { _ = try await client.readThreadActions(.init(environmentID: environment, target: target)) }
+        await #expect(throws: RemoteEnvironmentClientError(.unsupported)) { _ = try await client.command(.threadAction(.setPinned(capture: capture, value: true)), undoOwner: binding) }
+        let queueCapture = RemoteSteeringCapture(binding: .init(environmentID: environment, hostID: UUID(), viewID: UUID(), threadID: thread.id, digest: String(repeating: "c", count: 64)),
+            threadCreatedAt: thread.createdAt, projectCreatedAt: project.createdAt, runID: nil, runtimeID: nil, activeConfigurationDigest: nil, queueRevision: String(repeating: "d", count: 64))
+        await #expect(throws: RemoteEnvironmentClientError(.unsupported)) { _ = try await client.command(.promptSteering(target: target, action: .removeQueued(capture: queueCapture, queuedID: UUID(), digest: String(repeating: "e", count: 64)))) }
+        #expect(try peer.count(RemoteThreadActionsProtocol.readMethod) == 0)
+        #expect(try peer.count(RemoteEnvironmentProtocol.commandMethod) == 0)
+        #expect(await client.isConnected())
+        try await peer.finish(client)
+    } catch { await client.close(); peer.retained(); throw error }
+}
+
+@Test func remoteUndoOwnerAndQueueRevisionOmitNilAndPreserveLegacyOriginalReceiptPayloadBytes() throws {
+    let environment = UUID(), project = WorkspaceProject(path: "/private/offline-legacy-payload"), thread = CodingThread(project: project)
+    let legacy = RemoteEnvironmentCommandRequest(environmentID: environment, command: .submit(threadID: thread.id, text: "Original literal input e\u{301}\u{327}", expectedConfiguration: .init(thread: thread)))
+    let bytes = try RemoteEnvironmentProtocol.payload(legacy)
+    let json = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+    #expect(json["undoOwner"] == nil)
+    #expect(try RemoteEnvironmentProtocol.payload(JSONDecoder().decode(RemoteEnvironmentCommandRequest.self, from: bytes)) == bytes)
+    let pending = RemoteEnvironmentPendingCommand(connectionID: UUID(), environmentID: environment, id: legacy.id, command: legacy.command)
+    let persisted = try JSONEncoder().encode(pending), restored = try JSONDecoder().decode(RemoteEnvironmentPendingCommand.self, from: persisted)
+    #expect(try RemoteEnvironmentProtocol.payload(restored.request) == bytes)
+    let owner = RemoteThreadActionBinding(environmentID: environment, hostID: UUID(), leaseID: UUID(), digest: String(repeating: "f", count: 64))
+    let owned = RemoteEnvironmentPendingCommand(connectionID: UUID(), environmentID: environment, id: legacy.id, command: legacy.command, undoOwner: owner)
+    let ownedRestored = try JSONDecoder().decode(RemoteEnvironmentPendingCommand.self, from: JSONEncoder().encode(owned))
+    #expect(ownedRestored.undoOwner == owner)
+    #expect(try RemoteEnvironmentProtocol.payload(ownedRestored.request) == RemoteEnvironmentProtocol.payload(owned.request))
+    let capture = RemoteSteeringCapture(binding: .init(environmentID: environment, hostID: UUID(), viewID: UUID(), threadID: thread.id, digest: String(repeating: "a", count: 64)),
+        threadCreatedAt: thread.createdAt, projectCreatedAt: project.createdAt, runID: nil, runtimeID: nil, activeConfigurationDigest: nil)
+    let captureJSON = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(capture)) as? [String: Any])
+    #expect(captureJSON["queueRevision"] == nil)
 }

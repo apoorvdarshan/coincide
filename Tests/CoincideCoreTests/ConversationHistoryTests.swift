@@ -631,3 +631,96 @@ private func conversationHistoryTemporaryRoot() throws -> URL {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     return root
 }
+
+/// Includes a valid, unrelated provider-history proof while recovering another
+/// conversation. This exercises the same history-readiness type path as the
+/// hosted crash without starting any Git/provider process or changing stacks.
+private func recoveredWorktreeHistoryFixture() throws -> (snapshot: WorkspaceSnapshot, threadID: UUID,
+    request: GitWorktreeRequest, result: GitWorktreeResult, queued: QueuedTurn, now: Date) {
+    var history = ConversationHistoryFixture()
+    let review = try history.review()
+    _ = try history.accept(review)
+    let project = try #require(history.snapshot.projects.first)
+    var thread = CodingThread(project: project, model: "recovery-model")
+    thread.checkpointPolicy = .disabled
+    let request = GitWorktreeRequest(sourcePath: project.path, destinationRoot: "/tmp/coincide-pure-recovery-worktrees",
+        selection: .createBranch(name: "reviewed-recovery", baseRef: "HEAD"))
+    let identity = GitWorktreeNodeIdentity(device: 1, inode: 42)
+    let plan = try GitWorktreePlan(request: request, sourcePath: project.path, commonDirectoryPath: project.path + "/.git",
+        sourceIdentity: identity, commonDirectoryIdentity: identity, destinationParentIdentity: identity,
+        branch: "reviewed-recovery", baseCommit: String(repeating: "a", count: 40))
+    var preparation = ThreadWorkspacePreparation(request: request, now: history.now)
+    preparation.plan = plan; preparation.phase = .failed; preparation.error = "Private publication response was lost"
+    preparation.endedAt = history.now
+    thread.workspacePreparation = preparation; thread.workspacePath = request.destinationPath
+    thread.draft = "Newer unsent typing stays separate"
+    thread.draftAttachments = [.init(id: UUID(), name: "newer.txt", mimeType: "text/plain", byteCount: 5,
+        digest: String(repeating: "b", count: 64), fileExtension: "txt")]
+    let queued = QueuedTurn(id: UUID(), text: "Original accepted input", configuration: .init(thread: thread),
+        createdAt: history.now, attachments: history.thread.draftAttachments, checkpointPolicy: .disabled)
+    thread.queuedTurns = [queued]; thread.queuePaused = true
+    history.snapshot.threads.append(thread)
+    try WorkspaceJournal.validate(history.snapshot)
+    return (history.snapshot, thread.id, request,
+        .init(destinationPath: request.destinationPath, headCommit: plan.baseCommit, branch: plan.branch), queued, history.now)
+}
+
+@Test func worktreeRecoveredPreservesPausedQueueAndProviderHistoryUntilExplicitResumeWithoutReplay() throws {
+    let f = try recoveredWorktreeHistoryFixture()
+    let before = try #require(f.snapshot.threads.first(where: { $0.id == f.threadID }))
+    let recovery = EngineCommand.worktreeRecovered(threadID: f.threadID, attemptID: f.request.id,
+        incarnation: UUID(), result: f.result)
+    let recovered = try WorkspaceDecision.make(recovery, id: UUID(), snapshot: f.snapshot, now: f.now)
+    let waiting = try #require(recovered.snapshot.threads.first(where: { $0.id == f.threadID }))
+    #expect(waiting.workspacePreparation?.isReady == true && waiting.workspacePreparation?.result == f.result)
+    #expect(recovered.snapshot.providerReady(for: waiting))
+    #expect(waiting.queuePaused && waiting.queuedTurns == [f.queued] && waiting.activeRun == nil && waiting.messages.isEmpty)
+    #expect(waiting.draft == before.draft && waiting.draftAttachments == before.draftAttachments)
+    #expect(recovered.snapshot.conversationHistoryOperations == f.snapshot.conversationHistoryOperations)
+    #expect(recovered.snapshot.threads.filter { $0.id != f.threadID } == f.snapshot.threads.filter { $0.id != f.threadID })
+    #expect(recovered.effects.isEmpty)
+    let repeated = try WorkspaceDecision.make(recovery, id: UUID(), snapshot: recovered.snapshot, now: f.now.addingTimeInterval(1))
+    #expect(repeated.snapshot == recovered.snapshot && repeated.effects.isEmpty)
+
+    let resumed = try WorkspaceDecision.make(.client(.resumeQueue(threadID: f.threadID)), id: UUID(),
+        snapshot: recovered.snapshot, now: f.now.addingTimeInterval(2))
+    let running = try #require(resumed.snapshot.threads.first(where: { $0.id == f.threadID }))
+    #expect(!running.queuePaused && running.queuedTurns.isEmpty && running.activeRun?.id == f.queued.id)
+    #expect(running.messages.filter { $0.role == .user }.map(\.text) == [f.queued.text])
+    #expect(running.messages.first?.attachments == f.queued.attachments)
+    #expect(running.draft == before.draft && running.draftAttachments == before.draftAttachments)
+    #expect(resumed.effects.count == 1)
+    if case .providerStart(let thread, let run, let configuration, let text, let attachments) = resumed.effects[0].request {
+        #expect(thread == f.threadID && run == f.queued.id && configuration == f.queued.configuration)
+        #expect(text == f.queued.text && attachments == f.queued.attachments)
+    } else { Issue.record("Explicit Resume must admit only the original captured provider input.") }
+    let lateRecovery = try WorkspaceDecision.make(recovery, id: UUID(), snapshot: resumed.snapshot, now: f.now.addingTimeInterval(3))
+    #expect(lateRecovery.snapshot == resumed.snapshot && lateRecovery.effects.isEmpty)
+}
+
+@Test func worktreeRecoveredStillPermitsSubsequentUnpausedNativeTurnsWithOriginalHistoryRetained() throws {
+    let f = try recoveredWorktreeHistoryFixture()
+    var current = try WorkspaceDecision.make(.worktreeRecovered(threadID: f.threadID, attemptID: f.request.id,
+        incarnation: UUID(), result: f.result), id: UUID(), snapshot: f.snapshot, now: f.now).snapshot
+    current = try WorkspaceDecision.make(.client(.resumeQueue(threadID: f.threadID)), id: UUID(), snapshot: current, now: f.now).snapshot
+    let runtime = UUID()
+    current = try WorkspaceDecision.make(.runtimeOpened(threadID: f.threadID, runID: f.queued.id, runtimeID: runtime),
+        id: UUID(), snapshot: current, now: f.now).snapshot
+    current = try WorkspaceDecision.make(.provider(threadID: f.threadID, runtimeID: runtime,
+        event: .context(runID: f.queued.id, event: .completed(.idle))), id: UUID(), snapshot: current,
+        now: f.now.addingTimeInterval(1)).snapshot
+    let finished = try #require(current.threads.first(where: { $0.id == f.threadID }))
+    #expect(finished.activeRun == nil && finished.queuedTurns.isEmpty)
+    let nextID = UUID()
+    let next = try WorkspaceDecision.make(.client(.submit(threadID: f.threadID, text: "A later explicit input")),
+        id: nextID, snapshot: current, now: f.now.addingTimeInterval(2))
+    let thread = try #require(next.snapshot.threads.first(where: { $0.id == f.threadID }))
+    #expect(thread.activeRun?.id == nextID && !thread.queuePaused && thread.queuedTurns.isEmpty)
+    #expect(thread.messages.filter { $0.role == .user }.map(\.text) == [f.queued.text, "A later explicit input"])
+    #expect(thread.runHistory?.filter { $0.id == f.queued.id }.count == 1)
+    #expect(next.snapshot.conversationHistoryOperations == f.snapshot.conversationHistoryOperations)
+    #expect(next.effects.count == 1)
+    if case .providerStart(let owner, let run, _, let text, _) = next.effects[0].request {
+        #expect(owner == f.threadID && run == nextID && text == "A later explicit input")
+    } else { Issue.record("A later explicit input should use normal native admission.") }
+}

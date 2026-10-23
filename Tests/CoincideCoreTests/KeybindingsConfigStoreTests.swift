@@ -106,7 +106,7 @@ private func fileRules(_ url: URL) throws -> [KeybindingRule] { KeybindingsConfi
     let store = KeybindingsConfigStore(fileURL: url, defaults: [])
     let replaced = try await store.upsert(.init(key: "mod+shift+k", command: .commandPaletteToggle), replacing: .init(key: "mod+k", command: .commandPaletteToggle))
     #expect(try fileRules(url) == [.init(key: "mod+j", command: .terminalToggle), .init(key: "mod+shift+k", command: .commandPaletteToggle)])
-    #expect(replaced.issues.isEmpty && KeybindingResolver.shortcut(for: .commandPaletteToggle, in: replaced.keybindings)?.label == "⇧⌘K")
+    #expect(replaced.issues.map(\.kind) == [.invalidEntry] && KeybindingResolver.shortcut(for: .commandPaletteToggle, in: replaced.keybindings)?.label == "⇧⌘K")
     _ = try await store.upsert(.init(key: "mod+j", command: .terminalToggle))
     #expect(try fileRules(url).map(\.key) == ["mod+shift+k", "mod+j"])
     let removed = try await store.remove(.init(key: "MOD+J", command: .terminalToggle))

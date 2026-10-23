@@ -623,6 +623,7 @@ public actor ClaudeSession: ProviderSession {
                 do { try consumeAssistant(frame["message"], envelopeID: frame["uuid"].string, parent: frame["parent_tool_use_id"].string) }
                 catch { failMessageBlocks() }
             case "user":
+                guard isRoot || frame["parent_tool_use_id"].string != nil else { return }
                 if isRoot, let uuid = frame["uuid"].string {
                     steerEchoes.append(uuid); if steerEchoes.count > 128 { steerEchoes.removeFirst() }
                 }
@@ -630,7 +631,10 @@ public actor ClaudeSession: ProviderSession {
                     let id = block["tool_use_id"].string ?? UUID().uuidString
                     if isRoot { removeRootSubagent(id) }
                     let text = block["content"].string ?? (block["content"].array ?? []).compactMap { $0["text"].string }.joined(separator: "\n")
-                    emit(.message(.init(id: "result-\(id)", role: .tool, text: text)))
+                    var message = ChatMessage(id: "result-\(id)", role: .tool, text: text)
+                    message.providerEntity = ClaudeToolResultMetadata.entity(block: block,
+                        sessionID: frame["session_id"].string ?? nativeThreadID, parent: frame["parent_tool_use_id"].string)
+                    emit(.message(message))
                 }
             case "system":
                 if isRoot, frame["subtype"] == .string("init") { observeModelControlMetadata(frame) }

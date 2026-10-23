@@ -18,6 +18,7 @@ struct ComposerPendingMutation: Codable, Sendable, Identifiable {
     let id: UUID
     let purpose: ComposerPendingPurpose
     let replacement: ComposerDraftReplacement
+    var ownerScope: Data? = nil
 }
 struct ComposerDraftToolsDocument: Codable, Sendable {
     var version = 1

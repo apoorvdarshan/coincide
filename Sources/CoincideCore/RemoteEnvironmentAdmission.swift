@@ -14,6 +14,8 @@ enum RemoteEnvironmentPreparation: Codable, Sendable {
     case contextTransfer(RemoteContextPreparation)
     case lifecycle(RemoteLifecyclePreparation)
     case projectScript(RemoteProjectScriptPreparation)
+    case steering(RemoteSteeringPreparation)
+    case threadActions(RemoteThreadActionsPreparation)
     case transcriptPlan(TranscriptPlanImplementation)
 }
 
@@ -65,14 +67,17 @@ enum RemoteEnvironmentAdmission {
             guard thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
                   thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw stale() }
             return .respond(threadID: id, requestID: request.id, response: response)
-        case .implementTranscriptPlan, .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest, .checkpoint, .history, .contextTransfer, .lifecycle, .lifecyclePolicy, .projectScript:
+        case .threadAction, .promptSteering, .submitComposerDraft, .implementTranscriptPlan, .implementTranscriptPlanInNewConversation, .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest, .checkpoint, .history, .contextTransfer, .lifecycle, .lifecyclePolicy, .projectScript:
             throw stale()
         }
     }
     static func commands(_ request: RemoteEnvironmentCommandRequest, preparation: RemoteEnvironmentPreparation,
                          snapshot: WorkspaceSnapshot) throws -> [EngineCommand] {
-        if case .implementTranscriptPlan(let target, let binding, let messageID, _) = request.command {
-            guard case .transcriptPlan(let captured) = preparation,
+        if case .threadAction = request.command { return try RemoteThreadActionsAdmission.commands(request, prepared: preparation, snapshot: snapshot) }
+        if case .promptSteering = request.command { return try steeringCommands(request, preparation: preparation, snapshot: snapshot) }
+        if let plan = request.command.transcriptPlanCommand {
+            let target = plan.target, binding = plan.binding, messageID = plan.messageID
+            guard case .transcriptPlan(let captured) = preparation, captured.destination == plan.destination,
                   target.environmentID == request.environmentID, binding.environmentID == request.environmentID,
                   binding.scope == .thread(target.threadID), captured.threadID == target.threadID,
                   captured.message.id.utf8.elementsEqual(messageID.utf8),
@@ -98,6 +103,32 @@ enum RemoteEnvironmentAdmission {
         }
         if case .pullRequest = request.command {
             return try pullRequestCommands(request, preparation: preparation, snapshot: snapshot)
+        }
+        if case .submitComposerDraft(let input) = request.command {
+            try input.validate()
+            let owner = input.target
+            guard case .attachments(let captured) = preparation, captured.target == owner,
+                  owner.environmentID == request.environmentID,
+                  let thread = snapshot.threads.first(where: { $0.id == owner.threadID }), !thread.isArchived,
+                  thread.projectID == owner.projectID, thread.createdAt == input.threadCreatedAt,
+                  snapshot.projects.first(where: { $0.id == owner.projectID })?.createdAt == input.projectCreatedAt,
+                  try RemoteAttachmentProtocol.payload(ProviderConfiguration(thread: thread)) == RemoteAttachmentProtocol.payload(input.expectedConfiguration),
+                  RemoteComposerSubmission.textDigest(thread.draft) == input.expectedHostDraftDigest,
+                  try RemoteAttachmentProtocol.payload(thread.draftAttachments) == RemoteAttachmentProtocol.payload(input.expectedDraftAttachments),
+                  captured.records.map(\.attachment.id) == input.uploadedAttachmentIDs,
+                  captured.records.allSatisfy({ $0.upload.target == owner && !$0.cancelled && ($0.claimedBy == nil || $0.claimedBy == request.id) }) else { throw stale() }
+            let omitted = thread.draftAttachments.filter { !input.selectedDraftAttachmentIDs.contains($0.id) }
+            let additions = captured.records.map(\.attachment)
+            let selected = input.selectedDraftAttachmentIDs.compactMap { id in thread.draftAttachments.first { $0.id == id } }
+            try AttachmentLimits.validate(selected + additions)
+            let all = selected + additions
+            let ordered = input.orderedAttachmentIDs.compactMap { id in all.first { $0.id == id } }
+            // Capture the selected immutable input, then return the unselected
+            // host references to its composer in the same original transaction.
+            return thread.draftAttachments.map { .client(.removeAttachment(threadID: owner.threadID, attachmentID: $0.id)) }
+                + (selected.isEmpty && additions.isEmpty ? [] : [.client(.addAttachments(threadID: owner.threadID, attachments: ordered))])
+                + [.client(.submit(threadID: owner.threadID, text: input.text))]
+                + (omitted.isEmpty ? [] : [.client(.addAttachments(threadID: owner.threadID, attachments: omitted))])
         }
         if case .submitWithAttachments(let owner, let text, let configuration, let expectedDraft, let ids) = request.command {
             guard case .attachments(let captured) = preparation, captured.target == owner,
@@ -180,7 +211,15 @@ extension WorkspaceDecision {
     static func reduceRemoteEnvironment(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         guard case .remoteEnvironment(let request, let preparation) = command else { throw RemoteEnvironmentAdmission.stale() }
         let commands = try RemoteEnvironmentAdmission.commands(request, preparation: preparation, snapshot: snapshot)
-        guard commands.count <= 2 else { throw RemoteEnvironmentAdmission.stale() }
+        let maximumCommands: Int
+        switch request.command {
+        case .submitComposerDraft, .promptSteering(_, .steerComposer):
+            // These closed compositions remove the bounded host references,
+            // capture one input, then restore only the omitted references.
+            maximumCommands = AttachmentLimits.count + 3
+        default: maximumCommands = 2
+        }
+        guard commands.count <= maximumCommands else { throw RemoteEnvironmentAdmission.stale() }
         do {
             var combined = Self(snapshot: snapshot)
             for action in commands {

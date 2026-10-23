@@ -156,6 +156,7 @@ public struct RemoteThreadSummary: Codable, Sendable, Equatable, Identifiable {
     public let state: ThreadState
     public let isPinned: Bool
     public let isArchived: Bool
+    public let projectCreatedAt: Date?
     public let createdAt: Date
     public let updatedAt: Date
     public let messageCount: Int
@@ -163,7 +164,7 @@ public struct RemoteThreadSummary: Codable, Sendable, Equatable, Identifiable {
     public let queueCount: Int
     public let workspaceLifecycle: ThreadWorkspaceLifecycle?
     public let settlementPhase: ThreadSettlementPhase?
-    public init(id: UUID, projectID: UUID, title: RemoteProjectionText, workspacePath: String, provider: ProviderKind, providerName: String, model: RemoteProjectionText, permission: PermissionMode, state: ThreadState, isPinned: Bool, isArchived: Bool, createdAt: Date, updatedAt: Date, messageCount: Int, runCount: Int, queueCount: Int, workspaceLifecycle: ThreadWorkspaceLifecycle? = nil, settlementPhase: ThreadSettlementPhase? = nil) {
+    public init(id: UUID, projectID: UUID, title: RemoteProjectionText, workspacePath: String, provider: ProviderKind, providerName: String, model: RemoteProjectionText, permission: PermissionMode, state: ThreadState, isPinned: Bool, isArchived: Bool, createdAt: Date, updatedAt: Date, messageCount: Int, runCount: Int, queueCount: Int, workspaceLifecycle: ThreadWorkspaceLifecycle? = nil, settlementPhase: ThreadSettlementPhase? = nil, projectCreatedAt: Date? = nil) {
         self.id = id
         self.projectID = projectID
         self.title = title
@@ -175,6 +176,7 @@ public struct RemoteThreadSummary: Codable, Sendable, Equatable, Identifiable {
         self.state = state
         self.isPinned = isPinned
         self.isArchived = isArchived
+        self.projectCreatedAt = projectCreatedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.messageCount = messageCount
@@ -252,7 +254,10 @@ public struct RemoteThreadDetail: Codable, Sendable, Equatable {
     public let checkpointBanner: RemoteCheckpointBannerSummary?
     public let liveProviderUsage: ProviderUsageUpdate?
     public let liveProviderUsageContent: RemoteProjectionContentReference?
-    public init(summary: RemoteThreadSummary, configuration: RemoteProjectionContentReference, draft: RemoteProjectionText, draftAttachments: RemoteProjectionContentReference, runtimeRequests: RemoteProjectionContentReference, requestCount: Int, queuePaused: Bool, checkpointPolicy: RunCheckpointPolicy, activeRun: RemoteActiveRunSummary? = nil, runtimeID: UUID? = nil, workspaceReady: Bool, isBusy: Bool, submit: RemoteProjectionAvailability, resumeQueue: RemoteProjectionAvailability, mutateFiles: RemoteProjectionAvailability, openTerminal: RemoteProjectionAvailability, chooseWorktree: RemoteProjectionAvailability, preparation: RemoteWorktreePreparationSummary? = nil, settlementID: UUID? = nil, checkpointBanner: RemoteCheckpointBannerSummary? = nil, liveProviderUsage: ProviderUsageUpdate? = nil, liveProviderUsageContent: RemoteProjectionContentReference? = nil) {
+    public let steeringCapabilityRevision: UInt64?
+    public let steeringTargetAvailable: Bool?
+    public init(summary: RemoteThreadSummary, configuration: RemoteProjectionContentReference, draft: RemoteProjectionText, draftAttachments: RemoteProjectionContentReference, runtimeRequests: RemoteProjectionContentReference, requestCount: Int, queuePaused: Bool, checkpointPolicy: RunCheckpointPolicy, activeRun: RemoteActiveRunSummary? = nil, runtimeID: UUID? = nil, workspaceReady: Bool, isBusy: Bool, submit: RemoteProjectionAvailability, resumeQueue: RemoteProjectionAvailability, mutateFiles: RemoteProjectionAvailability, openTerminal: RemoteProjectionAvailability, chooseWorktree: RemoteProjectionAvailability, preparation: RemoteWorktreePreparationSummary? = nil, settlementID: UUID? = nil, checkpointBanner: RemoteCheckpointBannerSummary? = nil, liveProviderUsage: ProviderUsageUpdate? = nil, liveProviderUsageContent: RemoteProjectionContentReference? = nil, steeringCapabilityRevision: UInt64? = nil, steeringTargetAvailable: Bool? = nil) {
+        self.steeringCapabilityRevision = steeringCapabilityRevision; self.steeringTargetAvailable = steeringTargetAvailable
         self.summary = summary
         self.configuration = configuration
         self.draft = draft

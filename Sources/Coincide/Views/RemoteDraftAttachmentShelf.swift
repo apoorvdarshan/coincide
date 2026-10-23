@@ -3,6 +3,7 @@ import SwiftUI
 
 struct RemoteDraftAttachmentShelf: View {
     @Bindable var store: RemoteAttachmentsStore
+    var includeHostReferences = true
     @State private var showingRetained = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -14,7 +15,7 @@ struct RemoteDraftAttachmentShelf: View {
                 }
             }
             if let draft = store.current {
-                if !draft.hostDraftAttachments.isEmpty {
+                if includeHostReferences, !draft.hostDraftAttachments.isEmpty {
                     Text("Already in the remote composer").font(.caption).foregroundStyle(.secondary)
                     AttachmentShelf(source: store.access(target: draft.target), attachments: draft.hostDraftAttachments)
                     Text("These remote files will be included with this message.").font(.caption2).foregroundStyle(.secondary)

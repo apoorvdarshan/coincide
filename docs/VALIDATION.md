@@ -5423,3 +5423,38 @@ Logs use `/tmp/coincide-protocol-ci-*-20261024.log`. Staged secret scanning pass
 No live provider/model request or installed-app launch was performed. Hosted
 success for this follow-up and full native GUI/provider/T3 acceptance remain
 unproven; the overall app goal remains active.
+
+
+## 2026-10-24: parallel Work starting checkpoint
+
+Integrated scratch conversations and their plan/history adapters, Codex plan
+controls, first-send worktree defaults, remote composer/steering/queue/thread
+actions, JSONC-preserving shortcut edits, and transcript provenance fixes.
+Physical scratch ownership is checked again before rewind/history work. Remote
+composer metadata now respects its private store's 16 MiB limit, and only the
+two closed attachment-preserving composer compositions receive a larger native
+command-batch bound. Other remote commands retain the existing two-action limit.
+
+Final local `swift build --build-tests` passes in 24.46 seconds. The affected
+selection exercised 181 Core and 28 native store/UI test declarations. Its only
+remaining failures were three fixture assumptions: two filesystem/Unicode path
+normalization cases and an archive-state expectation. Those fixture-only fixes
+were followed by complete affected-declaration reruns: 2 Core declarations
+(including all eight changed-source arguments) passed in 0.047 seconds and
+2 UI declarations passed in 0.112 seconds. All 209 selected declarations thus
+have passing evidence across the unchanged passing selection and corrected
+reruns; this was not a new all-green full-suite invocation.
+
+The final async-default ABI guard covers 1,567 Mach-O objects, with 1,165 Core
+and 540 App coverage counters, six local default records and zero weak default
+records. Diff whitespace checks and Python fixture parsing pass. The selection
+includes physical scratch-folder replacement, omitted composer references,
+original command receipt reuse, worktree recovery, and process/stream draining.
+
+Evidence logs use `/tmp/coincide-cloud-baseline-`: `build11-20261024.log`,
+`focused3-20261024.log`, `final-fixtures-20261024.log`, and
+`abi-verified-20261024.log`. This checkpoint does not establish full hosted CI,
+packaging, installed-provider, live SSH, or interactive native UI acceptance.
+The eight independent feature briefs in `CLOUD_TASKS.md` are a handoff for
+ChatGPT Work or a dot coordinator, not a claim that those tasks have started or
+that full T3 parity is complete.

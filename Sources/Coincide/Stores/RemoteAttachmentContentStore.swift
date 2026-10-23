@@ -106,6 +106,10 @@ final class RemoteAttachmentContentStore {
         else { active -= 1 }
     }
     func cancelAll() { downloads.values.forEach { $0.cancel() } }
+    func drain() async {
+        let owned = Array(downloads.values); for task in owned { task.cancel() }
+        for task in owned { _ = await task.result }
+    }
     func remember(target: RemoteAttachmentTarget, remote: ChatAttachment, local: ChatAttachment) {
         guard remote.digest == local.digest, remote.byteCount == local.byteCount else { return }
         cache[Self.key(target, remote)] = local

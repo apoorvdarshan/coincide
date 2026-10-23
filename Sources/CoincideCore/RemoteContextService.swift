@@ -2,7 +2,7 @@ import Foundation
 
 struct RemoteContextPreparation: Codable, Sendable {
     enum Action: Codable, Sendable {
-        case review(ContextTransferReview, title: String?)
+        case review(ContextTransferReview, title: String?, scratchAllocation: ScratchWorkspaceAllocation? = nil)
         case abandon(deliveryID: UUID, ids: [UUID])
     }
     let target: RemoteWorkspaceTarget
@@ -19,11 +19,11 @@ enum RemoteContextAdmission {
               let thread = snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
               !thread.isArchived, ContextTransferProtocol.same(ProviderConfiguration(thread: thread), target.configuration) else { throw RemoteEnvironmentAdmission.stale() }
         switch (action, prepared.action) {
-        case (.begin(let id, let digest, let title), .review(let review, let capturedTitle)):
+        case (.begin(let id, let digest, let title), .review(let review, let capturedTitle, let allocation)):
             guard id == review.id, digest == prepared.digest, ContextTransferProtocol.same(title, capturedTitle),
                   review.request.sourceThreadID == thread.id,
                   ContextTransferProtocol.same(review.sourceConfiguration, target.configuration) else { throw RemoteEnvironmentAdmission.stale() }
-            return [.contextTransferAccepted(review: review, title: title)]
+            return [.contextTransferAccepted(review: review, title: title, scratchAllocation: allocation)]
         case (.useFreshContext(let id, let ids), .abandon(let savedID, let savedIDs)):
             guard id == savedID, ids == savedIDs else { throw RemoteEnvironmentAdmission.stale() }
             return [.client(.abandonContextTransfer(threadID: thread.id, deliveryID: id, expectedTransferIDs: ids))]
@@ -241,7 +241,7 @@ actor RemoteContextService {
             return result
         } catch { throw safe(error) }
     }
-    func prepare(_ command: RemoteEnvironmentCommand) async throws -> RemoteEnvironmentPreparation {
+    func prepare(_ command: RemoteEnvironmentCommand, commandID: UUID? = nil, originalPayload: Data? = nil) async throws -> RemoteEnvironmentPreparation {
         try begin(); defer { finish() }
         guard case .contextTransfer(let target, let action) = command else { throw RemoteContextFailure(.invalidRequest) }
         do {
@@ -252,7 +252,15 @@ actor RemoteContextService {
                       let native = saved.nativeReview else { throw RemoteContextFailure(.staleReview) }
                 let current = try await engine.prepareContextTransferAcceptance(reviewID: id, digest: native.digest)
                 try saved.validateAnchors()
-                return .contextTransfer(.init(target: target, digest: digest, action: .review(current, title: title)))
+                let allocation: ScratchWorkspaceAllocation?
+                if let commandID {
+                    allocation = try await engine.prepareScratchContextTransfer(current, commandID: commandID)
+                    if allocation != nil {
+                        guard let originalPayload else { throw RemoteContextFailure(.invalidRequest) }
+                        try await engine.recordScratchContextTransfer(allocation, commandID: commandID, originalPayload: originalPayload)
+                    }
+                } else { allocation = nil }
+                return .contextTransfer(.init(target: target, digest: digest, action: .review(current, title: title, scratchAllocation: allocation)))
             case .useFreshContext(let id, let ids):
                 guard !ids.isEmpty, ids.count <= 32, Set(ids).count == ids.count else { throw RemoteContextFailure(.invalidRequest) }
                 return .contextTransfer(.init(target: target, digest: nil, action: .abandon(deliveryID: id, ids: ids)))
@@ -261,7 +269,7 @@ actor RemoteContextService {
     }
     func validatePreparation(_ prepared: RemoteContextPreparation) async throws {
         try await validate(prepared.target, requireRoot: prepared.requiresBoundRoot)
-        if case .review(let review, _) = prepared.action {
+        if case .review(let review, _, _) = prepared.action {
             guard let saved = leases.values.first(where: { $0.nativeReview?.id == review.id && $0.bytes.binding.digest == prepared.digest && ContextTransferProtocol.same($0.bytes.target, prepared.target) }) else { throw RemoteContextFailure(.staleReview) }
             try saved.validateAnchors()
         }

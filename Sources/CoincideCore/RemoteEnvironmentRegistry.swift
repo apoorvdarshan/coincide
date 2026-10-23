@@ -78,10 +78,11 @@ public struct RemoteEnvironmentPendingCommand: Codable, Sendable, Equatable {
     public let environmentID: UUID
     public let id: UUID
     public let command: RemoteEnvironmentCommand
-    public init(connectionID: UUID, environmentID: UUID, id: UUID, command: RemoteEnvironmentCommand) {
-        self.connectionID = connectionID; self.environmentID = environmentID; self.id = id; self.command = command
+    public let undoOwner: RemoteThreadActionBinding?
+    public init(connectionID: UUID, environmentID: UUID, id: UUID, command: RemoteEnvironmentCommand, undoOwner: RemoteThreadActionBinding? = nil) {
+        self.connectionID = connectionID; self.environmentID = environmentID; self.id = id; self.command = command; self.undoOwner = undoOwner
     }
-    public var request: RemoteEnvironmentCommandRequest { .init(environmentID: environmentID, id: id, command: command) }
+    public var request: RemoteEnvironmentCommandRequest { .init(environmentID: environmentID, id: id, command: command, undoOwner: undoOwner) }
 }
 
 public actor RemoteEnvironmentPendingStore {

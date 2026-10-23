@@ -195,13 +195,13 @@ actor RemoteHistoryService {
         if discarded { for lease in leases.values.filter({ $0.reviewID == request.reviewID }) { remove(lease.binding.leaseID) } }
         return .init(request: request, discarded: discarded)
     }
-    func prepare(_ command: RemoteEnvironmentCommand) async throws -> RemoteEnvironmentPreparation {
+    func prepare(_ command: RemoteEnvironmentCommand, commandID: UUID? = nil, originalPayload: Data? = nil) async throws -> RemoteEnvironmentPreparation {
         try begin(); defer { finish() }
         guard case .history(let target, let action) = command else { throw RemoteHistoryFailure(.invalidRequest) }
         let locked: Bool; if case .begin = action { locked = false } else { locked = true }
         do {
             try await validate(target, locked: locked, requireRoot: action.requiresBoundRoot)
-            let value = try await engine.prepareRemoteHistory(command)
+            let value = try await engine.prepareRemoteHistory(command, commandID: commandID, originalPayload: originalPayload)
             try await validate(target, locked: locked, requireRoot: action.requiresBoundRoot)
             return value
         } catch { throw Self.safe(error) }

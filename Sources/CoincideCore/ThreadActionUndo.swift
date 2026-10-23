@@ -91,6 +91,14 @@ public struct ThreadActionUndoClaim: Codable, Sendable, Equatable, Identifiable 
         case .client(.settleThread(let id, _, _)): kind = .settle; threadID = id
         case .client(.workspaceLifecycle(.snooze(let id, _))): kind = .snooze; threadID = id
         case .client(.discardComposerDraft(let discard)): kind = .discard; threadID = discard.expected.threadID
+        case .remoteEnvironment(let request, _):
+            switch request.command {
+            case .threadAction(.setPinned(let capture, false)): kind = .unpin; threadID = capture.target.threadID
+            case .threadAction(.setArchived(let capture, true)): kind = .archive; threadID = capture.target.threadID
+            case .lifecycle(let capture, .snooze): kind = .snooze; threadID = capture.target.threadID
+            case .lifecycle(let capture, .settleWithoutScript), .lifecycle(let capture, .settleReviewingScript): kind = .settle; threadID = capture.target.threadID
+            default: return nil
+            }
         default: return nil
         }
         guard let old = previous.threads.first(where: { $0.id == threadID }), let current = next.threads.first(where: { $0.id == threadID }),
@@ -159,6 +167,12 @@ final class ThreadActionUndoRegistry {
         prune(now: now)
         for id in Array(order) where records[id].map({ !$0.claim.isApplicable(to: snapshot) }) ?? true { remove(id) }
     }
+    func owned(by ownerID: UUID, now: Date) -> (claims: [ThreadActionUndoClaim], deadline: Date?) {
+        prune(now: now)
+        let result = order.compactMap { records[$0] }.filter { $0.claim.ownerID == ownerID }
+        return (result.map(\.claim), result.map(\.deadline).min())
+    }
+    func remove(ownerID: UUID) { for id in Array(order) where records[id]?.claim.ownerID == ownerID { remove(id) } }
     func consume(_ id: UUID) { remove(id) }
     func removeAll() { records.removeAll(); forwards.removeAll(); order.removeAll(); byteCount = 0 }
     private func prune(now: Date) { for id in Array(order) where records[id].map({ $0.deadline <= now }) ?? true { remove(id) } }

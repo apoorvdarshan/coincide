@@ -43,6 +43,7 @@ extension WorkspaceDecision {
         }
         let allIDs = snapshot.threads.compactMap(\.workspacePreparation).flatMap { $0.previousAttempts.map { $0.request.id } + [$0.id] }
         guard !allIDs.contains(request.id), !snapshot.cloneAttemptIDs.contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is already in use.") }
+        thread.draftWorkspaceIntent = nil
         thread.workspacePreparation = .init(request: request, now: now, previousAttempts: history, reviewSetup: reviewSetup)
         if let previous = thread.claudeRuntimeConfiguration {
             guard let captured = claudeRuntimeConfiguration,

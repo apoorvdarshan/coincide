@@ -6,7 +6,7 @@ public enum TranscriptToolKind: String, Sendable, CaseIterable {
 
 /// Only states the transcript actually proves. Codex command text carries no
 /// exit status, and an unfinished entity after its run ended is `unknown`.
-public enum TranscriptToolStatus: String, Sendable { case running, completed, failed, cancelled, unknown }
+public enum TranscriptToolStatus: String, Sendable { case running, completed, failed, cancelled, declined, unknown }
 
 public struct TranscriptTodo: Sendable, Equatable {
     public var text: String
@@ -55,15 +55,23 @@ public struct TranscriptToolContext: Sendable, Hashable {
 /// Codex `$ command` and `File changes` text, Claude `Name\n{input}` calls with
 /// `result-<id>` rows, and ACP/OpenCode/Pi/Muse/Antigravity `tool_call` entities.
 public enum TranscriptToolPresentation {
+    /// A presentation predicate only. Run/thread/lease ownership must still be
+    /// checked by the caller before merging a result into a call.
+    public static func isNativeClaudeToolResult(_ entity: ProviderEntity?, messageID: String, rootOnly: Bool = true) -> Bool {
+        ClaudeToolResultMetadata.matches(entity, messageID: messageID, rootOnly: rootOnly)
+    }
     public static func card(for message: ChatMessage, result: ChatMessage? = nil, context: TranscriptToolContext = .init()) -> TranscriptToolCard {
         var card: TranscriptToolCard
-        if let entity = message.providerEntity { card = entityCard(entity, context: context) }
+        if ClaudeToolResultMetadata.matches(message) {
+            card = .init(kind: .other, name: "result", title: String(localized: "Tool result"), status: ClaudeToolResultMetadata.outcome(message) ?? .unknown)
+            card.output = message.text.isEmpty ? nil : message.text
+        } else if let entity = message.providerEntity { card = entityCard(entity, context: context) }
         else if message.text.hasPrefix("$ ") { card = codexCommand(message.text, context: context) }
         else if message.text == "File changes" || message.text.hasPrefix("File changes\n") { card = codexFileChange(message.text) }
         else if message.id.hasPrefix("acp-"), message.id.hasSuffix("-plan") {
             card = .init(kind: .todo, name: "plan", title: "Updated plan", status: .completed); card.todos = checklist(message.text)
         } else if message.id.hasPrefix("result-") && result == nil {
-            card = .init(kind: .other, name: "result", title: String(localized: "Tool result"), status: .completed); card.output = message.text
+            card = .init(kind: .other, name: "result", title: String(localized: "Tool result"), status: .unknown); card.output = message.text
         } else if context.provider == .claude || claudeShaped(message.text) { card = claudeCard(message.text, result: result, context: context) }
         else {
             let (head, rest) = split(message.text)
@@ -77,10 +85,9 @@ public enum TranscriptToolPresentation {
     // MARK: Codex text forms
 
     static func codexCommand(_ text: String, context: TranscriptToolContext) -> TranscriptToolCard {
-        let (head, rest) = split(text)
-        let command = String(head.dropFirst(2))
-        var card = TranscriptToolCard(kind: .command, name: "commandExecution", subject: command, status: context.trailing ? .running : .unknown)
-        card.output = rest.isEmpty ? nil : rest
+        let parsed = TranscriptCommandParser.parse(text)
+        var card = TranscriptToolCard(kind: .command, name: "commandExecution", subject: parsed.command, status: context.trailing ? .running : .unknown)
+        card.output = parsed.output
         return card
     }
 
@@ -116,13 +123,18 @@ public enum TranscriptToolPresentation {
         case "Read": card.kind = .read; card.subject = string("file_path", "path")
         case "Edit":
             card.kind = .edit; card.subject = string("file_path")
-            if let path = card.subject { card.changes = [TranscriptLineDiff.change(path: path, old: input["old_string"].string ?? "", new: input["new_string"].string ?? "")] }
+            if let path = card.subject {
+                var change = TranscriptLineDiff.change(path: path, old: input["old_string"].string ?? "", new: input["new_string"].string ?? "")
+                if input["replace_all"] == .bool(true) || input["old_string"].string == nil || input["new_string"].string == nil { change.countsComplete = false }
+                card.changes = [change]
+            }
         case "MultiEdit":
             card.kind = .edit; card.subject = string("file_path")
             if let path = card.subject, let edits = input["edits"].array {
                 var combined = TranscriptFileChange(path: path)
                 for edit in edits.prefix(256) {
-                    let change = TranscriptLineDiff.change(path: path, old: edit["old_string"].string ?? "", new: edit["new_string"].string ?? "")
+                    var change = TranscriptLineDiff.change(path: path, old: edit["old_string"].string ?? "", new: edit["new_string"].string ?? "")
+                    if edit["replace_all"] == .bool(true) || edit["old_string"].string == nil || edit["new_string"].string == nil { change.countsComplete = false }
                     guard combined.lineCount + change.lineCount <= TranscriptPatch.maximumLines else {
                         combined.isTruncated = true; combined.countsComplete = false; break
                     }
@@ -130,15 +142,21 @@ public enum TranscriptToolPresentation {
                     combined.isTruncated = combined.isTruncated || change.isTruncated
                     combined.countsComplete = combined.countsComplete && change.countsComplete
                 }
+                if edits.count > 256 { combined.isTruncated = true; combined.countsComplete = false }
                 card.changes = [combined]
             }
         case "Write":
             card.kind = .edit; card.subject = string("file_path")
-            if let path = card.subject { card.changes = [TranscriptLineDiff.change(path: path, old: nil, new: input["content"].string ?? "", kind: .modified, numbered: true)] }
+            if let path = card.subject {
+                var change = TranscriptLineDiff.change(path: path, old: nil, new: input["content"].string ?? "", kind: .modified, numbered: true)
+                change.countsComplete = false; card.changes = [change]
+            }
             card.title = card.subject.map { String(localized: "Wrote \(relative($0, to: context.workspacePath))") } ?? ""
         case "NotebookEdit":
             card.kind = .edit; card.subject = string("notebook_path")
-            if let path = card.subject { card.changes = [TranscriptLineDiff.change(path: path, old: nil, new: input["new_source"].string ?? "", kind: .modified)] }
+            // Cell source does not describe a whole notebook-file replacement.
+            // Keep the literal input/output and path, without invented diff rows.
+            card.paths = card.subject.map { [$0] } ?? []
         case "Grep", "Glob", "LS":
             card.kind = .search; card.subject = name == "LS" ? string("path") : string("pattern")
             card.detail = name == "LS" ? nil : string("path", "glob")
@@ -155,15 +173,24 @@ public enum TranscriptToolPresentation {
                 card.subject = parts.count >= 2 ? parts[0] + " · " + parts.dropFirst().joined(separator: "__") : String(name.dropFirst(5))
             } else { card.kind = inferredKind(name: name, input: input) ?? .other; card.subject = subject(for: card.kind, input: input) }
         }
-        card.paths = card.changes.map(\.path) + (card.kind == .read ? card.subject.map { [$0] } ?? [] : [])
+        card.paths += card.changes.map(\.path) + (card.kind == .read ? card.subject.map { [$0] } ?? [] : [])
         if let result {
-            var output = result.text
-            if let range = output.range(of: "<tool_use_error>") {
-                card.status = .failed
-                output = output.replacingCharacters(in: range, with: "").replacingOccurrences(of: "</tool_use_error>", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            } else { card.status = .completed }
+            let typed = ClaudeToolResultMetadata.outcome(result)
+            let wrapped = ClaudeToolResultMetadata.wrappedError(result.text)
+            if let typed { card.status = typed }
+            else if ClaudeToolResultMetadata.isExplicitDecline(result.text) { card.status = .declined }
+            else if wrapped != nil { card.status = .failed }
+            else if let path = card.subject, (name == "Edit" || name == "MultiEdit" || name == "Write"),
+                    result.text.trimmingCharacters(in: .whitespacesAndNewlines).utf8.elementsEqual(("The file " + path + " has been updated successfully.").utf8) { card.status = .completed }
+            else { card.status = .unknown }
+            let output = card.status == .failed || card.status == .declined ? (wrapped ?? result.text) : result.text
             card.output = output.isEmpty ? nil : output
+            if name == "Write", let path = card.subject, let contents = input["content"].string,
+               card.status != .failed, card.status != .declined, card.status != .cancelled,
+               result.text.trimmingCharacters(in: .whitespacesAndNewlines).utf8.elementsEqual(("File created successfully at: " + path).utf8) {
+                card.status = .completed
+                card.changes = [TranscriptLineDiff.change(path: path, old: nil, new: contents, kind: .added, numbered: true)]
+            }
         } else if card.kind == .plan || card.kind == .todo {
             card.status = .completed
         } else { card.status = context.runActive ? .running : .unknown }
@@ -181,7 +208,15 @@ public enum TranscriptToolPresentation {
                 card.todos = entries.prefix(512).map { .init(text: $0["content"].string ?? "", status: $0["status"].string ?? "pending") }
                 return card
             }
-            var card = TranscriptToolCard(kind: .plan, name: "plan", title: String(localized: "Proposed plan"), status: .completed)
+            let status: TranscriptToolStatus
+            if fields["nativeKind"].string == "proposed_plan" {
+                switch fields["status"].string {
+                case "completed": status = .completed
+                case "in_progress": status = .running
+                default: status = .unknown
+                }
+            } else { status = .completed }
+            var card = TranscriptToolCard(kind: .plan, name: "plan", title: String(localized: "Proposed plan"), status: status)
             card.plan = fields["content"].string ?? contentText(fields["content"].array ?? [])
             return card
         case "terminal":
@@ -251,7 +286,8 @@ public enum TranscriptToolPresentation {
         switch value {
         case "completed", "success": .completed
         case "failed", "error": .failed
-        case "cancelled", "canceled", "interrupted", "declined": .cancelled
+        case "cancelled", "canceled", "interrupted": .cancelled
+        case "declined", "denied", "rejected": .declined
         case "pending", "in_progress", "inProgress", "running": context.runActive ? .running : .unknown
         default: context.trailing ? .running : .unknown
         }

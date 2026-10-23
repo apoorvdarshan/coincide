@@ -72,8 +72,33 @@ public actor RemoteEnvironmentService {
         self.dataDirectory = dataDirectory; self.label = label; self.options = options; self.providerFactory = providerFactory; self.driverFactory = driverFactory
         self.projectScriptFactory = projectScriptFactory
     }
+    private var threadActionsService: RemoteThreadActionsService?
+    private func threadActions() async throws -> RemoteThreadActionsService {
+        if let threadActionsService { return threadActionsService }
+        let engine = try await workspace(), workspace = try await workspaceOperations()
+        try require(environmentID)
+        if let threadActionsService { return threadActionsService }
+        let value = RemoteThreadActionsService(environmentID: environmentID, hostID: composerHostID, engine: engine, workspace: workspace)
+        threadActionsService = value; return value
+    }
+    public func readThreadActions(_ request: RemoteThreadActionsReadRequest) async throws -> RemoteThreadActionsReadResult { try require(request.environmentID); return try await (try await threadActions()).read(request) }
+    public func releaseThreadActions(_ request: RemoteThreadActionsReleaseRequest) async throws -> RemoteThreadActionsReleaseResult { try require(request.binding.environmentID); return await (try await threadActions()).release(request) }
+    private var steeringService: RemoteSteeringService?
+    private func steering() async throws -> RemoteSteeringService {
+        if let steeringService { return steeringService }
+        let engine = try await workspace(), workspace = try await workspaceOperations()
+        try require(environmentID)
+        if let steeringService { return steeringService }
+        let value = RemoteSteeringService(environmentID: environmentID, hostID: composerHostID, engine: engine, workspace: workspace)
+        steeringService = value; return value
+    }
+    public func readSteering(_ request: RemoteSteeringReadRequest) async throws -> RemoteSteeringReadResult { try require(request.target.environmentID); return try await (try await steering()).read(request) }
+    public func steeringPage(_ request: RemoteSteeringPageRequest) async throws -> RemoteSteeringPage { try require(request.target.environmentID); return try await (try await steering()).page(request) }
+    public func steeringContent(_ request: RemoteSteeringContentRequest) async throws -> RemoteSteeringContentResult { try require(request.target.environmentID); return try await (try await steering()).content(request) }
+    public func releaseSteering(_ request: RemoteSteeringReleaseRequest) async throws -> RemoteSteeringReleaseResult { try require(request.target.environmentID); return await (try await steering()).release(request) }
+    private let composerHostID = UUID()
     public func descriptor() -> RemoteEnvironmentDescriptor {
-        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true, supportsRemoteHistory: true, supportsContextTransfers: true, supportsWorkspaceLifecycleControls: true, supportsReviewedSettleScripts: projectScriptFactory != nil, supportsTranscriptPlanImplementation: true))
+        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil, supportsBoundedProjections: true, supportsRemoteHistory: true, supportsContextTransfers: true, supportsWorkspaceLifecycleControls: true, supportsReviewedSettleScripts: projectScriptFactory != nil, supportsTranscriptPlanImplementation: true, supportsTranscriptPlanNewConversation: true, supportsRemoteComposerDraftSelection: true, supportsRemotePromptSteering: true, supportsRemoteThreadActions: true, supportsRemoteQueueManagement: true), hostID: composerHostID)
     }
     private func require(_ id: UUID) throws {
         guard id == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
@@ -123,7 +148,7 @@ public actor RemoteEnvironmentService {
         try require(request.environmentID)
         do {
             let engine = try await workspace(), receipt = try await engine.remoteEnvironmentReceipt(request)
-            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request) }
+            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
             return .init(environmentID: environmentID, receipt: receipt)
         } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
     }
@@ -132,21 +157,21 @@ public actor RemoteEnvironmentService {
         _ = try RemoteEnvironmentProtocol.payload(request)
         let engine = try await workspace()
         var inspected: RemoteEnvironmentPreparation?
-        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isLifecycleCommand || request.command.isProjectScriptCommand {
+        if request.undoOwner != nil || request.command.isThreadActionCommand || request.command.isSteeringCommand || request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isLifecycleCommand || request.command.isProjectScriptCommand {
             do {
                 if let receipt = try await engine.remoteEnvironmentReceipt(request) {
-                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request) }
+                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
                     return .init(environmentID: environmentID, receipt: receipt)
                 }
             } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
             // Saved-plan inspection can wait for native Git. It owns a bounded
             // task in Engine, outside the short command/mutation admission lane.
-            do { try validate(request.command); inspected = try await prepare(request.command, engine: engine) }
+            do { try validate(request.command); inspected = try await prepare(request.command, engine: engine, commandID: request.id, originalPayload: RemoteEnvironmentProtocol.payload(request)) }
             catch is CancellationError { throw CancellationError() }
             catch { inspected = .refused }
         }
         let result = try await commitCommand(request, engine: engine, inspected: inspected)
-        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request) }
+        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
         return result
     }
     private func commitCommand(_ request: RemoteEnvironmentCommandRequest, engine: WorkspaceEngine,
@@ -165,7 +190,14 @@ public actor RemoteEnvironmentService {
                 try await workspaceService?.admitConversationCommand(request.command)
                 try validate(request.command)
                 if let inspected { preparation = inspected }
-                else { preparation = try await prepare(request.command, engine: engine) }
+                else { preparation = try await prepare(request.command, engine: engine, commandID: request.id, originalPayload: RemoteEnvironmentProtocol.payload(request)) }
+                if case .threadActions(let prepared) = preparation {
+                    let workspace = try await workspaceOperations()
+                    for target in prepared.targets {
+                        try await workspace.validateCheckpointTarget(target, allowLocked: false)
+                        try await workspace.admitConversationCommand(.resumeQueue(threadID: target.threadID, expectedConfiguration: target.configuration))
+                    }
+                }
                 if case .lifecycle(let prepared) = preparation, prepared.requiresBoundRoot, let target = prepared.target {
                     let workspace = try await workspaceOperations()
                     try await workspace.validateCheckpointTarget(target, allowLocked: false)
@@ -180,11 +212,11 @@ public actor RemoteEnvironmentService {
                     if case .projectScript(_, .retry) = request.command { excluding = prepared.target.threadID } else { excluding = nil }
                     try await workspace.admitProjectScriptScope(target: prepared.target, scope: prepared.scope, excludingManagedScriptThreadID: excluding)
                 }
-                if case .transcriptPlan(let prepared) = preparation {
-                    guard case .implementTranscriptPlan(let target, _, _, _) = request.command else { throw RemoteEnvironmentError(.invalidRequest) }
+                if case .transcriptPlan = preparation {
+                    guard let target = request.command.transcriptPlanCommand?.target else { throw RemoteEnvironmentError(.invalidRequest) }
                     let workspace = try await workspaceOperations()
                     try await workspace.validateCheckpointTarget(target, allowLocked: false)
-                    try await workspace.admitConversationCommand(.resumeQueue(threadID: prepared.threadID, expectedConfiguration: prepared.expectedConfiguration))
+                    try await workspace.admitConversationCommand(request.command)
                 }
                 if case .contextTransfer(let prepared) = preparation { try await (try await contexts()).validatePreparation(prepared) }
                 if case .history(let prepared) = preparation {
@@ -609,7 +641,7 @@ public actor RemoteEnvironmentService {
         _ = try RemoteEnvironmentProtocol.encode(value)
         return value
     }
-    private func prepare(_ command: RemoteEnvironmentCommand, engine: WorkspaceEngine) async throws -> RemoteEnvironmentPreparation {
+    private func prepare(_ command: RemoteEnvironmentCommand, engine: WorkspaceEngine, commandID: UUID, originalPayload: Data) async throws -> RemoteEnvironmentPreparation {
         switch command {
         case .addProject(let id, let path, let title):
             var isDirectory: ObjCBool = false
@@ -633,23 +665,29 @@ public actor RemoteEnvironmentService {
                 try captured.validate(); thread.codexRuntimeConfiguration = captured
             }
             return .thread(thread)
-        case .implementTranscriptPlan(let target, let binding, let messageID, let presentation):
-            return .transcriptPlan(try await (try await projections()).prepareTranscriptPlanImplementation(target: target, binding: binding, messageID: messageID, presentation: presentation))
+        case .implementTranscriptPlan, .implementTranscriptPlanInNewConversation:
+            guard let plan = command.transcriptPlanCommand else { throw RemoteEnvironmentError(.invalidRequest) }
+            return .transcriptPlan(try await (try await projections()).prepareTranscriptPlanImplementation(target: plan.target,
+                binding: plan.binding, messageID: plan.messageID, presentation: plan.presentation, destination: plan.destination,
+                commandID: commandID, originalPayload: originalPayload))
         case .prepareWorktree(let target, let sourceRootID, let expectedAttemptID, _, _):
             let identity = try await (try await workspaceOperations()).validateWorktreeSource(target, sourceRootID: sourceRootID, expectedAttemptID: expectedAttemptID)
             return try await engine.prepareRemoteWorktree(command, expectedSourceIdentity: identity)
         case .retryWorktree, .inspectWorktree:
             return try await engine.prepareRemoteWorktree(command)
-        case .submitWithAttachments:
+        case .threadAction(let action): return .threadActions(try await (try await threadActions()).prepare(commandID: commandID, action: action))
+        case .promptSteering(let target, let action):
+            return .steering(try await (try await steering()).prepare(commandID: commandID, target: target, action: action))
+        case .submitWithAttachments, .submitComposerDraft:
             return try await engine.prepareRemoteAttachmentSubmission(command)
         case .pullRequest:
             return try await (try await pullRequests()).prepare(command)
         case .checkpoint:
             return try await (try await checkpoints()).prepare(command)
         case .history:
-            return try await (try await history()).prepare(command)
+            return try await (try await history()).prepare(command, commandID: commandID, originalPayload: originalPayload)
         case .contextTransfer:
-            return try await (try await contexts()).prepare(command)
+            return try await (try await contexts()).prepare(command, commandID: commandID, originalPayload: originalPayload)
         case .lifecycle(let capture, let action):
             return .lifecycle(try await (try await lifecycles()).prepare(capture, action: action))
         case .lifecyclePolicy(let policy, let expected):
@@ -676,7 +714,10 @@ public actor RemoteEnvironmentService {
             case .title(let value): try text(value, maximum: 512)
             case .model(let value): try text(value, maximum: 512, allowEmpty: true)
             case .permission, .checkpointPolicy: break }
-        case .implementTranscriptPlan(let target, let binding, let messageID, let presentation):
+        case .implementTranscriptPlan, .implementTranscriptPlanInNewConversation:
+            guard let plan = command.transcriptPlanCommand else { throw RemoteEnvironmentError(.invalidRequest) }
+            let target = plan.target, binding = plan.binding, messageID = plan.messageID, presentation = plan.presentation
+            guard plan.destination?.threadID != target.threadID else { throw RemoteEnvironmentError(.invalidRequest) }
             guard target.environmentID == environmentID, binding.environmentID == environmentID,
                   binding.scope == .thread(target.threadID), presentation.kind == .transcriptPresentation,
                   presentation.totalBytes > 0, presentation.totalBytes <= RemoteProjectionProtocol.maximumCacheBytes,
@@ -699,6 +740,16 @@ public actor RemoteEnvironmentService {
             if case .approve(let claim) = action {
                 guard RemoteLifecycleProtocol.same(claim.target, target), RemoteLifecycleProtocol.validDigest(claim.digest) else { throw RemoteProjectScriptFailure(.staleReview) }
             }
+        case .threadAction(let action):
+            guard action.binding.environmentID == environmentID, action.binding.hostID == composerHostID else { throw RemoteEnvironmentError(.invalidRequest) }
+        case .promptSteering(let target, let action):
+            guard target.environmentID == environmentID, action.capture.binding.environmentID == environmentID,
+                  action.capture.binding.hostID == composerHostID, action.capture.binding.threadID == target.threadID,
+                  !action.requiresRoot || target.rootID != nil else { throw RemoteEnvironmentError(.invalidRequest) }
+            if case .steerComposer(_, let input) = action { guard input.hostID == composerHostID else { throw RemoteEnvironmentError(.invalidRequest) }; try input.validate() }
+        case .submitComposerDraft(let input):
+            guard input.target.environmentID == environmentID, input.hostID == composerHostID else { throw RemoteAttachmentFailure(.invalidTarget) }
+            try input.validate()
         case .submitWithAttachments(let target, let value, _, let draft, let uploaded):
             guard target.environmentID == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
             try text(value, maximum: 120_000, allowEmpty: !draft.isEmpty || !uploaded.isEmpty)
@@ -762,9 +813,11 @@ public actor RemoteEnvironmentService {
         let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
         for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
         let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService, checkpointService = checkpointService, historyService = historyService, contextService = contextService, projectionService = projectionService
-        let lifecycleService = lifecycleService, projectScriptService = projectScriptService
+        let lifecycleService = lifecycleService, projectScriptService = projectScriptService, steeringService = steeringService, threadActionsService = threadActionsService
         for task in subscriptions { task.cancel() }
         let task = Task {
+            await threadActionsService?.close()
+            await steeringService?.close()
             await lifecycleService?.close()
             await projectScriptService?.close()
             await terminalService?.close()
@@ -785,6 +838,8 @@ public actor RemoteEnvironmentService {
 }
 
 extension RemoteEnvironmentCommand {
+    var isThreadActionCommand: Bool { if case .threadAction = self { return true }; return false }
+    var isSteeringCommand: Bool { if case .promptSteering = self { return true }; return false }
     var isProjectScriptCommand: Bool { if case .projectScript = self { true } else { false } }
     var isLifecycleCommand: Bool { switch self { case .lifecycle, .lifecyclePolicy: true; default: false } }
     var isContextTransferCommand: Bool { if case .contextTransfer = self { true } else { false } }
@@ -798,6 +853,7 @@ extension RemoteEnvironmentCommand {
     }
     var preparesAttachments: Bool {
         if case .submitWithAttachments = self { return true }
+        if case .submitComposerDraft = self { return true }
         return false
     }
 }

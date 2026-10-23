@@ -620,3 +620,93 @@ machine refusing before credential consumption. Current tests and results are
 recorded in [VALIDATION.md](VALIDATION.md); native form/window interaction runs
 only in hosted GUI CI. No remote infrastructure or authentication has been
 changed by the local implementation checks.
+
+## Remote composer drafts
+
+Updated helpers advertise `supportsRemoteComposerDraftSelection`. Both projected and legacy remote conversations use the native composer for large-paste folding (32 KiB UTF-8), Paste as Text, verified text-attachment expansion, and a private 20-entry prompt stash. Stash and pop change the draft only; they never start a provider. Host references are downloaded through captured attachment access and kept as verified private copies before a stash clears them. Remote paths are never resolved on this Mac.
+
+Local draft mutations have original UUID receipts and exact text/reference CAS. Pending mutations retain their environment, helper, thread birth, project, raw workspace and configuration scope. Receipt checks do not repeat mutations. Model/configuration advances preserve the current local draft while invalidating old operations. Drafts from older helper sessions remain available for explicit copying into the current draft; missing private bytes refuse restoration and preserve the source.
+
+Selected sends use the additive `submitComposerDraft` lane. It checks the host draft hash, native reference bytes, captured configuration and conversation/project birth before native input capture. Attachment order is explicit. Unselected host references remain in the host composer, and later local text/references are kept when an accepted receipt is reconciled. Old helper command payloads are unchanged; selected-reference sends fail closed without the capability.
+
+Per environment, private composer metadata is limited to 16 MiB, 256 scoped draft records and 4,096 mutation receipts/copy references; immutable private copies have a 512 MiB aggregate budget. Limits refuse new writes and keep existing data. Uploads keep the existing bounded chunk protocol and explicit uncertain-result checks. Closing owns and drains reads and accepted local writes.
+
+### Active steering and queued-input editing
+
+Helpers advertising `supportsRemotePromptSteering` expose bounded, leased
+steering reads (`remoteEnvironment.steering.read/page/content/release`). Queue
+rows and delivery history are proof-free summaries; full text and attachment
+metadata are immutable references with byte counts and SHA-256 digests. Views
+are limited to eight and a shared 128 MiB of encoded metadata/content, including
+reserved cursor metadata. Every response reserves JSON-RPC envelope space within
+256 KiB. Cursor kind, offset, total, exact source binding and repeated reply
+bytes are checked. A stale or evicted view must be refreshed.
+
+The closed `promptSteering` command is separate from Submit. Composer steering
+captures the original active run, runtime and settings on the host, then uses
+the existing native `PromptSteeringOperation` effect. Promoting a queued input
+retains its original identity, attachments and captured settings. The sole
+outer command UUID owns the durable receipt; duplicate commands and receipt
+inspection after reconnect never send another steer or provider turn. Native
+proven-unsent handling remains native behavior. Unknown delivery is retained,
+holds the queue, and offers explicit acknowledgment without replay. Metadata
+reads and acknowledgment remain available when the physical checkout is gone.
+
+Queued edits replace only the exact reviewed queue item through
+`QueuedInputReplacement`. Its complete original digest, thread birth, project,
+raw workspace path and settings are checked again at commit. Text and selected
+ordered attachment references change together; the queued configuration,
+context reservations and active unsent composer remain intact. Reserved native
+follow-ups and already-captured context deliveries refuse in-place editing.
+Both native and remote queue panels open independent editors. Remote reference
+bytes are read only through the captured `AttachmentAccess`, copied privately
+for stashes, and uploaded under the existing bounded attachment protocol.
+Queued-editor upload caches are separate from the active composer's cache,
+including after an uncertain write, helper restart and receipt acknowledgment.
+
+The legacy remote renderer and bounded projected renderer mount the same
+composer and queue controls. Older helpers make no steering RPC or Submit
+fallback. Local composer writes and accepted host writes keep their original
+receipts; cancellation joins owned reads and releases the original leases.
+Remote queue removal/reordering and remote manual Plan/Default controls remain
+separate work; these controls do not claim either capability.
+
+### Remote metadata, archive browsing and Undo
+
+`supportsRemoteThreadActions` advertises host-captured Pin/Unpin and
+Archive/Unarchive, plus grouped conversation Undo. The remote sidebar can
+include archived conversations using the existing bounded catalog query;
+pinned conversations sort first with stable ordering within each group. An
+archived conversation keeps its local draft, private attachment copies, upload
+recovery, queue and transcript. Unarchiving and Undo never replay a prompt.
+
+A helper-issued window lease owns immutable metadata captures. The host checks
+its native thread incarnation, project/thread birth, exact raw paths and
+configuration, run/runtime IDs, and expected metadata before committing the
+normal native action. Stop an active turn before archiving, as required by the native action. Archive acknowledgment joins only the exact captured
+runtime retirement; replaying an old receipt cannot drain a replacement.
+
+Optional `undoOwner` request metadata is omitted for legacy requests. It assigns
+only claims created from genuinely committed before/after decisions, including
+manual remote lifecycle snooze and immediately settled actions, to the window
+that initiated them. Native inverse payloads stay on the host. The client sees
+only bounded group/claim IDs, an identity digest and a remaining lifetime. Five
+seconds is enforced at the native Engine admission gate before its awaited
+SQLite commit; an already admitted action may finish while SQLite waits.
+Repeated original accepted UUIDs remain inspectable after expiry or helper
+restart. A new request cannot reuse an expired, foreign or consumed group.
+
+The notice consumes its exact current group before awaiting transport. The
+shared keyboard dispatcher owns the event once and checks the original key
+window, sheets, terminal focus and IME. An intervening text edit returns Cmd-Z
+to native text Undo; the explicit notice can still undo applicable metadata.
+Claims are ephemeral and do not survive helper restart. No client-authored
+inverse, file restoration, Git operation or provider-input replay is implied.
+
+`supportsRemoteQueueManagement` separately advertises removal and reordering.
+Commands carry the original host capture and a digest of every queued input's
+full native revision. The host derives the actual native order and invokes its
+existing queue primitives; text/settings/reference changes refuse a stale
+request even if the UUID order stayed the same. These metadata controls can
+recover a queue without inventing physical checkout authority. Older helpers
+perform no new read or mutation RPC for either capability.

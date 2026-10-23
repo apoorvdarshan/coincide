@@ -125,6 +125,13 @@ public enum WorkspaceJournal {
         try snapshot.validateConversationHistory()
         try snapshot.validateConversationHistoryFilesLedger()
         try snapshot.validateCheckpointRestores()
+        let scratchProjects = snapshot.projects.filter { $0.scratch != nil }
+        guard scratchProjects.count <= 1 else { throw ScratchWorkspaceError() }
+        for project in scratchProjects { guard project.scratch?.validates(project) == true else { throw ScratchWorkspaceError() } }
+        for thread in snapshot.threads where thread.scratchWorkspace != nil || scratchProjects.contains(where: { $0.id == thread.projectID }) {
+            guard let project = snapshot.projects.first(where: { $0.id == thread.projectID }),
+                  thread.scratchWorkspace?.validates(thread: thread, project: project) == true else { throw ScratchWorkspaceError() }
+        }
         var cloneIDs: Set<UUID> = []
         for project in snapshot.projects {
             try validateRepositoryIdentity(project.repositoryIdentity, project: project)
@@ -247,7 +254,7 @@ public enum WorkspaceJournal {
                 metadata.draft.utf8.elementsEqual($0.draft.utf8) && metadata.title.utf8.elementsEqual($0.title.utf8) &&
                     metadata.workspacePath.utf8.elementsEqual($0.workspacePath.utf8) && ComposerDraftSnapshot.sameAttachments(metadata.draftAttachments, $0.draftAttachments)
             } ?? false
-            if metadata != oldMetadata || importedUpdate || !exactMetadata { events.append(.threadMetadataUpserted(metadata)) }
+            if metadata != oldMetadata || importedUpdate || !exactMetadata || !QueuedInputReplacement.sameContent(metadata.queuedTurns, oldMetadata?.queuedTurns ?? []) { events.append(.threadMetadataUpserted(metadata)) }
             let oldMessages = oldThreads[thread.id]?.messages ?? []
             if thread.messages.count < oldMessages.count { events.append(.messagesTruncated(threadID: thread.id, count: thread.messages.count)) }
             for (index, message) in thread.messages.enumerated() {

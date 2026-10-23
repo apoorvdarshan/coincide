@@ -44,6 +44,7 @@ actor RemoteWorkspaceService {
               !snapshot.isPullRequestCheckoutLocked(path: target.workspacePath),
               !snapshot.isPullRequestCreationLocked(path: target.workspacePath),
               !snapshot.isConversationHistoryLocked(threadID: thread.id) else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        if thread.scratchWorkspace != nil { try await engine.validateScratchWorkspace(threadID: thread.id, workspacePath: target.workspacePath) }
         if mutating {
             try await admitManagedScriptScope([target.workspacePath])
             guard !hasRunningWorktree(at: target.workspacePath, snapshot: snapshot) else { throw RemoteWorkspaceFailure(.busy) }
@@ -448,10 +449,23 @@ actor RemoteWorkspaceService {
             guard let thread = snapshot.threads.first(where: { $0.id == id }) else { return }
             paths = [thread.workspacePath]
             inputOwnerID = id
+        case .promptSteering(let target, let action):
+            switch action { case .acknowledge, .removeQueued, .moveQueued: return; default: break }
+            try await validateCheckpointTarget(target, allowLocked: false)
+            paths = [target.workspacePath]; inputOwnerID = target.threadID
+        case .submitComposerDraft(let input):
+            guard let thread = snapshot.threads.first(where: { $0.id == input.target.threadID }) else { return }
+            paths = [thread.workspacePath]; inputOwnerID = thread.id
         case .submitWithAttachments(let target, _, _, _, _):
             guard let thread = snapshot.threads.first(where: { $0.id == target.threadID }) else { return }
             paths = [thread.workspacePath]
             inputOwnerID = thread.id
+        case .implementTranscriptPlan(let target, _, _, _):
+            paths = [target.workspacePath]; inputOwnerID = target.threadID
+        case .implementTranscriptPlanInNewConversation(let target, _, _, _, _):
+            // A fresh conversation does not inherit the source conversation's
+            // permission to coexist with its own managed setup/script job.
+            paths = [target.workspacePath]; inputOwnerID = nil
         case .prepareWorktree(let target, let sourceRootID, let attemptID, let selection, _):
             try await validateWorktreeSource(target, sourceRootID: sourceRootID, expectedAttemptID: attemptID)
             guard let source = roots[sourceRootID] else { throw RemoteWorkspaceFailure(.staleRoot) }

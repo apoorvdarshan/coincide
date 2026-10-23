@@ -13,11 +13,12 @@ public struct GitWorktreeRequest: Codable, Sendable, Equatable {
     public let selection: GitWorktreeSelection
     public let submodules: ProjectWorktreeSubmoduleMode
     public let expectedSourceIdentity: GitWorktreeNodeIdentity?
+    public let automaticBase: GitWorktreeAutomaticBase?
     public init(id: UUID = UUID(), sourcePath: String, destinationRoot: String, selection: GitWorktreeSelection,
-                submodules: ProjectWorktreeSubmoduleMode = .none, expectedSourceIdentity: GitWorktreeNodeIdentity? = nil) {
+                submodules: ProjectWorktreeSubmoduleMode = .none, expectedSourceIdentity: GitWorktreeNodeIdentity? = nil, automaticBase: GitWorktreeAutomaticBase? = nil) {
         self.id = id; self.sourcePath = sourcePath; self.destinationRoot = destinationRoot; self.selection = selection
         self.submodules = submodules
-        self.expectedSourceIdentity = expectedSourceIdentity
+        self.expectedSourceIdentity = expectedSourceIdentity; self.automaticBase = automaticBase
     }
     public var destinationPath: String {
         if case .reuse(let path) = selection { return path }
@@ -26,6 +27,13 @@ public struct GitWorktreeRequest: Codable, Sendable, Equatable {
     public func validate() throws {
         try WorktreeValidation.path(sourcePath); try WorktreeValidation.path(destinationRoot)
         if let expectedSourceIdentity, expectedSourceIdentity.inode == 0 { throw WorktreeValidation.invalid("The worktree source identity is invalid.") }
+        if let automaticBase {
+            try automaticBase.sourceProof.validate(); try WorktreeValidation.branch(automaticBase.branch)
+            guard case .createBranch = selection,
+                  expectedSourceIdentity == automaticBase.sourceProof.sourceIdentity else {
+                throw WorktreeValidation.invalid("The automatic base is not owned by this source checkout.")
+            }
+        }
         switch selection {
         case .createBranch(let name, let baseRef):
             try WorktreeValidation.branch(name)
@@ -39,13 +47,14 @@ public struct GitWorktreeRequest: Codable, Sendable, Equatable {
             guard submodules == .none else { throw WorktreeValidation.invalid("Registered-worktree reuse does not initialize or change its submodules.") }
         }
     }
-    private enum CodingKeys: String, CodingKey { case id, sourcePath, destinationRoot, selection, submodules, expectedSourceIdentity }
+    private enum CodingKeys: String, CodingKey { case id, sourcePath, destinationRoot, selection, submodules, expectedSourceIdentity, automaticBase }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(id: try c.decode(UUID.self, forKey: .id), sourcePath: try c.decode(String.self, forKey: .sourcePath),
                   destinationRoot: try c.decode(String.self, forKey: .destinationRoot), selection: try c.decode(GitWorktreeSelection.self, forKey: .selection),
                   submodules: c.contains(.submodules) ? try c.decode(ProjectWorktreeSubmoduleMode.self, forKey: .submodules) : .none,
-                  expectedSourceIdentity: try c.decodeIfPresent(GitWorktreeNodeIdentity.self, forKey: .expectedSourceIdentity))
+                  expectedSourceIdentity: try c.decodeIfPresent(GitWorktreeNodeIdentity.self, forKey: .expectedSourceIdentity),
+                  automaticBase: try c.decodeIfPresent(GitWorktreeAutomaticBase.self, forKey: .automaticBase))
         try validate()
     }
 }

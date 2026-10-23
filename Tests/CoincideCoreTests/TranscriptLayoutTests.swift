@@ -19,10 +19,13 @@ private struct LayoutFixture {
         thread.runHistory = (thread.runHistory ?? []) + [record]
         return id
     }
-    mutating func add(_ id: String, _ role: MessageRole, _ text: String, run: UUID?, at offset: TimeInterval) {
+    mutating func add(_ id: String, _ role: MessageRole, _ text: String, run: UUID?, at offset: TimeInterval, resultError: Bool? = nil) {
         var message = ChatMessage(id: id, role: role, text: text)
         message.createdAt = start + offset
         message.runReference = run.map { .init(threadID: thread.id, runID: $0) }
+        if let resultError, id.hasPrefix("result-") {
+            message.providerEntity = ClaudeToolResultMetadata.entity(block: .object(["tool_use_id": .string(String(id.dropFirst(7))), "is_error": .bool(resultError)]), sessionID: "controlled-native", parent: nil)
+        }
         thread.messages.append(message)
     }
 }
@@ -47,7 +50,7 @@ private func kinds(_ rows: [TranscriptRow]) -> [String] {
     f.add("u1", .user, "Fix it", run: run, at: 0)
     f.add("r1", .reasoning, "**Looking**", run: run, at: 2)
     f.add("toolu_1", .tool, bash("swift test"), run: run, at: 3)
-    f.add("result-toolu_1", .tool, "1 failure", run: run, at: 9)
+    f.add("result-toolu_1", .tool, "1 failure", run: run, at: 9, resultError: false)
     f.add("a1", .assistant, "Let me fix that.", run: run, at: 10)
     f.add("toolu_2", .tool, "Edit\n" + JSONValue.object(["file_path": .string("/tmp/coincide-layout/a.swift"), "old_string": .string("a"), "new_string": .string("b")]).pretty, run: run, at: 11)
     f.add("a2", .assistant, "Fixed.", run: run, at: 130)
@@ -76,7 +79,7 @@ private func kinds(_ rows: [TranscriptRow]) -> [String] {
     let run = f.run(.running, opening: "u1", start: 10, seconds: nil)
     f.add("u1", .user, "Go", run: run, at: 10)
     f.add("toolu_a", .tool, bash("make"), run: run, at: 11)
-    f.add("result-toolu_a", .tool, "ok", run: run, at: 12)
+    f.add("result-toolu_a", .tool, "ok", run: run, at: 12, resultError: false)
     f.add("toolu_b", .tool, "Read\n" + JSONValue.object(["file_path": .string("/x")]).pretty, run: run, at: 13)
     let rows = TranscriptLayout.rows(thread: f.thread)
     #expect(kinds(rows) == ["message:legacy-user", "entry:legacy-tool", "message:legacy-answer", "message:u1", "group:toolu_a,toolu_b"])

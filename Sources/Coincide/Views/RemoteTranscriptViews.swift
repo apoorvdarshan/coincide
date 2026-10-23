@@ -126,7 +126,7 @@ final class RemoteTranscriptState {
               !value.terminalResponse || (value.role == .assistant && value.runStatus?.isTerminal == true),
               !value.streaming || (value.role == .assistant && value.runActive && value.trailing),
               !value.runActive || value.runReference != nil, !value.trailing || value.runActive,
-              !value.canPairClaudeResult || (value.provider == .claude && value.runReference != nil && value.providerEntity == nil) else { throw RemoteProjectionFailure(.invalidRequest) }
+              !value.canPairClaudeResult || (value.provider == .claude && value.runReference != nil && (value.providerEntity == nil || TranscriptToolPresentation.isNativeClaudeToolResult(value.providerEntity, messageID: value.messageID))) else { throw RemoteProjectionFailure(.invalidRequest) }
     }
     func card(_ message: RemoteMessageSummary, result: RemoteMessageSummary? = nil, binding: RemoteProjectionBinding) -> TranscriptToolCard? {
         guard let entry = entry(message, binding), entry.sourceText != nil || entry.presentation.providerEntity != nil else { return nil }

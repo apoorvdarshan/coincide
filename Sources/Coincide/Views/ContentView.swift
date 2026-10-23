@@ -38,6 +38,9 @@ struct ContentView: View {
                     } description: {
                         Text("Your projects and coding agents, in a native Mac workspace.")
                     } actions: {
+                        Button("Start Without a Project") { store.newScratchThread() }
+                            .disabled(store.isCreatingScratchConversation)
+                            .accessibilityIdentifier("scratch-empty-state")
                         Button("New Project…") { newProjectSheetPresented = true }
                         Button("Add Project…") { store.addProject() }
                         Button("Import Agent Projects…") { agentSessionImportSheetPresented = true }

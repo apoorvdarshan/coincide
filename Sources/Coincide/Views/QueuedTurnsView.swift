@@ -33,7 +33,8 @@ struct QueuedTurnsView: View {
                                     .disabled(!store.canSteerQueued(queued, threadID: thread.id))
                             }
                             Button { store.editQueued(queued.id, threadID: thread.id) } label: { Image(systemName: "pencil") }
-                                .help("Edit queued message").accessibilityLabel("Edit queued message")
+                                .help("Edit queued message in place").accessibilityLabel("Edit queued message")
+                                .disabled(queued.existingMessageID != nil || queued.contextDelivery != nil)
                             Button { store.removeQueued(queued.id, threadID: thread.id) } label: { Image(systemName: "xmark") }
                                 .help("Remove queued message").accessibilityLabel("Remove queued message")
                         }.buttonStyle(.borderless)
@@ -41,5 +42,8 @@ struct QueuedTurnsView: View {
                 }
             }.frame(height: min(200, CGFloat(thread.queuedTurns.count) * (thread.queuedTurns.contains { !($0.attachments ?? []).isEmpty } ? 55 : 37)))
         }.padding(12).coincideSurface()
+        .sheet(item: Binding(get: { store.queuedInputEditor?.thread.id == thread.id ? store.queuedInputEditor : nil }, set: { value in if value == nil, let editor = store.queuedInputEditor { store.closeQueuedInputEditor(editor) } })) { editor in
+            QueuedInputEditorView(store: store, editor: editor)
+        }
     }
 }

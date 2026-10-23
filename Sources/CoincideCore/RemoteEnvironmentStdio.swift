@@ -150,6 +150,42 @@ public enum RemoteEnvironmentStdio {
                         case RemoteEnvironmentProtocol.workspaceBindMethod:
                             let target = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceTarget.self, from: params)
                             result = try RemoteEnvironmentProtocol.encode(try await current.bindWorkspace(target))
+                        case RemoteThreadActionsProtocol.readMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteThreadActionsReadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.readThreadActions(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteThreadActionsProtocol.releaseMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteThreadActionsReleaseRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.releaseThreadActions(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteSteeringProtocol.readMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteSteeringReadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.readSteering(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteSteeringProtocol.pageMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteSteeringPageRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.steeringPage(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteSteeringProtocol.contentMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteSteeringContentRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.steeringContent(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteSteeringProtocol.releaseMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteSteeringReleaseRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.releaseSteering(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
                         case RemoteLifecycleProtocol.readMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteLifecycleReadRequest.self, from: params)
                             try await workspaceReads.submit(id: id, operation: {

@@ -64,6 +64,21 @@ final class KeyboardCommandDispatcher {
     private final class Registration { weak var window: NSWindow?; weak var controller: MainWindowController?
         init(_ window: NSWindow, _ controller: MainWindowController) { self.window = window; self.controller = controller } }
     private var registrations: [ObjectIdentifier: Registration] = [:]
+    private final class RemoteUndoRegistration {
+        weak var window: NSWindow?; weak var store: RemoteThreadActionsStore?
+        init(_ window: NSWindow, _ store: RemoteThreadActionsStore) { self.window = window; self.store = store }
+    }
+    private var remoteUndoRegistrations: [ObjectIdentifier: RemoteUndoRegistration] = [:]
+    func registerRemoteUndo(_ store: RemoteThreadActionsStore, window: NSWindow) {
+        guard controller(for: window) == nil else { return }
+        remoteUndoRegistrations = remoteUndoRegistrations.filter { $0.value.window != nil && $0.value.store != nil }
+        if let displaced = remoteUndoRegistrations[ObjectIdentifier(window)]?.store, displaced !== store { displaced.unbind(window: window) }
+        remoteUndoRegistrations[ObjectIdentifier(window)] = .init(window, store); store.bind(window: window); installIfNeeded()
+    }
+    func unregisterRemoteUndo(_ store: RemoteThreadActionsStore, window: NSWindow) {
+        if remoteUndoRegistrations[ObjectIdentifier(window)]?.store === store { remoteUndoRegistrations.removeValue(forKey: ObjectIdentifier(window)) }
+        store.unbind(window: window)
+    }
     private var monitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var declined: (timestamp: TimeInterval, keyCode: UInt16, window: Int)?
@@ -85,6 +100,7 @@ final class KeyboardCommandDispatcher {
     private var retirements: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     func register(_ controller: MainWindowController, window: NSWindow) {
+        if let remote = remoteUndoRegistrations.removeValue(forKey: ObjectIdentifier(window)) { remote.store?.unbind(window: window) }
         registrations = registrations.filter { $0.value.window != nil && $0.value.controller != nil }
         if let displaced = registrations[ObjectIdentifier(window)]?.controller,
            displaced !== controller, displaced.window === window {
@@ -120,6 +136,8 @@ final class KeyboardCommandDispatcher {
         if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers.removeAll()
         for entry in registrations.values { if let controller = entry.controller { retire(controller) } }
+        for entry in remoteUndoRegistrations.values { if let window = entry.window { entry.store?.unbind(window: window) } }
+        remoteUndoRegistrations.removeAll()
         registrations.removeAll(); decisions.removeAll(); decisionOrder.removeAll(); declined = nil
     }
     func shutdown() async {
@@ -196,6 +214,10 @@ final class KeyboardCommandDispatcher {
         return .init(characters: String(key.character), modifiers: modifiers)
     }
     private func handleOnce(_ event: NSEvent) -> NSEvent? {
+        if let window = event.window, window.isKeyWindow, let remote = remoteUndoRegistrations[ObjectIdentifier(window)], remote.window === window,
+           controller(for: window) == nil, let keybindings, let store = remote.store {
+            return store.route(event, keybindings: keybindings) ? nil : event
+        }
         guard let window = event.window, window.isKeyWindow, let controller = controller(for: window),
               controller.canHandleInteraction, let keybindings else { return event }
         let flags = event.modifierFlags

@@ -243,3 +243,37 @@ func nativeUnconfirmedSteeringKeepsItsInputAndQueueUntilExplicitContinueWithoutR
     } catch { await f.cleanup(); throw error }
     await f.cleanup()
 }
+
+@MainActor @Test(.timeLimit(.minutes(1)))
+func nativeQueuedEditorReplacesTextAndAttachmentsWithoutUnqueueingOrChangingTheLiveComposer() async throws {
+    let f = try await NativeSteeringFixture.make()
+    do {
+        try await f.start()
+        #expect(await f.store.submit("Original queued text", threadID: f.threadID).value)
+        try await waitNativeSetup { f.store.thread(f.threadID)?.queuedTurns.count == 1 }
+        let queued = try #require(f.store.thread(f.threadID)?.queuedTurns.first)
+        f.store.setDraft("Still typing a different message e\u{301}\u{327}", id: f.threadID)
+        let capturedDraft = try #require(f.store.thread(f.threadID)).draft
+        f.store.editQueued(queued.id, threadID: f.threadID)
+        let editor = try #require(f.store.queuedInputEditor)
+        #expect(f.store.thread(f.threadID)?.queuedTurns.first?.id == queued.id)
+        #expect(f.store.thread(f.threadID)?.draft.utf8.elementsEqual(capturedDraft.utf8) == true)
+        editor.text = "Queued edit stays in its original position"
+        let attachment = try await f.engine.attachments.importData(Data("Private immutable queued attachment".utf8), name: "queued.txt")
+        editor.attachments = [attachment]
+        var invalid = attachment; invalid.byteCount = -1
+        let invalidRequest = QueuedInputReplacement(thread: editor.thread, queued: editor.original, text: "Refuse invalid metadata", attachments: [invalid])
+        await #expect(throws: WorkspaceCommandError.self) { _ = try await f.engine.replaceQueuedInput(invalidRequest) }
+        // A normal accepted edit after the refusal proves it was not an
+        // infrastructure failure that stopped the engine's inbox.
+        f.store.saveQueuedInputEditor(editor)
+        try await waitNativeSetup { f.store.queuedInputEditor == nil }
+        let after = try #require(f.store.thread(f.threadID)), changed = try #require(after.queuedTurns.first)
+        #expect(changed.id == queued.id && changed.configuration == queued.configuration)
+        #expect(changed.text == editor.text && changed.attachments == [attachment])
+        #expect(after.draft.utf8.elementsEqual(capturedDraft.utf8) && after.draftAttachments.isEmpty)
+        #expect(await f.provider.starts.count == 1)
+        #expect(await f.provider.steers.isEmpty)
+    } catch { await f.cleanup(); throw error }
+    await f.cleanup()
+}

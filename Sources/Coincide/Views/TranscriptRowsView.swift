@@ -128,7 +128,9 @@ struct TranscriptRowsView: View {
             let source = store.captureTranscriptSource(thread: thread, message: entry.message)
             PlanCardView(plan: entry.card?.plan ?? entry.message.text, workspacePath: thread.workspacePath, expanded: binding(entry.id, \.expandedPlans),
                          canImplement: source.map { store.canImplementTranscriptPlan($0) } ?? false,
+                         canImplementInNewConversation: source.map { store.canImplementTranscriptPlanInNewConversation($0) } ?? false,
                          implement: { _ in guard let source else { return false }; return await store.implementTranscriptPlan(source) },
+                         implementInNewConversation: { _ in guard let source else { return false }; return await store.implementTranscriptPlanInNewConversation(source) },
                          save: { path, contents in guard let source else { throw CancellationError() }; try await store.saveTranscriptPlan(source, path: path, contents: contents) }, openFile: openPath)
                 .id(entry.message.id).threadFindHighlight(entry.message.id)
         case .fold(let fold):

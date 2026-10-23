@@ -47,11 +47,12 @@ public enum AppMCPWorkspaceStrategy: Sendable, Equatable {
     case existingWorktree(path: String, branch: String?)
 }
 public struct AppMCPThreadLaunch: Sendable, Equatable {
-    public let projectID: UUID
+    public let projectID: UUID?
+    public let scratch: Bool
     public let creation: AppMCPThreadCreation
     public let workspace: AppMCPWorkspaceStrategy
-    public init(projectID: UUID, creation: AppMCPThreadCreation, workspace: AppMCPWorkspaceStrategy = .root) {
-        self.projectID = projectID; self.creation = creation; self.workspace = workspace
+    public init(projectID: UUID? = nil, scratch: Bool = false, creation: AppMCPThreadCreation, workspace: AppMCPWorkspaceStrategy = .root) {
+        self.projectID = projectID; self.scratch = scratch; self.creation = creation; self.workspace = workspace
     }
 }
 public struct AppMCPProjectCreate: Sendable, Equatable {
@@ -313,9 +314,14 @@ public struct AppMCPTools: Sendable {
             let requests = try rows.map { try creation(Input($0)) }
             return .createThreads(requests, clientRequestID: try input.text("clientRequestId", maximum: 256))
         case "t3_thread_launch":
-            try input.only(["projectId", "title", "modelSelection", "runtimeMode", "interactionMode", "workspaceStrategy", "message"])
+            try input.only(["projectId", "scratch", "title", "modelSelection", "runtimeMode", "interactionMode", "workspaceStrategy", "message"])
             let request = try AppMCPThreadCreation(title: input.text("title", maximum: 512, required: true), prompt: input.text("message", maximum: 120_000),
                 target: selection(input.value["modelSelection"]), permission: permission(input))
+            let scratch = try input.boolean("scratch", default: false)
+            if scratch {
+                guard input.value.object?["projectId"] == nil, input.value.object?["workspaceStrategy"] == nil else { throw AppMCPError(.invalidRequest) }
+                return .launchThread(.init(scratch: true, creation: request))
+            }
             let project = try input.uuid("projectId") ?? caller.projectID
             guard view.snapshot.projects.contains(where: { $0.id == project }) else { throw AppMCPError(.notFound) }
             return .launchThread(.init(projectID: project, creation: request, workspace: try workspace(input.value["workspaceStrategy"])))
@@ -727,8 +733,8 @@ public struct AppMCPTools: Sendable {
             tool("t3_project_create", "Register an explicit local workspace or create a managed project by title through the native project lifecycle. Requires a live full-access caller; each call is a new request.", ["title": title, "workspaceRoot": string(maximum: 4_096), "createWorkspaceRootIfMissing": .object(["type": .string("boolean")])], required: ["title"], readOnly: false),
             tool("t3_project_update", "Rename a registered project. Other project settings are preserved. Requires a live full-access caller.", ["projectId": uuid, "title": title], required: ["projectId", "title"], readOnly: false),
             tool("t3_project_delete", "Remove a registered project through its normal cleanup lifecycle. Nonempty projects require force=true. Repository files are not deleted. Requires a live full-access caller.", ["projectId": uuid, "force": .object(["type": .string("boolean")])], required: ["projectId"], readOnly: false),
-            tool("create_threads", "Create up to 20 independent threads in the caller's current workspace, preserving parent creation audit and a supplied retry key. This is not delegated-task completion or parent wakeup.", ["threads": .object(["type": .string("array"), "minItems": .number(1), "maxItems": .number(20), "items": creation]), "clientRequestId": string(maximum: 256)], required: ["threads"], readOnly: false),
-            tool("t3_thread_launch", "Create an ordinary top-level thread with an explicit project/workspace binding before its optional first input. Omitted workspaceStrategy means the project root, not the caller's worktree. It never copies the current draft or sends an implicit continuation. Each call creates a new launch; inspect thread_list after a lost response before retrying.", ["projectId": uuid, "title": title, "modelSelection": selection, "message": text, "workspaceStrategy": workspace].merging(modes) { _, new in new }, required: ["title"], readOnly: false),
+            tool("create_threads", "Create up to 20 independent threads in the caller's current workspace, preserving parent creation audit and a supplied retry key. This is not delegated-task completion or parent wakeup. Scratch callers use t3_thread_launch with scratch:true instead of this shared-workspace batch.", ["threads": .object(["type": .string("array"), "minItems": .number(1), "maxItems": .number(20), "items": creation]), "clientRequestId": string(maximum: 256)], required: ["threads"], readOnly: false),
+            tool("t3_thread_launch", "Create an ordinary top-level thread with an explicit project/workspace binding before its optional first input. Use scratch:true without projectId/workspaceStrategy for a private folder without a project. Omitted projectId otherwise inherits the caller project; omitted workspaceStrategy means that project root, not the caller's worktree. It never copies the current draft or sends an implicit continuation. Each call creates a new launch; inspect thread_list after a lost response before retrying.", ["projectId": uuid, "scratch": .object(["type": .string("boolean")]), "title": title, "modelSelection": selection, "message": text, "workspaceStrategy": workspace].merging(modes) { _, new in new }, required: ["title"], readOnly: false),
             tool("t3_thread_list", "List active registered threads in a project, defaulting to the caller's project. Native app statuses are idle, running, awaitingApproval, failed and interrupted. Pages use live offsets.", ["projectId": uuid, "statuses": .object(["type": .string("array"), "maxItems": .number(10), "items": string(values: ["idle", "running", "awaitingApproval", "failed", "interrupted"])]), "titleContains": string(maximum: 256), "settled": .object(["type": .string("boolean")])].merging(page) { _, new in new }),
             tool("t3_thread_read", "Read bounded visible native-app history, recent run status and safe thread metadata. Removed history remains excluded. Messages view includes user/assistant text; activity includes other timeline rows. itemId plus textOffset reads another text slice without changing the thread.", ["threadId": uuid, "itemId": string(maximum: 512), "textOffset": integer(minimum: 0), "view": string(values: ["messages", "activity"]), "afterPosition": integer(minimum: 0), "limit": integer(minimum: 1, maximum: 100), "runLimit": integer(minimum: 1, maximum: 50), "maxCharsPerItem": integer(minimum: 1, maximum: 50_000)], required: ["threadId"]),
             tool("t3_thread_search", "Search active thread titles and retained message text in one project, defaulting to the caller's project. Results are bounded and do not promise exhaustive coverage or stable pagination.", ["query": string(maximum: 256), "projectId": uuid, "limit": integer(minimum: 1, maximum: 100)], required: ["query"]),

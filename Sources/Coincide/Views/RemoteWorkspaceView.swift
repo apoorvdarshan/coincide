@@ -34,6 +34,7 @@ struct RemoteWorkspaceCommands: Commands {
 
 struct RemoteWorkspaceView: View {
     @Bindable var store: RemoteWorkspaceStore
+    var keybindings: KeybindingsStore? = nil
     @AppStorage("appearance") private var appearance = "system"
     @State private var addingConnection = false
     @State private var addingProject = false
@@ -70,6 +71,10 @@ struct RemoteWorkspaceView: View {
                     Button("Add SSH Connection…", systemImage: "plus") { addingConnection = true }
                         .accessibilityIdentifier("remote-add-connection").disabled(store.isWorking)
                 }
+                Section {
+                    Toggle("Include Archived Conversations", isOn: Binding(get: { store.includeArchived }, set: { value in Task { await store.setIncludeArchived(value) } }))
+                        .disabled(!store.isConnected)
+                }
                 if store.usesProjection {
                     Section("Remote Projects") {
                         if store.projection.catalogOutdated { Text("Updated catalog available · Refresh to return to the first page").font(.caption).foregroundStyle(.secondary) }
@@ -90,7 +95,7 @@ struct RemoteWorkspaceView: View {
                         Text("Conversations \(store.projection.threadWindowStart + (store.projection.threads.isEmpty ? 0 : 1))–\(store.projection.threadWindowStart + store.projection.threads.count) of \(store.projection.threadCount)").font(.caption).foregroundStyle(.secondary)
                         ForEach(store.projection.threads) { thread in
                             Button { store.selectThread(thread.id) } label: {
-                                HStack { Text(thread.title.preview).lineLimit(2); Spacer(); if store.selectedThreadID == thread.id { Image(systemName: "checkmark") } }
+                                HStack { if thread.isPinned { Image(systemName: "pin.fill").font(.caption) }; if thread.isArchived { Image(systemName: "archivebox").font(.caption) }; Text(thread.title.preview).lineLimit(2); Spacer(); if store.selectedThreadID == thread.id { Image(systemName: "checkmark") } }
                             }.accessibilityIdentifier("remote-thread-\(thread.id.uuidString)")
                         }
                         if store.projection.canLoadThreads { Button("Load More Conversations") { Task { await store.projection.loadThreads() } } }
@@ -101,6 +106,8 @@ struct RemoteWorkspaceView: View {
                         ForEach(store.threads.filter { $0.projectID == project.id }) { thread in
                             Button { store.selectThread(thread.id) } label: {
                                 HStack {
+                                    if thread.isPinned { Image(systemName: "pin.fill").font(.caption) }
+                                    if thread.isArchived { Image(systemName: "archivebox").font(.caption) }
                                     Text(thread.title).lineLimit(2)
                                     Spacer()
                                     if thread.isBusy { ProgressView().controlSize(.mini) }
@@ -120,6 +127,7 @@ struct RemoteWorkspaceView: View {
         } detail: {
             VStack(spacing: 0) {
                 connectionStatus
+                RemoteThreadActionsView(store: store).padding(.horizontal, 12)
                 if let error = store.errorMessage ?? (store.usesProjection ? store.projection.errorMessage : nil) {
                     HStack {
                         Label(error, systemImage: "exclamationmark.triangle").textSelection(.enabled)
@@ -167,6 +175,7 @@ struct RemoteWorkspaceView: View {
             }
         }
         .navigationTitle("Remote Workspaces")
+        .background(RemoteThreadUndoWindowRegistration(store: store.threadActions, dispatcher: keybindings?.dispatcher).frame(width: 0, height: 0))
         .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject, inspectorVisible: $store.inspectorVisible))
         .toolbar {
             ToolbarItem {
@@ -218,6 +227,7 @@ struct RemoteWorkspaceView: View {
             }
         }
         .task { await store.load() }
+        .task(id: store.threadActionsSelection) { await store.updateThreadActions() }
         .task(id: store.inspectorSelection) { await store.updateInspector() }
         .task(id: store.lifecycleSelection) { await store.updateLifecycle() }
         .task(id: store.attachmentSelection) { await store.updateAttachments() }
@@ -357,30 +367,15 @@ struct RemoteWorkspaceView: View {
                 }.padding(.horizontal, 24)
             }
             VStack(alignment: .leading, spacing: 8) {
-                RemoteDraftAttachmentShelf(store: store.attachments)
-                TextEditor(text: Binding(get: { store.drafts[thread.id] ?? thread.draft }, set: { store.setDraft($0, threadID: thread.id) }))
-                    .font(.body).scrollContentBackground(.hidden).frame(minHeight: 72, maxHeight: 120)
-                    .accessibilityLabel("Remote message")
-                    .onPasteCommand(of: [UTType.fileURL, UTType.image]) { store.attachments.importAttachments(providers: $0) }
-                HStack {
-                    Button("Attach Files…", systemImage: "paperclip") { store.attachments.chooseAttachments() }
-                        .disabled(!store.attachments.canImport).accessibilityIdentifier("remote-attach-files")
-                    if store.isPreparingSubmission || store.attachments.isUploading { ProgressView().controlSize(.small) }
-                    Text(store.draftPersistenceFailed ? "Draft could not be saved" : store.draftsSaving ? "Saving draft…" : "Drafts stay on this Mac")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    if thread.isBusy {
-                        Button("Stop") { Task { await store.stop(thread) } }.disabled(!store.canWrite || thread.runtimeID == nil)
-                    }
-                    Button(thread.isBusy ? "Queue" : "Send") { Task { await store.submit() } }
-                        .keyboardShortcut(.return, modifiers: .command).buttonStyle(.borderedProminent)
-                        .disabled(!store.canSubmit)
-                }
-                if store.isConnected && store.descriptor?.capabilities.supportsRemoteAttachments != true {
-                    Text("Update the remote helper to enable attachments.").font(.caption).foregroundStyle(.secondary)
-                }
+                RemoteComposerView(store: store, threadID: thread.id, provider: thread.provider, providerName: thread.providerName,
+                    permission: thread.permission, busy: thread.isBusy, canStop: store.canWrite && thread.runtimeID != nil,
+                    stop: { Task { await store.stop(thread) } })
             }.padding(14).coincideSurface(cornerRadius: 20).padding(18)
                 .onDrop(of: [UTType.fileURL.identifier, UTType.image.identifier], isTargeted: nil) { providers in
+                    if store.composerSupported, let scope = store.remoteComposerScope {
+                        guard store.composer.canOperate else { return false }
+                        store.composer.tools?.importProviders(providers, threadID: scope.threadID); return true
+                    }
                     guard store.attachments.canImport else { return false }
                     store.attachments.importAttachments(providers: providers); return true
                 }

@@ -119,6 +119,7 @@ final class WorkspaceStore {
     @ObservationIgnored private var agentSessionImportProjects: [UUID: [UUID: UUID]] = [:]
     private let projectCreator: ProjectCreator
     private let projectScriptReader: NativeProjectScriptService.Reader
+    @ObservationIgnored private var draftWorkspaceJobs: [UUID: (projectID: UUID, task: Task<Void, Never>)] = [:]
     @ObservationIgnored private var projectDefaultReads: [UUID: (projectID: UUID, task: Task<ProjectConfigurationDocument, any Error>)] = [:]
     @ObservationIgnored private let claudeRuntimeCaptureOverride: ClaudeRuntimeCapture?
     @ObservationIgnored private var neutralClaudeModelProfile: ClaudeRuntimeProfile?
@@ -254,6 +255,8 @@ final class WorkspaceStore {
     private var historyRecallDraftOwners: [UUID: UUID] = [:]
     private var historyRecallDrainWaiters: [CheckedContinuation<Void, Never>] = []
     private var projectCreationTasks: [UUID: Task<ManagedProjectCreationResult, any Error>] = [:]
+    private var scratchCreationTasks: [UUID: Task<UUID, any Error>] = [:]
+    var isCreatingScratchConversation: Bool { !scratchCreationTasks.isEmpty }
     private var lastSequence: Int64 = -1
     private var terminating = false
 
@@ -309,13 +312,13 @@ final class WorkspaceStore {
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
          piRuntimeCapture: PiRuntimeCapture? = nil,
          projectScriptReader: NativeProjectScriptService.Reader? = nil,
-         projectCreator: ProjectCreator? = nil) {
+         projectCreator: ProjectCreator? = nil, projectSettingsStore: ProjectSettingsStore? = nil) {
         composerDraftTools = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AgentSessionImports", isDirectory: true))
         terminalArchives = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("TerminalHistory", isDirectory: true))
         claudeRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent())
         self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
-        projectSettings = .init(root: ProjectSettingsFiles.root(dataRoot: engine.worktreesRoot.deletingLastPathComponent()))
+        projectSettings = projectSettingsStore ?? .init(root: ProjectSettingsFiles.root(dataRoot: engine.worktreesRoot.deletingLastPathComponent()))
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
@@ -1425,6 +1428,8 @@ final class WorkspaceStore {
         processAutomaticHistoryRecalls()
     }
     private func reconcileRemovedResources(threadIDs: Set<UUID>, projectIDs: Set<UUID>) {
+        let draftJobs = draftWorkspaceJobs.values.filter { projectIDs.contains($0.projectID) }.map(\.task)
+        for job in draftJobs { job.cancel() }
         let modelReads = threadIDs.compactMap { codexModelDefaultsReads[$0]?.task }
         let skills = providerSkillsDrains.values.filter { projectIDs.contains($0.scope.projectID) || threadIDs.contains($0.scope.threadID) }.map(\.task)
         for id in threadIDs {
@@ -1477,6 +1482,7 @@ final class WorkspaceStore {
         }
         let cleanupID = UUID()
         let task: Task<Void, Never> = Task { [weak self] in
+            for job in draftJobs { await job.value }
             await self?.composerDraftTools.forgetRemovedThreads(threadIDs)
             for task in modelReads { _ = await task.value }
             for task in skills { await task.value }
@@ -1542,7 +1548,10 @@ final class WorkspaceStore {
         }
     }
     func workspaceReady(for thread: CodingThread) -> Bool {
-        snapshot.workspaceReady(for: thread) && !isCheckpointRestoreLocked(threadID: thread.id) &&
+        if thread.scratchWorkspace != nil {
+            guard (try? ScratchWorkspaceService(dataRoot: worktreesRoot.deletingLastPathComponent()).validate(thread: thread)) != nil else { return false }
+        }
+        return snapshot.workspaceReady(for: thread) && !isCheckpointRestoreLocked(threadID: thread.id) &&
             !isPullRequestCreationLocked(threadID: thread.id) && !isPullRequestCheckoutLocked(threadID: thread.id) &&
             !workspaceTransitionLocks.values.contains { $0.contains(Self.canonicalPath(thread.workspacePath)) }
     }
@@ -1599,6 +1608,78 @@ final class WorkspaceStore {
         }
     }
     func isRetryingProjectClone(_ projectID: UUID) -> Bool { retryingProjectClones.contains(projectID) }
+    func newScratchThread() {
+        guard !terminating, !isCreatingScratchConversation else { return }
+        Task { do { _ = try await openScratchDraft(draft: "") } catch { if !terminating { errorMessage = error.localizedDescription } } }
+    }
+    func openScratchDraft(draft: String, requestedProvider: ProviderKind? = nil, requestedModel: String? = nil) async throws -> UUID {
+        try Task.checkCancellation()
+        guard !terminating, let engine, draft.utf16.count <= 120_000 else { throw CancellationError() }
+        let provider = requestedProvider ?? .codex
+        guard provider == .codex || provider == .claude else { throw CoincideError("Choose Codex or Claude for this scratch conversation.") }
+        let runtime = codexRuntime.configuration, captureClaude = claudeRuntimeCapture
+        let rows: [ProviderModel]
+        if provider == .codex {
+            if let selected = selectedThread, selected.provider == .codex, (selected.codexRuntimeConfiguration ?? .init()) == runtime { rows = models(for: selected) }
+            else { rows = runtime == .init() ? providerModels[.codex] ?? [] : [] }
+        } else if claudeRuntimeCaptureOverride == nil, claudeRuntime.isLoaded,
+                  neutralClaudeModelProfile == claudeRuntime.profile || (neutralClaudeModelProfile == nil && claudeRuntime.profile == .init()) {
+            rows = providerModels[.claude] ?? []
+        } else { rows = [] }
+        let selectedProject = selectedProjectID, selectedThread = selectedThreadID
+        let commandID = UUID(), threadID = UUID()
+        flushDrafts()
+        let previous = commandTail
+        let task = Task<UUID, any Error> { [weak self] in
+            await previous?.value; try Task.checkCancellation()
+            guard let self, !self.terminating else { throw CancellationError() }
+            let allocation = try await engine.prepareScratchWorkspace(commandID: commandID, threadID: threadID, namingText: draft)
+            try Task.checkCancellation()
+            guard !self.terminating else { throw CancellationError() }
+            var thread = CodingThread(project: allocation.project)
+            thread.id = threadID; thread.workspacePath = allocation.workspacePath; thread.scratchWorkspace = allocation.receipt
+            thread.createdAt = allocation.receipt.createdAt; thread.updatedAt = allocation.receipt.createdAt
+            thread.provider = provider; thread.draft = draft; thread.checkpointPolicy = .disabled
+            if provider == .codex { thread.codexRuntimeConfiguration = runtime == .init() ? nil : runtime }
+            else { thread.claudeRuntimeConfiguration = try captureClaude(allocation.workspacePath) }
+            if let requestedModel, let row = rows.first(where: { $0.id.utf8.elementsEqual(requestedModel.utf8) || $0.name.utf8.elementsEqual(requestedModel.utf8) || $0.catalogID?.utf8.elementsEqual(requestedModel.utf8) == true }) {
+                if provider == .codex { try thread.selectCodexModel(row) } else { try thread.selectClaudeModel(row) }
+            }
+            let select = self.selectedProjectID == selectedProject && self.selectedThreadID == selectedThread
+            let creation = ScratchThreadCreation(allocation: allocation, thread: thread, selectsConversation: select)
+            let receipt = try await engine.createScratchThread(creation, commandID: commandID)
+            self.apply(await engine.current())
+            if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+            guard let created = self.thread(threadID), created.scratchWorkspace == allocation.receipt else { throw ScratchWorkspaceError() }
+            if !Task.isCancelled, !self.terminating, self.selectedProjectID == selectedProject, self.selectedThreadID == selectedThread {
+                self.selectedProjectID = created.projectID; self.showArchived = false; self.selectedThreadID = threadID
+            }
+            return threadID
+        }
+        scratchCreationTasks[commandID] = task
+        commandTail = Task { _ = await task.result }
+        defer { scratchCreationTasks.removeValue(forKey: commandID) }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+    func scratchWorkspaceRecoveries(limit: Int, offset: Int = 0) async throws -> [ScratchWorkspaceRecovery] {
+        guard !terminating, let engine else { throw CancellationError() }
+        return try await engine.scratchWorkspaceRecoveries(limit: limit, offset: offset)
+    }
+    func discardEmptyScratchAllocation(_ id: UUID) async throws -> Bool {
+        guard !terminating, let engine else { throw CancellationError() }
+        return try await engine.discardEmptyScratchAllocation(commandID: id)
+    }
+    func openRecoveredScratchConversation(_ recovery: ScratchWorkspaceRecovery) {
+        guard !terminating, recovery.phase == .accepted, let allocation = recovery.allocation,
+              let thread = thread(allocation.threadID), thread.scratchWorkspace == allocation.receipt else { return }
+        selectedProjectID = thread.projectID; showArchived = thread.isArchived; selectedThreadID = thread.id
+    }
+
+    func performDraftWorkspaceOverride(_ command: WorkspaceCommand) {
+        guard !terminating else { return }
+        let task = enqueue(command)
+        Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
+    }
     func newThread(projectID: UUID? = nil) {
         let project: WorkspaceProject
         if let projectID {
@@ -1609,17 +1690,29 @@ final class WorkspaceStore {
                   let group = projectGroup(containing: currentID), let selected = preferredProject(in: group) {
             project = selected
         } else if let selected = snapshot.projects.first { project = selected }
-        else { addProject(); return }
-        let thread = newCodingThread(project: project)
-        let task = enqueue(.createThread(thread))
-        Task {
+        else { newScratchThread(); return }
+        if project.scratch != nil { newScratchThread(); return }
+        let draft = newCodingThread(project: project), jobID = UUID()
+        let selectedAtStart = selectedThreadID, projectAtStart = selectedProjectID
+        let earlierCreations = draftWorkspaceJobs.values.filter { $0.projectID == project.id }.map(\.task)
+        let job = Task { [weak self] in
+            guard let self else { return }
+            defer { draftWorkspaceJobs.removeValue(forKey: jobID) }
             do {
-                _ = try await task.value
-                guard self.thread(thread.id) != nil else { return }
-                selectedThreadID = thread.id
-                selectedProjectID = project.id; showArchived = false
-            } catch { errorMessage = error.localizedDescription }
+                for earlier in earlierCreations { await earlier.value }
+                try Task.checkCancellation()
+                var thread = draft
+                thread.draftWorkspaceIntent = try await captureDraftWorkspaceIntent(project: project, thread: thread)
+                try Task.checkCancellation()
+                guard projectDefaultsProjectIsCurrent(project) else { return }
+                _ = try await enqueue(.createThread(thread)).value
+                guard !terminating, self.thread(thread.id)?.createdAt == thread.createdAt,
+                      selectedThreadID == selectedAtStart, selectedProjectID == projectAtStart else { return }
+                selectedThreadID = thread.id; selectedProjectID = project.id; showArchived = false
+            } catch is CancellationError { }
+            catch { if !terminating { errorMessage = error.localizedDescription } }
         }
+        draftWorkspaceJobs[jobID] = (project.id, job)
     }
     /// Deep links and the `coincide` command open a new conversation with an unsent draft.
     /// The text is never queued, steered or submitted. A folder is added as a project first.
@@ -1627,6 +1720,9 @@ final class WorkspaceStore {
                          requestedProvider: ProviderKind? = nil, requestedModel: String? = nil) async throws -> UUID {
         try Task.checkCancellation()
         guard !terminating, engine != nil else { throw CancellationError() }
+        if folder == nil, projectID == nil || projectID.flatMap({ id in snapshot.projects.first { $0.id == id } })?.scratch != nil {
+            return try await openScratchDraft(draft: draft, requestedProvider: requestedProvider, requestedModel: requestedModel)
+        }
         var project: WorkspaceProject, addsProject = false
         if let folder {
             var directory: ObjCBool = false
@@ -1639,6 +1735,7 @@ final class WorkspaceStore {
         else { throw CoincideError("Add a project before opening this link.") }
         let selectedProject = selectedProjectID, selectedThread = selectedThreadID
         var thread = newCodingThread(project: project); thread.draft = draft
+        thread.draftWorkspaceIntent = try await captureDraftWorkspaceIntent(project: project, thread: thread, isNewProject: addsProject)
         if let requestedProvider {
             guard requestedProvider == .codex || requestedProvider == .claude else { throw CoincideError("Choose Codex or Claude in this prompt link.") }
             thread.provider = requestedProvider; thread.model = ""
@@ -1803,6 +1900,19 @@ final class WorkspaceStore {
                 throw CoincideError("Codex's speed choices changed. Refresh models and choose the current option.")
             }
             return .editThread(threadID, .codexServiceTier(model: actual, tier: tier, expected: captured))
+        }
+        Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
+    }
+    func setCodexInteractionMode(_ selection: CodexModeSelection) {
+        let task = enqueuePreparing { [weak self] in
+            guard let self, !self.terminating, let current = self.thread(selection.threadID), selection.matches(current),
+                  self.workspaceReady(for: current) else { throw CancellationError() }
+            if let model = selection.model {
+                guard self.models(for: current).contains(where: { $0 == model }) else {
+                    throw CoincideError("Codex's supported modes changed. Refresh models and open the mode menu again.")
+                }
+            }
+            return .editThread(current.id, .codexInteractionMode(selection))
         }
         Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
     }
@@ -2297,35 +2407,65 @@ final class WorkspaceStore {
         return source.matches(thread: current, project: project)
     }
     func canImplementTranscriptPlan(_ source: TranscriptActionSource) -> Bool {
+        transcriptPlanReady(source, inNewConversation: false)
+    }
+    func canImplementTranscriptPlanInNewConversation(_ source: TranscriptActionSource) -> Bool {
+        transcriptPlanReady(source, inNewConversation: true)
+    }
+    private func transcriptPlanReady(_ source: TranscriptActionSource, inNewConversation: Bool) -> Bool {
         guard transcriptSourceIsCurrent(source), let current = thread(source.threadID),
               workspaceReady(for: current), canEditWorkspace(current.workspacePath), !current.isBusy, !current.isSettled,
               current.queuedTurns.isEmpty, current.runtimeRequests.isEmpty,
-              current.draft.isEmpty, current.draftAttachments.isEmpty,
+              (inNewConversation || (current.draft.isEmpty && current.draftAttachments.isEmpty)),
               !preparingWorkspaces.contains(current.id), !isImportingAttachments(current.id),
               !composerDraftTools.blocksSubmission(current.id), historyRecallDraftOwners[current.id] == nil,
               !snapshot.isConversationHistoryLocked(threadID: current.id), !acceptingHistoryThreads.contains(current.id),
               !isCheckpointRestoreLocked(threadID: current.id), !isPullRequestCreationLocked(threadID: current.id),
               !isPullRequestCheckoutLocked(threadID: current.id), !claudeResumeSelectionNeedsInspection(threadID: current.id) else { return false }
+        let card = TranscriptToolPresentation.card(for: source.message, context: .init(provider: current.provider, workspacePath: current.workspacePath))
+        guard card.kind == .plan, card.status == .completed else { return false }
+        if inNewConversation, current.provider == .codex, !CodexModeSelection.isAvailable(for: current) { return false }
         return true
     }
     func implementTranscriptPlan(_ source: TranscriptActionSource) async -> Bool {
-        guard !Task.isCancelled, canImplementTranscriptPlan(source), let captured = thread(source.threadID), let engine else { return false }
+        await implementTranscriptPlan(source, destination: nil)
+    }
+    func implementTranscriptPlanInNewConversation(_ source: TranscriptActionSource) async -> Bool {
+        await implementTranscriptPlan(source, destination: .init())
+    }
+    private func implementTranscriptPlan(_ source: TranscriptActionSource, destination: TranscriptPlanDestination?) async -> Bool {
+        guard !Task.isCancelled, transcriptPlanReady(source, inNewConversation: destination != nil), let captured = thread(source.threadID), let engine else { return false }
         do {
             let claude = captured.provider == .claude && captured.claudeRuntimeConfiguration == nil ? try legacyClaudeRuntimeCapture(captured.workspacePath) : nil
             let pi: PiRuntimeConfiguration?
             if captured.provider == .pi, let native = captured.piConfiguration, native.runtime == nil {
                 pi = try piRuntimeCapture(captured.workspacePath, native.executable, native.instanceID)
             } else { pi = nil }
-            let request = TranscriptPlanImplementation(thread: captured, message: source.message, legacyClaudeConfiguration: claude, piConfiguration: pi)
+            // Validate availability without launching or changing a provider.
+            if captured.provider == .codex { _ = try codexRuntimeInstallation.resolve(configuration: captured.codexRuntimeConfiguration ?? .init()) }
+            else {
+                let executable = captured.provider == .claude ? (captured.claudeRuntimeConfiguration ?? claude)?.executable ?? captured.provider.executable
+                    : captured.provider == .pi ? (captured.piConfiguration?.runtime ?? pi)?.executable ?? captured.piConfiguration?.executable ?? captured.provider.executable
+                    : captured.acpAgent?.executable ?? captured.antigravityConfiguration?.executable ?? captured.museConfiguration?.executable ?? captured.openCodeConfiguration?.executable ?? captured.provider.executable
+                guard ProcessChannel.findExecutable(executable) != nil else { throw CoincideError("Choose an available provider runtime before implementing this plan.") }
+            }
+            let request = TranscriptPlanImplementation(thread: captured, message: source.message, legacyClaudeConfiguration: claude, piConfiguration: pi, destination: destination)
+            let selectedProject = selectedProjectID, selectedThread = selectedThreadID
             flushDrafts()
             let previous = commandTail, commandID = UUID()
             let task = Task<Bool, Never> { [weak self] in
                 await previous?.value
-                guard !Task.isCancelled, let self, self.canImplementTranscriptPlan(source) else { return false }
+                guard !Task.isCancelled, let self, self.transcriptPlanReady(source, inNewConversation: destination != nil) else { return false }
                 do {
                     let receipt = try await engine.implementTranscriptPlan(request, commandID: commandID)
                     self.apply(await engine.current())
                     if let rejection = receipt.rejection { throw CoincideError(rejection) }
+                    if let destination, !Task.isCancelled, !self.terminating,
+                       self.selectedProjectID == selectedProject, self.selectedThreadID == selectedThread,
+                       let created = self.thread(destination.threadID), created.transcriptPlanSource?.threadID == source.threadID,
+                       created.transcriptPlanSource?.threadCreatedAt == source.threadCreatedAt {
+                        self.selectedProjectID = created.projectID; self.showArchived = false; self.selectedThreadID = created.id
+                    }
                     return true
                 } catch {
                     if !self.terminating { self.errorMessage = error.localizedDescription }
@@ -2385,11 +2525,28 @@ final class WorkspaceStore {
         pendingDrafts.removeValue(forKey: id)
         draftOverrides[id] = ""
         let command: WorkspaceCommand
-        if let capturedClaude { command = .submitCapturedClaude(threadID: id, text: prompt, configuration: capturedClaude) }
+        if let intent = thread.draftWorkspaceIntent {
+            command = .submitDefaultWorktree(.init(thread: thread, intent: intent, text: prompt, claudeRuntime: capturedClaude, piRuntime: capturedPi))
+        } else if let capturedClaude { command = .submitCapturedClaude(threadID: id, text: prompt, configuration: capturedClaude) }
         else if let capturedPi { command = .submitCapturedPi(threadID: id, text: prompt, configuration: capturedPi) }
         else { command = .submit(threadID: id, text: prompt) }
-        let task = enqueue(command)
+        let changesWorkspace = thread.draftWorkspaceIntent != nil
+        let task = enqueue(command, preflight: { [weak self] in
+            guard changesWorkspace else { return }
+            guard let self, !self.terminating, let current = self.thread(id),
+                  current.createdAt == thread.createdAt, current.projectID == thread.projectID,
+                  current.workspacePath.utf8.elementsEqual(thread.workspacePath.utf8),
+                  current.draftWorkspaceIntent == thread.draftWorkspaceIntent,
+                  self.canEditWorkspace(current.workspacePath),
+                  !self.dirtyEditors.values.contains(Self.canonicalPath(current.workspacePath)),
+                  !self.terminalStores.values.compactMap(\.value).contains(where: { !($0.sessions[id] ?? []).isEmpty }),
+                  !self.closingTerminalSessions.values.contains(where: { Self.pathsOverlap($0.directory, current.workspacePath) }) else {
+                throw WorkspaceCommandError("Close this draft’s terminals and finish file edits before preparing its worktree.")
+            }
+            self.workspaceTransitionLocks[id] = [Self.canonicalPath(current.workspacePath)]
+        })
         return Task {
+            defer { if changesWorkspace { workspaceTransitionLocks.removeValue(forKey: id) } }
             do { _ = try await task.value; if draftOverrides[id] == "" { draftOverrides.removeValue(forKey: id) }; return true }
             catch {
                 guard self.thread(id) != nil else { return false }
@@ -2547,8 +2704,55 @@ final class WorkspaceStore {
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
     }
     func removeQueued(_ queuedID: UUID, threadID: UUID) { sendCommand(.removeQueued(threadID: threadID, queuedID: queuedID)) }
+    var queuedInputEditor: QueuedInputEditor?
+    @ObservationIgnored private var queuedEditorDrains: [UUID: Task<Void, Never>] = [:]
     func editQueued(_ queuedID: UUID, threadID: UUID) {
-        flushDrafts(); sendCommand(.editQueued(threadID: threadID, queuedID: queuedID))
+        guard !terminating, let thread = thread(threadID), let queued = thread.queuedTurns.first(where: { $0.id == queuedID }),
+              queued.existingMessageID == nil, queued.contextDelivery == nil else { return }
+        if let old = queuedInputEditor { closeQueuedInputEditor(old) }
+        queuedInputEditor = .init(thread: thread, queued: queued)
+    }
+    func closeQueuedInputEditor(_ editor: QueuedInputEditor) {
+        guard queuedInputEditor === editor else { return }; editor.close(); queuedInputEditor = nil
+        let id = UUID()
+        queuedEditorDrains[id] = Task { [weak self] in await editor.drain(); self?.queuedEditorDrains.removeValue(forKey: id) }
+    }
+    func chooseQueuedInputAttachments(_ editor: QueuedInputEditor) {
+        guard queuedInputEditor === editor, !editor.isSaving else { return }
+        let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = true; panel.prompt = "Attach"
+        panel.begin { [weak self, weak editor] response in
+            guard response == .OK, let self, let editor, self.queuedInputEditor === editor, let engine = self.engine else { return }
+            let id = UUID()
+            editor.imports[id] = Task { [weak self, weak editor] in
+                guard let self, let editor else { return }; defer { editor.imports.removeValue(forKey: id) }
+                do {
+                    for url in panel.urls {
+                        try Task.checkCancellation()
+                        let reference = try await engine.attachments.importFile(url)
+                        try Task.checkCancellation()
+                        guard self.queuedInputEditor === editor else { return }
+                        try AttachmentLimits.validate(editor.attachments + [reference]); editor.attachments.append(reference)
+                    }
+                } catch { if !(error is CancellationError) { editor.errorMessage = error.localizedDescription } }
+            }
+        }
+    }
+    func saveQueuedInputEditor(_ editor: QueuedInputEditor) {
+        guard !terminating, queuedInputEditor === editor, editor.canSave, let engine else { return }
+        editor.isSaving = true
+        let request = QueuedInputReplacement(thread: editor.thread, queued: editor.original, text: editor.text, attachments: editor.attachments)
+        let previous = commandTail
+        let task = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            defer { editor.isSaving = false }
+            do {
+                let receipt = try await engine.replaceQueuedInput(request, commandID: editor.commandID)
+                if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+                self.apply(await engine.current()); self.closeQueuedInputEditor(editor)
+            } catch { editor.errorMessage = "The original queued input changed or cannot be edited. Your composer draft was kept." }
+        }
+        commandTail = task
     }
     func resumeQueue(_ threadID: UUID) { sendCommand(.resumeQueue(threadID: threadID)) }
     func openFile(_ url: URL, line: Int?, workspacePath: String) {
@@ -3599,6 +3803,14 @@ final class WorkspaceStore {
         terminating = true
         await engine?.closeScheduledTasks()
         await scheduledTasksStorage?.shutdown()
+        let scratch = Array(scratchCreationTasks.values)
+        for task in scratch { task.cancel() }
+        for task in scratch { _ = await task.result }
+        let draftJobs = draftWorkspaceJobs.values.map(\.task)
+        for job in draftJobs { job.cancel() }; for job in draftJobs { await job.value }
+        let queuedEditor = queuedInputEditor; queuedInputEditor = nil
+        await queuedEditor?.drain()
+        for task in Array(queuedEditorDrains.values) { await task.value }
         await gitSync?.shutdown()
         await agentSessionImports.shutdown()
         await threadActionUndo.shutdown()

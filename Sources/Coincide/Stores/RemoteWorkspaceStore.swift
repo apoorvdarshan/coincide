@@ -36,6 +36,10 @@ final class RemoteWorkspaceStore {
     let inspector: RemoteWorkspaceInspectorStore
     let terminals = RemoteTerminalStore()
     let worktrees = RemoteWorktreeStore()
+    let composer: RemoteComposerStore
+    let steering: RemoteSteeringStore
+    let threadActions = RemoteThreadActionsStore()
+    var includeArchived = false
     let attachments: RemoteAttachmentsStore
     let pullRequests: RemotePullRequestStore
     let checkpoints = RemoteCheckpointStore()
@@ -72,13 +76,15 @@ final class RemoteWorkspaceStore {
         draftStore = .init(root: root.appendingPathComponent("Drafts", isDirectory: true))
         inspector = .init(pendingStore: .init(root: root.appendingPathComponent("WorkspaceOperations", isDirectory: true)),
                           recoveryJournal: .init(root: root.appendingPathComponent("EditorRecovery", isDirectory: true)))
+        composer = .init(root: root.appendingPathComponent("Composer", isDirectory: true))
+        steering = .init(root: root.appendingPathComponent("QueuedEdits", isDirectory: true))
         attachments = .init(root: root.appendingPathComponent("Attachments", isDirectory: true))
         pullRequests = .init(root: root.appendingPathComponent("PullRequestDrafts", isDirectory: true))
     }
 
     var projects: [WorkspaceProject] { snapshot?.workspace.projects ?? [] }
-    var threads: [CodingThread] { snapshot?.workspace.threads.filter { !$0.isArchived } ?? [] }
-    var selectedThread: CodingThread? { threads.first { $0.id == selectedThreadID } }
+    var threads: [CodingThread] { snapshot?.workspace.threads.enumerated().filter { includeArchived || !$0.element.isArchived }.sorted { a, b in a.element.isPinned != b.element.isPinned ? a.element.isPinned : a.offset < b.offset }.map(\.element) ?? [] }
+    var selectedThread: CodingThread? { snapshot?.workspace.threads.first { $0.id == selectedThreadID } }
     var canWrite: Bool { isConnected && !isWorking && !isPreparingSubmission && pending == nil && !stopping }
     var lifecycleSelection: PullRequestSelection {
         struct State: Encodable {
@@ -144,7 +150,7 @@ final class RemoteWorkspaceStore {
     var selectedSequence: Int64? { usesProjection ? projection.control?.binding.sequence : snapshot?.sequence }
     var selectedWorkspacePath: String { selectedConfiguration?.workspacePath ?? "" }
     var hostDraftAttachments: [ChatAttachment] { usesProjection ? (projection.control?.detail.summary.id == selectedThreadID ? projection.control?.attachments ?? [] : []) : selectedThread?.draftAttachments ?? [] }
-    var hasUnsavedDrafts: Bool { draftsSaving || draftPersistenceFailed || attachments.hasUnsavedDrafts || pullRequests.hasUnsavedDrafts }
+    var hasUnsavedDrafts: Bool { draftsSaving || draftPersistenceFailed || composer.hasUnsavedDrafts || attachments.hasUnsavedDrafts || pullRequests.hasUnsavedDrafts }
     var hasUnsavedWorkspaceEdits: Bool { inspector.hasUnsavedEdits }
     struct PullRequestSelection: Hashable {
         let environmentID: UUID?, threadID: UUID?, sequence: Int64?
@@ -317,12 +323,33 @@ final class RemoteWorkspaceStore {
         guard !stopping else { attachments.disconnect(); return }
         await attachments.select(target: attachmentTarget, client: isConnected ? client : nil,
             hostDraftAttachments: hostDraftAttachments, supported: descriptor?.capabilities.supportsRemoteAttachments == true)
+        let captured = remoteComposerScope
+        let target = attachmentTarget
+        await composer.select(scope: captured, text: draft, host: hostDraftAttachments, locals: attachments.entries.map(\.local),
+            remoteAccess: target.map { attachments.access(target: $0) }, localAccess: target.map { attachments.localAccess(target: $0) },
+            isCurrent: { [weak self] scope in self?.remoteComposerScope?.matches(scope) == true },
+            publish: { [weak self] scope, text, expected in
+                guard let self, self.remoteComposerScope?.matches(scope) == true,
+                      self.draft.utf8.elementsEqual(expected.utf8) else { return false }
+                self.threadActions.releaseShortcut(); self.drafts[scope.threadID] = text; self.saveDrafts(); return true
+            }, currentText: { [weak self] in self?.draft ?? "" })
     }
+    var remoteComposerScope: RemoteComposerScope? {
+        guard !stopping, isConnected, descriptor?.capabilities.supportsRemoteComposerDraftSelection == true,
+              let hostID = descriptor?.hostID, let target = attachmentTarget, let configuration = selectedConfiguration,
+              let birth = usesProjection ? projection.control?.detail.summary.createdAt : selectedThread?.createdAt else { return nil }
+        let projectBirth = usesProjection ? projection.control?.detail.summary.projectCreatedAt : projects.first(where: { $0.id == target.projectID })?.createdAt
+        return .init(environmentID: target.environmentID, hostID: hostID, threadID: target.threadID, projectID: target.projectID,
+            threadCreatedAt: birth, projectCreatedAt: projectBirth, workspacePath: configuration.workspacePath,
+            configuration: RemoteComposerScope.fingerprint(configuration))
+    }
+    var composerSupported: Bool { remoteComposerScope != nil }
+
     var draftExceedsLocalLimit: Bool { draft.utf16.count > 120_000 }
     func replaceOversizedDraft() { if let id = selectedThreadID, draftExceedsLocalLimit { setDraft("", threadID: id) } }
     var canSubmit: Bool {
-        !draftExceedsLocalLimit && canWrite && (!usesProjection || (selectedThreadExists && projection.control?.detail.submit.allowed == true)) && !attachments.isLoading && !attachments.isImporting && !attachments.isUploading &&
-            (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachments.hasAttachments || !hostDraftAttachments.isEmpty)
+        !selectedIsArchived && !draftExceedsLocalLimit && canWrite && (!composerSupported || !composer.blocksSubmission) && (!usesProjection || (selectedThreadExists && projection.control?.detail.submit.allowed == true)) && !attachments.isLoading && !attachments.isImporting && !attachments.isUploading &&
+            (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (composerSupported ? composer.hasAttachments : attachments.hasAttachments || !hostDraftAttachments.isEmpty))
     }
     struct InspectorSelection: Hashable {
         let environmentID: UUID?, threadID: UUID?, path: Data
@@ -528,8 +555,13 @@ final class RemoteWorkspaceStore {
         inspector.disconnect()
         terminals.disconnect()
         worktrees.disconnect()
+        threadActions.disconnect()
+        steering.disconnect()
+        composer.disconnect()
         attachments.disconnect()
         pullRequests.disconnect(); checkpoints.disconnect(); history.disconnect(); contextTransfers.disconnect()
+        await threadActions.drainReads()
+        await steering.drainReads()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -544,6 +576,9 @@ final class RemoteWorkspaceStore {
         await inspector.shutdown()
         await terminals.shutdown()
         await worktrees.shutdown()
+        await threadActions.shutdown()
+        await steering.shutdown()
+        await composer.shutdown()
         await attachments.shutdown()
         await pullRequests.shutdown()
         await checkpoints.shutdown()
@@ -551,7 +586,7 @@ final class RemoteWorkspaceStore {
         await contextTransfers.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; lifecycle.cancelShutdown(); projectScripts.cancelShutdown(); inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown(); history.cancelShutdown(); contextTransfers.cancelShutdown() }
+    func cancelShutdown() { stopping = false; threadActions.cancelShutdown(); steering.cancelShutdown(); composer.cancelShutdown(); lifecycle.cancelShutdown(); projectScripts.cancelShutdown(); inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown(); history.cancelShutdown(); contextTransfers.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -571,7 +606,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
-        if selectedThreadID != id { lifecycle.disconnect(); projectScripts.disconnect(); inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection(); contextTransfers.clearSelection() }
+        if selectedThreadID != id { steering.disconnect(); lifecycle.disconnect(); projectScripts.disconnect(); inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection(); history.clearSelection(); contextTransfers.clearSelection() }
         selectedThreadID = id
         if usesProjection {
             projection.beginSelection(id)
@@ -587,7 +622,9 @@ final class RemoteWorkspaceStore {
             errorMessage = "The draft exceeds the local limit of 120,000 UTF-16 characters. Your previous text was kept. Copy the larger text and replace it with a shorter local draft before sending."
             return
         }
+        if !drafts[threadID, default: ""].utf8.elementsEqual(text.utf8) { threadActions.releaseShortcut() }
         drafts[threadID] = text
+        if composer.scope?.threadID == threadID, composerSupported { composer.setText(text) }
         saveDrafts()
     }
 
@@ -631,7 +668,10 @@ final class RemoteWorkspaceStore {
     @discardableResult
     func perform(_ command: RemoteEnvironmentCommand) async -> Bool {
         guard canWrite, let client, let connection, let environmentID = connection.environmentID else { return false }
-        guard attachmentSubmissionStillAllowed(command), transcriptPlanCommandStillAllowed(command) else {
+        if descriptor?.capabilities.supportsRemoteThreadActions == true, RemoteThreadActionsStore.canCreateUndo(command), threadActions.binding == nil {
+            await updateThreadActions(); guard canWrite else { return false }
+        }
+        guard threadActions.commandStillAllowed(command), attachmentSubmissionStillAllowed(command), steeringCommandStillAllowed(command), transcriptPlanCommandStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Review the draft before sending again."; return false
         }
         guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command), lifecycleCommandStillAllowed(command), projectScriptCommandStillAllowed(command) else {
@@ -654,9 +694,10 @@ final class RemoteWorkspaceStore {
         isWorking = true; defer { isWorking = false }
         errorMessage = nil; notice = nil
         let owner = generation
+        let undoOwner = threadActions.forwardOwner(for: command)
         await drainDrafts(owner: owner)
         guard generation == owner, !stopping, !draftPersistenceFailed else { return false }
-        guard attachmentSubmissionStillAllowed(command), transcriptPlanCommandStillAllowed(command) else {
+        guard threadActions.commandStillAllowed(command), attachmentSubmissionStillAllowed(command), steeringCommandStillAllowed(command), transcriptPlanCommandStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Your draft was kept."; return false
         }
         guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command), historyCommandStillAllowed(command), contextCommandStillAllowed(command), lifecycleCommandStillAllowed(command), projectScriptCommandStillAllowed(command) else {
@@ -667,18 +708,18 @@ final class RemoteWorkspaceStore {
             return false
         }
         let request = RemoteEnvironmentPendingCommand(connectionID: connection.id, environmentID: environmentID,
-            id: UUID(), command: command)
+            id: UUID(), command: command, undoOwner: undoOwner?.binding)
         do {
             try await pendingStore.save(request)
             guard generation == owner, !stopping else { return false }
-            pending = request
+            pending = request; threadActions.track(request.id, owner: undoOwner)
             if !pullRequestCommandStillAllowed(command) || !checkpointCommandStillAllowed(command) || !historyCommandStillAllowed(command) || !contextCommandStillAllowed(command) || !lifecycleCommandStillAllowed(command) || !projectScriptCommandStillAllowed(command) {
                 try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
                 pending = nil
                 errorMessage = "The remote review or its affected checkout changed. Your draft was kept."
                 return false
             }
-            if !attachmentSubmissionStillAllowed(command) || !transcriptPlanCommandStillAllowed(command) {
+            if !threadActions.commandStillAllowed(command) || !attachmentSubmissionStillAllowed(command) || !steeringCommandStillAllowed(command) || !transcriptPlanCommandStillAllowed(command) {
                 try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
                 pending = nil
                 errorMessage = "The selected conversation or its attachments changed. Your draft was kept."
@@ -693,10 +734,11 @@ final class RemoteWorkspaceStore {
                 errorMessage = "The workspace or its retained edits changed before sending. Review them and choose the checkout again."
                 return false
             }
-            let result = try await client.command(command, id: request.id)
+            let result = try await client.command(command, id: request.id, undoOwner: request.undoOwner)
             guard generation == owner else { return false }
             try await finish(request, receipt: result.receipt)
             await refreshAfterCommand(client: client, owner: owner)
+            if result.receipt.rejection == nil { await threadActions.recovered(request, receipt: result.receipt) }
             return result.receipt.rejection == nil
         } catch {
             guard generation == owner else { return false }
@@ -748,6 +790,17 @@ final class RemoteWorkspaceStore {
     }
 
     private func attachmentSubmissionStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        let composerInput: RemoteComposerSubmission?
+        switch command { case .submitComposerDraft(let input), .promptSteering(_, .steerComposer(_, let input)): composerInput = input; default: composerInput = nil }
+        if let input = composerInput {
+            guard let scope = remoteComposerScope, scope.hostID == input.hostID, scope.threadCreatedAt == input.threadCreatedAt,
+                  scope.projectCreatedAt == input.projectCreatedAt, attachmentTarget == input.target,
+                  scope.configuration == RemoteComposerScope.fingerprint(input.expectedConfiguration),
+                  draft.utf8.elementsEqual(input.text.utf8),
+                  ComposerDraftSnapshot.sameAttachments(hostDraftAttachments, input.expectedDraftAttachments) else { return false }
+            let hostDraft = usesProjection ? projection.control?.draft ?? "" : selectedThread?.draft ?? ""
+            return RemoteComposerSubmission.textDigest(hostDraft) == input.expectedHostDraftDigest
+        }
         guard case .submitWithAttachments(let target, _, let configuration, let expected, _) = command else { return true }
         guard isConnected, !stopping, attachmentTarget == target, selectedConfiguration == configuration else { return false }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -789,11 +842,12 @@ final class RemoteWorkspaceStore {
         isWorking = true; defer { isWorking = false }
         let owner = generation
         do {
-            let result = try await client.receipt(for: pending.command, id: pending.id)
+            let result = try await client.receipt(for: pending.command, id: pending.id, undoOwner: pending.undoOwner)
             guard generation == owner else { return }
             if let receipt = result.receipt {
                 try await finish(pending, receipt: receipt)
                 await refreshAfterCommand(client: client, owner: owner)
+                if receipt.rejection == nil { await threadActions.recovered(pending, receipt: receipt) }
             } else { notice = "No committed receipt is available. Inspect the remote conversation before dismissing this request; it has not been repeated." }
         } catch { if generation == owner { errorMessage = error.localizedDescription } }
     }
@@ -817,12 +871,24 @@ final class RemoteWorkspaceStore {
         let submitted: (UUID, String)?
         switch request.command {
         case .submit(let id, let text, _): submitted = (id, text)
+        case .submitComposerDraft(let input), .promptSteering(_, .steerComposer(_, let input)):
+            let birth = usesProjection ? (projection.control?.detail.summary.id == input.target.threadID ? projection.control?.detail.summary.createdAt : projection.threads.first(where: { $0.id == input.target.threadID })?.createdAt) : snapshot?.workspace.threads.first(where: { $0.id == input.target.threadID })?.createdAt
+            submitted = birth == input.threadCreatedAt ? (input.target.threadID, input.text) : nil
+            if receipt.rejection == nil {
+                guard await attachments.acknowledge(target: input.target, uploadedAttachmentIDs: input.uploadedAttachmentIDs) else { throw CoincideError("The accepted attachment draft could not be saved.") }
+                await composer.acknowledgeSubmission(input)
+            }
         case .submitWithAttachments(let target, let text, _, _, let uploaded):
             submitted = (target.threadID, text)
             if receipt.rejection == nil {
                 guard await attachments.acknowledge(target: target, uploadedAttachmentIDs: uploaded) else {
                     throw CoincideError("The accepted request's attachment draft could not be saved. Check its result again after saving is available.")
                 }
+            }
+        case .promptSteering(let target, .editQueued(_, let queuedID, _, _, _, let uploads, _)):
+            submitted = nil
+            if receipt.rejection == nil {
+                guard await steering.acknowledgeQueued(target: .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID), queuedID: queuedID, uploadedIDs: uploads) else { throw CoincideError("The accepted queued edit could not be saved locally.") }
             }
         default: submitted = nil
         }
@@ -903,40 +969,60 @@ final class RemoteWorkspaceStore {
         } == true
     }
     func canImplementTranscriptPlan(message: RemoteMessageSummary, binding: RemoteProjectionBinding,
-                                    presentation: RemoteTranscriptMessagePresentation) -> Bool {
-        canWrite && transcriptPlanReady(message: message, binding: binding, presentation: presentation)
+                                    presentation: RemoteTranscriptMessagePresentation, inNewConversation: Bool = false) -> Bool {
+        canWrite && transcriptPlanReady(message: message, binding: binding, presentation: presentation, inNewConversation: inNewConversation)
     }
     private func transcriptPlanReady(message: RemoteMessageSummary, binding: RemoteProjectionBinding,
-                                     presentation: RemoteTranscriptMessagePresentation) -> Bool {
+                                     presentation: RemoteTranscriptMessagePresentation, inNewConversation: Bool = false) -> Bool {
         guard descriptor?.capabilities.supportsTranscriptPlanImplementation == true,
+              !inNewConversation || descriptor?.capabilities.supportsTranscriptPlanNewConversation == true,
               transcriptActionIsCurrent(message: message, binding: binding, presentation: presentation),
               !projection.controlHasNewerState, let control = projection.control,
               control.detail.submit.allowed, control.detail.workspaceReady, !control.detail.isBusy,
               control.detail.summary.queueCount == 0, control.detail.requestCount == 0, control.detail.settlementID == nil,
-              draft.isEmpty,
-              control.draft.isEmpty,
-              hostDraftAttachments.isEmpty, !attachments.hasAttachments,
+              (inNewConversation || (draft.isEmpty && control.draft.isEmpty && hostDraftAttachments.isEmpty && !attachments.hasAttachments)),
               !attachments.isLoading, !attachments.isImporting, !attachments.isUploading else { return false }
+        if let fields = presentation.providerEntity?.fields, fields["nativeKind"] == .string("proposed_plan"),
+           fields["status"] != .string("completed") { return false }
         return true
     }
     func implementTranscriptPlan(plan: String, message: RemoteMessageSummary, binding: RemoteProjectionBinding,
                                  presentation: RemoteTranscriptMessagePresentation) async -> Bool {
+        await implementTranscriptPlan(plan: plan, message: message, binding: binding, presentation: presentation, destination: nil)
+    }
+    func implementTranscriptPlanInNewConversation(plan: String, message: RemoteMessageSummary, binding: RemoteProjectionBinding,
+                                                  presentation: RemoteTranscriptMessagePresentation) async -> Bool {
+        await implementTranscriptPlan(plan: plan, message: message, binding: binding, presentation: presentation, destination: .init())
+    }
+    private func implementTranscriptPlan(plan: String, message: RemoteMessageSummary, binding: RemoteProjectionBinding,
+                                        presentation: RemoteTranscriptMessagePresentation, destination: TranscriptPlanDestination?) async -> Bool {
         guard !Task.isCancelled, !plan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              canImplementTranscriptPlan(message: message, binding: binding, presentation: presentation),
+              canImplementTranscriptPlan(message: message, binding: binding, presentation: presentation, inNewConversation: destination != nil),
               let target = pullRequestTarget, let reference = message.presentation else { return false }
         let owner = generation
         await updateInspector()
         guard generation == owner, !Task.isCancelled,
-              canImplementTranscriptPlan(message: message, binding: binding, presentation: presentation),
+              canImplementTranscriptPlan(message: message, binding: binding, presentation: presentation, inNewConversation: destination != nil),
               let bound = inspector.selected?.session.target, bound.rootID != nil,
               inspector.selected?.session.canRead == true,
               RemoteWorkspaceInspectorSession.sameWorkspace(bound, target) else { return false }
         // Send the host-owned reference. The helper resolves the immutable
         // authored plan and revalidates it in the atomic native reducer.
-        return await perform(.implementTranscriptPlan(target: bound, binding: binding, messageID: message.id, presentation: reference))
+        let command: RemoteEnvironmentCommand
+        if let destination {
+            command = .implementTranscriptPlanInNewConversation(target: bound, binding: binding, messageID: message.id,
+                presentation: reference, destinationID: destination.threadID)
+        } else { command = .implementTranscriptPlan(target: bound, binding: binding, messageID: message.id, presentation: reference) }
+        let accepted = await perform(command)
+        if accepted, let destination, generation == owner, !Task.isCancelled, selectedThreadID == target.threadID {
+            selectThread(destination.threadID)
+        }
+        return accepted
     }
     private func transcriptPlanCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
-        guard case .implementTranscriptPlan(let target, let binding, let messageID, let reference) = command else { return true }
+        guard let plan = command.transcriptPlanCommand else { return true }
+        let target = plan.target, binding = plan.binding, messageID = plan.messageID, reference = plan.presentation
+        guard plan.destination == nil || descriptor?.capabilities.supportsTranscriptPlanNewConversation == true else { return false }
         guard let current = pullRequestTarget, RemoteLifecycleProtocol.same(current.configuration, target.configuration),
               current.environmentID == target.environmentID, current.projectID == target.projectID, current.threadID == target.threadID,
               let bound = inspector.selected?.session.target, bound.rootID == target.rootID, target.rootID != nil,
@@ -946,9 +1032,8 @@ final class RemoteWorkspaceStore {
               control.binding.hostID == binding.hostID, descriptor?.capabilities.supportsTranscriptPlanImplementation == true,
               !projection.controlHasNewerState, control.detail.submit.allowed, control.detail.workspaceReady, !control.detail.isBusy,
               control.detail.summary.queueCount == 0, control.detail.requestCount == 0, control.detail.settlementID == nil,
-              draft.isEmpty,
-              control.draft.isEmpty, hostDraftAttachments.isEmpty,
-              !attachments.hasAttachments, !attachments.isImporting, !attachments.isUploading else { return false }
+              (plan.destination != nil || (draft.isEmpty && control.draft.isEmpty && hostDraftAttachments.isEmpty && !attachments.hasAttachments)),
+              !attachments.isLoading, !attachments.isImporting, !attachments.isUploading else { return false }
         return true
     }
     func saveTranscriptPlan(path: String, contents: String, message: RemoteMessageSummary, binding: RemoteProjectionBinding,
@@ -978,13 +1063,43 @@ final class RemoteWorkspaceStore {
         }
     }
 
-    func submit() async {
-        guard canSubmit, let configuration = selectedConfiguration, let target = attachmentTarget else { return }
+    func submit(steer: Bool = false) async {
+        guard (steer ? canWrite && steering.canSteer && composerSupported : canSubmit), let configuration = selectedConfiguration, let target = attachmentTarget else { return }
+        let steeringState = steer ? steering.state : nil
         let threadID = target.threadID
         // Materialize a server-provided draft locally before recording the send.
         let text = draft; setDraft(text, threadID: threadID)
         let owner = generation
-        if descriptor?.capabilities.supportsRemoteAttachments == true {
+        if composerSupported, let scope = remoteComposerScope {
+            isPreparingSubmission = true
+            defer { isPreparingSubmission = false }
+            guard await composer.flush(), remoteComposerScope?.matches(scope) == true else { return }
+            let selected = composer.selected
+            let host = hostDraftAttachments, hostDraft = usesProjection ? projection.control?.draft ?? "" : selectedThread?.draft ?? ""
+            let hostIDs = Set(host.map(\.id)); var staged: [UUID: UUID] = [:]
+            do {
+                for reference in selected {
+                    let bytes = try await composer.data(reference)
+                    guard remoteComposerScope?.matches(scope) == true, draft.utf8.elementsEqual(text.utf8) else { throw CancellationError() }
+                    if !hostIDs.contains(reference.id) { staged[reference.id] = try await attachments.stage(bytes, reference: reference, target: target) }
+                }
+                guard let prepared = await attachments.prepareSubmission(selectedLocalIDs: Set(staged.values), selectedHostIDs: Set(selected.map(\.id))),
+                      generation == owner, remoteComposerScope?.matches(scope) == true,
+                      draft.utf8.elementsEqual(text.utf8), ComposerDraftSnapshot.sameAttachments(composer.selected, selected) else { return }
+                let ordered = try selected.map { reference -> UUID in
+                    if hostIDs.contains(reference.id) { return reference.id }
+                    guard let localID = staged[reference.id], let remote = attachments.entries.first(where: { $0.id == localID })?.remote?.attachment else { throw RemoteAttachmentFailure(.integrity) }
+                    return remote.id
+                }
+                let input = RemoteComposerSubmission(target: target, hostID: scope.hostID, threadCreatedAt: scope.threadCreatedAt,
+                    projectCreatedAt: scope.projectCreatedAt, text: text, expectedConfiguration: configuration,
+                    expectedHostDraftDigest: RemoteComposerSubmission.textDigest(hostDraft), expectedDraftAttachments: host,
+                    selectedDraftAttachmentIDs: selected.filter { hostIDs.contains($0.id) }.map(\.id), uploadedAttachmentIDs: prepared.uploadedAttachmentIDs, selectionDigest: RemoteComposerScope.digest(try RemoteComposerScope.bytes(selected)), orderedAttachmentIDs: ordered)
+                isPreparingSubmission = false
+                if steer, let steeringState { _ = await steering.send(.steerComposer(capture: steeringState.page.capture, input: input), state: steeringState) }
+                else { _ = await perform(.submitComposerDraft(input)) }
+            } catch { if !(error is CancellationError) { errorMessage = error.localizedDescription } }
+        } else if descriptor?.capabilities.supportsRemoteAttachments == true {
             isPreparingSubmission = true
             defer { isPreparingSubmission = false }
             await updateAttachments()
@@ -1072,4 +1187,104 @@ final class RemoteWorkspaceStore {
             runtimeID: runtimeID, request: request, response: response))
     }
 
+}
+
+extension RemoteWorkspaceStore {
+    var steeringSelection: Data {
+        struct Key: Encodable { let target: RemoteWorkspaceTarget?; let run: UUID?; let runtime: UUID?; let birth: Date?; let projectBirth: Date?; let count: Int; let busy: Bool; let requests: Int; let paused: Bool; let capability: UInt64?; let hasTarget: Bool; let supported: Bool; let connected: Bool; let generation: Int }
+        let detail = projection.control?.detail
+        return (try? RemoteComposerScope.bytes(Key(target: pullRequestTarget,
+            run: usesProjection ? detail?.activeRun?.id : selectedThread?.activeRun?.id,
+            runtime: usesProjection ? detail?.runtimeID : selectedThread?.runtimeID,
+            birth: usesProjection ? detail?.summary.createdAt : selectedThread?.createdAt,
+            projectBirth: usesProjection ? detail?.summary.projectCreatedAt : projects.first(where: { $0.id == selectedThread?.projectID })?.createdAt,
+            count: usesProjection ? detail?.summary.queueCount ?? 0 : selectedThread?.queuedTurns.count ?? 0,
+            busy: usesProjection ? detail?.isBusy ?? false : selectedThread?.isBusy ?? false,
+            requests: usesProjection ? detail?.requestCount ?? 0 : selectedThread?.runtimeRequests.count ?? 0,
+            paused: usesProjection ? detail?.queuePaused ?? false : selectedThread?.queuePaused ?? false,
+            capability: usesProjection ? detail?.steeringCapabilityRevision : selectedThread?.steeringCapabilityRevision,
+            hasTarget: usesProjection ? detail?.steeringTargetAvailable == true : selectedThread?.activeRun?.nativeTurnID != nil,
+            supported: descriptor?.capabilities.supportsRemotePromptSteering == true, connected: isConnected, generation: generation))) ?? Data()
+    }
+    func updateSteering() async {
+        let descriptorHost = descriptor?.hostID, owner = generation
+        let birth = usesProjection ? projection.control?.detail.summary.createdAt : selectedThread?.createdAt
+        let projectBirth = usesProjection ? projection.control?.detail.summary.projectCreatedAt : projects.first(where: { $0.id == selectedThread?.projectID })?.createdAt
+        await steering.select(client: isConnected && !stopping ? client : nil, target: pullRequestTarget,
+            supported: descriptor?.capabilities.supportsRemotePromptSteering == true, selection: steeringSelection,
+            current: { [weak self] target in
+                guard let self, self.generation == owner, self.isConnected, !self.stopping,
+                      self.descriptor?.hostID == descriptorHost, let current = self.pullRequestTarget else { return false }
+                let currentBirth = self.usesProjection ? self.projection.control?.detail.summary.createdAt : self.selectedThread?.createdAt
+                let currentProjectBirth = self.usesProjection ? self.projection.control?.detail.summary.projectCreatedAt : self.projects.first(where: { $0.id == self.selectedThread?.projectID })?.createdAt
+                guard currentBirth == birth, currentProjectBirth == projectBirth else { return false }
+                let actual = RemoteWorkspaceTarget(environmentID: current.environmentID, projectID: current.projectID, threadID: current.threadID,
+                    configuration: current.configuration, rootID: target.rootID)
+                return RemoteLifecycleProtocol.same(actual, target)
+            }, perform: { [weak self] command in await self?.perform(command) == true })
+    }
+    private func steeringCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        guard case .promptSteering(let target, let action) = command else { return true }
+        guard !stopping, isConnected, let state = steering.state, state.page.capture == action.capture,
+              RemoteLifecycleProtocol.same(state.target, target), let current = pullRequestTarget else { return false }
+        let expected = RemoteWorkspaceTarget(environmentID: current.environmentID, projectID: current.projectID, threadID: current.threadID,
+            configuration: current.configuration, rootID: target.rootID)
+        let birth = usesProjection ? projection.control?.detail.summary.createdAt : selectedThread?.createdAt
+        let projectBirth = usesProjection ? projection.control?.detail.summary.projectCreatedAt : projects.first(where: { $0.id == selectedThread?.projectID })?.createdAt
+        guard RemoteLifecycleProtocol.same(expected, target), birth == action.capture.threadCreatedAt, projectBirth == action.capture.projectCreatedAt else { return false }
+        switch action { case .acknowledge, .removeQueued, .moveQueued: return true; default: break }
+        let runID = usesProjection ? projection.control?.detail.activeRun?.id : selectedThread?.activeRun?.id
+        let runtimeID = usesProjection ? projection.control?.detail.runtimeID : selectedThread?.runtimeID
+        return target.rootID != nil && runID == action.capture.runID && runtimeID == action.capture.runtimeID
+    }
+    func saveQueuedEdit(_ model: RemoteSteeringEditor) async {
+        guard steering.editor === model, !model.isSaving, !model.requiresRefresh, !model.composer.blocksSubmission, canWrite else { return }
+        model.isSaving = true; defer { model.isSaving = false }
+        let target = model.state.target
+        let attachmentTarget = RemoteAttachmentTarget(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID)
+        let text = model.text, refs = model.composer.selected
+        do {
+            guard await model.composer.flush() else { return }
+            let originalIDs = Set(model.originals.map(\.id)); var staged: [UUID: UUID] = [:]
+            for ref in refs where !originalIDs.contains(ref.id) {
+                let bytes = try await model.composer.data(ref)
+                guard steering.editor === model, model.text.utf8.elementsEqual(text.utf8), attachmentTarget == self.attachmentTarget else { throw CancellationError() }
+                staged[ref.id] = try await model.uploads.stage(bytes, reference: ref, target: attachmentTarget)
+            }
+            guard let uploads = await model.uploads.prepareSubmission(selectedLocalIDs: Set(staged.values), selectedHostIDs: []),
+                  steering.editor === model, model.text.utf8.elementsEqual(text.utf8), ComposerDraftSnapshot.sameAttachments(refs, model.composer.selected) else { throw CancellationError() }
+            let ordered = try refs.map { ref -> UUID in
+                if originalIDs.contains(ref.id) { return ref.id }
+                guard let local = staged[ref.id], let uploaded = model.uploads.entries.first(where: { $0.id == local })?.remote?.attachment else { throw RemoteAttachmentFailure(.integrity) }
+                return uploaded.id
+            }
+            let accepted = await steering.send(.editQueued(capture: model.state.page.capture, queuedID: model.source.id, digest: model.source.digest, text: text,
+                selectedAttachmentIDs: refs.filter { originalIDs.contains($0.id) }.map(\.id), uploadedAttachmentIDs: uploads.uploadedAttachmentIDs, orderedAttachmentIDs: ordered), state: model.state)
+            if accepted, steering.editor === model {
+                if model.text.utf8.elementsEqual(text.utf8), ComposerDraftSnapshot.sameAttachments(refs, model.composer.selected) { steering.closeEditor(); await steering.refresh() }
+                else { model.requiresRefresh = true; model.errorMessage = "An earlier revision was saved. Your newer edits remain local; stash them before reopening the current queued input." }
+            }
+        } catch { if !(error is CancellationError) { model.errorMessage = "This queued input could not be updated. Its original input and your separate draft were kept." } }
+    }
+}
+
+extension RemoteWorkspaceStore {
+    var selectedIsArchived: Bool { usesProjection ? projection.control?.detail.summary.isArchived == true : selectedThread?.isArchived == true }
+    var threadActionsSelection: Data {
+        struct Key: Encodable { let generation: Int; let window: UUID; let environment: UUID?; let host: UUID?; let target: RemoteWorkspaceTarget?; let birth: Date?; let pinned: Bool; let archived: Bool; let lifecycle: ThreadWorkspaceLifecycle?; let supported: Bool }
+        let summary = usesProjection ? projection.control?.detail.summary : nil
+        return (try? RemoteComposerScope.bytes(Key(generation: generation, window: threadActions.windowRevision, environment: connection?.environmentID, host: descriptor?.hostID, target: pullRequestTarget,
+            birth: usesProjection ? summary?.createdAt : selectedThread?.createdAt, pinned: usesProjection ? summary?.isPinned == true : selectedThread?.isPinned == true,
+            archived: selectedIsArchived, lifecycle: usesProjection ? summary?.workspaceLifecycle : selectedThread?.workspaceLifecycle,
+            supported: descriptor?.capabilities.supportsRemoteThreadActions == true))) ?? Data()
+    }
+    func updateThreadActions() async {
+        let owner = generation, host = descriptor?.hostID, env = connection?.environmentID
+        let key = (try? RemoteComposerScope.bytes([String(owner), host?.uuidString ?? "", env?.uuidString ?? ""])) ?? Data()
+        await threadActions.update(environmentID: env, connectionKey: key, target: pullRequestTarget, transport: isConnected ? client.map(RemoteThreadActionsTransport.live) : nil,
+            supported: descriptor?.capabilities.supportsRemoteThreadActions == true,
+            current: { [weak self] in self?.generation == owner && self?.descriptor?.hostID == host && self?.connection?.environmentID == env && self?.isConnected == true && self?.stopping == false },
+            perform: { [weak self] command in await self?.perform(command) == true })
+    }
+    func setIncludeArchived(_ value: Bool) async { includeArchived = value; if usesProjection { await projection.setIncludeArchived(value) } }
 }

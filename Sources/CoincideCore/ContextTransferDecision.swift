@@ -23,7 +23,7 @@ extension WorkspaceDecision {
             result.snapshot.threads[index].piFreshSessionIntent = nil; result.snapshot.threads[index].piFreshConsumerRunID = nil
             result.snapshot.threads[index].queuedTurns.removeAll { $0.id == delivery.runID }
             result.snapshot.threads[index].queuePaused = true; result.closeRuntimes.insert(threadID)
-        case .contextTransferAccepted(let review, let title):
+        case .contextTransferAccepted(let review, let title, let scratchAllocation):
             try snapshot.validateContextTransferReview(review)
             guard (snapshot.contextTransfers ?? []).count < ContextTransferProtocol.maximumStoredTransfers else { throw ContextTransferError.limit }
             let used = try (snapshot.contextTransfers ?? []).reduce(0) { try $0 + ContextTransferProtocol.payload($1.review).count }
@@ -38,12 +38,19 @@ extension WorkspaceDecision {
                     result.snapshot.contextTransfers![index].updatedAt = now
                 }
             }
+            if review.kind != .fork, scratchAllocation != nil { throw ScratchWorkspaceError() }
             switch review.request.intent {
             case .fork:
                 var thread = CodingThread(project: project, model: review.targetConfiguration.model)
                 thread.id = review.targetThreadID; thread.title = title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? review.title
                 guard thread.title.utf8.count <= 4_096, !thread.title.contains("\0") else { throw ContextTransferError.invalidSource }
                 thread.applyContextConfiguration(review.targetConfiguration); thread.checkpointPolicy = source.checkpointPolicy
+                if project.scratch != nil {
+                    guard let allocation = scratchAllocation, allocation.receipt.commandID == id,
+                          allocation.threadID == thread.id, allocation.project.scratch == project.scratch,
+                          allocation.workspacePath.utf8.elementsEqual(thread.workspacePath.utf8) else { throw ScratchWorkspaceError() }
+                    thread.scratchWorkspace = allocation.receipt; thread.createdAt = allocation.receipt.createdAt
+                } else if scratchAllocation != nil { throw ScratchWorkspaceError() }
                 thread.contextTransferLineage = .init(parentThreadID: source.id,
                     rootThreadID: source.contextTransferLineage?.rootThreadID ?? source.id, transferID: review.id, basePoint: review.sourcePoint)
                 result.snapshot.threads.insert(thread, at: 0)

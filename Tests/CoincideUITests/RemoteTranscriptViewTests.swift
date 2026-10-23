@@ -259,3 +259,24 @@ func remoteTranscriptLegacyFallbackAndReadOnlyCardsRenderWithoutInvokingRemoteAc
     #expect(reads == 0)
     await state.shutdown()
 }
+
+@MainActor @Test(.timeLimit(.minutes(1)))
+func remoteTranscriptNativeClaudeResultMetadataRetainsScopedPairingAndObservedFailure() async throws {
+    let base = try RemoteTranscriptFixture.make(), run = TranscriptRunReference(threadID: UUID(), runID: UUID())
+    let call = try RemoteTranscriptFixture.make(binding: base.binding, id: "owned-call", role: .tool,
+        owner: base.presentation.threadID, reference: run, source: "Bash\n{\"command\":\"controlled display\"}", provider: .claude, canPair: true)
+    var metadata = ProviderEntity(key: .init(sessionID: "owned-native", type: "claude_tool_result", id: "owned-call"), fields: .object(["is_error": .bool(true)]))
+    let result = try RemoteTranscriptFixture.make(binding: base.binding, id: "result-owned-call", role: .tool,
+        owner: base.presentation.threadID, reference: run, source: "Exact native failure", entity: metadata, provider: .claude, canPair: true)
+    let state = RemoteTranscriptState(); state.select(base.binding)
+    for fixture in [call, result] { state.request(fixture.summary, binding: base.binding) { ref, _ in try #require(fixture.documents[ref.id]) } }
+    try await remoteTranscriptWait { state.entry(call.summary, base.binding) != nil && state.entry(result.summary, base.binding) != nil }
+    let paired = RemoteTranscriptLayout.pairedResult(call.summary, messages: [call.summary, result.summary], binding: base.binding, state: state)
+    #expect(paired?.id == result.summary.id && state.card(call.summary, result: paired, binding: base.binding)?.status == .failed)
+    #expect(RemoteTranscriptLayout.pairedResult(call.summary, messages: [call.summary, call.summary, result.summary], binding: base.binding, state: state) == nil)
+    metadata.fields = .object(["is_error": .bool(false), "parent_tool_use_id": .string("foreign-child")])
+    let child = try RemoteTranscriptFixture.make(binding: base.binding, id: "result-owned-call", role: .tool,
+        owner: base.presentation.threadID, reference: run, source: "Child output", entity: metadata, provider: .claude, canPair: true)
+    #expect(throws: RemoteProjectionFailure.self) { try RemoteTranscriptState.validate(child.presentation, message: child.summary, binding: base.binding) }
+    await state.shutdown()
+}

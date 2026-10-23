@@ -29,6 +29,13 @@ struct ComposerView: View {
     var draftTools: ComposerDraftToolsStore? = nil
     var draftThreadID: UUID? = nil
     var discardDraft: (() -> Void)? = nil
+    var inputAccessibilityLabel: String? = nil
+    var attachAccessibilityIdentifier: String? = nil
+    var sendAccessibilityLabel: String? = nil
+    var stopAccessibilityLabel: String? = nil
+    var sendAvailable = true
+    var stopAvailable = true
+    var permissionEditable = true
     @FocusState private var editorFocused: Bool
     @State private var dropTargeted = false
     @AppStorage("showSkillsInSlashMenu") private var showSkillsInSlashMenu = true
@@ -46,7 +53,7 @@ struct ComposerView: View {
     @State private var insertionError: String?
     @State private var stashMenuOpen = false
     private var draftChangesBlockSend: Bool { draftThreadID.map { draftTools?.blocksSubmission($0) == true } ?? false }
-    private var canSend: Bool { !historyLocked && !submitting && !draftChangesBlockSend && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+    private var canSend: Bool { sendAvailable && !historyLocked && !submitting && !draftChangesBlockSend && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
     private var canSteer: Bool { steeringAvailable && steer != nil }
     private var delivery: ComposerDelivery {
         .resolve(running: busy, preference: followUpBehavior, alternate: false, canSteer: canSteer)
@@ -76,7 +83,7 @@ struct ComposerView: View {
                     .accessibilityIdentifier("composer-input")
                     .focused($editorFocused)
                     .onAppear { editorFocused = true }
-                    .scrollContentBackground(.hidden).accessibilityLabel("Message to \(providerName ?? provider.name)")
+                    .scrollContentBackground(.hidden).accessibilityLabel(Text(inputAccessibilityLabel ?? "Message to \(providerName ?? provider.name)"))
                     .background(ComposerSelectionBridge(request: selectionRequest, selectionChanged: observeSelection, keyDown: handleSkillKey))
                     .onKeyPress(keys: [.return], phases: .down) { event in
                         guard !event.modifiers.contains(.shift), !event.modifiers.contains(.option) else { return .ignored }
@@ -89,13 +96,13 @@ struct ComposerView: View {
             ViewThatFits(in: .horizontal) {
                 HStack {
                     attachmentControls
-                    permissionControl
+                    permissionControl.disabled(!permissionEditable)
                     Spacer(minLength: 8)
                     if !busy { newlineHint }
                     deliveryControls
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack { attachmentControls; permissionControl; Spacer(minLength: 0) }
+                    HStack { attachmentControls; permissionControl.disabled(!permissionEditable); Spacer(minLength: 0) }
                     HStack { newlineHint; Spacer(minLength: 8); deliveryControls }
                 }
             }
@@ -120,7 +127,7 @@ struct ComposerView: View {
     }
     @ViewBuilder private var attachmentControls: some View {
         Button(action: attach) { Image(systemName: "plus").frame(width: 24, height: 24) }
-            .buttonStyle(.plain).help("Attach files").accessibilityLabel("Attach files").disabled(submitting)
+            .buttonStyle(.plain).help("Attach files").accessibilityLabel("Attach files").accessibilityIdentifier(attachAccessibilityIdentifier ?? "composer-attach").disabled(submitting)
         if let draftTools, let draftThreadID {
             Button { stashPrompt() } label: {
                 HStack(spacing: 3) {
@@ -228,7 +235,7 @@ struct ComposerView: View {
             .accessibilityLabel("Message delivery").accessibilityIdentifier("composer-delivery")
             .help("Choose Queue or Steer. Command-Return uses the alternate delivery when steering is available.")
             Button(action: stop) { Image(systemName: "stop.fill").frame(width: 30, height: 30) }
-                .buttonStyle(.plain).help("Stop turn").accessibilityLabel("Stop turn")
+                .buttonStyle(.plain).help("Stop turn").accessibilityLabel(Text(stopAccessibilityLabel ?? "Stop turn")).disabled(!stopAvailable)
         }
         Button {
             activate(alternate: NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.control))
@@ -238,7 +245,7 @@ struct ComposerView: View {
         }
         .coincidePrimaryAction().controlSize(.small).buttonBorderShape(.circle)
         .keyboardShortcut(.return, modifiers: .command)
-        .accessibilityLabel(commandAnchor != nil ? String(localized: "Insert selected command or skill") : skillAnchor == nil ? delivery.label : String(localized: "Insert selected skill"))
+        .accessibilityLabel(sendAccessibilityLabel ?? (commandAnchor != nil ? String(localized: "Insert selected command or skill") : skillAnchor == nil ? delivery.label : String(localized: "Insert selected skill")))
         .accessibilityIdentifier("composer-send")
         .help(delivery == .steer ? "Send into the running turn using its current settings" : busy ? "Send after the current turn" : "Send message")
         .disabled(!canSend)

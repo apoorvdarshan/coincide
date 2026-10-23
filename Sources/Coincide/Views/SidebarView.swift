@@ -14,6 +14,7 @@ struct SidebarView: View {
     @State private var pendingGroupRemoval: ProjectGroupRemovalRequest?
     @State private var snoozing: ThreadSnoozePresentation?
     @Environment(ProjectActionsPresenter.self) private var projectActions: ProjectActionsPresenter?
+    @State private var scratchRecoveryPresented = false
     var body: some View {
         List(selection: $store.selectedThreadID) {
             ForEach(store.orderedProjectGroups) { group in
@@ -68,6 +69,11 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Menu {
+                    Button("New Conversation Without a Project") { store.newScratchThread() }
+                        .disabled(store.isCreatingScratchConversation)
+                        .accessibilityIdentifier("scratch-new-conversation")
+                    Button("Saved Scratch Allocations…") { scratchRecoveryPresented = true }
+                    Divider()
                     Button("New Project…", action: onNewProject)
                     Button("Open Folder…") { store.addProject() }
                     Button("Clone Repository…", action: onClone)
@@ -79,6 +85,7 @@ struct SidebarView: View {
                 Toggle(isOn: $store.showArchived) { Image(systemName: "archivebox") }.toggleStyle(.button).help("Show archived threads")
             }.buttonStyle(.borderless).padding(12)
         }
+        .sheet(isPresented: $scratchRecoveryPresented) { ScratchWorkspaceRecoverySheet(store: store) }
         .onChange(of: store.selectedThreadID) { if let thread = store.selectedThread { store.selectedProjectID = thread.projectID } }
         .alert(renaming?.alertTitle ?? String(localized: "Rename"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $title).accessibilityIdentifier("sidebar-rename-title")

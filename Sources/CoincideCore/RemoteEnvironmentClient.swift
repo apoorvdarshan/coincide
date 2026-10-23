@@ -72,6 +72,8 @@ public actor RemoteEnvironmentClient {
         let offset: Int, total: Int
     }
     private var contextViews = RemoteContextClientState()
+    private var steeringViews = RemoteSteeringClientState()
+    private var threadActionLeases: [UUID: RemoteThreadActionBinding] = [:]
     private var historyHostID: UUID?
     private var historyBindings: [UUID: RemoteHistoryBinding] = [:]
     private var historyTargets: [UUID: Data] = [:]
@@ -181,10 +183,21 @@ public actor RemoteEnvironmentClient {
         let (connection, owned, environment) = try context()
         return try await requestSnapshot(RemoteEnvironmentProtocol.snapshotMethod, connection: connection, generation: owned, environmentID: environment)
     }
-    public func command(_ command: RemoteEnvironmentCommand, id: UUID = UUID()) async throws -> RemoteEnvironmentCommandResult {
+    public func command(_ command: RemoteEnvironmentCommand, id: UUID = UUID(), undoOwner: RemoteThreadActionBinding? = nil) async throws -> RemoteEnvironmentCommandResult {
         let (connection, owned, environment) = try context()
-        if case .implementTranscriptPlan(let target, let binding, let messageID, let presentation) = command {
-            guard descriptor?.capabilities.supportsTranscriptPlanImplementation == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        if let undoOwner {
+            guard descriptor?.capabilities.supportsRemoteThreadActions == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            guard threadActionLeases[undoOwner.leaseID] == undoOwner, undoOwner.environmentID == environment else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        if case .threadAction(let action) = command {
+            guard descriptor?.capabilities.supportsRemoteThreadActions == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            guard threadActionLeases[action.binding.leaseID] == action.binding else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        if let plan = command.transcriptPlanCommand {
+            let target = plan.target, binding = plan.binding, messageID = plan.messageID, presentation = plan.presentation
+            guard descriptor?.capabilities.supportsTranscriptPlanImplementation == true,
+                  plan.destination == nil || descriptor?.capabilities.supportsTranscriptPlanNewConversation == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            guard plan.destination?.threadID != target.threadID else { throw RemoteEnvironmentClientError(.invalidResponse) }
             guard target.environmentID == environment, binding.environmentID == environment, target.rootID != nil,
                   case .thread(let threadID) = binding.scope, threadID == target.threadID,
                   presentation.kind == .transcriptPresentation else { throw RemoteEnvironmentClientError(.invalidResponse) }
@@ -214,6 +227,28 @@ public actor RemoteEnvironmentClient {
         }
         if command.isWorktreeCommand, descriptor?.capabilities.supportsRemoteWorktrees != true {
             throw RemoteEnvironmentClientError(.unsupported)
+        }
+        if case .promptSteering(let target, let action) = command {
+            switch action {
+            case .removeQueued, .moveQueued:
+                guard descriptor?.capabilities.supportsRemoteQueueManagement == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            default: break
+            }
+            guard descriptor?.capabilities.supportsRemotePromptSteering == true else { throw RemoteEnvironmentClientError(.unsupported) }
+            guard target.environmentID == environment, action.capture.binding.environmentID == environment,
+                  action.capture.binding.hostID == descriptor?.hostID, action.capture.binding.threadID == target.threadID,
+                  !action.requiresRoot || target.rootID != nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            try steeringViews.check(action.capture.binding, target: target)
+            guard steeringViews.captures[action.capture.binding.viewID] == action.capture else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            if case .steerComposer(_, let input) = action {
+                try input.validate()
+                guard descriptor?.capabilities.supportsRemoteComposerDraftSelection == true, descriptor?.hostID == input.hostID else { throw RemoteEnvironmentClientError(.unsupported) }
+            }
+        }
+        if case .submitComposerDraft(let input) = command {
+            guard descriptor?.capabilities.supportsRemoteComposerDraftSelection == true,
+                  descriptor?.hostID == input.hostID else { throw RemoteEnvironmentClientError(.unsupported) }
+            try input.validate()
         }
         if command.preparesAttachments, descriptor?.capabilities.supportsRemoteAttachments != true {
             throw RemoteEnvironmentClientError(.unsupported)
@@ -261,7 +296,7 @@ public actor RemoteEnvironmentClient {
         guard attemptedCommands.count < 4_096, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests else {
             throw RemoteEnvironmentClientError(.limitExceeded)
         }
-        let request = RemoteEnvironmentCommandRequest(environmentID: environment, id: id, command: command)
+        let request = RemoteEnvironmentCommandRequest(environmentID: environment, id: id, command: command, undoOwner: undoOwner)
         let bytes = try RemoteEnvironmentProtocol.payload(request)
         let payload = try JSONDecoder().decode(JSONValue.self, from: bytes)
         attemptedCommands.insert(id); activeRequests += 1
@@ -281,10 +316,10 @@ public actor RemoteEnvironmentClient {
             throw RemoteEnvironmentClientError(.commandUncertain, commandID: id)
         }
     }
-    public func receipt(for command: RemoteEnvironmentCommand, id: UUID) async throws -> RemoteEnvironmentReceiptResult {
+    public func receipt(for command: RemoteEnvironmentCommand, id: UUID, undoOwner: RemoteThreadActionBinding? = nil) async throws -> RemoteEnvironmentReceiptResult {
         let (connection, owned, environment) = try context()
         guard activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests else { throw RemoteEnvironmentClientError(.limitExceeded) }
-        let request = RemoteEnvironmentCommandRequest(environmentID: environment, id: id, command: command)
+        let request = RemoteEnvironmentCommandRequest(environmentID: environment, id: id, command: command, undoOwner: undoOwner)
         let bytes = try RemoteEnvironmentProtocol.payload(request)
         guard attemptedCommands.count < 4_096 || attemptedCommands.contains(id) else { throw RemoteEnvironmentClientError(.limitExceeded) }
         attemptedCommands.insert(id)
@@ -1331,6 +1366,7 @@ public actor RemoteEnvironmentClient {
         projectionMode = false; projectionHostID = nil; latestProjectionBinding = nil
         projectionCursors.removeAll(); projectionReplies.removeAll()
         contextViews = .init()
+        steeringViews = RemoteSteeringClientState(); threadActionLeases.removeAll()
         historyHostID = nil; historyBindings.removeAll(); historyTargets.removeAll(); historyCursors.removeAll(); historyReplies.removeAll()
         let gracefulEnvironment = graceful && connected && descriptor?.environmentID == expectedID ? expectedID : nil
         generation = UUID(); connected = false; subscribing = false
@@ -2184,5 +2220,137 @@ extension RemoteEnvironmentClient {
         let digest = try RemoteHistoryProtocol.digest(value)
         if let prior = historyReplies[key] { guard prior.leaseID == binding.leaseID, prior.digest == digest else { throw RemoteEnvironmentClientError(.invalidResponse) } }
         historyReplies[key] = (binding.leaseID, digest)
+    }
+}
+
+extension RemoteEnvironmentClient {
+    private func steeringRPC<Request: Encodable, Result: Decodable>(_ method: String, _ request: Request, as: Result.Type) async throws -> Result {
+        let (connection, owned, _) = try context()
+        guard descriptor?.capabilities.supportsRemotePromptSteering == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        let data = try RemoteProjectionProtocol.payload(request)
+        guard data.count <= RemoteEnvironmentProtocol.maximumRequestBytes, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + data.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; activeWorkspaceBytes += data.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= data.count }
+        let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: data), timeout: .seconds(30))
+        guard generation == owned, rpc != nil else { throw CancellationError() }
+        guard try RemoteProjectionProtocol.payload(raw).count <= RemoteSteeringProtocol.maximumBytes else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        do { return try RemoteEnvironmentProtocol.decode(Result.self, from: raw) }
+        catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+    }
+    public func readSteering(_ request: RemoteSteeringReadRequest) async throws -> RemoteSteeringReadResult {
+        let (_, owned, environment) = try context(), floor = sequenceFloor
+        guard request.target.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
+        let result = try await steeringRPC(RemoteSteeringProtocol.readMethod, request, as: RemoteSteeringReadResult.self)
+        try validateWorkspaceResponse(generation: owned) {
+            let capture = result.page.capture, binding = capture.binding
+            let expected = RemoteWorkspaceTarget(environmentID: request.target.environmentID, projectID: request.target.projectID, threadID: request.target.threadID,
+                configuration: request.target.configuration, rootID: result.target.rootID)
+            guard RemoteLifecycleProtocol.same(result.target, expected), request.target.rootID == nil || request.target.rootID == result.target.rootID,
+                  binding.environmentID == environment, binding.hostID == descriptor?.hostID, binding.threadID == request.target.threadID,
+                  RemoteLifecycleProtocol.validDigest(binding.digest), result.sequence >= floor,
+                  result.page.kind == .queue, result.operationPage.kind == .operations, result.operationPage.capture == capture,
+                  !result.canSteer || (capture.runID != nil && capture.runtimeID != nil && capture.activeConfigurationDigest != nil),
+                  result.operationCount == result.operationPage.totalCount,
+                  result.activeModel.map({ $0.utf8.count <= 128 }) ?? true,
+                  result.reason.map({ $0.utf8.count <= 2_048 }) ?? true,
+                  capture.threadCreatedAt.timeIntervalSince1970.isFinite, capture.projectCreatedAt?.timeIntervalSince1970.isFinite != false,
+                  capture.activeConfigurationDigest.map(RemoteLifecycleProtocol.validDigest) ?? true else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            guard steeringViews.targets.count < 8 || steeringViews.targets[binding.viewID] != nil else { throw RemoteEnvironmentClientError(.limitExceeded) }
+            steeringViews.targets[binding.viewID] = result.target; steeringViews.captures[binding.viewID] = capture
+            try steeringViews.accept(result.page, target: result.target, offset: 0)
+            try steeringViews.accept(result.operationPage, target: result.target, offset: 0)
+        }
+        return result
+    }
+    public func steeringPage(_ request: RemoteSteeringPageRequest) async throws -> RemoteSteeringPage {
+        try steeringViews.check(request.binding, target: request.target)
+        guard let claim = steeringViews.cursors[request.cursor], claim.binding == request.binding, claim.kind == request.kind else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        let (_, owned, _) = try context()
+        let result = try await steeringRPC(RemoteSteeringProtocol.pageMethod, request, as: RemoteSteeringPage.self)
+        try validateWorkspaceResponse(generation: owned) {
+            guard result.capture.binding == request.binding, result.kind == request.kind else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            try steeringViews.accept(result, target: request.target, offset: claim.offset, total: claim.total)
+            try steeringViews.immutable(result, key: request.binding.viewID.uuidString + ":page:" + request.cursor.uuidString)
+        }
+        return result
+    }
+    public func steeringContent(_ request: RemoteSteeringContentRequest) async throws -> RemoteSteeringContentResult {
+        try steeringViews.check(request.binding, target: request.target)
+        guard steeringViews.references[request.binding.viewID]?[request.reference.id] == request.reference,
+              request.offset >= 0, request.offset <= request.reference.totalBytes else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        let (_, owned, _) = try context()
+        let result = try await steeringRPC(RemoteSteeringProtocol.contentMethod, request, as: RemoteSteeringContentResult.self)
+        try validateWorkspaceResponse(generation: owned) {
+            try steeringViews.check(request.binding, target: request.target)
+            guard result.binding == request.binding, result.reference == request.reference, result.offset == request.offset,
+                  result.data.count <= 128 * 1_024, request.offset + result.data.count <= request.reference.totalBytes,
+                  result.complete == (request.offset + result.data.count == request.reference.totalBytes), result.complete || !result.data.isEmpty else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            try steeringViews.immutable(result, key: request.binding.viewID.uuidString + ":content:" + request.reference.id.uuidString + ":" + String(request.offset))
+        }
+        return result
+    }
+    public func steeringDocument(_ reference: RemoteSteeringContentReference, binding: RemoteSteeringBinding, target: RemoteWorkspaceTarget) async throws -> Data {
+        var bytes = Data()
+        repeat {
+            try Task.checkCancellation()
+            let page = try await steeringContent(.init(target: target, binding: binding, reference: reference, offset: bytes.count))
+            bytes.append(page.data)
+            if page.complete { break }
+        } while bytes.count < reference.totalBytes
+        guard bytes.count == reference.totalBytes, RemoteProjectionProtocol.digest(bytes) == reference.digest else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        return bytes
+    }
+    public func releaseSteering(_ request: RemoteSteeringReleaseRequest) async throws -> RemoteSteeringReleaseResult {
+        try steeringViews.check(request.binding, target: request.target)
+        defer { steeringViews.release(request.binding.viewID) }
+        let result = try await steeringRPC(RemoteSteeringProtocol.releaseMethod, request, as: RemoteSteeringReleaseResult.self)
+        guard result.binding == request.binding else { throw RemoteEnvironmentClientError(.invalidResponse) }; return result
+    }
+}
+
+extension RemoteEnvironmentClient {
+    public func readThreadActions(_ request: RemoteThreadActionsReadRequest) async throws -> RemoteThreadActionsReadResult {
+        let (connection, owned, environment) = try context(), floor = sequenceFloor
+        guard descriptor?.capabilities.supportsRemoteThreadActions == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        guard request.environmentID == environment, request.target?.environmentID == environment || request.target == nil,
+              request.binding.map({ threadActionLeases[$0.leaseID] == $0 }) ?? true else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        let bytes = try RemoteProjectionProtocol.payload(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumRequestBytes, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests, activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        let raw = try await connection.request(RemoteThreadActionsProtocol.readMethod, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(30))
+        let result = try RemoteEnvironmentProtocol.decode(RemoteThreadActionsReadResult.self, from: raw)
+        try validateWorkspaceResponse(generation: owned) {
+            guard result.binding.environmentID == environment, result.binding.hostID == descriptor?.hostID,
+                  RemoteLifecycleProtocol.validDigest(result.binding.digest), result.sequence >= floor,
+                  request.binding == nil || result.binding == request.binding,
+                  try RemoteProjectionProtocol.payload(result).count <= RemoteThreadActionsProtocol.maximumBytes,
+                  threadActionLeases.count < 16 || threadActionLeases[result.binding.leaseID] != nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            if let capture = result.capture {
+                guard let target = request.target, RemoteLifecycleProtocol.same(target, capture.target), capture.binding == result.binding,
+                      RemoteLifecycleProtocol.validDigest(capture.digest), capture.threadCreatedAt.timeIntervalSince1970.isFinite,
+                      capture.projectCreatedAt?.timeIntervalSince1970.isFinite != false else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            } else if request.target != nil { throw RemoteEnvironmentClientError(.invalidResponse) }
+            if let group = result.undo {
+                guard !group.claimIDs.isEmpty, group.claimIDs.count <= 128, Set(group.claimIDs).count == group.claimIDs.count,
+                      group.threadIDs.count == group.claimIDs.count, group.forwardCommandIDs.count == group.claimIDs.count, RemoteLifecycleProtocol.validDigest(group.digest),
+                      group.expiresAt.timeIntervalSince1970.isFinite, (0...5_000).contains(group.remainingMilliseconds) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            }
+            threadActionLeases[result.binding.leaseID] = result.binding
+        }
+        return result
+    }
+    public func releaseThreadActions(_ request: RemoteThreadActionsReleaseRequest) async throws -> RemoteThreadActionsReleaseResult {
+        let (connection, owned, environment) = try context()
+        guard threadActionLeases[request.binding.leaseID] == request.binding, request.binding.environmentID == environment else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        defer { if threadActionLeases[request.binding.leaseID] == request.binding { threadActionLeases.removeValue(forKey: request.binding.leaseID) } }
+        guard activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; defer { activeRequests -= 1 }
+        let bytes = try RemoteProjectionProtocol.payload(request)
+        let raw = try await connection.request(RemoteThreadActionsProtocol.releaseMethod, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(30))
+        let result = try RemoteEnvironmentProtocol.decode(RemoteThreadActionsReleaseResult.self, from: raw)
+        guard generation == owned, result.binding == request.binding else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        return result
     }
 }

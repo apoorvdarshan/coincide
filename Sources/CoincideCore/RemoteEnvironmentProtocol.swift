@@ -61,6 +61,10 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsWorkspaceFilesAndGit: Bool
     public let supportsRemoteTerminal: Bool
     public let supportsRemoteWorktrees: Bool
+    public let supportsRemotePromptSteering: Bool
+    public let supportsRemoteThreadActions: Bool
+    public let supportsRemoteQueueManagement: Bool
+    public let supportsRemoteComposerDraftSelection: Bool
     public let supportsRemoteAttachments: Bool
     public let supportsRemotePullRequests: Bool
     public let supportsRemoteCheckpoints: Bool
@@ -70,13 +74,17 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsWorkspaceLifecycleControls: Bool
     public let supportsReviewedSettleScripts: Bool
     public let supportsTranscriptPlanImplementation: Bool
-    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false, supportsWorkspaceLifecycleControls: Bool = false, supportsReviewedSettleScripts: Bool = false, supportsTranscriptPlanImplementation: Bool = false) {
+    public let supportsTranscriptPlanNewConversation: Bool
+    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false, supportsBoundedProjections: Bool = false, supportsRemoteHistory: Bool = false, supportsContextTransfers: Bool = false, supportsWorkspaceLifecycleControls: Bool = false, supportsReviewedSettleScripts: Bool = false, supportsTranscriptPlanImplementation: Bool = false, supportsTranscriptPlanNewConversation: Bool = false, supportsRemoteComposerDraftSelection: Bool = false, supportsRemotePromptSteering: Bool = false, supportsRemoteThreadActions: Bool = false, supportsRemoteQueueManagement: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
         supportsWorkspaceFilesAndGit = true
         self.supportsRemoteTerminal = supportsRemoteTerminal
         supportsRemoteWorktrees = true
+        self.supportsRemotePromptSteering = supportsRemotePromptSteering
+        self.supportsRemoteThreadActions = supportsRemoteThreadActions; self.supportsRemoteQueueManagement = supportsRemoteQueueManagement
+        self.supportsRemoteComposerDraftSelection = supportsRemoteComposerDraftSelection
         supportsRemoteAttachments = true
         supportsRemotePullRequests = true
         supportsRemoteCheckpoints = true
@@ -86,10 +94,13 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         self.supportsWorkspaceLifecycleControls = supportsWorkspaceLifecycleControls
         self.supportsReviewedSettleScripts = supportsReviewedSettleScripts
         self.supportsTranscriptPlanImplementation = supportsTranscriptPlanImplementation
+        self.supportsTranscriptPlanNewConversation = supportsTranscriptPlanNewConversation
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers, supportsWorkspaceLifecycleControls, supportsReviewedSettleScripts, supportsTranscriptPlanImplementation
+        case supportsRemotePromptSteering, supportsRemoteThreadActions, supportsRemoteQueueManagement
+        case supportsRemoteComposerDraftSelection
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints, supportsBoundedProjections, supportsRemoteHistory, supportsContextTransfers, supportsWorkspaceLifecycleControls, supportsReviewedSettleScripts, supportsTranscriptPlanImplementation, supportsTranscriptPlanNewConversation
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -104,6 +115,10 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsWorkspaceFilesAndGit = try values.decodeIfPresent(Bool.self, forKey: .supportsWorkspaceFilesAndGit) ?? false
         supportsRemoteTerminal = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteTerminal) ?? false
         supportsRemoteWorktrees = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteWorktrees) ?? false
+        supportsRemoteThreadActions = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteThreadActions) ?? false
+        supportsRemoteQueueManagement = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteQueueManagement) ?? false
+        supportsRemotePromptSteering = try values.decodeIfPresent(Bool.self, forKey: .supportsRemotePromptSteering) ?? false
+        supportsRemoteComposerDraftSelection = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteComposerDraftSelection) ?? false
         supportsRemoteAttachments = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteAttachments) ?? false
         supportsRemotePullRequests = try values.decodeIfPresent(Bool.self, forKey: .supportsRemotePullRequests) ?? false
         supportsRemoteCheckpoints = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteCheckpoints) ?? false
@@ -113,16 +128,18 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsWorkspaceLifecycleControls = try values.decodeIfPresent(Bool.self, forKey: .supportsWorkspaceLifecycleControls) ?? false
         supportsReviewedSettleScripts = try values.decodeIfPresent(Bool.self, forKey: .supportsReviewedSettleScripts) ?? false
         supportsTranscriptPlanImplementation = try values.decodeIfPresent(Bool.self, forKey: .supportsTranscriptPlanImplementation) ?? false
+        supportsTranscriptPlanNewConversation = try values.decodeIfPresent(Bool.self, forKey: .supportsTranscriptPlanNewConversation) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
     public let environmentID: UUID
+    public let hostID: UUID?
     public let protocolVersion: Int
     public let label: String
     public let capabilities: RemoteEnvironmentCapabilities
     public init(environmentID: UUID, protocolVersion: Int = RemoteEnvironmentProtocol.version, label: String,
-                capabilities: RemoteEnvironmentCapabilities = .init()) {
-        self.environmentID = environmentID; self.protocolVersion = protocolVersion
+                capabilities: RemoteEnvironmentCapabilities = .init(), hostID: UUID? = nil) {
+        self.environmentID = environmentID; self.hostID = hostID; self.protocolVersion = protocolVersion
         self.label = label; self.capabilities = capabilities
     }
 }
@@ -150,10 +167,14 @@ public enum RemoteEnvironmentThreadEdit: Codable, Sendable, Equatable {
 /// provider events can never be supplied by a remote command.
 public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
     case implementTranscriptPlan(target: RemoteWorkspaceTarget, binding: RemoteProjectionBinding, messageID: String, presentation: RemoteProjectionContentReference)
+    case implementTranscriptPlanInNewConversation(target: RemoteWorkspaceTarget, binding: RemoteProjectionBinding, messageID: String, presentation: RemoteProjectionContentReference, destinationID: UUID)
     case addProject(id: UUID, path: String, title: String?)
     case createThread(id: UUID, projectID: UUID, provider: ProviderKind, title: String, model: String, permission: PermissionMode, checkpointPolicy: RunCheckpointPolicy? = nil)
     case editThread(threadID: UUID, edit: RemoteEnvironmentThreadEdit, expectedConfiguration: ProviderConfiguration)
     case submit(threadID: UUID, text: String, expectedConfiguration: ProviderConfiguration)
+    case threadAction(RemoteThreadAction)
+    case promptSteering(target: RemoteWorkspaceTarget, action: RemoteSteeringAction)
+    case submitComposerDraft(RemoteComposerSubmission)
     case submitWithAttachments(target: RemoteAttachmentTarget, text: String, expectedConfiguration: ProviderConfiguration, expectedDraftAttachments: [ChatAttachment], uploadedAttachmentIDs: [UUID])
     case pullRequest(target: RemoteWorkspaceTarget, action: RemotePullRequestAction)
     case checkpoint(target: RemoteWorkspaceTarget, action: RemoteCheckpointAction)
@@ -174,8 +195,9 @@ public struct RemoteEnvironmentCommandRequest: Codable, Sendable, Equatable {
     public let environmentID: UUID
     public let id: UUID
     public let command: RemoteEnvironmentCommand
-    public init(environmentID: UUID, id: UUID = UUID(), command: RemoteEnvironmentCommand) {
-        self.environmentID = environmentID; self.id = id; self.command = command
+    public let undoOwner: RemoteThreadActionBinding?
+    public init(environmentID: UUID, id: UUID = UUID(), command: RemoteEnvironmentCommand, undoOwner: RemoteThreadActionBinding? = nil) {
+        self.environmentID = environmentID; self.id = id; self.command = command; self.undoOwner = undoOwner
     }
 }
 public struct RemoteEnvironmentCommandResult: Codable, Sendable, Equatable {

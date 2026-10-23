@@ -146,7 +146,7 @@ struct CoincideApp: App {
             }
         }
         Window("Remote Workspaces", id: RemoteWorkspaceStore.sceneID) {
-            RemoteWorkspaceView(store: remoteStore).frame(minWidth: 900, minHeight: 600)
+            RemoteWorkspaceView(store: remoteStore, keybindings: keybindings).frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         Settings { SettingsView(store: store).environment(keybindings) }

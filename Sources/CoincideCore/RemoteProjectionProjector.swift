@@ -106,7 +106,7 @@ enum RemoteProjectionProjector {
                 provider: thread.provider, providerName: thread.providerName, model: text(thread.model), permission: thread.permission,
                 state: thread.state, isPinned: thread.isPinned, isArchived: thread.isArchived, createdAt: thread.createdAt, updatedAt: thread.updatedAt,
                 messageCount: thread.messages.count, runCount: thread.runHistory?.count ?? 0, queueCount: thread.queuedTurns.count,
-                workspaceLifecycle: thread.workspaceLifecycle, settlementPhase: thread.settlement?.phase)
+                workspaceLifecycle: thread.workspaceLifecycle, settlementPhase: thread.settlement?.phase, projectCreatedAt: snapshot.projects.first(where: { $0.id == thread.projectID })?.createdAt)
             return counted ? try row(result) : result
         }
         func preparation(_ value: ThreadWorkspacePreparation) throws -> RemoteWorktreePreparationSummary {
@@ -141,7 +141,9 @@ enum RemoteProjectionProjector {
                 openTerminal: availability(available && ready && !preparing, "This workspace is unavailable or held by an operation."),
                 chooseWorktree: availability(canChoose, "Choose a worktree before the first message and with no running or queued work."),
                 preparation: thread.workspacePreparation.map { try preparation($0) }, settlementID: thread.settlement?.id,
-                checkpointBanner: banner(thread), liveProviderUsage: inline, liveProviderUsageContent: content)
+                checkpointBanner: banner(thread), liveProviderUsage: inline, liveProviderUsageContent: content,
+                steeringCapabilityRevision: thread.steeringCapabilityRevision,
+                steeringTargetAvailable: snapshot.promptSteeringTargetReason(threadID: thread.id) == nil)
             }
             var selectedUsage = try usage(thread.liveProviderUsage)
             var result = try projected(selectedUsage.inline, selectedUsage.content)
@@ -181,7 +183,7 @@ enum RemoteProjectionProjector {
                     streaming: visible && value.role == .assistant && record?.id == thread.activeRun?.id && record.flatMap { latest[$0.id] } == value.id,
                     runActive: record != nil && record?.id == thread.activeRun?.id,
                     trailing: visible && record?.id == thread.activeRun?.id && record.flatMap { latest[$0.id] } == value.id,
-                    canPairClaudeResult: value.role == .tool && value.providerEntity == nil && sourceRecord?.messageAttributionVersion == 1 && sourceRecord?.configuration.provider == .claude)
+                    canPairClaudeResult: value.role == .tool && (value.providerEntity == nil || ClaudeToolResultMetadata.matches(value, rootOnly: true)) && sourceRecord?.messageAttributionVersion == 1 && sourceRecord?.configuration.provider == .claude)
                 return try message(value, presentation: json(presentation, kind: .transcriptPresentation))
             }
         }

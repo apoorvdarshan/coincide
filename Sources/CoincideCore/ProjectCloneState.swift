@@ -46,7 +46,11 @@ extension WorkspaceSnapshot {
     var cloneAttemptIDs: Set<UUID> { Set(projects.flatMap { ($0.clone?.previousPlans ?? []) + ($0.clone.map { [$0.plan] } ?? []) }.map(\.id)) }
     public func workspaceReady(for thread: CodingThread) -> Bool {
         guard let project = projects.first(where: { $0.id == thread.projectID }) else { return false }
-        let preparation = threads.first(where: { $0.id == thread.id })?.workspacePreparation ?? thread.workspacePreparation
+        let current = threads.first(where: { $0.id == thread.id }) ?? thread
+        if project.scratch != nil {
+            guard let receipt = current.scratchWorkspace, receipt.validates(thread: current, project: project) else { return false }
+        } else if current.scratchWorkspace != nil { return false }
+        let preparation = current.workspacePreparation
         return (project.clone?.isReady ?? true) && (preparation?.isReady ?? true)
     }
     public func providerReady(for thread: CodingThread) -> Bool {

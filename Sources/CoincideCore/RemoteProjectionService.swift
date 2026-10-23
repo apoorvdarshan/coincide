@@ -22,7 +22,8 @@ actor RemoteProjectionService {
     /// The native reducer will revalidate this current source at the original
     /// remote command's durable admission boundary.
     func prepareTranscriptPlanImplementation(target: RemoteWorkspaceTarget, binding: RemoteProjectionBinding,
-                                             messageID: String, presentation: RemoteProjectionContentReference) async throws -> TranscriptPlanImplementation {
+                                             messageID: String, presentation: RemoteProjectionContentReference, destination: TranscriptPlanDestination? = nil,
+                                             commandID: UUID? = nil, originalPayload: Data? = nil) async throws -> TranscriptPlanImplementation {
         try require(target.environmentID)
         let owned = try view(binding)
         guard case .thread(let threadID) = binding.scope, threadID == target.threadID,
@@ -65,7 +66,12 @@ actor RemoteProjectionService {
         // capture review; this display document cannot invent that authority.
         if thread.provider == .claude, thread.claudeRuntimeConfiguration == nil { throw RemoteProjectionFailure(.unavailable) }
         if thread.provider == .pi, thread.piConfiguration?.runtime == nil { throw RemoteProjectionFailure(.unavailable) }
-        return .init(thread: thread, message: message)
+        let request = TranscriptPlanImplementation(thread: thread, message: message, destination: destination)
+        guard thread.scratchWorkspace != nil, destination != nil else { return request }
+        guard let commandID, let originalPayload else { throw ScratchWorkspaceError() }
+        let prepared = try await engine.prepareTranscriptPlanImplementation(request, commandID: commandID)
+        try await engine.recordScratchTranscriptPlan(prepared, commandID: commandID, originalPayload: originalPayload)
+        return prepared
     }
 
     private func transcriptDocument(_ reference: RemoteProjectionContentReference, view: RemoteProjectionView) throws -> Data {
@@ -123,7 +129,8 @@ actor RemoteProjectionService {
         case .projects:
             return try page(view: value, cursor: request.cursor, query: "projects", total: value.projects.count, item: { value.projects[$0] }, wrap: RemoteProjectionCatalogResult.projects)
         case .threads(let project, let archived):
-            let rows = value.threads.filter { (project == nil || $0.projectID == project) && (archived || !$0.isArchived) }
+            let rows = value.threads.enumerated().filter { (project == nil || $0.element.projectID == project) && (archived || !$0.element.isArchived) }
+                .sorted { a, b in a.element.isPinned != b.element.isPinned ? a.element.isPinned : a.offset < b.offset }.map(\.element)
             return try page(view: value, cursor: request.cursor, query: "threads|\(project?.uuidString ?? "all")|\(archived)",
                 total: rows.count, item: { rows[$0] }, wrap: RemoteProjectionCatalogResult.threads)
         }

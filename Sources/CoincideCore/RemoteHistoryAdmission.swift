@@ -18,7 +18,7 @@ struct RemoteHistoryMaintenanceReview: Codable, Sendable {
 }
 struct RemoteHistoryPreparation: Codable, Sendable {
     enum Action: Codable, Sendable {
-        case begin(ConversationHistoryReview, digest: String, title: String?)
+        case begin(ConversationHistoryReview, digest: String, title: String?, scratchFork: ScratchHistoryForkGrant? = nil)
         case reconcile(ConversationHistoryOperation, ConversationHistoryReconciliation)
         case files(ConversationHistoryOperation, GitCheckpointRestoreInspection)
         case acknowledge(ConversationHistoryOperation)
@@ -38,7 +38,7 @@ struct RemoteHistoryPreparation: Codable, Sendable {
         switch action { case .acknowledge, .recall, .dismiss, .cancelPi, .respondPi: false; default: true }
     }
     var scope: RemoteHistoryScope {
-        if case .begin(let review, _, _) = action, let files = review.files {
+        if case .begin(let review, _, _, _) = action, let files = review.files {
             return .init(mutatingPaths: [files.gitReview.currentPlan.repositoryPath, files.gitReview.currentPlan.commonDirectoryPath],
                          coordinationPaths: [files.gitReview.currentPlan.commonDirectoryPath])
         }
@@ -61,11 +61,11 @@ enum RemoteHistoryAdmission {
                   try RemoteHistoryProtocol.payload(current) == RemoteHistoryProtocol.payload(expected) else { throw RemoteEnvironmentAdmission.stale() }
         }
         switch (action, captured.action) {
-        case (.begin(let id, let digest, let title), .begin(let review, let expectedDigest, let expectedTitle)):
+        case (.begin(let id, let digest, let title), .begin(let review, let expectedDigest, let expectedTitle, let grant)):
             guard review.id == id, digest == expectedDigest, try RemoteHistoryProtocol.payload(title) == RemoteHistoryProtocol.payload(expectedTitle),
                   review.sourceThreadID == thread.id, review.projectID == thread.projectID,
                   review.sourceIncarnation == captured.incarnation else { throw RemoteEnvironmentAdmission.stale() }
-            return [.conversationHistoryAccepted(review: review, title: title)]
+            return [.conversationHistoryAccepted(review: review, title: title, scratchFork: grant)]
         case (.inspectProvider(let id), .reconcile(let expected, let result)),
              (.keepOpenCodeV1Original(let id), .reconcile(let expected, let result)),
              (.keepPiOriginal(let id), .reconcile(let expected, let result)):

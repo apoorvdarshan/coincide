@@ -79,6 +79,11 @@ final class RemoteProjectionStore {
     var canLoadRuns: Bool { runCursor != nil && connected && !isLoading }
     var canLoadOperations: Bool { operationCursor != nil && connected && !isLoading }
 
+    private(set) var includeArchived = false
+    func setIncludeArchived(_ value: Bool) async {
+        guard includeArchived != value else { return }; includeArchived = value; catalogRead = UUID()
+        await refreshLatest()
+    }
     func connect(client: RemoteEnvironmentClient, binding: RemoteProjectionBinding, changed: @escaping @MainActor () -> Void) async throws {
         disconnect(); generation = UUID(); self.client = client; connected = true; self.changed = changed
         let owner = generation, loading = beginLoad()
@@ -158,7 +163,7 @@ final class RemoteProjectionStore {
     private func refreshCatalog(binding: RemoteProjectionBinding, owner: UUID, token: UUID) async throws -> RemoteProjectionBinding? {
         guard let client, generation == owner, catalogRead == token else { throw CancellationError() }
         let p = try await client.projectionCatalog(.init(binding: binding, query: .projects))
-        let t = try await client.projectionCatalog(.init(binding: binding, query: .threads(projectID: nil, includeArchived: false)))
+        let t = try await client.projectionCatalog(.init(binding: binding, query: .threads(projectID: nil, includeArchived: includeArchived)))
         guard generation == owner, catalogRead == token, connected, !Task.isCancelled else { throw CancellationError() }
         guard case .projects(let projects) = p, case .threads(let threads) = t else { throw RemoteProjectionFailure(.invalidRequest) }
         try Self.validate(projects, binding: binding, offset: 0); try Self.validate(threads, binding: binding, offset: 0)
@@ -239,7 +244,7 @@ final class RemoteProjectionStore {
         let owner = generation, token = catalogRead, loading = beginLoad()
         defer { finishLoad(loading, owner: owner) }
         do {
-            let result = try await client.projectionCatalog(.init(binding: binding, query: isProjects ? .projects : .threads(projectID: nil, includeArchived: false), cursor: cursor))
+            let result = try await client.projectionCatalog(.init(binding: binding, query: isProjects ? .projects : .threads(projectID: nil, includeArchived: includeArchived), cursor: cursor))
             guard owner == generation, catalogRead == token, binding == catalogBinding, !Task.isCancelled else { return }
             switch result {
             case .projects(let page) where isProjects:

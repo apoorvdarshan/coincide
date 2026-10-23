@@ -48,6 +48,7 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case title(String), model(String), provider(ProviderKind), permission(PermissionMode)
     case draft(String), pinned(Bool), archived(Bool), workspacePath(String)
     case acpAgent(ACPAgentConfiguration), agentMode(String?)
+    case codexInteractionMode(CodexModeSelection)
     case agentConfig(id: String, value: String?)
     case agentConfiguration(id: String, value: JSONValue?)
     case resetAgentOptions
@@ -93,6 +94,8 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case reorderProjectGroups(projectIDs: [UUID], expectedOrder: [UUID], expectedGroups: [String: [UUID]])
     case createThread(CodingThread)
     case editThread(UUID, ThreadEdit)
+    case submitDefaultWorktree(DefaultWorktreeInput)
+    case useCurrentCheckout(threadID: UUID, intentID: UUID)
     case submit(threadID: UUID, text: String)
     case submitFromAppMCP(threadID: UUID, text: String, queueEvenWhenIdle: Bool)
     case submitCapturedClaude(threadID: UUID, text: String, configuration: ClaudeRuntimeConfiguration)
@@ -141,7 +144,10 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
 // envelope indirect so decoding and broad switch dispatch copy an owned reference
 // instead of reserving every case's maximum payload on the worker stack.
 indirect enum EngineCommand: Codable, Sendable {
+    case retryDefaultWorktree(threadID: UUID, attemptID: UUID)
+    case defaultWorktreeSubmission(DefaultWorktreeInput, GitWorktreeRequest)
     case transcriptPlanImplementation(TranscriptPlanImplementation)
+    case scratchThreadAccepted(ScratchThreadCreation)
     case agentSessionImportAccepted(AgentSessionImportAdmission)
     case delegatedTaskAccepted(DelegatedTaskPreparation)
     case delegatedTaskCancel(parentThreadID: UUID, taskID: UUID, reason: String?)
@@ -150,7 +156,7 @@ indirect enum EngineCommand: Codable, Sendable {
     case delegatedTaskWakePolicy(parentThreadID: UUID, taskID: UUID)
     case delegatedTaskCompletionPrepared(DelegatedTaskCohort, PromptSteeringOperation?)
     case delegatedTaskCompletionCoalesced(cohortID: UUID, expectedTaskIDs: [UUID], taskIDs: [UUID])
-    case contextTransferAccepted(review: ContextTransferReview, title: String?)
+    case contextTransferAccepted(review: ContextTransferReview, title: String?, scratchAllocation: ScratchWorkspaceAllocation? = nil)
     case contextTransferDispatching(threadID: UUID, runID: UUID, deliveryID: UUID, runtimeID: UUID)
     case contextTransferNativeReserved(threadID: UUID, runID: UUID, deliveryID: UUID, publication: ClaudeTranscriptPublication)
     case contextTransferNativeReady(threadID: UUID, runID: UUID, deliveryID: UUID, snapshot: ProviderConversationSnapshot)
@@ -190,9 +196,10 @@ indirect enum EngineCommand: Codable, Sendable {
     case threadResumed(threadID: UUID, generationID: UUID, incarnation: UUID)
     case runCheckpointEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case runCheckpointRecovered(threadID: UUID, runID: UUID, stage: RunCheckpointStage, attemptID: UUID, path: String, incarnation: UUID, receipt: GitCheckpointReceipt)
-    case conversationHistoryAccepted(review: ConversationHistoryReview, title: String?)
+    case conversationHistoryAccepted(review: ConversationHistoryReview, title: String?, scratchFork: ScratchHistoryForkGrant? = nil)
     case conversationHistoryDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case conversationHistoryEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
+    case conversationHistoryScratchForkHeld(ScratchHistoryForkHeldResult)
     case conversationHistoryCandidateObserved(operationID: UUID, candidate: OpenCodeV1HistoryCandidate, incarnation: UUID)
     case conversationHistoryClaudeForkReserved(operationID: UUID, publication: ClaudeTranscriptPublication, incarnation: UUID)
     case conversationHistoryPiCandidateObserved(operationID: UUID, candidate: PiHistoryCandidate, incarnation: UUID)
@@ -224,6 +231,8 @@ indirect enum EngineCommand: Codable, Sendable {
     case pullRequestCheckoutEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case pullRequestCheckoutInspected(operationID: UUID, incarnation: UUID, result: GitHubPullRequestCheckoutInspection)
     case pullRequestCheckoutCancel(operationID: UUID)
+    case queuedInputReplaced(QueuedInputReplacement)
+    case remoteThreadUndo(RemoteThreadActionsPreparation)
     case promptSteeringAccepted(PromptSteeringOperation)
     case promptSteeringDispatching(operationID: UUID, incarnation: UUID)
     case promptSteeringEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
@@ -289,6 +298,16 @@ struct WorkspaceDecision: Sendable {
             var prepared = Self(snapshot: snapshot)
             try prepared.prepareClientCommand(.scheduledTask(mutation), commandID: id, now: now)
             reduced = .init(decision: try reduceScheduledTask(mutation, id: id, snapshot: prepared.snapshot, now: now), requiresFinalization: true)
+        case .retryDefaultWorktree(let threadID, let attemptID):
+            reduced = .init(decision: try reduceDefaultWorktreeRetry(threadID: threadID, attemptID: attemptID, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .defaultWorktreeSubmission(let input, let request):
+            reduced = .init(decision: try reduceDefaultWorktree(input, request: request, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .remoteThreadUndo(let prepared):
+            var decision = Self(snapshot: snapshot)
+            for claim in prepared.claims.reversed() { try decision.applyThreadActionUndo(claim, id: claim.id, now: now) }
+            reduced = .init(decision: decision, requiresFinalization: true)
+        case .queuedInputReplaced(let edit):
+            reduced = .init(decision: try reduceQueuedInputReplacement(edit, commandID: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.workspaceLifecycle(let action)):
             var decision = Self(snapshot: snapshot)
             try decision.applyWorkspaceLifecycle(action, commandID: id, now: now, policy: snapshot.workspaceLifecyclePolicy ?? .init())
@@ -316,11 +335,15 @@ struct WorkspaceDecision: Sendable {
             try decision.prepareClientCommand(.replaceComposerDraft(replacement), commandID: id, now: now)
             try decision.replaceComposerDraft(replacement)
             reduced = .init(decision: decision, requiresFinalization: true)
+        case .scratchThreadAccepted(let creation):
+            reduced = .init(decision: try reduceScratchThreadCreation(creation, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.replaceComposerDraft(let replacement)):
             var decision = Self(snapshot: snapshot)
             try decision.prepareClientCommand(.replaceComposerDraft(replacement), commandID: id, now: now)
             try decision.replaceComposerDraft(replacement)
             reduced = .init(decision: decision, requiresFinalization: true)
+        case .worktreeRecovered:
+            reduced = .init(decision: try reduceWorktreeRecovery(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .beginWorktreePreparation:
             reduced = .init(decision: try reduceWorktreePreparation(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .piRunHistoryPrepared:
@@ -338,7 +361,7 @@ struct WorkspaceDecision: Sendable {
             reduced = .init(decision: try reducePiHistory(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .provider(let threadID, let runtimeID, let event):
             reduced = try reduceProvider(event, threadID: threadID, runtimeID: runtimeID, snapshot: snapshot, now: now)
-        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryScratchForkHeld, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
              .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
              .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt):
             reduced = .init(decision: try reduceConversationHistory(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
@@ -375,6 +398,22 @@ struct WorkspaceDecision: Sendable {
         guard reduced.requiresFinalization && validatingLedger else { return decision }
         return try finalized(decision)
     }
+    /// Inspection can complete an interrupted checkout while retaining its
+    /// paused queue. Keep this small path out of the general mutation frame:
+    /// provider readiness may copy large history proof values beneath it.
+    @inline(never)
+    private static func reduceWorktreeRecovery(_ command: EngineCommand, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        guard case .worktreeRecovered(let threadID, let attemptID, _, let result) = command else {
+            throw WorkspaceCommandError("This worktree recovery was routed incorrectly.")
+        }
+        var decision = Self(snapshot: snapshot)
+        if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
+           let state = decision.snapshot.threads[i].workspacePreparation, state.id == attemptID, !state.isReady, let plan = state.plan {
+            decision.snapshot.threads[i].queuePaused = true
+            decision.finished(.prepareWorktree(threadID: threadID, plan: plan), result: .worktreePrepared(result), now: now)
+        }
+        return decision
+    }
     /// Only the host's closed remote command adapter uses deferred validation;
     /// every native reducer still checks its own action admission normally.
     static func finalizedRemoteBatch(_ decision: Self) throws -> Self { try finalized(decision) }
@@ -392,6 +431,10 @@ struct WorkspaceDecision: Sendable {
         switch command {
         case .client(.workspaceLifecycle(let action)):
             try Self(snapshot: snapshot).guardPullRequestActions(.workspaceLifecycle(action))
+        case .defaultWorktreeSubmission(let input, let request):
+            try requireAvailable([input.intent.sourcePath, request.destinationPath])
+        case .retryDefaultWorktree(let threadID, _):
+            if let state = snapshot.threads.first(where: { $0.id == threadID })?.workspacePreparation { try requireAvailable([state.request.sourcePath, state.destinationPath]) }
         case .beginWorktreePreparation(let id, let request, let source, _, _, _, _, _):
             try requireAvailable([request.sourcePath, request.destinationPath, source] + snapshot.threads.filter { $0.id == id }.map(\.workspacePath))
         case .pullRequestCheckoutAccepted(let operation):
@@ -456,12 +499,14 @@ struct WorkspaceDecision: Sendable {
         var decision = Self(snapshot: snapshot)
         if case .client(let action) = command { try decision.prepareClientCommand(action, commandID: id, now: now) }
         switch command {
-        case .conversationHistoryAccepted(let review, let title):
-            try decision.acceptConversationHistory(review, title: title, now: now)
+        case .conversationHistoryAccepted(let review, let title, let grant):
+            try decision.acceptConversationHistory(review, title: title, scratchFork: grant, commandID: id, now: now)
         case .conversationHistoryDispatching(let threadID, let operationID, let incarnation):
             try decision.dispatchConversationHistory(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
         case .conversationHistoryEffectResult(let request, let result, let incarnation):
             decision.finishConversationHistory(request, result: result, incarnation: incarnation, now: now)
+        case .conversationHistoryScratchForkHeld(let held):
+            decision.holdScratchHistoryFork(held, now: now)
         case .conversationHistoryCandidateObserved(let operationID, let candidate, let incarnation):
             try decision.recordOpenCodeV1HistoryCandidate(operationID: operationID, candidate: candidate, incarnation: incarnation, now: now)
         case .conversationHistoryClaudeForkReserved(let operationID, let publication, let incarnation):
@@ -580,12 +625,60 @@ struct WorkspaceDecision: Sendable {
         return decision
     }
 
+    @inline(never)
+    private static func reduceScratchThreadCreation(_ creation: ScratchThreadCreation, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        try creation.validate()
+        let allocation = creation.allocation, thread = creation.thread
+        guard allocation.receipt.commandID == id else { throw ScratchWorkspaceError() }
+        var decision = Self(snapshot: snapshot)
+        if let project = snapshot.projects.first(where: { $0.id == allocation.project.id }) {
+            guard project.scratch == allocation.project.scratch, project.path.utf8.elementsEqual(allocation.project.path.utf8) else { throw ScratchWorkspaceError() }
+        } else {
+            guard !snapshot.projects.contains(where: { $0.scratch != nil || $0.path.utf8.elementsEqual(allocation.project.path.utf8) }) else { throw ScratchWorkspaceError() }
+            try decision.prepareClientCommand(.addProject(allocation.project), commandID: id, now: now, allowScratch: true)
+            decision.snapshot.projects.append(allocation.project)
+        }
+        try decision.prepareClientCommand(.createThread(thread), commandID: id, now: now, allowScratch: true)
+        try decision.insertNewThread(thread, allowScratch: true)
+        for edit in creation.modelEdits {
+            let next = try make(.client(.editThread(thread.id, edit)), id: id, snapshot: decision.snapshot, now: now, validatingLedger: false)
+            decision.snapshot = next.snapshot; decision.effects += next.effects; decision.closeRuntimes.formUnion(next.closeRuntimes)
+        }
+        if creation.selectsConversation {
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            preferences.selectedThreadID = thread.id; decision.snapshot.sidebarPreferences = preferences
+        }
+        guard let prompt = creation.prompt else { return decision }
+        let action = WorkspaceCommand.submitFromAppMCP(threadID: thread.id, text: prompt, queueEvenWhenIdle: false)
+        var submitted = try reduceSubmission(.client(action), id: id, snapshot: decision.snapshot, now: now)
+        submitted.closeRuntimes.formUnion(decision.closeRuntimes)
+        submitted.reconcileWorkspaceLifecycle(previous: snapshot, command: action, now: now)
+        return submitted
+    }
+
     /// Submitting input must not retain the broad mutation switch's unrelated
     /// captured values while checking readiness and starting a native run.
     @inline(never)
     private static func reduceTranscriptPlanImplementation(_ request: TranscriptPlanImplementation, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         let action = try request.command(in: snapshot)
-        var decision = try reduceSubmission(.client(action), id: id, snapshot: snapshot, now: now)
+        var admission = Self(snapshot: snapshot)
+        // Source locks are checked even when the actual input goes to a new
+        // conversation; no second command receipt or history fork is created.
+        try admission.prepareClientCommand(.submit(threadID: request.threadID, text: ""), commandID: id, now: now)
+        if let destination = try request.destinationThread(in: snapshot, now: now) {
+            let scratch = request.scratchAllocation
+            guard scratch == nil || scratch?.receipt.commandID == id else { throw ScratchWorkspaceError() }
+            try admission.prepareClientCommand(.createThread(destination), commandID: id, now: now, allowScratch: scratch != nil)
+            try admission.insertNewThread(destination, allowScratch: scratch != nil)
+        } else if let index = admission.snapshot.threads.firstIndex(where: { $0.id == request.threadID }),
+                  admission.snapshot.threads[index].provider == .codex,
+                  admission.snapshot.threads[index].agentModeID == CodexInteractionMode.plan.rawValue {
+            // Native collaboration mode is sticky. Persist explicit Default in
+            // the same decision as its first implementation input.
+            admission.snapshot.threads[index].agentModeID = CodexInteractionMode.default.rawValue
+        }
+        var decision = try reduceSubmission(.client(action), id: id, snapshot: admission.snapshot, now: now)
+        decision.closeRuntimes.formUnion(admission.closeRuntimes)
         decision.reconcileWorkspaceLifecycle(previous: snapshot, command: action, now: now)
         return decision
     }
@@ -599,6 +692,7 @@ struct WorkspaceDecision: Sendable {
             var thread = decision.snapshot.threads[index]
         switch action {
             case .submit(_, let text), .submitFromAppMCP(_, let text, _), .submitCapturedClaude(_, let text, _), .submitCapturedPi(_, let text, _):
+                guard thread.draftWorkspaceIntent == nil else { throw WorkspaceCommandError("Prepare the captured worktree or explicitly choose this checkout before sending.") }
                 let independent: Bool
                 let queueEvenWhenIdle: Bool
                 if case .submitFromAppMCP(_, _, let queue) = action { independent = true; queueEvenWhenIdle = queue }
@@ -623,7 +717,7 @@ struct WorkspaceDecision: Sendable {
                 guard text.utf16.count <= 120_000 else { throw WorkspaceCommandError("Messages can contain up to 120,000 characters. Shorten the draft or attach it as a file.") }
                 var queued = QueuedTurn(id: id, text: text, configuration: .init(thread: thread), createdAt: now,
                                         attachments: independent || thread.draftAttachments.isEmpty ? nil : thread.draftAttachments, checkpointPolicy: thread.effectiveCheckpointPolicy,
-                                        preservesTitle: independent && thread.title != "New thread" ? true : nil)
+                                        preservesTitle: (independent || thread.transcriptPlanSource != nil) && thread.title != "New thread" ? true : nil)
                 try decision.captureContextTransfers(for: &queued, thread: thread, now: now)
                 if !independent { thread.draft = ""; thread.draftAttachments = [] }
                 if thread.settlement != nil {
@@ -662,6 +756,7 @@ struct WorkspaceDecision: Sendable {
         var decision = prepared
         switch command {
         case .transcriptPlanImplementation: throw WorkspaceCommandError("This plan action was routed incorrectly.")
+        case .scratchThreadAccepted: throw WorkspaceCommandError("This scratch allocation was routed incorrectly.")
         case .agentSessionImportAccepted: throw AgentSessionImportError.invalidRequest
         case .client(.workspaceLifecycle), .client(.setWorkspaceLifecyclePolicy):
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
@@ -671,7 +766,7 @@ struct WorkspaceDecision: Sendable {
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
         case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
              .conversationHistoryPiControlResponding, .conversationHistoryPiControlsClosed, .conversationHistoryPiCancelled, .piFreshSessionResolved,
-             .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
+             .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryScratchForkHeld, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
              .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
              .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt),
              .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
@@ -687,6 +782,7 @@ struct WorkspaceDecision: Sendable {
              .codexAuthenticationPreparing, .codexAccountConfigured,
              .projectScriptStarted, .projectScriptExited, .projectScriptStopped:
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
+        case .queuedInputReplaced, .remoteThreadUndo: break
         case .promptSteeringAccepted(let operation): try decision.acceptPromptSteering(operation)
         case .piRunHistoryPrepared:
             return .init(decision: try reducePiRunHistoryPrepared(command, snapshot: snapshot), requiresFinalization: true)
@@ -724,6 +820,8 @@ struct WorkspaceDecision: Sendable {
                 // Restart already held restored work. Inspection must not override a
                 // newer explicit submit/resume intent, and never starts work itself.
             }
+        case .defaultWorktreeSubmission, .retryDefaultWorktree:
+            throw WorkspaceCommandError("This worktree input was routed incorrectly.")
         case .beginWorktreePreparation:
             return .init(decision: try reduceWorktreePreparation(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .claudeResumeInspected(let threadID, _, let selection, let run, let result):
@@ -832,12 +930,8 @@ struct WorkspaceDecision: Sendable {
                 decision.snapshot.threads[i].setProjectScript(run, owner: owner)
                 var thread = decision.snapshot.threads[i]; decision.startNext(in: &thread, now: now); decision.snapshot.threads[i] = thread
             }
-        case .worktreeRecovered(let threadID, let attemptID, _, let result):
-            if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
-               let state = decision.snapshot.threads[i].workspacePreparation, state.id == attemptID, !state.isReady, let plan = state.plan {
-                decision.snapshot.threads[i].queuePaused = true
-                decision.finished(.prepareWorktree(threadID: threadID, plan: plan), result: .worktreePrepared(result), now: now)
-            }
+        case .worktreeRecovered:
+            throw WorkspaceCommandError("This worktree recovery was routed incorrectly.")
         case .worktreeStarted(let threadID, let attemptID):
             if let i = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }), var state = decision.snapshot.threads[i].workspacePreparation,
                state.id == attemptID, state.phase == .queued, !state.cancelRequested {
@@ -1070,6 +1164,7 @@ struct WorkspaceDecision: Sendable {
                     }
                     thread.permission = mode
                 case .agentMode(let mode): thread.agentModeID = mode
+                case .codexInteractionMode(let selection): try selection.apply(to: &thread)
                 case .agentConfig(let id, let value):
                     guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
                     var values = thread.agentConfigValues ?? [:]; values[id] = value; thread.agentConfigValues = values.isEmpty ? nil : values
@@ -1209,9 +1304,15 @@ struct WorkspaceDecision: Sendable {
                         thread.piConfiguration = .init(instanceID: native.instanceID, executable: native.executable, model: native.model, thinkingLevel: native.thinkingLevel, runtime: capturedPi)
                     } else if capturedPi != nil { throw WorkspaceCommandError("The Pi runtime changed before its workspace was saved.") }
                     thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
+                    thread.draftWorkspaceIntent = nil
                     thread.workspacePath = path; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
                 }
-            case .submit, .submitFromAppMCP, .submitCapturedClaude, .submitCapturedPi:
+            case .useCurrentCheckout(_, let intentID):
+                guard thread.draftWorkspaceIntent?.id == intentID, thread.draftWorkspaceIntent?.threadID == thread.id,
+                      thread.draftWorkspaceIntent?.threadCreatedAt == thread.createdAt, thread.messages.isEmpty, thread.queuedTurns.isEmpty,
+                      thread.workspacePreparation == nil, !thread.isBusy else { throw WorkspaceCommandError("This workspace choice changed. Reopen the draft before changing it.") }
+                thread.draftWorkspaceIntent = nil
+            case .submitDefaultWorktree, .submit, .submitFromAppMCP, .submitCapturedClaude, .submitCapturedPi:
                 throw WorkspaceCommandError("This workspace command was routed incorrectly.")
             case .interrupt, .interruptFromAppMCP:
                 if case .interruptFromAppMCP(_, let runID, let runtimeID) = action {
@@ -1478,7 +1579,8 @@ struct WorkspaceDecision: Sendable {
         }
         return .init(decision: decision, requiresFinalization: true)
     }
-    mutating func prepareClientCommand(_ action: WorkspaceCommand, commandID: UUID, now: Date) throws {
+    mutating func prepareClientCommand(_ action: WorkspaceCommand, commandID: UUID, now: Date, allowScratch: Bool = false) throws {
+        if !allowScratch { try validateScratchClientCommand(action) }
         try validateContextTransferCommand(action)
         guard !snapshot.conversationHistoryMaintenanceReservedIDs.contains(commandID) else { throw WorkspaceCommandError("This identity is reserved by provider history maintenance.") }
         preventDelayedPromptSteering(action, now: now)
@@ -1492,12 +1594,23 @@ struct WorkspaceDecision: Sendable {
     }
     /// Compound registration shares the same insertion rules without entering
     /// the complete reducer a second time on the same task stack.
-    private mutating func insertNewThread(_ thread: CodingThread) throws {
+    private mutating func insertNewThread(_ thread: CodingThread, allowScratch: Bool = false) throws {
+        if !allowScratch { try validateScratchClientCommand(.createThread(thread)) }
         guard snapshot.projects.contains(where: { $0.id == thread.projectID }), !snapshot.threads.contains(where: { $0.id == thread.id }),
               thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, (thread.runHistory ?? []).isEmpty, thread.workspacePreparation == nil else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
         guard snapshot.workspaceReady(for: thread) || snapshot.projects.first(where: { $0.id == thread.projectID })?.path == thread.workspacePath else { throw WorkspaceCommandError("Wait for the clone before choosing another workspace.") }
         if thread.provider == .acp {
             guard let agent = thread.acpAgent, snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
+        }
+        if let intent = thread.draftWorkspaceIntent {
+            guard thread.scratchWorkspace == nil, intent.threadID == thread.id, intent.threadCreatedAt == thread.createdAt,
+                  intent.projectID == thread.projectID,
+                  let project = snapshot.projects.first(where: { $0.id == thread.projectID }), project.scratch == nil, project.createdAt == intent.projectCreatedAt,
+                  project.path.utf8.elementsEqual(intent.sourcePath.utf8), thread.workspacePath.utf8.elementsEqual(intent.sourcePath.utf8) else {
+                throw WorkspaceCommandError("The new draft’s workspace choice belongs to another conversation or checkout.")
+            }
+            do { try intent.sourceProof.validate(); try WorktreeValidation.branch(intent.baseBranch) }
+            catch let error as CoincideError { throw WorkspaceCommandError(error.localizedDescription) }
         }
         var thread = thread; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil
         snapshot.threads.insert(thread, at: 0)
@@ -1558,7 +1671,11 @@ struct WorkspaceDecision: Sendable {
     }
     mutating func startNext(in thread: inout CodingThread, now: Date) {
         if let i = snapshot.threads.firstIndex(where: { $0.id == thread.id }) { snapshot.threads[i] = thread }
-        guard thread.claudeResumeConsumerRunID == nil, thread.piFreshConsumerRunID == nil, !snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), snapshot.providerReady(for: thread), !thread.isBusy, !thread.queuePaused, !thread.isArchived, !thread.queuedTurns.isEmpty else { return }
+        // These pure local gates cannot start work. Avoid materializing native
+        // history proofs for a paused/empty queue, including read-only recovery.
+        guard !thread.queuePaused, !thread.isBusy, !thread.isArchived, !thread.queuedTurns.isEmpty,
+              thread.claudeResumeConsumerRunID == nil, thread.piFreshConsumerRunID == nil,
+              !snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), snapshot.providerReady(for: thread) else { return }
         let queued = thread.queuedTurns.removeFirst(); start(queued, in: &thread, now: now)
     }
     private mutating func receive(_ scopedEvent: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
@@ -1898,6 +2015,8 @@ struct WorkspaceDecision: Sendable {
 extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
+        case .submitDefaultWorktree(let input): input.threadID
+        case .useCurrentCheckout(let id, _): id
         case .workspaceLifecycle(let action): action.threadID
         case .scheduledTask: nil
         case .setWorkspaceLifecyclePolicy: nil

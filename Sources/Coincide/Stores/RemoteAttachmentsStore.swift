@@ -229,6 +229,18 @@ final class RemoteAttachmentsStore {
         do { try await add(try await persistence.importData(data, name: name), to: draft) }
         catch { errorMessage = Self.safeMessage(error) }
     }
+    /// Stages a verified immutable composer copy under the captured target.
+    func stage(_ bytes: Data, reference: ChatAttachment, target: RemoteAttachmentTarget) async throws -> UUID {
+        guard canImport, let draft = current, draft.target == target,
+              bytes.count == reference.byteCount, Self.digest(bytes) == reference.digest else { throw RemoteAttachmentFailure(.invalidTarget) }
+        let owner = lease
+        if let existing = draft.entries.first(where: { $0.local.digest == reference.digest && $0.local.byteCount == reference.byteCount && $0.local.name.utf8.elementsEqual(reference.name.utf8) }) {
+            _ = try await persistence.data(existing.local); return existing.id
+        }
+        let local = try await persistence.importData(bytes, name: reference.name)
+        guard owner == lease, current === draft, !stopping else { throw CancellationError() }
+        try await add(local, to: draft); return local.id
+    }
     private func add(_ reference: ChatAttachment, to draft: RemoteAttachmentDraft) async throws {
         try Task.checkCancellation()
         try AttachmentLimits.validate(draft.entries.map(\.local) + draft.hostDraftAttachments + [reference])
@@ -250,12 +262,14 @@ final class RemoteAttachmentsStore {
         }
     }
 
-    func prepareSubmission() async -> RemoteAttachmentComposerSubmission? {
+    func prepareSubmission(selectedLocalIDs: Set<UUID>? = nil, selectedHostIDs: Set<UUID>? = nil) async -> RemoteAttachmentComposerSubmission? {
         guard !stopping, !isPreparingSubmission, !isImporting, let draft = current else { return nil }
         isPreparingSubmission = true; defer { isPreparingSubmission = false }
-        let captured = draft.entries, host = draft.hostDraftAttachments, target = draft.target, owner = lease
+        let captured = draft.entries.filter { selectedLocalIDs?.contains($0.id) ?? true }
+        let host = draft.hostDraftAttachments, target = draft.target, owner = lease
+        let selectedHost = host.filter { selectedHostIDs?.contains($0.id) ?? true }
         do {
-            try AttachmentLimits.validate(captured.map(\.local) + host)
+            try AttachmentLimits.validate(captured.map(\.local) + selectedHost)
             for entry in captured {
                 guard draft.entries.contains(where: { $0 === entry }) else { throw CancellationError() }
                 if !entry.isReady { guard await upload(entry.id, in: draft) else { return nil } }
@@ -264,9 +278,9 @@ final class RemoteAttachmentsStore {
             let references = try captured.map { entry in
                 guard entry.isReady, let reference = entry.remote?.attachment else { throw RemoteAttachmentFailure(.uncertain) }; return reference
             }
-            try AttachmentLimits.validate(host + references)
+            try AttachmentLimits.validate(selectedHost + references)
             guard await persist(target.environmentID) else { return nil }
-            return .init(target: target, expectedDraftAttachments: host, uploadedAttachmentIDs: references.map(\.id), attachments: host + references)
+            return .init(target: target, expectedDraftAttachments: host, uploadedAttachmentIDs: references.map(\.id), attachments: selectedHost + references)
         } catch is CancellationError { return nil }
         catch { errorMessage = Self.safeMessage(error); return nil }
     }
@@ -434,6 +448,7 @@ final class RemoteAttachmentsStore {
     }
     func shutdown() async {
         stopping = true; disconnect()
+        await content.drain()
         let importing = Array(imports.values); importing.forEach { $0.cancel() }; for task in importing { await task.value }
         let uploading = uploads.values.map(\.1); for task in uploading { _ = await task.value }
         while let task = writes { let revision = writeRevision; _ = await task.value; if revision == writeRevision { break } }

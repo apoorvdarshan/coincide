@@ -373,6 +373,7 @@ extension WorkspaceEngine {
     private func appMCPCreateThreads(_ requests: [AppMCPThreadCreation], key: String?, context: AppMCPContext, view: AppMCPView) async throws -> JSONValue {
         guard (1...20).contains(requests.count), let runID = context.runID else { throw AppMCPError(.invalidRequest) }
         let parent = try appMCPThread(context.scope.threadID, in: view)
+        guard parent.scratchWorkspace == nil else { throw AppMCPError(.unsupported) }
         let date = parent.runHistory?.first(where: { $0.id == runID })?.startedAt ?? parent.activeRun?.startedAt
         guard let date, let project = view.snapshot.projects.first(where: { $0.id == parent.projectID }) else { throw AppMCPError(.notFound) }
         let requestKey = key ?? UUID().uuidString
@@ -394,6 +395,13 @@ extension WorkspaceEngine {
     }
 
     private func appMCPLaunch(_ request: AppMCPThreadLaunch, context: AppMCPContext, view: AppMCPView) async throws -> JSONValue {
+        if request.scratch { return try await appMCPScratchLaunch(request, context: context, view: view) }
+        if view.snapshot.projects.first(where: { $0.id == request.projectID })?.scratch != nil {
+            if case .existingWorktree = request.workspace { throw AppMCPError(.unsupported) }
+            // The pinned launcher normalizes worktree requests for Scratch:
+            // every ordinary launch gets its own actual non-Git folder.
+            return try await appMCPScratchLaunch(.init(scratch: true, creation: request.creation), context: context, view: view)
+        }
         guard let project = view.snapshot.projects.first(where: { $0.id == request.projectID }) else { throw AppMCPError(.notFound) }
         let parent = try appMCPThread(context.scope.threadID, in: view)
         var thread = try appMCPNewThread(project: project, workspacePath: project.path, configuration: context.configuration, date: Date())
@@ -423,6 +431,35 @@ extension WorkspaceEngine {
         let preparation = try await beginWorktreePreparation(threadID: thread.id, selection: selection)
         if let message = request.creation.prompt { _ = try await appMCPDispatch([.submitFromAppMCP(threadID: thread.id, text: message, queueEvenWhenIdle: false)], context: context) }
         return .object(["threadId": appMCPID(thread.id), "projectId": appMCPID(project.id), "runId": .null, "status": .string("preparing"), "sequence": .number(Double(preparation.sequence))])
+    }
+
+    private func appMCPScratchLaunch(_ request: AppMCPThreadLaunch, context: AppMCPContext, view: AppMCPView) async throws -> JSONValue {
+        guard request.projectID == nil, request.workspace == .root else { throw AppMCPError(.invalidRequest) }
+        let parent = try appMCPThread(context.scope.threadID, in: view), commandID = UUID(), threadID = UUID()
+        let allocation = try await prepareScratchWorkspace(commandID: commandID, threadID: threadID,
+            namingText: request.creation.prompt ?? request.creation.title ?? "")
+        _ = try await appMCPView(context)
+        var thread = try appMCPNewThread(project: allocation.project, workspacePath: allocation.workspacePath,
+            configuration: context.configuration, date: allocation.receipt.createdAt)
+        thread.id = threadID; thread.scratchWorkspace = allocation.receipt; thread.checkpointPolicy = .disabled
+        thread.title = request.creation.title ?? "New thread"; thread.permission = request.creation.permission ?? context.configuration.permission
+        guard let runID = context.runID else { throw AppMCPError(.staleCaller) }
+        thread.createdByAppMCP = .init(sessionID: context.scope.sessionID, threadID: parent.id, runID: runID)
+        var edits: [ThreadEdit] = []
+        if let selection = request.creation.target {
+            for command in try await appMCPSelection(selection, thread: thread, context: context, inherited: parent) {
+                guard case .editThread(let id, let edit) = command, id == threadID else { throw AppMCPError(.invalidRequest) }
+                edits.append(edit)
+            }
+        }
+        _ = try await appMCPView(context)
+        let creation = ScratchThreadCreation(allocation: allocation, thread: thread, prompt: request.creation.prompt,
+            selectsConversation: false, modelEdits: edits)
+        let receipt = try await createScratchThread(creation, commandID: commandID)
+        guard receipt.rejection == nil, let created = current().snapshot.threads.first(where: { $0.id == threadID }) else { throw AppMCPError(.unavailable) }
+        return .object(["threadId": appMCPID(created.id), "projectId": appMCPID(created.projectID),
+            "runId": created.activeRun.map { appMCPID($0.id) } ?? .null, "status": .string(created.state.rawValue),
+            "sequence": .number(Double(receipt.sequence))])
     }
 
     private func appMCPSelection(_ selection: AppMCPModelSelection, thread: CodingThread, context: AppMCPContext, inherited: CodingThread? = nil) async throws -> [WorkspaceCommand] {
