@@ -3588,7 +3588,7 @@ public actor WorkspaceEngine {
     /// to that metadata actor, and its exact operation is joined on cancellation.
     public func commands(thread: CodingThread, forceReload: Bool = false) async throws -> ProviderCommandInventory {
         _ = try await load(); try Task.checkCancellation()
-        guard thread.provider == .pi || thread.provider == .opencode else { throw ProviderCommandError(.unsupported) }
+        guard [.pi, .opencode, .claude].contains(thread.provider) else { throw ProviderCommandError(.unsupported) }
         guard !closing, !stoppingEffects, fatalError == nil,
               let incarnation = threadIncarnations[thread.id],
               let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
@@ -3629,9 +3629,10 @@ public actor WorkspaceEngine {
             metadataLaunch.activeRun = nil; metadataLaunch.runtimeID = nil
             metadataLaunch.runtimeRequests = []; metadataLaunch.queuedTurns = []
             metadataLaunch.state = .idle
-            if metadataLaunch.provider == .pi || metadataLaunch.provider == .opencode {
+            if metadataLaunch.provider == .pi || metadataLaunch.provider == .opencode || metadataLaunch.provider == .claude {
                 metadataLaunch.providerThreadID = nil
                 metadataLaunch.piFreshSessionIntent = nil; metadataLaunch.piFreshConsumerRunID = nil
+                metadataLaunch.claudeResumeSelection = nil; metadataLaunch.claudeResumeConsumerRunID = nil
             }
         }
         let id = UUID(), session = try factory(metadataLaunch)

@@ -11,8 +11,9 @@ public enum TerminalLifecycle: Equatable, Sendable {
 /// Owns one native terminal emulator and its PTY. Hiding its view does not end the shell.
 @MainActor @Observable
 public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewDelegate {
-    public let id = UUID()
+    public let id: UUID
     public let directory: String
+    public let isRestored: Bool
     public private(set) var title = "Terminal"
     public private(set) var lifecycle = TerminalLifecycle.running
     @ObservationIgnored public let view: LocalProcessTerminalView
@@ -27,16 +28,11 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
         }
         let requested = executable ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         guard let shell = ProcessChannel.findExecutable(requested) else { throw CoincideError("The selected shell is unavailable.") }
+        id = UUID(); isRestored = false
         self.directory = directory.standardizedFileURL.path
         self.commandTitle = commandTitle.map(Self.cleanTitle)
         if let commandTitle = self.commandTitle { title = commandTitle }
-        var options = TerminalOptions()
-        options.scrollback = 5_000
-        view = WorkspaceTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 260),
-                                     font: .monospacedSystemFont(ofSize: 12, weight: .regular), options: options)
-        view.nativeForegroundColor = .textColor
-        view.nativeBackgroundColor = .textBackgroundColor
-        view.setAccessibilityLabel("Workspace terminal")
+        view = Self.makeView()
         view.processDelegate = self
         var environment = ProcessChannel.environment()
         for key in unsetEnvironment { environment.removeValue(forKey: key) }
@@ -48,6 +44,45 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
             view.startProcess(executable: shell.path, args: arguments,
                               environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: self.directory)
         }
+    }
+
+    /// Restoring display output never starts a process, runs a command or sends
+    /// saved terminal control sequences back through a PTY.
+    public init(restoring archive: TerminalTabArchive) {
+        id = archive.id; directory = archive.directory; isRestored = true
+        let savedTitle = Self.cleanTitle(archive.title)
+        title = savedTitle
+        commandTitle = archive.isCommand ? savedTitle : nil
+        lifecycle = .exited(archive.exitCode)
+        view = Self.makeView(); view.processDelegate = self
+        view.feed(text: TerminalTabArchive.displayText(archive.text).replacingOccurrences(of: "\n", with: "\r\n"))
+    }
+
+    private static func makeView() -> LocalProcessTerminalView {
+        var options = TerminalOptions(); options.scrollback = 5_000
+        let view = WorkspaceTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 260),
+            font: .monospacedSystemFont(ofSize: 12, weight: .regular), options: options)
+        view.nativeForegroundColor = .textColor; view.nativeBackgroundColor = .textBackgroundColor
+        view.setAccessibilityLabel("Workspace terminal")
+        return view
+    }
+
+    public func archive(threadID: UUID, workspacePath: String) -> TerminalTabArchive {
+        let code: Int32? = if case .exited(let code) = lifecycle { code } else { nil }
+        return .init(id: id, threadID: threadID, workspacePath: workspacePath, directory: directory,
+            title: title, text: String(decoding: view.getBufferAsData(kind: .normal), as: UTF8.self),
+            isCommand: isCommand, exitCode: code)
+    }
+
+    public func showFind() {
+        let item = NSMenuItem(); item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
+        view.performTextFinderAction(item)
+    }
+
+    public func setFontSize(_ size: Double) {
+        let bounded = min(24, max(9, size.isFinite ? size : 12))
+        guard view.font.pointSize != bounded else { return }
+        view.font = .monospacedSystemFont(ofSize: bounded, weight: .regular)
     }
 
     public var processID: pid_t { view.process.shellPid }

@@ -102,6 +102,8 @@ func changedScriptRevisionAndClosedWindowNeverLaunchAndReloadUsesNewConfiguratio
         await #expect(throws: CancellationError.self) { try await service.run(fresh, scriptIndex: 0, in: f.terminals) }
         #expect(f.terminals.sessions.isEmpty)
         f.store.registerTerminals(f.terminals)
+        f.store.restoreTerminals(f.terminals)
+        await f.terminals.waitForRestoration()
         let session = try await service.run(fresh, scriptIndex: 0, in: f.terminals)
         try await waitScriptUI { if case .exited = session.lifecycle { true } else { false } }
         #expect(session.title == "New script" && session.visibleText.contains("RELOADED_OK"))

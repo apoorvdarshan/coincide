@@ -5,7 +5,6 @@ struct ContentView: View {
     @Bindable var store: WorkspaceStore
     @AppStorage("appearance") private var appearance = "system"
     @State private var terminals = TerminalWorkspaceStore()
-    @State private var terminalVisible = false
     @State private var cloneSheetPresented = false
     @State private var newProjectSheetPresented = false
     @State private var scriptThread: CodingThread?
@@ -20,9 +19,9 @@ struct ContentView: View {
                 if let thread = store.selectedThread {
                     VSplitView {
                         ChatView(store: store, threadID: thread.id, onSettle: { settlementThread = $0 }).id(thread.id).frame(minHeight: 280)
-                        if terminalVisible, store.workspaceReady(for: thread) {
+                        if terminals.panelVisible, store.workspaceReady(for: thread) {
                             TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
-                                          report: { store.errorMessage = $0 }, hide: { terminalVisible = false })
+                                          report: { store.errorMessage = $0 }, hide: { terminals.panelVisible = false })
                                 .id(thread.id).frame(minHeight: 160, idealHeight: 260, maxHeight: 600)
                         }
                     }
@@ -53,7 +52,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem { Button { store.newThread() } label: { Label("New Thread", systemImage: "square.and.pencil") } }
             ToolbarItem {
-                Button { terminalVisible.toggle() } label: { Label("Terminal", systemImage: "terminal") }
+                Button { toggleTerminal() } label: { Label("Terminal", systemImage: "terminal") }
                     .keyboardShortcut("t", modifiers: [.command, .option]).disabled(store.selectedThread.map { !store.workspaceReady(for: $0) } ?? true)
             }
             ToolbarItem {
@@ -73,7 +72,7 @@ struct ContentView: View {
         }
         .sheet(item: $scriptThread) { thread in
             ProjectScriptsSheet(store: store, thread: thread, terminals: terminals,
-                didRun: { terminalVisible = true; scriptThread = nil }, close: { scriptThread = nil })
+                didRun: { terminals.panelVisible = true; scriptThread = nil }, close: { scriptThread = nil })
         }
         .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $cloneSheetPresented)
         .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented || settlementThread != nil ? nil : $newProjectSheetPresented)
@@ -83,7 +82,16 @@ struct ContentView: View {
         .disabled(store.isLoading)
         .task { await store.refreshExternalEditors() }
         .onAppear { store.registerTerminals(terminals) }
-        .onDisappear { terminals.closeAll(); store.unregisterTerminals(terminals) }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in terminals.closeAll() }
+        .task(id: store.hasLoadedWorkspace) {
+            store.restoreTerminals(terminals)
+        }
+        .onDisappear { store.unregisterTerminals(terminals) }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in terminals.suspend() }
+    }
+    private func toggleTerminal() {
+        terminals.panelVisible.toggle()
+        guard terminals.panelVisible, !terminals.isRestoring, let thread = store.selectedThread,
+              terminals.sessions[thread.id, default: []].isEmpty, store.canOpenTerminal(for: thread) else { return }
+        do { try terminals.add(for: thread) } catch { store.errorMessage = error.localizedDescription }
     }
 }

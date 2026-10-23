@@ -187,6 +187,9 @@ final class WorkspaceStore {
     private var projectCloneRetryTasks: [UUID: Task<Void, Never>] = [:]
     private var removalCleanupTasks: [UUID: ProjectRemovalCleanup] = [:]
     private var terminalStores: [ObjectIdentifier: WeakTerminalStore] = [:]
+    let terminalArchives: TerminalArchiveStore
+    private(set) var hasLoadedWorkspace = false
+    private var terminalSuspensions: [UUID: Task<Void, Never>] = [:]
     private var closingTerminalSessions: [UUID: LocalTerminalSession] = [:]
     private var closingTerminalTasks: [UUID: Task<Void, Never>] = [:]
     private var dirtyEditors: [UUID: String] = [:]
@@ -235,6 +238,7 @@ final class WorkspaceStore {
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
          piRuntimeCapture: PiRuntimeCapture? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
+        terminalArchives = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("TerminalHistory", isDirectory: true))
         self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
@@ -277,6 +281,7 @@ final class WorkspaceStore {
          piRuntimeCapture: PiRuntimeCapture? = nil,
          projectScriptReader: NativeProjectScriptService.Reader? = nil,
          projectCreator: ProjectCreator? = nil) {
+        terminalArchives = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("TerminalHistory", isDirectory: true))
         self.claudeRuntimeCapture = claudeRuntimeCapture ?? { try ClaudeRuntimeConfiguration.capture(workspacePath: $0) }
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
@@ -833,10 +838,19 @@ final class WorkspaceStore {
         terminalStores[ObjectIdentifier(terminals)] = WeakTerminalStore(terminals)
         terminals.sessionWillClose = { [weak self] in self?.retainClosingTerminal($0) }
     }
+    func restoreTerminals(_ terminals: TerminalWorkspaceStore) {
+        guard hasLoadedWorkspace, engine != nil, !terminating else { return }
+        terminals.restore(from: terminalArchives, currentThreads: { [weak self] in self?.snapshot.threads ?? [] })
+    }
     func unregisterTerminals(_ terminals: TerminalWorkspaceStore) {
-        terminals.closeAll()
+        terminals.suspend()
         terminalStores.removeValue(forKey: ObjectIdentifier(terminals))
         terminals.sessionWillClose = nil
+        let id = UUID()
+        terminalSuspensions[id] = Task { [weak self] in
+            await terminals.waitForRestoration(); await terminals.waitForPersistence()
+            self?.terminalSuspensions.removeValue(forKey: id)
+        }
     }
     private func retainClosingTerminal(_ session: LocalTerminalSession) {
         guard closingTerminalSessions[session.id] == nil else { return }
@@ -979,6 +993,7 @@ final class WorkspaceStore {
                 ?? snapshot.threads.first(where: { !$0.isArchived })?.id
             selectedProjectID = selectedThread?.projectID ?? snapshot.projects.first?.id
             showArchived = selectedThread?.isArchived ?? false
+            hasLoadedWorkspace = true
         } catch { errorMessage = error.localizedDescription }
     }
     private func apply(_ update: WorkspaceUpdate) {
@@ -1941,7 +1956,7 @@ final class WorkspaceStore {
         catch { if !terminating { errorMessage = error.localizedDescription } }
     }
     func skillsScope(threadID: UUID) -> ProviderSkillsStore.Scope? {
-        guard !terminating, let thread = thread(threadID), [.codex, .pi, .opencode].contains(thread.provider),
+        guard !terminating, let thread = thread(threadID), [.codex, .pi, .opencode, .claude].contains(thread.provider),
               workspaceReady(for: thread), snapshot.providerReady(for: thread) else { return nil }
         let scope = ProviderSkillsStore.Scope(thread)
         if thread.provider == .codex {
@@ -1949,6 +1964,8 @@ final class WorkspaceStore {
                   scope.configuration.authenticationMode != .ownedChatGPT || !codexAuthenticationChanges.contains(scope.configuration.instanceID) else { return nil }
         } else if thread.provider == .pi {
             guard scope.piConfiguration?.runtime != nil else { return nil }
+        } else if thread.provider == .claude {
+            guard scope.claudeConfiguration != nil else { return nil }
         } else if scope.openCodeConfiguration == nil { return nil }
         return scope
     }
@@ -2861,8 +2878,13 @@ final class WorkspaceStore {
         draftSaveTask?.cancel(); flushDrafts()
         await commandTail?.value
         for cleanup in Array(removalCleanupTasks.values) { await cleanup.task.value }
-        for terminals in terminalStores.values.compactMap(\.value) { for session in terminals.removeAll() { await session.waitForClose() } }
+        for terminals in terminalStores.values.compactMap(\.value) {
+            let closing = terminals.suspend()
+            await terminals.waitForRestoration(); await terminals.waitForPersistence()
+            for session in closing { await session.waitForClose() }
+        }
         for task in Array(closingTerminalTasks.values) { await task.value }
+        for task in Array(terminalSuspensions.values) { await task.value }
         await engine?.shutdown()
         updatesTask?.cancel(); updatesTask = nil
     }

@@ -770,8 +770,8 @@ final class CoincideDesktopUITests: XCTestCase {
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
         let configuration = project.appendingPathComponent("t3.json")
         let staleCommand = "printf 'stale\\n' > script-stale.txt; exit 3"
-        let inspectedCommand = "pwd -P > script-cwd.txt; printf '%s\\n' \"$T3CODE_PROJECT_ROOT\" > script-root.txt; printf '%s\\n' \"${T3CODE_WORKTREE_PATH-unset}\" > script-worktree.txt; printf 'native-script-finished\\n'; exit 7"
-        let holdingCommand = "printf 'running\\n' > script-holding.txt; exec /bin/sleep 120"
+        let inspectedCommand = "printf 'inspect\\n' >> script-invocations.txt; pwd -P > script-cwd.txt; printf '%s\\n' \"$T3CODE_PROJECT_ROOT\" > script-root.txt; printf '%s\\n' \"${T3CODE_WORKTREE_PATH-unset}\" > script-worktree.txt; printf 'native-script-find-early-marker\\n'; i=0; while [ \"$i\" -lt 80 ]; do printf 'native-script-padding-%s\\n' \"$i\"; i=$((i+1)); done; printf 'native-script-finished\\n'; exit 7"
+        let holdingCommand = "printf 'hold\\n' >> script-invocations.txt; printf 'running\\n' > script-holding.txt; exec /bin/sleep 120"
         func writeConfiguration(_ command: String) throws {
             let scripts: [[String: Any]] = [
                 ["name": "Inspect Workspace", "command": command, "runOnWorktreeCreate": true, "runOnSettle": true],
@@ -785,7 +785,7 @@ final class CoincideDesktopUITests: XCTestCase {
                            name: "scripts-fixture-\(arguments[0])")
         }
         let initialHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "scripts-initial-head")
-        let receiptNames = ["script-stale.txt", "script-cwd.txt", "script-root.txt", "script-worktree.txt", "script-holding.txt"]
+        let receiptNames = ["script-stale.txt", "script-cwd.txt", "script-root.txt", "script-worktree.txt", "script-holding.txt", "script-invocations.txt"]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
@@ -836,6 +836,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-worktree.txt"), encoding: .utf8), "unset\n")
         XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-stale.txt").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-holding.txt").path))
+        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-invocations.txt"), encoding: .utf8), "inspect\n")
         XCTAssertEqual(composer.value as? String, draft)
         capture(app, name: "scripts-reviewed-command-cwd-and-exit-status")
         openProjectScripts(in: app); XCTAssertTrue(review.waitForExistence(timeout: 5))
@@ -865,8 +866,46 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(holdingTab, timeout: 10))
         XCTAssertTrue(inspectedTab.exists)
         XCTAssertEqual(composer.value as? String, draft)
+        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-invocations.txt"), encoding: .utf8), "inspect\nhold\n")
+        let threadID = try selectedThreadIdentifier(in: app)
+        let originalConfiguration = try Data(contentsOf: configuration)
+        let originalReceipts = try Dictionary(uniqueKeysWithValues: receiptNames.filter { $0 != "script-stale.txt" }.map {
+            ($0, try Data(contentsOf: project.appendingPathComponent($0)))
+        })
         XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "scripts-final-head"), initialHead)
         capture(app, name: "scripts-running-tab-closed-draft-retained")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertTrue(inspectedTab.waitForExistence(timeout: 10))
+        XCTAssertFalse(holdingTab.exists, "A terminal explicitly closed before Quit must stay closed after relaunch.")
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value CONTAINS %@", "native-script-finished"), object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
+        let disconnected = "Saved output. The previous shell is no longer connected."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", disconnected, disconnected)).element.waitForExistence(timeout: 10))
+        XCTAssertFalse((terminal.value as? String ?? "").contains("native-script-find-early-marker"), "The search target starts outside the restored viewport.")
+        let find = app.buttons["Find in terminal"]
+        XCTAssertTrue(find.isHittable); find.click()
+        let search = app.searchFields.matching(NSPredicate(format: "placeholderValue == %@", "Find")).firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click(); search.typeKey("a", modifierFlags: .command); search.typeText("native-script-find-early-marker")
+        search.typeKey(.return, modifierFlags: [])
+        let matched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value CONTAINS %@", "native-script-find-early-marker"), object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [matched], timeout: 5), .completed)
+        XCTAssertEqual(search.value as? String, "native-script-find-early-marker")
+        XCTAssertEqual(composer.value as? String, draft)
+        XCTAssertFalse(holdingTab.exists)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-stale.txt").path))
+        for (name, contents) in originalReceipts {
+            XCTAssertEqual(try Data(contentsOf: project.appendingPathComponent(name)), contents, "Restoring saved output must not rerun a script or change its receipts: \(name)")
+        }
+        XCTAssertEqual(try Data(contentsOf: configuration), originalConfiguration)
+        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "scripts-restored-head"), initialHead)
+        capture(app, name: "scripts-cold-output-restored-and-searched-without-replay")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
@@ -1959,14 +1998,14 @@ final class CoincideDesktopUITests: XCTestCase {
             else {
                 let alpha = app.checkBoxes["Alpha"], beta = app.checkBoxes["Beta"]
                 XCTAssertTrue(alpha.waitForExistence(timeout: 5) && beta.exists)
-                XCTAssertTrue(alpha.isHittable && beta.isHittable)
-                beta.click(); alpha.click()
+                try revealClaudeGUIQuestionControl(beta, in: app); beta.click()
+                let initiallyChecked = (beta.value as? NSNumber)?.intValue ?? Int((beta.value as? String) ?? "")
+                XCTAssertEqual(initiallyChecked, 1)
+                try revealClaudeGUIQuestionControl(alpha, in: app); alpha.click()
                 let betaChecked = (beta.value as? NSNumber)?.intValue ?? Int((beta.value as? String) ?? "")
                 XCTAssertEqual(betaChecked, label == "single" ? 0 : 1)
-                let other = try revealClaudeGUIQuestionField("Other answer for Answer", in: app)
-                other.click(); other.typeText("Other literal answer")
-                let notes = try revealClaudeGUIQuestionField("Notes for Answer", in: app)
-                notes.click(); notes.typeText("Exact native notes")
+                try enterClaudeGUIQuestionText("Other literal answer", label: "Other answer for Answer", in: app)
+                try enterClaudeGUIQuestionText("Exact native notes", label: "Notes for Answer", in: app)
                 try waitForClaudeGUIEnabled(submit, timeout: 5); XCTAssertTrue(submit.isHittable)
                 capture(app, name: "claude-question-" + label + "-explicit-controls")
                 submit.click()
@@ -1996,13 +2035,41 @@ final class CoincideDesktopUITests: XCTestCase {
         try assertClaudeGUIWorkspaceUnchanged(f)
     }
 
-    @MainActor private func revealClaudeGUIQuestionField(_ label: String, in app: XCUIApplication) throws -> XCUIElement {
-        let field = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        let scroll = app.scrollViews.containing(.checkBox, identifier: "Alpha").firstMatch
-        XCTAssertTrue(scroll.exists)
-        for _ in 0..<6 where !field.isHittable { scroll.scroll(byDeltaX: 0, deltaY: -80) }
-        XCTAssertTrue(field.isHittable); return field
+    @MainActor private func revealClaudeGUIQuestionControl(_ control: XCUIElement, in app: XCUIApplication) throws {
+        XCTAssertTrue(control.waitForExistence(timeout: 5))
+        let matches = app.scrollViews.containing(.checkBox, identifier: "Alpha")
+        XCTAssertEqual(matches.count, 1)
+        let scroll = matches.element
+        for _ in 0..<8 {
+            // SwiftUI can report a clipped descendant hittable at its layout
+            // frame, even when that point belongs to the composer underneath.
+            // Allow only the native control border's one-point frame overhang,
+            // including the final field at the bottom scroll limit.
+            let viewport = scroll.frame.insetBy(dx: -2, dy: -2), frame = control.frame
+            if control.isEnabled && control.isHittable && frame.width > 0 && frame.height > 0 && viewport.contains(frame) { return }
+            let delta: CGFloat
+            if frame.minY < viewport.minY { delta = min(80, viewport.minY - frame.minY + 4) }
+            else { delta = -min(80, max(4, frame.maxY - viewport.maxY + 4)) }
+            scroll.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTFail("The exact Claude question control must be visible inside its question viewport before interaction.")
+        throw NSError(domain: "CoincideDesktopUITests", code: 2)
+    }
+
+    @MainActor private func enterClaudeGUIQuestionText(_ text: String, label: String, in app: XCUIApplication) throws {
+        let field = app.textFields.matching(NSPredicate(format: "label == %@", label)).element
+        try revealClaudeGUIQuestionControl(field, in: app)
+        field.click()
+        let keyboardFocus = NSPredicate(format: "hasKeyboardFocus == true")
+        let focused = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            keyboardFocus.evaluate(with: field) || field.descendants(matching: .any).matching(keyboardFocus).count > 0
+        }, object: field)
+        guard XCTWaiter.wait(for: [focused], timeout: 5) == .completed else {
+            XCTFail("The revealed Claude question field must own keyboard focus before typing.")
+            throw NSError(domain: "CoincideDesktopUITests", code: 2)
+        }
+        field.typeText(text)
+        XCTAssertTrue(waitForValue(field, value: text, timeout: 5))
     }
 
     @MainActor private func prepareClaudeHistoryGUI(appearance: String, name: String, questionWorkflow: Bool = false) throws -> ClaudeHistoryGUIFixture {

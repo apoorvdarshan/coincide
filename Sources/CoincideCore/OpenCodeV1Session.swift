@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import OSLog
 
 /// Fixed messages never include native payloads, server URLs or credentials.
@@ -89,6 +90,9 @@ public actor OpenCodeV1Session: ProviderSession {
     private var grants: [String: [OpenCodeV1PermissionRule]] = [:]
     private var requests: [UUID: Task<OpenCodeHTTPResponse, any Error>] = [:]
     private var reconciliation: [UUID: Task<Void, Never>] = [:]
+    private var reconciliationGenerations: [UUID: Int] = [:]
+    private var steering: [String: OpenCodeV1SteeringInput] = [:]
+    private var steeringTasks: [String: Task<ProviderSteeringReceipt, any Error>] = [:]
     private var lastMessageMillis: UInt64 = 0
     private var messageCounter: UInt64 = 0
     private var historyToken: UUID?
@@ -515,6 +519,10 @@ public actor OpenCodeV1Session: ProviderSession {
             guard runs.count < 256 else { throw OpenCodeV1SessionError.invalidResponse }
             runs[runID] = .init(id: runID, sessionID: nativeID, inputID: inputID, autonomous: false)
             runs[runID]?.compaction = compact
+            runs[runID]?.nativeCommand = command != nil
+            runs[runID]?.configuration = captured
+            runs[runID]?.model = model
+            runs[runID]?.agentID = selected.agentID
             nativeOwners[nativeID] = runID; activeRunID = runID
             let inputKey = Self.messageKey(nativeID, inputID)
             if !compact { messageOwners[inputKey] = runID; userMessages.insert(inputKey) }
@@ -564,6 +572,138 @@ public actor OpenCodeV1Session: ProviderSession {
             if let safe = error as? OpenCodeV1SessionError { throw safe }
             throw OpenCodeV1SessionError.invalidResponse
         }
+    }
+
+    public func steeringCapabilities() async -> ProviderSteeringCapabilities {
+        pruneSteering()
+        guard !closing, !uncertain, connected, preparing == nil, historyToken == nil, !historyUnsafe,
+              let id = activeRunID, let run = runs[id], !run.autonomous, !run.compaction, !run.nativeCommand,
+              !run.finished, !run.stopped, run.accepted, run.inputObserved, run.announced,
+              run.configuration != nil, run.pendingSteeringID == nil,
+              !pending.values.contains(where: { $0.owner == id }), run.steeringCount < 128, steering.count < 1_024 else {
+            return .init(unavailableReason: ProviderSteeringError(.noActiveTurn).localizedDescription)
+        }
+        return .init(supportsActiveSteering: true)
+    }
+
+    /// Legacy v1 accepts a new user message on its current native loop. The
+    /// opening message remains our observed turn reference; no expected-turn
+    /// parameter or independent native execution identity is invented.
+    public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String,
+                      clientMessageID: String) async throws -> ProviderSteeringReceipt {
+        try Task.checkCancellation()
+        try ProviderSteeringValidation.id(clientMessageID); try ProviderSteeringValidation.input(input)
+        guard !closing, !uncertain, connected, preparing == nil, historyToken == nil, !historyUnsafe,
+              let owner = activeRunID, let run = runs[owner], !run.autonomous, !run.compaction, !run.nativeCommand,
+              !run.finished, !run.stopped, run.accepted, run.inputObserved, run.announced,
+              run.inputID == expectedTurnID, thread.provider == .opencode, thread.providerThreadID == run.sessionID,
+              thread.activeRun?.id == owner, thread.activeRun?.nativeTurnID == expectedTurnID,
+              let captured = run.configuration, let agentID = run.agentID, thread.activeRun?.configuration == captured,
+              captured.openCodeConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
+              URL(fileURLWithPath: captured.workspacePath).standardizedFileURL.resolvingSymlinksInPath() == cwd,
+              !pending.values.contains(where: { $0.owner == owner }) else { throw ProviderSteeringError(.staleTarget) }
+        let parts = try Self.parts(input)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let encoded = try encoder.encode(JSONValue.array(parts))
+        guard encoded.count <= 4 * 1_024 * 1_024 - 16_384 else { throw ProviderSteeringError(.invalidRequest) }
+        let fingerprint = SHA256.hash(data: encoded).map { String(format: "%02x", $0) }.joined()
+        if let previous = steering[clientMessageID] {
+            guard previous.owner == owner, previous.fingerprint == fingerprint else { throw ProviderSteeringError(.invalidRequest) }
+            if let task = steeringTasks[clientMessageID] { return try await task.value }
+            guard !previous.rejected else { throw ProviderSteeringError(.rejected) }
+            guard previous.accepted || previous.observed else { throw ProviderSteeringError(.outcomeUncertain) }
+            return try .init(turnID: run.inputID)
+        }
+        guard run.pendingSteeringID == nil, run.steeringCount < 128, steering.count < 1_024 else { throw ProviderSteeringError(.staleTarget) }
+        // Native slash commands have a blocking, distinct admission contract.
+        // They cannot silently become ordinary steers while a turn is active.
+        if try ProviderCommandCatalog.requiresInventory(input.text) {
+            let catalog = try await providerCommands()
+            guard try ProviderCommandCatalog.v1Selection(in: input.text, inventory: catalog) == nil else { throw ProviderSteeringError(.unsupported) }
+        }
+        if appMCPConnection != nil { try await transport.prepareAppMCP() }
+        guard !closing, !uncertain, activeRunID == owner, var current = runs[owner], !current.finished, !current.stopped,
+              current.inputID == expectedTurnID, current.pendingSteeringID == nil,
+              !pending.values.contains(where: { $0.owner == owner }) else { throw ProviderSteeringError(.staleTarget) }
+        let nativeID = nextMessageID()
+        current.generation += 1; current.steeringCount += 1
+        current.pendingSteeringID = nativeID; current.steeringAccepted = false; current.steeringObserved = false; current.idleEarly = false
+        runs[owner] = current
+        steering[clientMessageID] = .init(owner: owner, nativeID: nativeID, fingerprint: fingerprint)
+        let key = Self.messageKey(run.sessionID, nativeID)
+        messageOwners[key] = owner; userMessages.insert(key)
+        var fields: [String: JSONValue] = ["messageID": .string(nativeID), "agent": .string(agentID), "parts": .array(parts)]
+        if let model = run.model {
+            fields["model"] = .object(["providerID": .string(model.providerID), "modelID": .string(model.id)])
+            if let variant = model.variant { fields["variant"] = .string(variant) }
+        }
+        let body = JSONValue.object(fields)
+        let task = Task { try await self.submitSteering(clientMessageID, owner: owner, body: body) }
+        steeringTasks[clientMessageID] = task
+        continuation.yield(.steeringCapabilitiesChanged)
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    private func submitSteering(_ clientID: String, owner: UUID, body: JSONValue) async throws -> ProviderSteeringReceipt {
+        defer { steeringTasks.removeValue(forKey: clientID) }
+        guard let initial = steering[clientID], let run = runs[owner], activeRunID == owner, !run.finished, !run.stopped,
+              run.pendingSteeringID == initial.nativeID, !closing, !uncertain,
+              !pending.values.contains(where: { $0.owner == owner }) else {
+            if let entry = steering[clientID], !entry.posted {
+                steering[clientID]?.rejected = true
+                if var current = runs[owner], current.pendingSteeringID == entry.nativeID {
+                    current.pendingSteeringID = nil; runs[owner] = current
+                    reconcileEarlyIdle(owner)
+                }
+                if let nativeSession = runs[owner]?.sessionID {
+                    let key = Self.messageKey(nativeSession, entry.nativeID)
+                    messageOwners.removeValue(forKey: key); userMessages.remove(key)
+                }
+                continuation.yield(.steeringCapabilitiesChanged)
+            }
+            throw ProviderSteeringError(.staleTarget)
+        }
+        steering[clientID]?.posted = true
+        do {
+            let response = try await call(method: "POST", path: ["session", run.sessionID, "prompt_async"], body: body)
+            guard response.status == 204 else { throw OpenCodeV1SessionError.invalidResponse }
+            steering[clientID]?.accepted = true
+            markSteeringAccepted(owner: owner, nativeID: initial.nativeID)
+            return try .init(turnID: run.inputID)
+        } catch {
+            if steering[clientID]?.observed == true {
+                steering[clientID]?.accepted = true
+                markSteeringAccepted(owner: owner, nativeID: initial.nativeID)
+                return try .init(turnID: run.inputID)
+            }
+            if error is OpenCodeV1RejectedResponse {
+                steering[clientID]?.rejected = true
+                if var current = runs[owner], current.pendingSteeringID == initial.nativeID {
+                    current.pendingSteeringID = nil; runs[owner] = current
+                    reconcileEarlyIdle(owner)
+                }
+                continuation.yield(.steeringCapabilitiesChanged)
+                throw ProviderSteeringError(.rejected)
+            }
+            if !closing { failConnection(.uncertainDelivery) }
+            throw ProviderSteeringError(.outcomeUncertain)
+        }
+    }
+
+    private func markSteeringAccepted(owner: UUID, nativeID: String) {
+        guard var run = runs[owner], run.pendingSteeringID == nativeID else { return }
+        run.steeringAccepted = true; runs[owner] = run
+        releaseSteeringAdmission(owner)
+    }
+
+    private func releaseSteeringAdmission(_ owner: UUID) {
+        guard var run = runs[owner], run.pendingSteeringID != nil, run.steeringAccepted, run.steeringObserved else { return }
+        if run.idleEarly { reconcileEarlyIdle(owner) }
+        else { run.pendingSteeringID = nil; runs[owner] = run; continuation.yield(.steeringCapabilitiesChanged) }
+    }
+
+    private func pruneSteering() {
+        steering = steering.filter { steeringTasks[$0.key] != nil || runs[$0.value.owner] != nil }
     }
 
     private static func commandJSON(_ response: OpenCodeHTTPResponse) throws -> JSONValue {
@@ -735,6 +875,20 @@ public actor OpenCodeV1Session: ProviderSession {
             if message.completed { run.accepted = true; run.inputObserved = true }
             runs[owner] = run; announce(owner)
         }
+        if message.sessionID == run.sessionID,
+           message.role == "user" || (message.role == "assistant" && message.completed),
+           let nativeID = message.role == "user" ? message.id : message.parentID,
+           let clientID = steering.first(where: { $0.value.owner == owner && $0.value.nativeID == nativeID })?.key {
+            guard steering[clientID]?.rejected != true else { failConnection(.uncertainDelivery); return }
+            steering[clientID]?.observed = true
+            if var active = runs[owner], active.pendingSteeringID == nativeID {
+                active.steeringObserved = true
+                if message.role == "assistant" { active.steeringAccepted = true; steering[clientID]?.accepted = true }
+                runs[owner] = active
+                releaseSteeringAdmission(owner)
+            }
+            continuation.yield(.context(runID: owner, event: .associateEntity(.init(sessionID: run.sessionID, type: "user_message", id: nativeID), clientMessageID: clientID)))
+        }
         try await project(event, owner: owner)
         let waiting = earlyParts.removeValue(forKey: key) ?? []
         earlyPartBytes -= waiting.reduce(0) { $0 + Self.eventBytes($1) }
@@ -811,8 +965,13 @@ public actor OpenCodeV1Session: ProviderSession {
             return
         }
         if failed || interrupted {
+            if run.pendingSteeringID != nil, !run.steeringObserved { failConnection(.uncertainDelivery); return }
             guard run.inputObserved else { throw OpenCodeV1SessionError.invalidResponse }
             finish(owner, state: interrupted || run.stopped ? .interrupted : .failed); return
+        }
+        if run.pendingSteeringID != nil {
+            run.idleEarly = true; runs[owner] = run
+            releaseSteeringAdmission(owner); return
         }
         guard run.accepted, run.inputObserved else {
             run.idleEarly = true; runs[owner] = run; return
@@ -821,20 +980,31 @@ public actor OpenCodeV1Session: ProviderSession {
     }
 
     private func reconcileEarlyIdle(_ id: UUID) {
-        guard let run = runs[id], !run.finished, !run.stopped, run.idleEarly,
-              run.accepted, run.inputObserved, reconciliation[id] == nil else { return }
+        guard !closing, !uncertain, let run = runs[id], !run.finished, !run.stopped, run.idleEarly,
+              run.accepted, run.inputObserved, reconciliation[id] == nil,
+              run.pendingSteeringID == nil || (run.steeringAccepted && run.steeringObserved) else { return }
         let generation = run.generation
+        reconciliationGenerations[id] = generation
         reconciliation[id] = Task { [weak self] in await self?.reconcileIdle(id, generation: generation) }
     }
 
     private func reconcileIdle(_ id: UUID, generation: Int) async {
-        defer { reconciliation.removeValue(forKey: id) }
+        defer {
+            if reconciliationGenerations[id] == generation {
+                reconciliation.removeValue(forKey: id); reconciliationGenerations.removeValue(forKey: id)
+            }
+            // A newer admission may have invalidated this read. Keep every
+            // request owned and joined, then reconcile its successor if needed.
+            reconcileEarlyIdle(id)
+        }
         do {
             guard let run = runs[id] else { return }
             let statuses = try OpenCodeV1Protocol.statuses(try await call(method: "GET", path: ["session", "status"]))
             guard !closing, !uncertain, var current = runs[id], !current.finished, !current.stopped,
-                  current.generation == generation, current.accepted, current.inputObserved else { return }
-            current.idleEarly = false; runs[id] = current
+                  current.generation == generation, current.accepted, current.inputObserved,
+                  current.pendingSteeringID == nil || (current.steeringAccepted && current.steeringObserved) else { return }
+            current.idleEarly = false; current.pendingSteeringID = nil; runs[id] = current
+            continuation.yield(.steeringCapabilitiesChanged)
             if statuses[run.sessionID] == nil || statuses[run.sessionID] == .idle { finish(id, state: .idle) }
         } catch {
             guard !closing, let current = runs[id], !current.finished, current.generation == generation else { return }
@@ -864,7 +1034,10 @@ public actor OpenCodeV1Session: ProviderSession {
         guard !closing else { throw CancellationError() }
         if let id = activeRunID, var run = runs[id] {
             run.stopped = true; run.generation += 1; runs[id] = run
-            if !run.inputObserved && !run.assistantObserved {
+            let ownedSteering = steering.filter { $0.value.owner == id }
+            for clientID in ownedSteering.keys { steeringTasks[clientID]?.cancel() }
+            let unknownSteering = ownedSteering.values.contains { $0.posted && !$0.observed && !$0.rejected }
+            if unknownSteering || (!run.inputObserved && !run.assistantObserved) {
                 // The native abort may race a POST still entering the server.
                 // Do not report known cancellation or leave a delayed POST alive.
                 failConnection(.uncertainDelivery); await close()
@@ -1026,6 +1199,8 @@ public actor OpenCodeV1Session: ProviderSession {
         if let token = preparing { stoppedPreparations.insert(token) }
         connecting?.cancel()
         let owned = Array(requests.values), reconciles = Array(reconciliation.values)
+        let ownedSteering = Array(steeringTasks.values)
+        for task in ownedSteering { task.cancel() }
         let ownedHistory = historyTask
         ownedHistory?.cancel()
         for request in owned { request.cancel() }
@@ -1043,6 +1218,7 @@ public actor OpenCodeV1Session: ProviderSession {
         await transport.close()
         for request in owned { _ = try? await request.value }
         for task in reconciles { await task.value }
+        for task in ownedSteering { _ = await task.result }
         if let ownedHistory { _ = await ownedHistory.result }
         if let connecting { _ = try? await connecting.value }
         reader?.cancel(); await reader?.value
@@ -1151,6 +1327,14 @@ private struct OpenCodeV1Run {
     let inputID: String
     let autonomous: Bool
     var compaction = false
+    var nativeCommand = false
+    var configuration: ProviderConfiguration?
+    var model: OpenCodeModelSelection?
+    var agentID: String?
+    var pendingSteeringID: String?
+    var steeringAccepted = false
+    var steeringObserved = false
+    var steeringCount = 0
     var accepted = false
     var inputObserved = false
     var assistantObserved = false
@@ -1159,6 +1343,16 @@ private struct OpenCodeV1Run {
     var stopped = false
     var finished = false
     var generation = 0
+}
+
+private struct OpenCodeV1SteeringInput {
+    let owner: UUID
+    let nativeID: String
+    let fingerprint: String
+    var posted = false
+    var accepted = false
+    var observed = false
+    var rejected = false
 }
 
 private struct OpenCodeV1ProjectionOwner: Hashable { let sessionID: String; let runID: UUID }

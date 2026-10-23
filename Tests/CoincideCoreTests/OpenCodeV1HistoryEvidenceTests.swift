@@ -165,3 +165,94 @@ func openCodeV1HistoryEvidenceRejectsForgedIntermediateNativeUserCopyLedger(part
     // bounded helper must leave legacy Codex audit capacity to its own validator.
     try OpenCodeV1HistoryReviewEvidence.validateAdoptionLedger(in: snapshot)
 }
+
+private extension V1ProvenanceFixture {
+    mutating func addFirstRunSteering() throws {
+        let configuration = try #require(thread.runHistory?.first?.configuration)
+        let input = QueuedTurn(id: UUID(), text: "Steering within the first execution", configuration: configuration, createdAt: .now)
+        var operation = PromptSteeringOperation(threadID: thread.id, projectID: thread.projectID,
+            sourceIncarnation: incarnation, runtimeID: UUID(), runID: runIDs[0], nativeThreadID: observed.reference.nativeThreadID,
+            nativeTurnID: "msg_100", input: input, messageID: "steering-authored-first", configuration: configuration, phase: .delivered)
+        operation.receipt = try .init(turnID: "msg_100")
+        try operation.validate()
+        snapshot.promptSteerings = [operation]
+        var row = ChatMessage(id: operation.messageID, role: .user, text: input.text)
+        row.promptSteeringID = operation.id; row.runReference = .init(threadID: thread.id, runID: runIDs[0])
+        row.providerEntity = .init(key: .init(sessionID: observed.reference.nativeThreadID, type: "user_message", id: "msg_150"))
+        snapshot.threads[0].messages.insert(row, at: 2)
+        var messages = observed.messages
+        messages.insert(contentsOf: [try .init(id: "msg_150", role: .user, partIDs: ["prt_steer"], contentDigest: String(repeating: "3", count: 64)),
+            try .init(id: "msg_160", role: .assistant, parentID: "msg_150", partIDs: ["prt_steer_reply"], contentDigest: String(repeating: "4", count: 64))], at: 2)
+        observed = try .init(reference: observed.reference, runtimeIdentity: observed.runtimeIdentity,
+            workspacePath: observed.workspacePath, projectID: observed.projectID, sessionDigest: observed.sessionDigest, messages: messages)
+    }
+}
+
+@Test func openCodeV1SteeringHistoryKeepsInputsInsideOriginalPhysicalRunAndThroughClone() throws {
+    var f = try V1ProvenanceFixture()
+    try f.addFirstRunSteering()
+    let first = try OpenCodeV1HistoryReviewEvidence.make(source: f.observed, snapshot: f.snapshot,
+        thread: f.thread, runID: f.runIDs[0], kind: .forkAfterRun)
+    #expect(first.retainedMessageCount == 4)
+    #expect(first.inputs[0].steeringMessageIDs == ["msg_150"])
+    #expect(f.thread.runHistory?.first?.turnIDs == ["msg_100"])
+    let rewind = try f.review(index: 2)
+    try f.adopt(rewind, nativeID: "ses_steer_clone")
+    let mapped = try OpenCodeV1HistoryReviewEvidence.make(source: f.observed, snapshot: f.snapshot,
+        thread: f.thread, runID: f.runIDs[0], kind: .forkAfterRun)
+    #expect(mapped.retainedMessageCount == 4)
+    #expect(mapped.inputs[0].steeringMessageIDs == [f.observed.messages[2].id])
+    #expect(mapped.inputs[0].originalMessageID == "msg_100")
+    let changed = try f.changing(f.observed, messageAt: 2)
+    #expect(throws: ProviderHistoryError.self) {
+        try OpenCodeV1HistoryReviewEvidence.make(source: changed, snapshot: f.snapshot,
+            thread: f.thread, runID: f.runIDs[0], kind: .forkAfterRun)
+    }
+}
+
+@Test(arguments: ["missing-association", "foreign-session", "wrong-run", "failed-audit", "wrong-target"])
+func openCodeV1SteeringHistoryRequiresExactAuthoredNativeOwnership(fault: String) throws {
+    var f = try V1ProvenanceFixture()
+    try f.addFirstRunSteering()
+    let index = try #require(f.snapshot.threads[0].messages.firstIndex { $0.id == "steering-authored-first" })
+    switch fault {
+    case "missing-association": f.snapshot.threads[0].messages[index].providerEntity = nil
+    case "foreign-session": f.snapshot.threads[0].messages[index].providerEntity?.key.sessionID = "ses_foreign"
+    case "wrong-run": f.snapshot.threads[0].messages[index].runReference = .init(threadID: f.thread.id, runID: f.runIDs[1])
+    case "failed-audit":
+        f.snapshot.promptSteerings?[0].phase = .failed
+        f.snapshot.promptSteerings?[0].receipt = nil
+        f.snapshot.promptSteerings?[0].error = PromptSteeringOperation.failureMessage
+    default:
+        let configuration = try #require(f.thread.runHistory?.first?.configuration)
+        var operation = PromptSteeringOperation(threadID: f.thread.id, projectID: f.thread.projectID,
+            sourceIncarnation: f.incarnation, runtimeID: UUID(), runID: f.runIDs[0], nativeThreadID: f.observed.reference.nativeThreadID,
+            nativeTurnID: "msg_200", input: .init(id: UUID(), text: "Wrong target", configuration: configuration, createdAt: .now),
+            messageID: "steering-authored-first", configuration: configuration, phase: .delivered)
+        operation.receipt = try .init(turnID: "msg_200"); f.snapshot.promptSteerings = [operation]
+    }
+    #expect(throws: ProviderHistoryError.self) {
+        try OpenCodeV1HistoryReviewEvidence.make(source: f.observed, snapshot: f.snapshot,
+            thread: f.thread, runID: f.runIDs[0], kind: .forkAfterRun)
+    }
+}
+
+@Test func openCodeV1SteeringHistoryRejectsCrossRunOwnershipAndKeepsLegacyEncoding() throws {
+    var f = try V1ProvenanceFixture()
+    try f.addFirstRunSteering()
+    let evidence = try OpenCodeV1HistoryReviewEvidence.make(source: f.observed, snapshot: f.snapshot,
+        thread: f.thread, runID: f.runIDs[0], kind: .forkAfterRun)
+    var inputs = evidence.inputs
+    inputs[0] = .init(runID: inputs[0].runID, originalReference: inputs[0].originalReference,
+        originalMessageID: inputs[0].originalMessageID, openingMessageID: inputs[0].openingMessageID, steeringMessageIDs: ["msg_200"])
+    #expect(throws: ProviderHistoryError.self) {
+        try OpenCodeV1HistoryReviewEvidence(source: evidence.source, boundary: evidence.boundary,
+            retainedMessageCount: evidence.retainedMessageCount, selectedOpeningMessageID: evidence.selectedOpeningMessageID, inputs: inputs)
+    }
+    let legacy = OpenCodeV1HistoryRunInput(runID: UUID(), originalReference: f.observed.reference,
+        originalMessageID: "msg_100", openingMessageID: "msg_100")
+    let encoded = try JSONEncoder().encode(legacy)
+    let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(object["steeringMessageIDs"] == nil)
+    #expect(try JSONDecoder().decode(OpenCodeV1HistoryRunInput.self, from: encoded) == legacy)
+}

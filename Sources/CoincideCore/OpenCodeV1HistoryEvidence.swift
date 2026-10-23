@@ -92,9 +92,13 @@ public struct OpenCodeV1HistoryRunInput: Codable, Sendable, Equatable {
     public let originalReference: ProviderConversationReference
     public let originalMessageID: String
     public let openingMessageID: String
-    public init(runID: UUID, originalReference: ProviderConversationReference, originalMessageID: String, openingMessageID: String) {
+    /// nil preserves the exact legacy encoding for runs with no active input.
+    public let steeringMessageIDs: [String]?
+    public init(runID: UUID, originalReference: ProviderConversationReference, originalMessageID: String,
+                openingMessageID: String, steeringMessageIDs: [String] = []) {
         self.runID = runID; self.originalReference = originalReference
         self.originalMessageID = originalMessageID; self.openingMessageID = openingMessageID
+        self.steeringMessageIDs = steeringMessageIDs.isEmpty ? nil : steeringMessageIDs
     }
 }
 
@@ -157,7 +161,35 @@ public struct OpenCodeV1HistoryReviewEvidence: Codable, Sendable, Equatable {
             guard let message = target.message(opening), message.role == .user, !message.isInternalUserInput else {
                 throw ProviderHistoryError(.historyChanged)
             }
-            return .init(runID: run.id, originalReference: original, originalMessageID: inputID, openingMessageID: opening)
+            var steering: [String] = []
+            for operation in snapshot.promptSteerings ?? [] where operation.threadID == thread.id && operation.runID == run.id {
+                guard operation.configuration == run.configuration,
+                      operation.configuration.openCodeConfiguration?.runtimeIdentity == observed.runtimeIdentity,
+                      operation.target == .nativeTurn(inputID) else { throw ProviderHistoryError(.boundaryUnavailable) }
+                let row = thread.messages.first { $0.id == operation.messageID }
+                let key = row?.providerEntity?.key
+                let acknowledged = operation.phase == .delivered && operation.receipt?.delivery == .acknowledged
+                guard let key else {
+                    if acknowledged { throw ProviderHistoryError(.historyChanged) }
+                    continue
+                }
+                guard key.sessionID == operation.nativeThreadID, key.type == "user_message",
+                      row?.role == .user, row?.promptSteeringID == operation.id,
+                      row?.runReference == .init(threadID: thread.id, runID: run.id),
+                      operation.phase == .delivered || operation.phase == .unconfirmed else {
+                    throw ProviderHistoryError(.historyChanged)
+                }
+                let reference = try ProviderConversationReference(provider: .opencode, nativeThreadID: operation.nativeThreadID)
+                let id = try resolver.resolve(reference: reference, messageID: key.id, target: target)
+                guard let message = target.message(id), message.role == .user, !message.isInternalUserInput,
+                      operation.receipt == nil || operation.receipt?.target == .nativeTurn(inputID) else {
+                    throw ProviderHistoryError(.historyChanged)
+                }
+                steering.append(id)
+            }
+            steering.sort { target.positions[$0]! < target.positions[$1]! }
+            return .init(runID: run.id, originalReference: original, originalMessageID: inputID,
+                         openingMessageID: opening, steeringMessageIDs: steering)
         }
     }
     public static func make(source: OpenCodeV1HistorySnapshot, snapshot: WorkspaceSnapshot, thread: CodingThread,
@@ -181,7 +213,7 @@ public struct OpenCodeV1HistoryReviewEvidence: Codable, Sendable, Equatable {
               inputs.contains(where: { $0.openingMessageID == selectedOpeningMessageID }) else { throw ProviderHistoryError(.invalidRequest) }
         let positions = Dictionary(uniqueKeysWithValues: source.messages.enumerated().map { ($0.element.id, $0.offset) })
         var claimed = Set<String>(), previous = -1
-        for input in inputs {
+        for (index, input) in inputs.enumerated() {
             try input.originalReference.validate()
             try OpenCodeV1HistoryValidation.nativeID(input.originalReference.nativeThreadID, prefix: "ses_")
             try OpenCodeV1HistoryValidation.nativeID(input.originalMessageID, prefix: "msg_")
@@ -189,6 +221,19 @@ public struct OpenCodeV1HistoryReviewEvidence: Codable, Sendable, Equatable {
                   let position = positions[input.openingMessageID], position > previous,
                   source.messages[position].role == .user, !source.messages[position].isInternalUserInput else {
                 throw ProviderHistoryError(.boundaryUnavailable)
+            }
+            let steering = input.steeringMessageIDs ?? []
+            guard steering.count <= 128 else { throw ProviderHistoryError(.boundaryUnavailable) }
+            let next = index + 1 < inputs.count ? positions[inputs[index + 1].openingMessageID] : source.messages.count
+            guard let next else { throw ProviderHistoryError(.boundaryUnavailable) }
+            var priorInput = position
+            for id in steering {
+                try OpenCodeV1HistoryValidation.nativeID(id, prefix: "msg_")
+                guard claimed.insert(id).inserted, let offset = positions[id], offset > priorInput, offset < next,
+                      source.messages[offset].role == .user, !source.messages[offset].isInternalUserInput else {
+                    throw ProviderHistoryError(.boundaryUnavailable)
+                }
+                priorInput = offset
             }
             previous = position
         }

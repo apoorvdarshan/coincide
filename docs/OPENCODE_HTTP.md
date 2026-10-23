@@ -206,12 +206,37 @@ retain their original run after parent completion; a launcher completing is not
 child success. Unknown child or assistant frames are never assigned to a later
 run merely because it is active.
 
+Active v1 steering sends one fresh authored message ID through the same native
+`prompt_async` endpoint, retaining the original run's captured model, variant,
+agent and native session. It retains the original opening message as the local
+turn reference; v1 supplies no expected-turn parameter, inbox cancellation or
+independent execution ID. Repeated client IDs bind the same exact payload and
+cannot replay an attempted input. Known native commands and skills with a
+different admission contract are refused while a turn is active.
+
+An idle received during steering admission waits for HTTP acknowledgement and
+the exact native user message, or its completed assistant parent relationship,
+then checks fresh native status. A read started before a later steering admission
+cannot complete that later generation. Lost replies can be settled by exact
+native observation; an unproved write remains uncertain. Pending approvals and
+questions are rechecked after command discovery or MCP preparation and before
+posting. These are local ownership barriers, not a native compare-and-swap
+against external writers.
+
+The actor emits an authored-to-native association for each observed steering
+input. Production actor-to-Engine/SQLite tests cover captured settings, FIFO,
+association persistence and restart without replay; controlled peers cover delayed
+acknowledgements, stale idle/status reads, question races, rejection and Stop.
+These new steering checks use a synthetic transport, separate from the existing
+loopback HTTP/SSE FIFO test. Installed v1 steering remains unverified.
+
 Permission replies distinguish once, conversation-rule grants and native
 workspace-wide grants. Questions preserve ordered exact labels, multiple
 selections and custom answers; native reply/rejection events settle local
 requests. Stop before any native input evidence remains uncertain even after a
-204 response, because v1 has no exact inbox cancellation. An observed Stop sends
-native root abort and attempts verified descendants. Close drains the owned
+204 response, because v1 has no exact inbox cancellation. The same rule applies
+to an outstanding steering POST without native observation: Stop closes and joins
+the owned connection and reports uncertainty. An observed Stop sends native root abort and attempts verified descendants. Close drains the owned
 parent and app-owned I/O; neither operation proves all OS descendants exited.
 
 ## Native OpenCode 2 conversations
@@ -282,7 +307,12 @@ Both use the native exclusive lexical message cut, verified against the observed
 chronological prefix. No revert, unrevert, model turn or native deletion is sent.
 An empty retained prefix is valid. Native compaction and its explicit continuation
 remain inside their owning run; unrelated synthetic or replayed user input is
-not silently claimed.
+not silently claimed. Observed steering inputs remain inside the original run,
+with exactly one opening turn ID. Their durable authored/native associations and
+delivery audits must agree with the native inventory. Verified rewind clone maps
+resolve those steering IDs alongside the original opening ID; a missing, foreign,
+changed or cross-run association refuses the history cut. The optional steering
+history field preserves existing no-steering encodings.
 
 The canonical copy proof covers complete message information and parts. It
 normalizes only native-regenerated message/part/session ownership IDs and the
@@ -392,8 +422,7 @@ establish installed or hosted history acceptance.
 
 Remaining work includes a shared instance lease registry,
 bounded reconnect/backfill reconciliation, complete autonomous/early-child
-recovery, v1 steering, session browsing/import, broader native history
-compatibility and installed/hosted history acceptance. V1 and v2 history have
+recovery, session browsing/import, broader native history compatibility and installed/hosted history acceptance. V1 and v2 history have
 distinct semantics; existing ACP history remains unsupported and does not inherit
 the native v2 path. Native setup/authentication, commands, skills, usage and
 installed-provider verification also remain required by

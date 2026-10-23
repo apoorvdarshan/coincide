@@ -116,13 +116,23 @@ every question; **Cancel Questions** returns an explicit cancellation. A failed
 selected-context consumer keeps Send disabled until its context is inspected,
 while the inspection action remains available.
 
+Claude, Pi and native OpenCode offer prompt-start slash-command suggestions from
+the selected runtime and workspace. Choosing a command inserts its literal token
+into the draft. Claude includes advertised namespaces, aliases and argument hints;
+its picker has offline verification. Installed command acceptance and Claude
+filesystem/`$skill` discovery and dispatch remain unfinished. Codex, Pi and native
+OpenCode also offer scoped skill choosers; see [provider boundaries](docs/PROVIDER_PARITY.md).
+
 For native OpenCode, **Refresh Models** reads the current workspace's models,
 variants and primary agents. These choices apply to future inputs; queued turns
 retain their captured model, variant, agent and permissions. Approval controls
-distinguish once, conversation-only and workspace-wide grants. The v2 adapter
-implements active-turn steering and reviewed fork/rewind; v1 has a separate
-reviewed clone/adoption history contract. Broader installed acceptance, recovery
-and history compatibility remain unfinished; see [OpenCode boundaries](docs/OPENCODE_HTTP.md).
+distinguish once, conversation-only and workspace-wide grants. Both native
+adapters implement active steering with the original run's captured settings;
+v1 retains its opening input identity and v2 uses its native inbox contract.
+V2 supports reviewed fork/rewind; v1 has a separate reviewed clone/adoption history
+contract that retains verified steering inputs. These paths have offline checks.
+Broader installed acceptance, recovery and history compatibility remain
+unfinished; see [OpenCode boundaries](docs/OPENCODE_HTTP.md).
 
 **Settings → Providers → Add Grok** saves its native ACP profile. Its composer
 offers **Ask**, **Auto**, and **Always approve**; active and queued inputs retain
@@ -476,7 +486,11 @@ are pending.
 Open **Terminal** in the toolbar (⌥⌘T) for a native terminal in the conversation's
 workspace. Create multiple tabs, resize the panel, or hide it while commands keep
 running. Terminals stay attached to their conversation while the window is open;
-closing a tab or quitting the app ends its local processes.
+closing a tab or quitting the app ends its local processes. Tabs, selection and
+bounded plain-text output restore after restart, without replaying commands or
+starting shells. Restored tabs show a disconnected notice; **New Terminal** opens
+a fresh shell. Use the terminal's Find button to search scrollback and its text
+size menu to adjust the font. See [terminal restoration and limits](docs/TERMINAL.md).
 
 The app uses SwiftUI/AppKit and a Swift core; it does not launch Electron or a T3
 Code server. Workspace data stays in `~/Library/Application Support/Coincide/`.

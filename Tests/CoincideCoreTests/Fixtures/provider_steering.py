@@ -14,6 +14,7 @@ pending = []
 input_bytes = bytearray()
 input_lines = []
 steering_segments_pending = False
+stream_message = 0
 
 
 def options():
@@ -32,6 +33,24 @@ def response(identifier, result):
 def control(identifier, result=None):
     emit({'type': 'control_response', 'response': {
         'subtype': 'success', 'request_id': identifier, 'response': result or {}}})
+
+
+def claude_block(block, delta=None):
+    """Use the native block lifecycle; orphan deltas have no stream owner."""
+    global stream_message
+    stream_message += 1
+    identifier = 'steering-api-message-' + str(stream_message)
+    envelope = {'type': 'stream_event', 'session_id': 'native-source', 'parent_tool_use_id': None}
+    emit(dict(envelope, event={'type': 'message_start', 'message': {'id': identifier}}))
+    emit(dict(envelope, event={'type': 'content_block_start', 'index': 0, 'content_block': block}))
+    completed = dict(block)
+    if delta is not None:
+        emit(dict(envelope, event={'type': 'content_block_delta', 'index': 0, 'delta': delta}))
+        completed['text'] = completed.get('text', '') + delta['text']
+    emit(dict(envelope, event={'type': 'content_block_stop', 'index': 0}))
+    emit({'type': 'assistant', 'session_id': 'native-source', 'parent_tool_use_id': None,
+          'uuid': identifier + '-snapshot', 'message': {'id': identifier, 'content': [completed]}})
+    emit(dict(envelope, event={'type': 'message_stop'}))
 
 
 def native_turn():
@@ -61,9 +80,7 @@ def signal(name):
               'message': {'id': 'agent-launch', 'content': [
                   {'type': 'tool_use', 'id': 'foreground-agent', 'name': 'Agent', 'input': {}}]}})
     elif name == 'agent_stream':
-        emit({'type': 'stream_event', 'session_id': 'native-source', 'parent_tool_use_id': None,
-              'event': {'type': 'content_block_start', 'index': 0, 'content_block': {
-                  'type': 'tool_use', 'id': 'foreground-agent', 'name': 'Task'}}})
+        claude_block({'type': 'tool_use', 'id': 'foreground-agent', 'name': 'Task', 'input': {}})
     elif name == 'agent_system':
         emit({'type': 'system', 'subtype': 'task_started', 'session_id': 'native-source',
               'task_id': 'foreground-task', 'tool_use_id': 'foreground-agent'})
@@ -77,9 +94,8 @@ def signal(name):
         emit({'type': 'system', 'subtype': 'task_notification', 'session_id': 'native-source',
               'task_id': 'foreground-task', 'status': 'completed'})
     elif name == 'token_delta':
-        emit({'type': 'stream_event', 'session_id': 'native-source', 'parent_tool_use_id': None,
-              'event': {'type': 'content_block_delta', 'index': 0, 'delta': {
-                  'type': 'text_delta', 'text': 'Capability-neutral token'}}})
+        claude_block({'type': 'text', 'text': ''},
+                     {'type': 'text_delta', 'text': 'Capability-neutral token'})
 
 
 while True:

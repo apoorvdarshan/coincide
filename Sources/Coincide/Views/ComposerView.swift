@@ -118,7 +118,7 @@ struct ComposerView: View {
                 .buttonStyle(.plain).help("Reference a workspace file or folder").accessibilityLabel("Reference workspace file")
                 .accessibilityIdentifier("composer-reference-file").disabled(submitting)
         }
-        if skills != nil {
+        if skills?.supportsSkills == true {
             Button(action: openSkills) { Image(systemName: "dollarsign").frame(width: 24, height: 24) }
                 .buttonStyle(.plain).help("Choose a workspace skill, or type $ to search")
                 .accessibilityLabel("Choose a skill").accessibilityIdentifier("composer-skills")
@@ -234,10 +234,11 @@ struct ComposerView: View {
         return selectedRange
     }
     private var typedSkillTrigger: ComposerSkillMention? {
-        ComposerSkillMention.trigger(in: text, selection: effectiveSelection, showSlash: showSkillsInSlashMenu)
+        guard skills?.supportsSkills == true else { return nil }
+        return ComposerSkillMention.trigger(in: text, selection: effectiveSelection, showSlash: showSkillsInSlashMenu)
     }
     private var skillAnchor: ComposerSkillMention? {
-        guard skills?.isClosed == false, !historyLocked, !submitting, manualCommandAnchor == nil else { return nil }
+        guard skills?.supportsSkills == true, skills?.isClosed == false, !historyLocked, !submitting, manualCommandAnchor == nil else { return nil }
         if let manualSkillAnchor { return manualSkillAnchor }
         let trigger = typedSkillTrigger
         return trigger == dismissedSkillTrigger ? nil : trigger

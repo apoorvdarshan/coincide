@@ -14,6 +14,7 @@ final class ProviderSkillsStore {
         let configuration: CodexRuntimeConfiguration
         let openCodeConfiguration: OpenCodeConfiguration?
         let piConfiguration: PiConfiguration?
+        let claudeConfiguration: ClaudeRuntimeConfiguration?
         let nativeThreadID: String?
         let permission: String?
         init(_ thread: CodingThread) {
@@ -21,6 +22,7 @@ final class ProviderSkillsStore {
             provider = thread.provider
             configuration = thread.codexRuntimeConfiguration ?? .init()
             openCodeConfiguration = thread.openCodeConfiguration; piConfiguration = thread.piConfiguration
+            claudeConfiguration = thread.claudeRuntimeConfiguration
             nativeThreadID = thread.provider == .codex ? nil : thread.providerThreadID
             permission = thread.provider == .codex ? nil : thread.permission.rawValue
         }
@@ -51,7 +53,8 @@ final class ProviderSkillsStore {
          isCurrent: @escaping @MainActor () -> Bool = { true }) {
         self.id = id; self.scope = scope; self.read = { .commands(try await commandRead($0)) }; self.isCurrent = isCurrent
     }
-    var supportsCommands: Bool { scope.provider == .pi || scope.provider == .opencode }
+    var supportsCommands: Bool { [.pi, .opencode, .claude].contains(scope.provider) }
+    var supportsSkills: Bool { scope.provider != .claude }
     var commands: [ProviderCommand] {
         var names = Set<String>()
         return (commandInventory?.commands ?? []).filter {

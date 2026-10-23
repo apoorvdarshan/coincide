@@ -382,6 +382,12 @@ private actor V1Record {
         if case .entity(let update) = inner { entities[update.key] = try? update.apply(to: entities[update.key]) }
         if case .runEntity(_, let update) = inner { entities[update.key] = try? update.apply(to: entities[update.key]) }
     }
+    var associations: [String: ProviderEntityKey] {
+        events.reduce(into: [:]) { result, event in
+            if case .associateEntity(let key, let clientID) = Self.inner(event) { result[clientID] = key }
+        }
+    }
+    var contextOwners: Set<UUID> { Set(events.compactMap { if case .context(let id, _) = $0 { id } else { nil } }) }
     var turns: [String] { events.compactMap { if case .turn(let value) = Self.inner($0) { value } else { nil } } }
     var completions: [ThreadState] { events.compactMap { if case .completed(let value) = Self.inner($0) { value } else { nil } } }
     var failures: Int { events.filter { if case .connectionClosed = Self.inner($0) { true } else { false } }.count }
@@ -497,6 +503,10 @@ private actor V1Peer: OpenCodeV1SessionTransport {
     private let stream: AsyncThrowingStream<OpenCodeSSEEvent, any Error>
     private let continuation: AsyncThrowingStream<OpenCodeSSEEvent, any Error>.Continuation
     private let gate = V1Gate()
+    private let commandGate = V1Gate(), statusGate = V1Gate()
+    private var holdingCommands = false, holdingStatus = false
+    var commandReadHeld = false, statusReadHeld = false
+    var heldStatusReturns = 0
     private var closed = false
     private var sessions: [String: JSONValue] = [:]
     private var busy = false
@@ -508,6 +518,7 @@ private actor V1Peer: OpenCodeV1SessionTransport {
     var configurationHeld = false
     var childPatched = false
     var promptCount: Int { calls.filter { $0.path.last == "prompt_async" }.count }
+    var statusCount: Int { calls.filter { $0.path == ["session", "status"] }.count }
     init(directory: String, model: OpenCodeModelSelection, mode: V1Fault) {
         self.directory = directory; self.model = model; self.mode = mode
         let pair = AsyncThrowingStream<OpenCodeSSEEvent, any Error>.makeStream()
@@ -521,7 +532,8 @@ private actor V1Peer: OpenCodeV1SessionTransport {
                      .init(id: "plan", name: "Plan", description: nil, mode: .primary, hidden: false)], defaults: [model])
     }
     func commands(directory: URL) async throws -> ProviderCommandInventory {
-        try ProviderCommandCatalog.openCode(commands: .array([
+        if holdingCommands { commandReadHeld = true; await commandGate.wait() }
+        return try ProviderCommandCatalog.openCode(commands: .array([
             .object(["name": .string("review"), "source": .string("skill")]),
             .object(["name": .string("audit"), "source": .string("skill")])]),
             skills: .array([.object(["name": .string("review"), "location": .string(directory.path + "/review/SKILL.md")]),
@@ -532,8 +544,12 @@ private actor V1Peer: OpenCodeV1SessionTransport {
     func setAgentRules(_ rules: [OpenCodeV1PermissionRule]) { agentRules = rules }
     func setMode(_ value: V1Fault) { mode = value }
     func release() async { await gate.release() }
-    func close() async { guard !closed else { return }; closed = true; closeCount += 1; continuation.finish(); await gate.release() }
+    func close() async { guard !closed else { return }; closed = true; closeCount += 1; continuation.finish(); await gate.release(); await commandGate.release(); await statusGate.release() }
     func disconnect() { continuation.finish() }
+    func holdCommandReads() { holdingCommands = true }
+    func releaseCommands() async { holdingCommands = false; await commandGate.release() }
+    func holdStatusRead() { holdingStatus = true }
+    func releaseStatus() async { holdingStatus = false; await statusGate.release() }
     func raw(_ text: String) { continuation.yield(.init(event: "message", data: text, id: nil, retryMilliseconds: nil)) }
     func seed(fault: String) {
         if fault == "missing" { return }
@@ -546,7 +562,13 @@ private actor V1Peer: OpenCodeV1SessionTransport {
     func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
         guard !closed else { throw CancellationError() }
         calls.append(.init(method: method, path: path, body: body))
-        if path == ["session", "status"] { return try response(.object(busy ? ["ses_root": .object(["type": .string("busy")])] : [:])) }
+        if path == ["session", "status"] {
+            if holdingStatus {
+                statusReadHeld = true; await statusGate.wait(); heldStatusReturns += 1
+                return try response(.object([:]))
+            }
+            return try response(.object(busy ? ["ses_root": .object(["type": .string("busy")])] : [:]))
+        }
         if method == "POST", path == ["session"] {
             sessions["ses_root"] = info(id: "ses_root", rules: body?["permission"] ?? .array([]))
             if mode == .lostCreate { throw OpenCodeHTTPError.transportFailure }
@@ -596,8 +618,8 @@ private actor V1Peer: OpenCodeV1SessionTransport {
         try emit("message.updated", session: session, fields: ["info": message(id: id, role: "assistant", session: session,
             parent: parent ?? inputID ?? "msg_missing", completed: completed)])
     }
-    func text(_ text: String, assistant: String = "msg_assistant", session: String = "ses_root") throws {
-        try emit("message.part.updated", session: session, fields: ["part": .object(["id": .string("part_text"), "sessionID": .string(session),
+    func text(_ text: String, assistant: String = "msg_assistant", session: String = "ses_root", part: String = "part_text") throws {
+        try emit("message.part.updated", session: session, fields: ["part": .object(["id": .string(part), "sessionID": .string(session),
             "messageID": .string(assistant), "type": .string("text"), "text": .string(text)])])
     }
     func delta(_ text: String, part: String, assistant: String = "msg_assistant", session: String = "ses_root") throws {
@@ -645,5 +667,284 @@ private actor V1Peer: OpenCodeV1SessionTransport {
     }
     private func response(_ value: JSONValue, status: Int = 200) throws -> OpenCodeHTTPResponse {
         .init(status: status, headers: ["content-type": "application/json"], body: try JSONEncoder().encode(value))
+    }
+}
+
+private func v1ReadyToSteer(_ f: V1Fixture, nativeDefault: Bool = false) async throws -> CodingThread {
+    var thread = f.thread()
+    if nativeDefault {
+        thread.openCodeConfiguration = f.configuration.selecting(model: nil); thread.model = ""
+        thread.activeRun = .init(id: UUID(), configuration: .init(thread: thread), startedAt: Date())
+    }
+    try await f.session.send(text: "Original input", thread: thread)
+    try await f.peer.begin()
+    try await v1Eventually { await f.record.turns.count == 1 }
+    thread.providerThreadID = "ses_root"
+    thread.activeRun?.nativeTurnID = await f.record.turns.first
+    try await v1Eventually { await f.session.steeringCapabilities().supportsActiveSteering }
+    return thread
+}
+
+@Test(arguments: [false, true])
+func openCodeV1SteeringKeepsCapturedControlsOriginalRunAndIdempotentInput(nativeDefault: Bool) async throws {
+    try await withV1Session { f in
+        var thread = try await v1ReadyToSteer(f, nativeDefault: nativeDefault)
+        let opening = try #require(thread.activeRun?.nativeTurnID)
+        thread.openCodeConfiguration = f.configuration.selecting(agentID: "plan")
+        thread.permission = .fullAccess
+        let before = await f.peer.calls
+        let receipt = try await f.session.steer(input: .init(text: "Follow exact $HOME 🌍"), thread: thread,
+            expectedTurnID: opening, clientMessageID: "local-steering-one")
+        #expect(receipt.turnID == opening && receipt.delivery == .acknowledged)
+        let calls = await f.peer.calls
+        let prompts = calls.filter { $0.path.last == "prompt_async" }
+        #expect(prompts.count == 2 && calls.count == before.count + 1)
+        let body = try #require(prompts.last?.body), nativeID = try #require(body["messageID"].string)
+        #expect(nativeID != opening && nativeID > opening)
+        #expect(body["agent"] == .string("build"))
+        #expect(body["variant"] == (nativeDefault ? .null : .string("balanced")))
+        #expect(body["model"] == (nativeDefault ? .null : .object(["providerID": .string(f.model.providerID), "modelID": .string(f.model.id)])))
+        #expect(body["parts"].array?.first?["text"] == .string("Follow exact $HOME 🌍"))
+        #expect(body["expectedTurnID"] == .null && body["delivery"] == .null)
+        let again = try await f.session.steer(input: .init(text: "Follow exact $HOME 🌍"), thread: thread,
+            expectedTurnID: opening, clientMessageID: "local-steering-one")
+        #expect(again == receipt)
+        await #expect(throws: ProviderSteeringError(.invalidRequest)) {
+            try await f.session.steer(input: .init(text: "Changed content"), thread: thread,
+                expectedTurnID: opening, clientMessageID: "local-steering-one")
+        }
+        try await f.peer.begin(assistant: "msg_steered_reply")
+        try await v1Eventually { await f.record.associations["local-steering-one"]?.id == nativeID }
+        try await f.peer.text("steered output", assistant: "msg_steered_reply", part: "part_steered")
+        try await f.peer.idle()
+        try await v1Eventually { await f.record.completions == [.idle] }
+        #expect(await f.record.turns == [opening])
+        #expect(await f.peer.promptCount == 2)
+        #expect(await f.record.text.contains("steered output"))
+        #expect(await f.record.contextOwners == [thread.activeRun!.id])
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV1SteeringHoldsOldIdleUntilExactInputAndFreshStatus(lostAck: Bool) async throws {
+    try await withV1Session { f in
+        let thread = try await v1ReadyToSteer(f), opening = try #require(thread.activeRun?.nativeTurnID)
+        let statusCount = await f.peer.statusCount
+        await f.peer.setMode(lostAck ? .heldLostAck : .heldAck)
+        let task = Task { try await f.session.steer(input: .init(text: "Delayed steering"), thread: thread,
+            expectedTurnID: opening, clientMessageID: "held-steering") }
+        do {
+            try await v1Eventually { await f.peer.promptCount == 2 }
+            try await f.peer.idle()
+            try await f.peer.user(id: "msg_unrelated_steer")
+            try await f.peer.assistant(id: "msg_unrelated_reply", parent: "msg_unrelated_steer", completed: true)
+            #expect(await f.record.completions.isEmpty)
+            try await f.peer.begin(assistant: "msg_held_reply")
+            if lostAck { try await f.peer.assistant(id: "msg_held_reply", completed: true) }
+            try await v1Eventually { await f.record.associations["held-steering"] != nil }
+            await f.peer.release()
+            #expect(try await task.value.turnID == opening)
+            try await v1Eventually { await f.peer.statusCount > statusCount }
+            #expect(await f.record.completions.isEmpty)
+            #expect(await f.record.failures == 0)
+            try await f.peer.idle()
+            try await v1Eventually { await f.record.completions == [.idle] }
+            #expect(await f.record.turns == [opening])
+        } catch { await f.peer.release(); _ = await task.result; throw error }
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV1SteeringSeparatesKnownRejectionFromUnknownAdmission(rejected: Bool) async throws {
+    try await withV1Session { f in
+        let thread = try await v1ReadyToSteer(f), opening = try #require(thread.activeRun?.nativeTurnID)
+        await f.peer.setMode(rejected ? .rejectedPrompt : .lostPrompt)
+        await #expect(throws: ProviderSteeringError(rejected ? .rejected : .outcomeUncertain)) {
+            try await f.session.steer(input: .init(text: "Never resend"), thread: thread,
+                expectedTurnID: opening, clientMessageID: "failed-steering")
+        }
+        await #expect(throws: (any Error).self) {
+            try await f.session.steer(input: .init(text: "Never resend"), thread: thread,
+                expectedTurnID: opening, clientMessageID: "failed-steering")
+        }
+        #expect(await f.peer.promptCount == 2)
+        #expect(await f.record.completions.isEmpty)
+        if rejected {
+            #expect(await f.session.steeringCapabilities().supportsActiveSteering)
+            try await f.peer.idle()
+            try await v1Eventually { await f.record.completions == [.idle] }
+        } else {
+            try await v1Eventually { await f.record.failures == 1 }
+            #expect(await f.session.steeringCapabilities().supportsActiveSteering == false)
+        }
+    }
+}
+
+@Test func openCodeV1SteeringStopJoinsUnknownAdmissionAndDoesNotCompleteIt() async throws {
+    try await withV1Session { f in
+        let thread = try await v1ReadyToSteer(f), opening = try #require(thread.activeRun?.nativeTurnID)
+        await f.peer.setMode(.heldAck)
+        let task = Task { try await f.session.steer(input: .init(text: "Unknown at Stop"), thread: thread,
+            expectedTurnID: opening, clientMessageID: "stopped-steering") }
+        try await v1Eventually { await f.peer.promptCount == 2 }
+        await #expect(throws: OpenCodeV1SessionError.uncertainDelivery) { try await f.session.interrupt() }
+        await #expect(throws: ProviderSteeringError(.outcomeUncertain)) { try await task.value }
+        #expect(await f.peer.closeCount == 1)
+        #expect(await f.record.completions.isEmpty)
+        #expect(await f.record.failures == 1)
+    }
+}
+
+@Test func openCodeV1SteeringRefusesChangedCapturedTargetPendingQuestionAndNativeCommand() async throws {
+    try await withV1Session { f in
+        let thread = try await v1ReadyToSteer(f), opening = try #require(thread.activeRun?.nativeTurnID)
+        var changed = thread
+        changed.activeRun?.configuration.permission = .fullAccess
+        await #expect(throws: ProviderSteeringError(.staleTarget)) {
+            try await f.session.steer(input: .init(text: "Wrong capture"), thread: changed,
+                expectedTurnID: opening, clientMessageID: "changed-capture")
+        }
+        await #expect(throws: ProviderSteeringError(.staleTarget)) {
+            try await f.session.steer(input: .init(text: "Wrong turn"), thread: thread,
+                expectedTurnID: "msg_foreign", clientMessageID: "changed-target")
+        }
+        await #expect(throws: ProviderSteeringError(.unsupported)) {
+            try await f.session.steer(input: .init(text: "/review inspect"), thread: thread,
+                expectedTurnID: opening, clientMessageID: "native-command")
+        }
+        try await f.peer.question(id: "question-steer")
+        try await v1Eventually { await f.record.approvals.count == 1 }
+        #expect(await f.session.steeringCapabilities().supportsActiveSteering == false)
+        await #expect(throws: ProviderSteeringError(.staleTarget)) {
+            try await f.session.steer(input: .init(text: "Question pending"), thread: thread,
+                expectedTurnID: opening, clientMessageID: "pending-question")
+        }
+        #expect(await f.peer.promptCount == 1)
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV1SteeringEnginePersistsNativeAssociationFIFOAndUnknownRestart(unknown: Bool) async throws {
+    let root = try temporaryWorkspace(), url = root.appendingPathComponent("workspace.sqlite")
+    let project = WorkspaceProject(path: root.path)
+    let model = OpenCodeModelSelection(providerID: "fixture-provider", id: "model/with/slashes")
+    let configuration = OpenCodeConfiguration(generation: .v1, model: .init(providerID: model.providerID, id: model.id, variant: "balanced"))
+    var thread = CodingThread(project: project)
+    thread.provider = .opencode; thread.openCodeConfiguration = configuration; thread.model = model.catalogID
+    thread.checkpointPolicy = .disabled
+    var seed = WorkspaceSnapshot(); seed.projects = [project]; seed.threads = [thread]
+    try await WorkspaceDatabase(url: url).save(seed, event: "v1 steering fixture")
+    let peer = V1Peer(directory: root.path, model: model, mode: .manual)
+    let session = OpenCodeV1Session(cwd: root, configuration: configuration, transport: peer)
+    let engine = try WorkspaceEngine(url: url, providerFactory: { _ in session }, identityResolver: { _ in nil })
+    let threadID = thread.id
+    do {
+        _ = try await engine.load()
+        _ = try await engine.dispatch(.submit(threadID: thread.id, text: "Original input"))
+        try await v1Eventually { await peer.promptCount == 1 }
+        try await peer.begin()
+        try await v1Eventually { await engine.promptSteeringAvailability(threadID: threadID).canSteer }
+        let original = try #require(await engine.current().snapshot.threads[0].activeRun)
+        _ = try await engine.dispatch(.editThread(thread.id, .permission(.fullAccess)))
+        await peer.setMode(unknown ? .lostPrompt : .heldAck)
+        _ = try await engine.steerPrompt(threadID: thread.id, text: "Additional original-run input", expectedRunID: original.id)
+        try await v1Eventually { await peer.promptCount == 2 }
+        if !unknown {
+            let persisted = try await WorkspaceDatabase(url: url).load()
+            #expect(persisted.promptSteerings?.last?.phase == .dispatching)
+        }
+        _ = try await engine.dispatch(.submit(threadID: thread.id, text: "Captured FIFO follow-up"))
+        if unknown {
+            try await v1Eventually { await engine.current().snapshot.promptSteerings?.last?.phase == .unconfirmed }
+            try await v1Eventually { await engine.current().snapshot.threads[0].activeRun == nil }
+            #expect(await engine.current().snapshot.threads[0].queuePaused)
+            #expect(await peer.promptCount == 2)
+        } else {
+            let nativeID = try #require(await peer.calls.last { $0.path.last == "prompt_async" }?.body?["messageID"].string)
+            try await peer.begin(assistant: "msg_engine_steered")
+            await peer.release()
+            try await v1Eventually {
+                let snapshot = await engine.current().snapshot
+                guard let operation = snapshot.promptSteerings?.last else { return false }
+                return operation.phase == .delivered && snapshot.threads[0].messages.first { $0.id == operation.messageID }?.providerEntity?.key.id == nativeID
+            }
+            #expect(await engine.current().snapshot.threads[0].activeRun?.id == original.id)
+            await peer.setMode(.manual)
+            try await peer.idle()
+            try await v1Eventually { await peer.promptCount == 3 }
+            try await peer.begin(assistant: "msg_engine_followup")
+            try await peer.idle()
+            try await v1Eventually { await engine.current().snapshot.threads[0].activeRun == nil }
+            let snapshot = await engine.current().snapshot
+            let operation = try #require(snapshot.promptSteerings?.last)
+            #expect(snapshot.threads[0].runHistory?.count == 2)
+            #expect(snapshot.threads[0].runHistory?.first?.turnIDs == [original.nativeTurnID!])
+            #expect(snapshot.threads[0].messages.filter { $0.promptSteeringID == operation.id }.count == 1)
+            #expect(snapshot.threads[0].messages.first { $0.id == operation.messageID }?.runReference?.runID == original.id)
+            let prompts = await peer.calls.filter { $0.path.last == "prompt_async" }
+            #expect(prompts[1].body?["agent"] == .string("build") && prompts[1].body?["variant"] == .string("balanced"))
+            #expect(operation.configuration.permission == .supervised)
+        }
+        await engine.drainCommands()
+        let retained = await engine.current().snapshot
+        let operation = try #require(retained.promptSteerings?.last)
+        #expect(try await WorkspaceDatabase(url: url).rebuildProjection().snapshot == retained)
+        await engine.shutdown()
+        let reopened = try WorkspaceEngine(url: url, providerFactory: { _ in throw CoincideError("A retained input must not start a provider") }, identityResolver: { _ in nil })
+        do {
+            _ = try await reopened.load()
+            #expect(await reopened.current().snapshot.promptSteering(operation.id)?.phase == (unknown ? .unconfirmed : .delivered))
+            #expect(await peer.promptCount == (unknown ? 2 : 3))
+            await reopened.shutdown()
+        } catch { await reopened.shutdown(); throw error }
+    } catch { await engine.shutdown(); try? FileManager.default.removeItem(at: root); throw error }
+    try FileManager.default.removeItem(at: root)
+}
+
+@Test func openCodeV1SteeringRechecksQuestionAfterHeldCommandDiscovery() async throws {
+    try await withV1Session { f in
+        let thread = try await v1ReadyToSteer(f), opening = try #require(thread.activeRun?.nativeTurnID)
+        await f.peer.holdCommandReads()
+        let task = Task { try await f.session.steer(input: .init(text: "Show $MISSING_NATIVE_SKILL literally"), thread: thread,
+            expectedTurnID: opening, clientMessageID: "preflight-steering") }
+        try await v1Eventually { await f.peer.commandReadHeld }
+        try await f.peer.question(id: "question-during-discovery")
+        try await v1Eventually { await f.record.approvals.count == 1 }
+        await f.peer.releaseCommands()
+        await #expect(throws: ProviderSteeringError(.staleTarget)) { try await task.value }
+        #expect(await f.peer.promptCount == 1)
+        #expect(await f.record.approvals.count == 1)
+    }
+}
+
+@Test func openCodeV1SteeringInvalidatesStatusReadStartedBeforeItsNativeAdmission() async throws {
+    try await withV1Session(mode: .heldAck) { f in
+        var thread = f.thread()
+        let initialThread = thread
+        let send = Task { try await f.session.send(text: "Original delayed acknowledgement", thread: initialThread) }
+        try await v1Eventually { await f.peer.promptCount == 1 }
+        await f.peer.holdStatusRead()
+        try await f.peer.idle()
+        try await f.peer.begin()
+        await f.peer.release()
+        try await send.value
+        try await v1Eventually { await f.peer.statusReadHeld }
+        thread.providerThreadID = "ses_root"
+        thread.activeRun?.nativeTurnID = await f.record.turns.first
+        let opening = try #require(thread.activeRun?.nativeTurnID)
+        _ = try await f.session.steer(input: .init(text: "Admitted after status started"), thread: thread,
+            expectedTurnID: opening, clientMessageID: "new-generation-steering")
+        try await f.peer.begin(assistant: "msg_new_generation")
+        try await v1Eventually { await f.record.associations["new-generation-steering"] != nil }
+        await f.peer.releaseStatus()
+        try await v1Eventually { await f.peer.heldStatusReturns == 1 }
+        // Drain actor scheduling after the controlled stale reply; no timeout
+        // extension or native retry is used to make the obsolete read succeed.
+        for _ in 0..<8 { await Task.yield() }
+        #expect(await f.record.completions.isEmpty)
+        #expect(await f.session.steeringCapabilities().supportsActiveSteering)
+        try await f.peer.idle()
+        try await v1Eventually { await f.record.completions == [.idle] }
+        #expect(await f.record.turns == [opening])
     }
 }

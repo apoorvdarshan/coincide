@@ -10,6 +10,7 @@ public actor ClaudeSession: ProviderSession {
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
     private let runtimeConfiguration: ClaudeRuntimeConfiguration?
+    private let workspacePath: String
     private let launchSelection: ClaudeResumeSelection?
     private var appMCPConnection: AppMCPConnection?
     private var appMCPRedaction: Task<Void, any Error>?
@@ -24,8 +25,9 @@ public actor ClaudeSession: ProviderSession {
     private var eventRunID: UUID?
     private var working = false
     private var requestedInterrupt = false
-    private var messageID = ""
+    private var messageBlocks = ClaudeMessageBlocks()
     private var initialization = JSONValue.null
+    private var advertisedCommands: JSONValue?
     private struct PendingApproval {
         let request: ApprovalRequest
         let generation: Int
@@ -53,6 +55,7 @@ public actor ClaudeSession: ProviderSession {
         self.events = events; self.continuation = continuation
         supportsAppMCP = configuration != nil && arguments == nil
         runtimeConfiguration = configuration; self.launchSelection = launchSelection
+        workspacePath = cwd.path
         var environment: [String: String]?
         if let configuration {
             try configuration.validate()
@@ -162,6 +165,7 @@ public actor ClaudeSession: ProviderSession {
             try Task.checkCancellation()
             if !initialized {
                 initialization = result; initialized = true
+                if advertisedCommands == nil { advertisedCommands = result.object?["commands"] }
                 logger.info("Claude connection ready")
             }
         } catch {
@@ -199,6 +203,16 @@ public actor ClaudeSession: ProviderSession {
             return ProviderModel(id: id, name: $0["displayName"].string ?? id)
         }
     }
+    public func providerCommands(forceReload: Bool = false) async throws -> ProviderCommandInventory {
+        try await connect()
+        await rpc.flushEvents()
+        guard !shuttingDown else { throw CancellationError() }
+        // Engine refreshes own a new metadata actor, so initialize already reads
+        // the selected runtime's native inventory. No unsupported reload request
+        // is guessed, and no running conversation's skill cache is mutated.
+        guard let advertisedCommands else { throw ProviderCommandError(.unsupported) }
+        return try ClaudeCommands.inventory(advertisedCommands, cwd: workspacePath)
+    }
     public static func permissionMode(_ mode: PermissionMode) -> String {
         switch mode {
         case .supervised: "default"
@@ -226,6 +240,7 @@ public actor ClaudeSession: ProviderSession {
         if nativeThreadID == nil { nativeThreadID = expectedNative }
         eventRunID = submittedRunID
         working = true; requestedInterrupt = false; emittedAssistant = false
+        messageBlocks.beginTurn()
         turnGeneration += 1
         let generation = turnGeneration
         activeConfiguration = captured; activeNativeThreadID = expectedNative ?? nativeThreadID
@@ -455,10 +470,14 @@ public actor ClaudeSession: ProviderSession {
                 }
             case "stream_event":
                 guard !isRoot || !working || submittedOpening else { return }
-                consumeStream(frame["event"], isRoot: isRoot)
+                guard isRoot || frame["parent_tool_use_id"].string != nil else { return }
+                do { try consumeStream(frame["event"], parent: frame["parent_tool_use_id"].string) }
+                catch { failMessageBlocks() }
             case "assistant":
                 guard !isRoot || !working || submittedOpening else { return }
-                consumeAssistant(frame["message"], isRoot: isRoot)
+                guard isRoot || frame["parent_tool_use_id"].string != nil else { return }
+                do { try consumeAssistant(frame["message"], envelopeID: frame["uuid"].string, parent: frame["parent_tool_use_id"].string) }
+                catch { failMessageBlocks() }
             case "user":
                 if isRoot, let uuid = frame["uuid"].string {
                     steerEchoes.append(uuid); if steerEchoes.count > 128 { steerEchoes.removeFirst() }
@@ -470,7 +489,11 @@ public actor ClaudeSession: ProviderSession {
                     emit(.message(.init(id: "result-\(id)", role: .tool, text: text)))
                 }
             case "system":
-                if isRoot, frame["subtype"] == .string("task_started"), let taskID = frame["task_id"].string {
+                if isRoot, frame["subtype"] == .string("commands_changed") {
+                    // Replacement, including empty/malformed payloads. A stale
+                    // healthy cache must not survive a native removal or error.
+                    advertisedCommands = frame["commands"]
+                } else if isRoot, frame["subtype"] == .string("task_started"), let taskID = frame["task_id"].string {
                     let toolID = frame["tool_use_id"].string ?? "task:" + taskID
                     activeSubagentTasks[taskID] = toolID; insertRootSubagent(toolID)
                 } else if frame["subtype"] == .string("task_notification"), let taskID = frame["task_id"].string,
@@ -505,40 +528,58 @@ public actor ClaudeSession: ProviderSession {
             }
         }
     }
-    private func consumeStream(_ event: JSONValue, isRoot: Bool) {
+    private func consumeStream(_ event: JSONValue, parent: String?) throws {
         switch event["type"].string {
-        case "message_start": messageID = event["message"]["id"].string ?? UUID().uuidString
+        case "message_start": try messageBlocks.start(messageID: event["message"]["id"].string, parent: parent)
+        case "message_stop": messageBlocks.stop(parent: parent)
         case "content_block_start":
-            let block = event["content_block"], id = blockID(index: event["index"])
+            let block = event["content_block"], kind = block["type"].string ?? "unknown"
+            guard let id = try messageBlocks.stream(index: event["index"], kind: kind,
+                toolID: kind == "tool_use" ? block["id"].string : nil, parent: parent) else { return }
             if block["type"].string == "tool_use" {
-                let toolID = block["id"].string ?? id
-                observeRootSubagent(block, id: toolID, isRoot: isRoot)
-                emit(.message(.init(id: toolID, role: .tool, text: block["name"].string ?? "Tool")))
+                observeRootSubagent(block, id: id, isRoot: parent == nil)
+                emit(.message(.init(id: id, role: .tool, text: block["name"].string ?? "Tool")))
             } else if let text = block["text"].string, !text.isEmpty {
                 emittedAssistant = true; emit(.delta(id: id, role: .assistant, text: text))
+            } else if let text = block["thinking"].string, !text.isEmpty {
+                emit(.delta(id: id, role: .reasoning, text: text))
             }
         case "content_block_delta":
-            let delta = event["delta"], id = blockID(index: event["index"])
-            if let text = delta["text"].string { emittedAssistant = true; emit(.delta(id: id, role: .assistant, text: text)) }
-            else if let text = delta["thinking"].string { emit(.delta(id: id, role: .reasoning, text: text)) }
+            let delta = event["delta"]
+            if let text = delta["text"].string,
+               let id = try messageBlocks.stream(index: event["index"], kind: "text", parent: parent) {
+                emittedAssistant = true; emit(.delta(id: id, role: .assistant, text: text))
+            } else if let text = delta["thinking"].string,
+                      let id = try messageBlocks.stream(index: event["index"], kind: "thinking", parent: parent) {
+                emit(.delta(id: id, role: .reasoning, text: text))
+            }
         default: break
         }
     }
-    private func consumeAssistant(_ message: JSONValue, isRoot: Bool) {
-        let id = message["id"].string ?? UUID().uuidString
-        for (index, block) in (message["content"].array ?? []).enumerated() {
+    private func consumeAssistant(_ message: JSONValue, envelopeID: String?, parent: String?) throws {
+        let content = message["content"].array ?? []
+        guard let identities = try messageBlocks.final(messageID: message["id"].string, content: content,
+            envelopeID: envelopeID, parent: parent) else { return }
+        for (id, block) in zip(identities, content) {
             switch block["type"].string {
             case "text":
                 emittedAssistant = true
-                emit(.message(.init(id: "\(id)-\(index)", role: .assistant, text: block["text"].string ?? "")))
-            case "thinking": emit(.message(.init(id: "\(id)-\(index)", role: .reasoning, text: block["thinking"].string ?? "")))
+                emit(.message(.init(id: id, role: .assistant, text: block["text"].string ?? "")))
+            case "thinking": emit(.message(.init(id: id, role: .reasoning, text: block["thinking"].string ?? "")))
             case "tool_use":
-                observeRootSubagent(block, id: block["id"].string ?? "\(id)-\(index)", isRoot: isRoot)
-                emit(.message(.init(id: block["id"].string ?? "\(id)-\(index)", role: .tool,
+                observeRootSubagent(block, id: id, isRoot: parent == nil)
+                emit(.message(.init(id: id, role: .tool,
                     text: "\(block["name"].string ?? "Tool")\n\(block["input"].pretty)")))
             default: break
             }
         }
+    }
+    private func failMessageBlocks() {
+        finishHistory(.failed)
+        emit(.failure("Claude sent invalid or excessive message block identities."))
+        shuttingDown = true; working = false
+        // Closing from this reader synchronously would wait on the reader itself.
+        Task { await self.close() }
     }
     private func ownsPreparing(_ generation: Int) -> Bool {
         generation == turnGeneration && working && !requestedInterrupt && !shuttingDown && !Task.isCancelled
@@ -603,10 +644,6 @@ public actor ClaudeSession: ProviderSession {
     private func clearRootSubagents() {
         guard !activeRootSubagentTools.isEmpty else { return }
         activeRootSubagentTools.removeAll(); emit(.steeringCapabilitiesChanged)
-    }
-    private func blockID(index: JSONValue) -> String {
-        if case .number(let index) = index { return "\(messageID)-\(Int(index))" }
-        return "\(messageID)-0"
     }
     private func emit(_ event: ProviderEvent, runID: UUID? = nil) {
         if let id = runID ?? eventRunID { continuation.yield(.context(runID: id, event: event)) }

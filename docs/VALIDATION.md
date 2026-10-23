@@ -1,5 +1,64 @@
 # Validation record
 
+## 2026-10-23 — OpenCode steering, Claude commands and terminal restoration
+
+- The complete serial local run covers 1784 declarations: 1539 Core in 383.972
+  seconds, 221 native view/store in 68.887 seconds, eleven terminal in 1.398
+  seconds and thirteen Markdown in 0.134 seconds. Thirteen opt-in installed
+  declarations are skipped; pinned Pi package acceptance is enabled. There are
+  1769 passes and two failing declarations (four failing expanded cases): an old
+  script test reuses a suspended window without restoration, and an old Claude
+  steering peer emits orphan deltas/tool blocks without native message starts.
+  Both fixtures are corrected without product changes or weaker assertions.
+  The final focused rerun passes five native view/store, nine terminal and three
+  Claude steering declarations (including all three foreground-agent cases).
+  The whole suite is not repeated after these fixture-only corrections.
+- Build-only packaging, deep strict signature verification and native math
+  resource rendering pass. Packaged/compiled Mach-O UUIDs match. The ABI guard
+  checks 921 objects, including 614 Core and 237 app objects, with zero weak
+  records. Final native GUI compilation and all 72 Python harness checks pass.
+  The installed app is not replaced or launched; the development bundle is
+  `dist/Coincide.app`.
+- OpenCode v1 active steering passes 68 focused declarations (110 expanded
+  cases), including 11 new steering declarations (19 expanded cases). Native
+  user-message identity, original-run ownership, pending-request admission,
+  stale idle reads, cancellation, uncertain delivery, FIFO and SQLite/history
+  evidence are covered. These are controlled protocol/Engine checks, not an
+  installed OpenCode 1 model run.
+- Claude stream/final reconciliation now retains native content-block indices
+  across per-block assistant envelopes. Root/child ownership, equal text in
+  distinct blocks, explicit replay, tool/reasoning blocks, repeated inputs and
+  journal/restart paths pass focused checks. This fixes the duplicate-row source
+  defect observed in the earlier installed question turn; old persisted rows
+  remain unchanged, and a fresh installed model turn has not verified this fix.
+- Claude's native initialize/commands_changed inventory and composer slash
+  commands pass six Core and two native view/store declarations. Refresh uses a
+  metadata-only actor without resuming the conversation or consuming selected
+  history. Exact literal invocation, aliases, replacement, malformed metadata and
+  runtime scope are covered. Installed Claude 2.1.308 is version-verified; an
+  initialize-only catalog probe was not launched because the normal runtime
+  enables SessionStart hooks. No installed catalog acceptance is claimed.
+  Claude filesystem skills and multi-mention skill dispatch remain unfinished.
+- Terminal checks cover real PTY output, inert cold restoration, independent
+  window claims, selection/order, removed tabs and workspaces, Unicode bounds,
+  corrupt/symlink files, native scrollback search and same-window reuse. A real
+  database-lock regression verifies failed workspace loading cannot claim or
+  erase another runtime's terminal archive. The last focused run passes four
+  native view/store and five terminal declarations. Restored output is plain text;
+  no live process reattachment or command replay is implemented.
+- The hosted project-script workflow now checks normal Quit/relaunch, restored
+  output and search beyond visible rows, unchanged draft/configuration/HEAD and
+  exact invocation receipts with no command replay. The runner compiles locally
+  with `--build-for-testing`; no local GUI test is executed.
+- Earlier hosted evidence is kept separate: `b716e29` completes 25 GUI methods
+  with 21 passes and four failures addressed by `4d1840d`. `7a8ed1b` completes
+  26 methods with 21 passes and those four failures plus a Claude question focus
+  failure. Its screenshot shows the custom-answer field clipped below the
+  question viewport, where the test's click instead focuses the composer.
+  The test now reveals each control inside that exact viewport and verifies
+  keyboard focus before typing, while retaining its exact answer receipts.
+  The `4d1840d` GUI run remains in progress; neither earlier run is a GUI pass.
+
 ## 2026-10-23 — Final local checkpoint after hosted failure fixes
 
 - Implementation `4d1840d08699b2ac4867bd6e15d9106662c3de7c` passes the complete
@@ -37,8 +96,9 @@
   skills and MCP for its invocation; existing authentication is unchanged.
   Run it explicitly with `COINCIDE_LIVE_CLAUDE_QUESTION=1 swift test --no-parallel --filter installedClaudeQuestionAcceptsNativeSelectionsNotesAndPreservesPrivateWorkspace`.
   The same turn exposes two identical assistant rows for one native API message
-  under stream/final block suffixes `1` and `0`. This remains an unresolved
-  transcript reconciliation bug, not evidence of a second native answer effect.
+  under stream/final block suffixes `1` and `0`. This was unresolved at that
+  checkpoint; the source fix and its evidence are recorded above. It does not
+  establish a second native answer effect.
 
 ## 2026-10-23 — Parallel implementation milestone
 

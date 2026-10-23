@@ -88,7 +88,12 @@ environment receipts, appears in its own terminal tab, and reports exit7.
 The test then launches a private holding command, checks closing it requires
 confirmation, verifies Cancel retains both tabs and the unsent draft, and
 confirms closure removes only that running tab. Original Git HEAD is preserved;
-process-group shutdown remains covered by the terminal unit tests.
+process-group shutdown remains covered by the terminal unit tests. After normal
+Quit and relaunch, the same thread and draft must return with the Inspect tab's
+saved output and explicit disconnection label, while the closed Hold tab stays
+absent. An append-only invocation receipt proves restoration does not run either
+command again. Find in terminal must reveal an early marker initially outside
+the restored viewport; project configuration, receipts and Git HEAD stay intact.
 The sixth test prepares a new branch from an explicit older local base, with
 submodules set to None and no provider or network calls. The native sheet and
 all three submodule options must fit the display. It checks the new checkout's
