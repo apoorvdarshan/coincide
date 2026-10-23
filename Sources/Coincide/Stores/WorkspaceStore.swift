@@ -1115,9 +1115,11 @@ final class WorkspaceStore {
         return (terminalStores.values.compactMap(\.value).flatMap { $0.sessions.values.flatMap { $0 } } + Array(closingTerminalSessions.values))
             .filter { ids.insert($0.id).inserted }
     }
+    var liveTerminalStores: [TerminalWorkspaceStore] { terminalStores.values.compactMap(\.value) }
     func registerTerminals(_ terminals: TerminalWorkspaceStore) {
         terminalStores[ObjectIdentifier(terminals)] = WeakTerminalStore(terminals)
         terminals.sessionWillClose = { [weak self] in self?.retainClosingTerminal($0) }
+        configureTerminalIntegration(terminals)
     }
     func restoreTerminals(_ terminals: TerminalWorkspaceStore) {
         guard hasLoadedWorkspace, engine != nil, !terminating else { return }
@@ -3064,6 +3066,7 @@ final class WorkspaceStore {
         try await performSettlementCommand(for: id) { engine, thread in
             try await engine.settleThread(threadID: id, expectedWorkspacePath: thread.workspacePath, reviewScript: reviewScript)
         }
+        await closeIdleTerminals(threadID: id)
     }
     func resumeThread(_ id: UUID, generationID: UUID) async throws {
         guard thread(id)?.settlement?.id == generationID else { throw CancellationError() }

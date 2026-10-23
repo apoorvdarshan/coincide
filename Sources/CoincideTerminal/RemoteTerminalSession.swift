@@ -18,6 +18,8 @@ public final class RemoteTerminalSession: Identifiable, TerminalViewDelegate {
     @ObservationIgnored public var onResize: (@MainActor (Int, Int) -> Void)?
     @ObservationIgnored private var terminalView: RemoteDisplayTerminalView?
     @ObservationIgnored private var output = Data()
+    @ObservationIgnored private var appearance: TerminalAppearance?
+    @ObservationIgnored private var appliedAppearance: (TerminalAppearance, Bool, Bool)?
     public static let transcriptByteLimit = 262_144
 
     public init(id: UUID = UUID()) { self.id = id }
@@ -34,6 +36,8 @@ public final class RemoteTerminalSession: Identifiable, TerminalViewDelegate {
         view.remoteInputEnabled = isInteractive; view.allowMouseReporting = isInteractive
         view.setAccessibilityLabel("Remote workspace terminal")
         terminalView = view
+        view.appearanceChanged = { [weak self] in self?.appliedAppearance = nil; if let appearance = self?.appearance { self?.apply(appearance) } }
+        if let appearance { appliedAppearance = nil; apply(appearance) }
         view.feed(text: Self.inertText(output).replacingOccurrences(of: "\n", with: "\r\n"))
         return view
     }
@@ -71,9 +75,16 @@ public final class RemoteTerminalSession: Identifiable, TerminalViewDelegate {
         view.performTextFinderAction(item)
     }
     public func setFontSize(_ size: Double) {
-        let size = min(24, max(9, size.isFinite ? size : 12))
-        guard view.font.pointSize != size else { return }
-        view.font = .monospacedSystemFont(ofSize: size, weight: .regular)
+        var next = appearance ?? .init(); next.fontSize = TerminalAppearance.clampedSize(size); apply(next)
+    }
+    /// Shares the local terminal font and colors; the remote PTY is not restarted.
+    public func apply(_ appearance: TerminalAppearance) {
+        self.appearance = appearance
+        let view = view
+        let key = (appearance, appearance.isDark(appearance: view.effectiveAppearance), NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
+        if let appliedAppearance, appliedAppearance == key { return }
+        appliedAppearance = key
+        appearance.apply(to: view)
     }
 
     public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
@@ -106,14 +117,42 @@ public final class RemoteTerminalSession: Identifiable, TerminalViewDelegate {
 
     private static func inertText(_ data: Data) -> String { TerminalTabArchive.displayText(String(decoding: data, as: UTF8.self)) }
     private func replaceView() {
-        terminalView?.terminalDelegate = nil
-        terminalView = nil; displayGeneration = UUID()
+        terminalView?.terminalDelegate = nil; terminalView?.appearanceChanged = nil
+        terminalView = nil; appliedAppearance = nil; displayGeneration = UUID()
     }
 }
 
 private final class RemoteDisplayTerminalView: TerminalView {
     var remoteInputEnabled = false
+    var appearanceChanged: (@MainActor () -> Void)?
     override func paste(_ sender: Any) { if remoteInputEnabled { super.paste(sender) } }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        appearanceChanged?()
+    }
+    /// Display-only actions; remote links and terminal commands stay with the host adapter.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu(title: String(localized: "Remote Terminal"))
+        menu.autoenablesItems = false
+        func add(_ title: String, _ action: Selector, _ key: String, enabled: Bool = true) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.target = self; item.isEnabled = enabled; menu.addItem(item)
+        }
+        add(String(localized: "Copy"), #selector(copySelection(_:)), "c", enabled: selectionActive)
+        add(String(localized: "Paste"), #selector(pasteInput(_:)), "v", enabled: remoteInputEnabled)
+        add(String(localized: "Select All"), #selector(selectEverything(_:)), "a")
+        add(String(localized: "Jump to Latest"), #selector(jumpToLatest(_:)), "")
+        add(String(localized: "Find…"), #selector(showFindBar(_:)), "f")
+        return menu
+    }
+    @objc private func copySelection(_ sender: Any?) { copy(self) }
+    @objc private func pasteInput(_ sender: Any?) { paste(self) }
+    @objc private func selectEverything(_ sender: Any?) { selectAll(nil) }
+    @objc private func jumpToLatest(_ sender: Any?) { scroll(toPosition: 1) }
+    @objc private func showFindBar(_ sender: Any?) {
+        let item = NSMenuItem(); item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
+        performTextFinderAction(item)
+    }
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
     override func accessibilityValue() -> Any? { visibleRowsText(0..<terminalDimensions.rows).joined(separator: "\n") }

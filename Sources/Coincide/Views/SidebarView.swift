@@ -140,6 +140,7 @@ struct SidebarView: View {
                 } else if thread.state != .idle {
                     Text(thread.state == .awaitingApproval ? "Needs your input" : thread.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
                 }
+                TerminalActivityBadge(store: store, threadID: thread.id)
                 if group.members.count > 1, let project {
                     Text(project.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                 }

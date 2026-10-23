@@ -18,13 +18,12 @@ struct ContentView: View {
         } detail: {
             NativeInspectorSplit(isPresented: store.inspectorVisible) {
                 if let thread = store.selectedThread {
-                    VSplitView {
+                    TerminalDrawerSplit(terminals: terminals, threadID: thread.id, showsDrawer: terminals.isVisible(thread.id) && store.workspaceReady(for: thread)) {
                         ChatView(store: store, threadID: thread.id, onSettle: { settlementThread = $0 }).id(thread.id).frame(minHeight: 280)
-                        if terminals.panelVisible, store.workspaceReady(for: thread) {
-                            TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
-                                          report: { store.errorMessage = $0 }, hide: { terminals.panelVisible = false })
-                                .id(thread.id).frame(minHeight: 160, idealHeight: 260, maxHeight: 600)
-                        }
+                    } drawer: {
+                        TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
+                                      report: { store.errorMessage = $0 }, hide: { terminals.setVisible(false, threadID: thread.id) })
+                            .id(thread.id)
                     }
                         .frame(minWidth: 0, maxWidth: .infinity)
                 } else {
@@ -75,11 +74,12 @@ struct ContentView: View {
         }
         .sheet(item: $scriptThread) { thread in
             ProjectScriptsSheet(store: store, thread: thread, terminals: terminals,
-                didRun: { terminals.panelVisible = true; scriptThread = nil }, close: { scriptThread = nil })
+                didRun: { terminals.setVisible(true, threadID: thread.id); scriptThread = nil }, close: { scriptThread = nil })
         }
         .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $cloneSheetPresented)
         .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $newProjectSheetPresented)
         .focusedSceneValue(\.settlementPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $settlementThread)
+        .focusedSceneValue(\.terminalCommands, TerminalCommandTarget(terminals: terminals, thread: store.selectedThread, workspaceReady: store.selectedThread.map { store.workspaceReady(for: $0) } ?? false, canOpen: store.selectedThread.map { store.canOpenTerminal(for: $0) } ?? false, toggle: toggleTerminal, report: { store.errorMessage = $0 }))
         .focusedSceneValue(\.agentSessionImportPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil || scriptThread != nil ? nil : $agentSessionImportSheetPresented)
         .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().coincideSurface() } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
@@ -93,9 +93,7 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in terminals.suspend() }
     }
     private func toggleTerminal() {
-        terminals.panelVisible.toggle()
-        guard terminals.panelVisible, !terminals.isRestoring, let thread = store.selectedThread,
-              terminals.sessions[thread.id, default: []].isEmpty, store.canOpenTerminal(for: thread) else { return }
-        do { try terminals.add(for: thread) } catch { store.errorMessage = error.localizedDescription }
+        guard let thread = store.selectedThread else { return }
+        do { try terminals.toggle(for: thread, canOpen: store.canOpenTerminal(for: thread)) } catch { store.errorMessage = error.localizedDescription }
     }
 }

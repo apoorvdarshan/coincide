@@ -49,12 +49,12 @@ func nativeTerminalWindowRestoresSelectedTabsAndOutputWithoutReplayingShells() a
     #expect(shell.visibleText.contains("DURABLE_TERMINAL_✓"))
     try first.add(for: thread)
     let secondID = try #require(first.sessions[thread.id]?.last?.id)
-    first.panelVisible = true
+    first.setVisible(true, threadID: thread.id)
     let closed = first.suspend(); await first.waitForPersistence()
     for session in closed { await session.waitForClose() }
     let second = TerminalWorkspaceStore(executable: "/bin/sh", loginShell: false)
     second.restore(from: archive, currentThreads: { [thread] }); await second.waitForRestoration()
-    #expect(second.panelVisible && second.selection[thread.id] == secondID)
+    #expect(second.isVisible(thread.id) && second.selection[thread.id] == secondID)
     #expect(second.sessions[thread.id]?.map(\.id) == [shell.id, secondID])
     #expect(second.sessions[thread.id]?.allSatisfy { $0.isRestored && $0.processID == 0 } == true)
     #expect(second.sessions[thread.id]?.first?.visibleText.contains("DURABLE_TERMINAL_✓") == true)
