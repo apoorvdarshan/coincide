@@ -17,9 +17,20 @@
 - The combined installed-provider acceptance completes both model turns and
   durability checks for Codex 0.163.0 and Claude 2.1.308. Installed OpenCode 2.1.3
   exposes a genuine directory-scope mismatch: owned transport and actor now use
-  the same resolved path. Its retry establishes a native session but stops on
-  captured configuration readback; live OpenCode tool execution is not yet
-  accepted. The failed generated fixture is retained for diagnosis.
+  the same resolved path. Native readback also materializes an omitted model
+  variant as the literal `default`; the adapter now sends that sentinel while
+  preserving captured choices and strict readback. Thirteen focused declarations
+  pass in 4.298 seconds, including implicit/default and explicit-variant controls.
+  A later retry reaches native execution; reading only its generated native
+  history identifies `provider.auth` failures with HTTP 403. The configured
+  provider rejects access, so further model calls stop without silently changing
+  models or credentials. Live OpenCode tool execution remains unaccepted.
+  Generated failures are retained without printing arbitrary error payloads.
+- Native v2 can return model-inventory HTTP 503 after its identity is ready.
+  A ten-second read-only readiness loop retries only that explicit temporary
+  failure. Eleven final focused declarations pass in 12.978 seconds, including
+  fail-fast authentication/schema/scope errors, cancellation/close and persistent
+  unavailability ending after 10.194 seconds. No submitted prompt is retried.
 - The focused integration run passes 27 Core declarations and three native
   view/store declarations. Claude question coverage exercises the real Engine
   command path and native stdio response, exact request ownership, single/multiple
@@ -34,11 +45,16 @@
   remains unverified. Notifications default to Off; synthetic test bundles cannot
   request permission, play sounds or alter the product's Dock badge.
 - All 72 Python harness checks pass, along with actionlint and shell syntax.
-  Native UI execution now partitions all 25 workflows across four isolated hosts,
+  Native UI execution now partitions all 26 workflows across four isolated hosts,
   serially within each desktop. Selection manifests and actual xcresult identities
   must cover every test exactly once, with no skips, retries or missing shards.
   Existing checks remain enabled. Hosted timing and acceptance are still required;
   local harness verification does not establish an observed speed improvement.
+- The additional hosted Claude question workflow compiles with
+  `--build-for-testing` without launching a GUI. Its isolated protocol peer
+  verifies single/multi/custom answers, notes and cancellation. The GUI workflow
+  requires exact native answer receipts, completed durable runs, restart without
+  replay and unchanged workspace bytes. Hosted click acceptance remains pending.
 - Build-only app packaging, deep strict signature verification and native math
   resource rendering pass. The async-default ABI guard checks 912 objects,
   including 604 Core and 235 app objects, with zero weak records. The installed

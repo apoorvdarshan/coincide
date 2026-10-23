@@ -912,6 +912,76 @@ func openCodeV2CommandTerminalBeforeCallbackReplyCannotReleaseSuccessorOrHideLos
     }
 }
 
+@Test(arguments: [false, true])
+func openCodeV2ImplicitVariantSendsNativeDefaultSentinelAndPreservesCapturedChoice(inheritModel: Bool) async throws {
+    try await withOpenCodeV2Session { fixture in
+        var thread = fixture.thread()
+        let selected = fixture.configuration.selecting(model: inheritModel ? nil : fixture.model)
+        thread.openCodeConfiguration = selected; thread.model = selected.model?.catalogID ?? ""
+        thread.activeRun = .init(id: UUID(), configuration: .init(thread: thread), startedAt: .now)
+        try await fixture.session.send(text: "Native default variant", thread: thread)
+        let calls = await fixture.transport.calls
+        let create = try #require(calls.first { $0.method == "POST" && $0.path == ["api", "session"] }?.body)
+        let configure = try #require(calls.last { $0.path.last == "model" }?.body)
+        for body in [create, configure] {
+            #expect(body["model"]["variant"] == .string("default"))
+            #expect(body["model"]["providerID"] == .string(fixture.model.providerID))
+            #expect(body["model"]["id"] == .string(fixture.model.id))
+        }
+        #expect(calls.filter { $0.path.last == "prompt" }.count == 1)
+        #expect(thread.openCodeConfiguration == selected)
+        #expect(thread.activeRun?.configuration.openCodeConfiguration == selected)
+        #expect(selected.model?.variant == nil)
+    }
+}
+
+@Test func openCodeV2MetadataWaitsOnlyForExplicitTemporaryNativeReadiness() async throws {
+    try await withOpenCodeV2Session { fixture in
+        await fixture.transport.deferInventoryReadiness(reads: 1)
+        let models = try await fixture.session.models()
+        #expect(models.count == 1)
+        #expect(await fixture.transport.inventoryReads == 2)
+        #expect(await fixture.transport.promptCount == 0)
+    }
+}
+
+@Test(arguments: [OpenCodeProtocolError.unauthorized, .invalidCatalog, .wrongDirectory])
+func openCodeV2MetadataDoesNotRetryAuthenticationOrInvalidInventory(error: OpenCodeProtocolError) async throws {
+    try await withOpenCodeV2Session { fixture in
+        await fixture.transport.failInventory(error)
+        await #expect(throws: error) { try await fixture.session.models() }
+        #expect(await fixture.transport.inventoryReads == 1)
+        #expect(await fixture.transport.promptCount == 0)
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV2MetadataReadinessRemainsCancellableAndCloseStopsPolling(close: Bool) async throws {
+    try await withOpenCodeV2Session { fixture in
+        await fixture.transport.deferInventoryReadiness(reads: Int.max)
+        let operation = Task { try await fixture.session.models() }
+        try await openCodeSessionEventually { await fixture.transport.inventoryReads > 0 }
+        if close { await fixture.session.close() } else { operation.cancel() }
+        await #expect(throws: (any Error).self) { try await operation.value }
+        let count = await fixture.transport.inventoryReads
+        #expect(count <= 2)
+        #expect(await fixture.transport.promptCount == 0)
+    }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func openCodeV2MetadataPersistentNativeUnavailabilityStopsAtBoundedDeadline() async throws {
+    try await withOpenCodeV2Session { fixture in
+        await fixture.transport.deferInventoryReadiness(reads: Int.max)
+        let started = ContinuousClock.now
+        await #expect(throws: OpenCodeProtocolError.unavailable) { try await fixture.session.models() }
+        let elapsed = ContinuousClock.now - started
+        #expect(elapsed >= .seconds(10) && elapsed < .seconds(15))
+        #expect(await fixture.transport.inventoryReads > 1)
+        #expect(await fixture.transport.promptCount == 0)
+    }
+}
+
 private struct OpenCodeSessionFixture: Sendable {
     let root: URL
     let configuration: OpenCodeConfiguration
@@ -990,8 +1060,16 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
         eventStream = pair.stream; eventContinuation = pair.continuation
     }
     func connect() async throws -> AsyncThrowingStream<OpenCodeSSEEvent, any Error> { connects += 1; return eventStream }
+    var inventoryReads = 0
+    private var unavailableInventoryReads = 0
+    private var inventoryFailure: OpenCodeProtocolError?
+    func failInventory(_ error: OpenCodeProtocolError) { inventoryFailure = error }
+    func deferInventoryReadiness(reads: Int) { unavailableInventoryReads = reads }
     func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot {
-        .init(server: .init(generation: .v2, version: .init(major: 2, minor: 1, patch: 2), processIdentifier: 1), directory: directory.path,
+        inventoryReads += 1
+        if let inventoryFailure { throw inventoryFailure }
+        if unavailableInventoryReads > 0 { unavailableInventoryReads -= 1; throw OpenCodeProtocolError.unavailable }
+        return .init(server: .init(generation: .v2, version: .init(major: 2, minor: 1, patch: 2), processIdentifier: 1), directory: directory.path,
               models: [.init(selection: model, name: "Fixture", variants: ["balanced", "fast"], enabled: true, input: ["text", "image"], output: ["text"], tools: true)],
               agents: [.init(id: "build", name: "Build", description: nil, mode: .primary, hidden: false)], defaults: [model])
     }

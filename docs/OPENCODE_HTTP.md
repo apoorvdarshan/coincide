@@ -99,6 +99,13 @@ unknown configuration are discarded. A second identity read fences catalog
 observation against server replacement. Closing metadata cancels and joins only
 its own reads, preserving a shared event subscription and HTTP client.
 
+Native v2 can advertise a ready HTTP identity while model initialization still
+returns 503. Conversation discovery waits at most ten seconds for that explicit
+temporary response using GET requests only. Authentication, invalid schemas and
+other failures remain immediate; no prompt or mutation is retried. An omitted
+model variant is sent as v2's literal `default` sentinel, matching its native
+readback without changing the captured choice or relaxing explicit variants.
+
 `OpenCodeSSEConnection` waits for accepted event-stream headers before returning.
 V1 is directory-scoped; v2 is a global feed whose adapter routes exact
 native session identities. Framing handles split UTF-8, BOM, CR/LF, comments,

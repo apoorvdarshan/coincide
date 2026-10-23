@@ -18,7 +18,7 @@ BASE_ARGUMENTS = ["--print", "--input-format", "stream-json", "--output-format",
                   "--allow-dangerously-skip-permissions"]
 MAX_FILE = 4_194_304
 MAX_FRAME = 65_536
-MODES = {"normal", "hold-result", "consume-then-disconnect", "before-write-disconnect"}
+MODES = {"normal", "hold-result", "consume-then-disconnect", "before-write-disconnect", "questions"}
 
 
 def require(value):
@@ -176,6 +176,7 @@ def run():
         privateConfiguration=True, privateHome=True)
     permission = None
     pending = None
+    pending_question = None
     buffer = bytearray()
     turns = 0
     try:
@@ -225,7 +226,33 @@ def run():
                     if method == "interrupt" and pending:
                         result(pending[1], "Synthetic turn interrupted", True); pending = None
                     continue
-                require(frame.get("type") == "user" and pending is None and permission == "default")
+                if frame.get("type") == "control_response":
+                    require(pending_question is not None)
+                    opening, question_input, question_id, question_label = pending_question
+                    response = frame["response"]
+                    require(response.get("subtype") == "success" and response.get("request_id") == question_id)
+                    decision = response["response"]
+                    if question_label == "cancel":
+                        require(decision.get("behavior") == "deny" and "updatedInput" not in decision)
+                    else:
+                        expected = "Other literal answer" if question_label == "single" else "Alpha, Beta, Other literal answer"
+                        updated = decision["updatedInput"]
+                        require(decision.get("behavior") == "allow" and updated["questions"] == question_input["questions"]
+                                and updated["metadata"] == question_input["metadata"]
+                                and updated["answers"] == {"Which literal choices?": expected}
+                                and updated["annotations"] == {"Which literal choices?": {"notes": "Exact native notes"}})
+                    log("question_answer", label=question_label, decision=decision)
+                    answer = "Claude GUI question " + question_label + " verified"
+                    assistant = str(uuid.uuid4())
+                    row = dict(type="assistant", uuid=assistant, parentUuid=opening, sessionId=session, cwd=str(cwd),
+                               isSidechain=False, message=dict(role="assistant", content=answer))
+                    append(transcript, [row]); records[assistant] = row; parent = assistant
+                    emit(dict(type="assistant", uuid=assistant, session_id=session, parent_tool_use_id=None,
+                              user_message_uuid=opening, message=dict(id="api-" + str(uuid.uuid4()), role="assistant",
+                              content=[dict(type="text", text=answer)])))
+                    result(opening, answer); pending_question = None
+                    continue
+                require(frame.get("type") == "user" and pending is None and pending_question is None and permission == "default")
                 turns += 1
                 require(turns <= 16 and frame.get("parent_tool_use_id") is None)
                 opening = native_uuid(frame["uuid"])
@@ -256,6 +283,15 @@ def run():
                           message=user["message"]))
                 if action["mode"] == "consume-then-disconnect":
                     return
+                if action["mode"] == "questions":
+                    require(action["label"] in ("single", "multi", "cancel"))
+                    question_input = dict(questions=[dict(question="Which literal choices?", header="Answer", multiSelect=action["label"] == "multi",
+                        options=[dict(label="Alpha", description="First"), dict(label="Beta", description="Second")])], metadata=dict(source="synthetic-native-ui"))
+                    question_id = "native-question-" + str(turns)
+                    pending_question = (opening, question_input, question_id, action["label"])
+                    emit(dict(type="control_request", request_id=question_id, request=dict(subtype="can_use_tool",
+                        tool_name="AskUserQuestion", tool_use_id="question-tool-" + str(turns), input=question_input)))
+                    continue
                 if action["label"] == "alpha":
                     answer = "Claude GUI saved ALPHA"
                 elif action["label"] == "beta":

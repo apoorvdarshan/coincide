@@ -132,9 +132,22 @@ public actor OpenCodeV2Session: ProviderSession {
 
     public func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
         try await connect()
-        let value = try await transport.inventory(directory: cwd)
-        guard !closing else { throw CancellationError() }
-        return value
+        // The HTTP identity can be ready before native model initialization.
+        // Retry only its explicit temporary 503 observation, never a mutation,
+        // authentication refusal, malformed response or admitted provider input.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while true {
+            try Task.checkCancellation()
+            guard !closing else { throw CancellationError() }
+            do {
+                let value = try await transport.inventory(directory: cwd)
+                guard !closing else { throw CancellationError() }
+                return value
+            } catch OpenCodeProtocolError.unavailable {
+                guard ContinuousClock.now < deadline else { throw OpenCodeProtocolError.unavailable }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+        }
     }
 
     public func models() async throws -> [ProviderModel] {
@@ -1399,7 +1412,11 @@ public actor OpenCodeV2Session: ProviderSession {
         guard let model = selected ?? inventory.defaults.first,
               let advertised = inventory.models.first(where: { $0.selection.providerID == model.providerID && $0.selection.id == model.id && $0.enabled }),
               model.variant == nil || advertised.variants.contains(model.variant!) else { throw OpenCodeV2SessionError.invalidConfiguration }
-        return model
+        // Native v2 resolves an omitted variant to its literal "default"
+        // sentinel, which is intentionally absent from the variant inventory.
+        // Capture that exact native request before creation/configuration so
+        // readback remains strict; explicit advertised variants are unchanged.
+        return .init(providerID: model.providerID, id: model.id, variant: model.variant ?? "default")
     }
 
     private static func permissions(_ permission: PermissionMode, agentID: String, agentPaths: [OpenCodeV2PermissionRule], grants: [OpenCodeV2PermissionRule], appMCP: Bool = false) -> JSONValue {

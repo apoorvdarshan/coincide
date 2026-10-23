@@ -167,7 +167,7 @@ exact-head hosted job runs; compilation and fixture tests alone are not GUI proo
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all twenty-five tests to pass with zero skips. Each shard retains
+gate requires all twenty-six tests to pass with zero skips. Each shard retains
 its selection manifest, summary counts, and complete xcresult test identities;
 these must match exactly, including one passing execution per assigned method.
 The final `native-ui` job checks all four artifacts together and rejects missing
@@ -187,6 +187,14 @@ packaging, and UI-harness changes. Configuration tests run without a GUI:
 ```sh
 python3 -m unittest discover -s UITests/macOS -p 'test_*.py' -v
 ```
+
+The twenty-sixth workflow uses the same isolated Claude peer to present native
+single-choice and multiple-choice question controls, a literal custom answer,
+optional notes, and explicit cancellation. The peer checks the exact returned
+answers and preserved request metadata; SQLite run history and response counts
+must survive a graceful quit and restart without sending another answer.
+This is an offline provider-protocol scenario. Local compilation and Python
+checks do not establish its hosted GUI result.
 
 The eleventh workflow publishes main and a feature commit to a private local bare
 repository, then binds the checkout's remote metadata to a closed-world fake gh

@@ -12,7 +12,7 @@ import sys
 TEST_BUNDLE_ID = "com.apoorvdarshan.coincide.uitesting"
 TEST_TARGET = "CoincideDesktopUITests"
 UI_SHARD_COUNT = 4
-MINIMUM_TEST_COUNT = 25
+MINIMUM_TEST_COUNT = 26
 TEST_SOURCE = Path(__file__).resolve().parents[1] / "UITests/macOS/CoincideDesktopUITests.swift"
 
 

@@ -4,10 +4,10 @@ Coincide now implements an app-owned MCP server, session registry, tool router
 and Engine admission path in Swift. Native **Pi**, **Codex**, captured normal
 **Claude**, and **OpenCode HTTP v1/v2** sessions register those tools through their own protocols. Other
 providers' app-MCP registration remains unfinished. Prior local protocol, Engine
-and intact Pi package checks are recorded in [VALIDATION.md](VALIDATION.md);
-that record separately tracks provider-specific test results. Hosted UI
-acceptance and authenticated-provider verification remain open. This does not
-establish full T3 parity.
+and intact Pi package checks are recorded in [VALIDATION.md](VALIDATION.md),
+including installed Codex/Claude model-driven acceptance. Hosted UI acceptance
+and broader provider/version verification remain open. This does not establish
+full T3 parity.
 
 The product enables app MCP by default. `WorkspaceEngine` library callers opt in
 with `appMCPEnabled: true`; its default is false. The separate synthetic GUI app

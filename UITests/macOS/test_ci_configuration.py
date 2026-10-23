@@ -1,6 +1,6 @@
 """Configuration checks run without launching a native app or touching user state.
 
-Four isolated macOS runners partition all twenty-five workflows without sharing
+Four isolated macOS runners partition all twenty-six workflows without sharing
 a desktop. Counts and xcresult identities must match each shard, and the final
 gate requires complete, unique coverage across every shard. Individual test and
 command deadlines remain unchanged.
@@ -25,13 +25,13 @@ spec.loader.exec_module(ci)
 class NativeUIConfigurationTests(unittest.TestCase):
     def test_shards_partition_every_source_case_once_and_reject_invalid_or_empty_selections(self):
         identifiers = ci.native_test_identifiers()
-        self.assertEqual(len(identifiers), 25)
+        self.assertEqual(len(identifiers), 26)
         shards = [ci.shard_manifest(index, ci.UI_SHARD_COUNT, identifiers) for index in range(ci.UI_SHARD_COUNT)]
         flattened = [case for shard in shards for case in shard["testIdentifiers"]]
         self.assertEqual(sorted(flattened), identifiers)
         self.assertEqual(len(set(flattened)), len(flattened))
-        self.assertEqual([len(shard["testIdentifiers"]) for shard in shards], [7, 6, 6, 6])
-        for index, count in ((-1, 4), (4, 4), (0, 0), (0, 26), (True, 4), (0, False)):
+        self.assertEqual([len(shard["testIdentifiers"]) for shard in shards], [7, 7, 6, 6])
+        for index, count in ((-1, 4), (4, 4), (0, 0), (0, 27), (True, 4), (0, False)):
             with self.assertRaises(ValueError):
                 ci.shard_manifest(index, count, identifiers)
         with self.assertRaises(ValueError):
@@ -87,7 +87,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ci.verify_shards(root)
             last = self.write_shard(root, 3)
-            self.assertEqual(ci.verify_shards(root)["passedTests"], 25)
+            self.assertEqual(ci.verify_shards(root)["passedTests"], 26)
             self.assertEqual(ci.verify_shards(root)["testIdentifiers"], ci.native_test_identifiers())
             (last / "selection.json").write_text(json.dumps(ci.shard_manifest(2, 4)))
             with self.assertRaises(ValueError):
@@ -110,7 +110,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
             manifest = json.loads(path.read_text())
             self.assertEqual(manifest, ci.shard_manifest(1, 4))
             self.assertEqual(result.stdout.splitlines(), ["-only-testing:" + ci.TEST_TARGET + "/" + case for case in manifest["testIdentifiers"]])
-            result = subprocess.run(command[:command.index("--shard-index")] + ["--shard-count", "26", "--manifest", str(path)], text=True, capture_output=True)
+            result = subprocess.run(command[:command.index("--shard-index")] + ["--shard-count", "27", "--manifest", str(path)], text=True, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
 
     def test_workflow_uses_isolated_serial_runners_keeps_failed_shards_and_enforces_aggregate(self):
@@ -182,7 +182,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
         launcher = (directory / "OfflineCLILauncher.swift").read_text()
         verifier = (directory / "verify_offline_launcher.py").read_text()
         peer = (directory / "claude_history_ui.py").read_text()
-        self.assertEqual(harness.count("@MainActor func test"), 25)
+        self.assertEqual(harness.count("@MainActor func test"), 26)
         for name in ("testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart",
                      "testNativeClaudeSelectedContextIsConsumedOnceBeforeQueuedSuccessor",
                      "testNativeClaudeContextInspectionIsReadOnlyAndNeverReplaysConsumedOrUnwrittenInput"):
@@ -228,9 +228,10 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_twenty_five_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=25, passedTests=25, failedTests=0, skippedTests=0)), 25)
-        for summary in [dict(totalTestCount=26, passedTests=26, failedTests=0, skippedTests=0),
+    def test_results_require_twenty_six_real_tests_without_silent_skips(self):
+        self.assertEqual(ci.verify_results(dict(totalTestCount=26, passedTests=26, failedTests=0, skippedTests=0)), 26)
+        for summary in [dict(totalTestCount=27, passedTests=27, failedTests=0, skippedTests=0),
+                        dict(totalTestCount=25, passedTests=25, failedTests=0, skippedTests=0),
                         dict(totalTestCount=25, passedTests=24, failedTests=0, skippedTests=1),
                         dict(totalTestCount=25, passedTests=24, failedTests=1, skippedTests=0),
                         dict(totalTestCount=24, passedTests=24, failedTests=0, skippedTests=0),

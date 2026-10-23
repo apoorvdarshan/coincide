@@ -1933,7 +1933,79 @@ final class CoincideDesktopUITests: XCTestCase {
         let gitPath: String
         let gitConfiguration: URL
     }
-    @MainActor private func prepareClaudeHistoryGUI(appearance: String, name: String) throws -> ClaudeHistoryGUIFixture {
+    @MainActor func testNativeClaudeQuestionSingleMultiCustomNotesAndCancellationPersistExactAnswers() throws {
+        let f = try prepareClaudeHistoryGUI(appearance: "light", name: "claude-questions", questionWorkflow: true)
+        let app = f.app
+        let provider = app.descendants(matching: .any).matching(identifier: "provider-model-menu").firstMatch
+        XCTAssertTrue(provider.waitForExistence(timeout: 10)); provider.click()
+        let claude = app.menuItems["Claude"]
+        XCTAssertTrue(claude.waitForExistence(timeout: 5) && claude.isEnabled); claude.click()
+        let threadID = try selectedThreadIdentifier(in: app)
+        _ = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID) else { return false }
+            return thread["provider"] as? String == "claude" && thread["claudeRuntimeConfiguration"] != nil
+        }
+        app.descendants(matching: .any).matching(identifier: "conversation-workspace").firstMatch.click()
+        let checkpoints = app.menuItems["conversation-run-checkpoints"]
+        XCTAssertTrue(checkpoints.waitForExistence(timeout: 5) && checkpoints.isEnabled); checkpoints.click()
+        _ = try waitForPrivateWorkspace(f.root, timeout: 10) { self.findClaudeGUIThread($0, id: threadID)?["checkpointPolicy"] as? String == "disabled" }
+        for label in ["single", "multi", "cancel"] {
+            let prompt = "Exercise native Claude question " + label
+            try submitClaudeGUI(prompt, in: app)
+            let submit = app.buttons["claude-question-submit"], cancel = app.buttons["claude-question-cancel"]
+            XCTAssertTrue(submit.waitForExistence(timeout: 10)); XCTAssertFalse(submit.isEnabled)
+            XCTAssertTrue(cancel.isHittable)
+            if label == "cancel" { cancel.click() }
+            else {
+                let alpha = app.checkBoxes["Alpha"], beta = app.checkBoxes["Beta"]
+                XCTAssertTrue(alpha.waitForExistence(timeout: 5) && beta.exists)
+                XCTAssertTrue(alpha.isHittable && beta.isHittable)
+                beta.click(); alpha.click()
+                let betaChecked = (beta.value as? NSNumber)?.intValue ?? Int((beta.value as? String) ?? "")
+                XCTAssertEqual(betaChecked, label == "single" ? 0 : 1)
+                let other = try revealClaudeGUIQuestionField("Other answer for Answer", in: app)
+                other.click(); other.typeText("Other literal answer")
+                let notes = try revealClaudeGUIQuestionField("Notes for Answer", in: app)
+                notes.click(); notes.typeText("Exact native notes")
+                try waitForClaudeGUIEnabled(submit, timeout: 5); XCTAssertTrue(submit.isHittable)
+                capture(app, name: "claude-question-" + label + "-explicit-controls")
+                submit.click()
+            }
+            _ = try completedClaudeGUI(f, threadID: threadID, prompt: prompt)
+            XCTAssertTrue(waitForAbsence(submit, timeout: 5))
+            let receipt = try XCTUnwrap(claudeGUIWire(f, method: "question_answer").last)
+            XCTAssertEqual(receipt["label"] as? String, label)
+            let decision = try XCTUnwrap(receipt["decision"] as? [String: Any])
+            XCTAssertEqual(decision["behavior"] as? String, label == "cancel" ? "deny" : "allow")
+            if label != "cancel" {
+                let input = try XCTUnwrap(decision["updatedInput"] as? [String: Any])
+                XCTAssertEqual(input["answers"] as? [String: String], ["Which literal choices?": label == "single" ? "Other literal answer" : "Alpha, Beta, Other literal answer"])
+                XCTAssertEqual((input["annotations"] as? [String: [String: String]])?["Which literal choices?"]?["notes"], "Exact native notes")
+            }
+        }
+        XCTAssertEqual(try claudeGUIWire(f, method: "question_answer").count, 3)
+        let before = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: threadID)
+        let history = try claudeGUIJSON(before["runHistory"])
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.textViews["composer-input"].waitForExistence(timeout: 10))
+        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        _ = try waitForPrivateWorkspace(f.root, timeout: 10) { self.findClaudeGUIThread($0, id: threadID)?["activeRun"] == nil }
+        XCTAssertEqual(try claudeGUIJSON(claudeGUIThread(privateWorkspaceSnapshot(f.root), id: threadID)["runHistory"]), history)
+        XCTAssertEqual(try claudeGUIWire(f, method: "question_answer").count, 3)
+        try assertClaudeGUIWorkspaceUnchanged(f)
+    }
+
+    @MainActor private func revealClaudeGUIQuestionField(_ label: String, in app: XCUIApplication) throws -> XCUIElement {
+        let field = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let scroll = app.scrollViews.containing(.checkBox, identifier: "Alpha").firstMatch
+        XCTAssertTrue(scroll.exists)
+        for _ in 0..<6 where !field.isHittable { scroll.scroll(byDeltaX: 0, deltaY: -80) }
+        XCTAssertTrue(field.isHittable); return field
+    }
+
+    @MainActor private func prepareClaudeHistoryGUI(appearance: String, name: String, questionWorkflow: Bool = false) throws -> ClaudeHistoryGUIFixture {
         let base = try prepareApplication(appearance: appearance, diagnosticPrefix: name)
         let app = base.app, root = base.root, manager = FileManager.default
         let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
@@ -1951,13 +2023,18 @@ final class CoincideDesktopUITests: XCTestCase {
         }
         let head = try verifyHead(gitPath: base.gitPath, project: project, configuration: base.configuration, name: name + "-head")
         let state = root.appendingPathComponent("claude-peer.json"), wire = root.appendingPathComponent("claude-wire.jsonl")
-        let actions: [String: [String: String]] = [
+        var actions: [String: [String: String]] = [
             Self.claudeAlphaPrompt: ["mode": "normal", "label": "alpha"], Self.claudeBetaPrompt: ["mode": "normal", "label": "beta"],
             Self.claudeProbePrompt: ["mode": "hold-result", "label": "probe", "gate": "release-selected"],
             Self.claudeQueuedPrompt: ["mode": "normal", "label": "queued"],
             Self.claudeConsumedPrompt: ["mode": "consume-then-disconnect", "label": "consumed"],
             Self.claudeUnwrittenPrompt: ["mode": "before-write-disconnect", "label": "unwritten"],
             Self.claudeRetryPrompt: ["mode": "normal", "label": "retry"]]
+        if questionWorkflow {
+            for label in ["single", "multi", "cancel"] {
+                actions["Exercise native Claude question " + label] = ["mode": "questions", "label": label]
+            }
+        }
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "configurationDirectory": config.path, "actions": actions], options: .sortedKeys)
             .write(to: state, options: .atomic)
         let peer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "claude_history_ui", withExtension: "py"))
