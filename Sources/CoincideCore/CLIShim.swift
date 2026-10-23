@@ -18,8 +18,12 @@ public enum CLIShim {
         # Remove it from Coincide Settings > General > Command-line tool.
         COINCIDE_APP=\(shellWord(appPath))
         COINCIDE_BUNDLE_ID=\(shellWord(bundleIdentifier))
-        usage() { printf '%s\\n' 'Usage: coincide [folder]' '' 'Opens the folder in Coincide, adding it as a project if needed, and starts a new conversation there.'; }
+        usage() { printf '%s\\n' 'Usage: coincide [folder]' '       coincide status|projects|threads|thread|providers|models|select|new|screenshot [arguments]' '' 'Open a folder or control the running Coincide app. Commands return JSON; no command sends a model prompt.'; }
         case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+        case "${1:-}" in status|projects|threads|thread|providers|models|select|new|screenshot)
+            if [ -f "$COINCIDE_APP/Contents/Resources/coincide" ]; then exec /usr/bin/python3 "$COINCIDE_APP/Contents/Resources/coincide" "$@"; fi
+            printf '%s\\n' 'Update Coincide and reinstall the command from Settings.' >&2; exit 127 ;;
+        esac
         if [ "$#" -gt 1 ]; then usage >&2; exit 2; fi
         unset CDPATH
         target=${1:-.}

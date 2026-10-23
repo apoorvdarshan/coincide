@@ -36,6 +36,7 @@ struct ComposerView: View {
     var sendAvailable = true
     var stopAvailable = true
     var permissionEditable = true
+    var modelControl: AnyView? = nil
     @FocusState private var editorFocused: Bool
     @State private var dropTargeted = false
     @AppStorage("showSkillsInSlashMenu") private var showSkillsInSlashMenu = true
@@ -98,12 +99,13 @@ struct ComposerView: View {
                     attachmentControls
                     permissionControl.disabled(!permissionEditable)
                     Spacer(minLength: 8)
-                    if !busy { newlineHint }
+                    if let modelControl { modelControl }
+                    else if !busy { newlineHint }
                     deliveryControls
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     HStack { attachmentControls; permissionControl.disabled(!permissionEditable); Spacer(minLength: 0) }
-                    HStack { newlineHint; Spacer(minLength: 8); deliveryControls }
+                    HStack { if let modelControl { modelControl }; Spacer(minLength: 8); deliveryControls }
                 }
             }
             if busy, let steeringExplanation {

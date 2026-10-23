@@ -123,3 +123,39 @@ explain they are used by commands run in terminals and by coding agents. The app
 drawn from vector geometry by `script/generate_app_icon.swift`, converted with `iconutil`
 and cached under `.build/coincide-app-icon` by the generator's hash. The UI-test copy has its
 URL types removed so it never handles real links.
+
+## Local app control CLI
+
+Run `./script/coincide --help` from this checkout. The packaged helper is also
+available through the Settings-installed `coincide` command after reinstalling
+that command for this build. Folder-opening behavior is unchanged.
+
+```sh
+./script/coincide status
+./script/coincide projects
+./script/coincide threads --project coincide
+./script/coincide thread <conversation-uuid>
+./script/coincide select <conversation-uuid>
+./script/coincide providers
+./script/coincide models
+./script/coincide models --refresh
+./script/coincide new /absolute/project/folder
+./script/coincide screenshot /tmp/coincide-window.png
+```
+
+Commands return JSON from the running app. Models without `--refresh` use its
+current catalog. Provider executable detection is not authentication or a live
+model test. `thread` returns the last 20 visible messages, with 4,000 characters
+per message; listings are capped at 500 items. No command sends a prompt,
+approves tools, or changes provider accounts. `new` creates an empty conversation.
+Screenshot renders the native content view to a new PNG; it refuses overwrite.
+
+The app creates a separate authenticated loopback MCP connection and publishes
+its credential only in `~/Library/Application Support/Coincide/Control/connection.json`
+(mode 0600 in a 0700 directory). This local-owner channel is separate from the
+provider-scoped app tools; its credential is never passed to model subprocesses.
+The client refuses non-loopback endpoints, proxies, redirects and unsafe file
+permissions. It never retries an uncertain mutation. Credentials expire after
+24 hours of inactivity or 4,096 RPC request IDs; restart the app to renew them.
+Normal app shutdown removes its own connection file and closes the endpoint.
+This is an initial local control surface, not complete CLI coverage of every UI.

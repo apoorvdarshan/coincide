@@ -167,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindows: MainWindowCoordinator?
     private var pendingProjects: [URL] = []
     private var startup: Task<Void, Never>?
+    private var localControl: LocalAppControl?
     private var ready = false
     private var isQuitting = false
     let shell = DesktopShell.shared
@@ -190,6 +191,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for url in projects { store.addProject(at: url) }
             self.mainWindows?.presentIfNeeded()
             self.shell.didLoad()
+            if Bundle.main.bundleIdentifier == "com.apoorvdarshan.coincide", let windows = self.mainWindows {
+                let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Coincide", isDirectory: true)
+                let control = LocalAppControl(store: store, windows: windows, root: root)
+                self.localControl = control
+                do { try await control.start() }
+                catch { FileHandle.standardError.write(Data("Coincide local CLI could not start.\n".utf8)) }
+            }
         }
     }
     func waitForStartup() async { await startup?.value }
@@ -262,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             await self.shell.shutdown()
+            await self.localControl?.stop()
             await store.shutdown()
             await self.keybindings?.shutdown()
             sender.reply(toApplicationShouldTerminate: true)

@@ -1,36 +1,27 @@
 # Coincide
 
-A native Swift macOS coding app, with [T3 Code](https://github.com/pingdotgg/t3code)
-as the functionality reference and the ChatGPT macOS app as the interface reference.
+A native Swift macOS coding app for **Codex and Claude**, with a ChatGPT-style
+Projects/Recents sidebar, readable conversations, and a model picker in the composer.
 
 ## Status
 
-In development. Full T3 Code feature parity is **not complete**. See
-[porting status](docs/PORTING.md) for implemented behavior, gaps, and verification.
+In active local development. The focus is reliable Codex/Claude chat, projects,
+tools, approvals, saved conversations, and direct command-line control.
+The former full T3 Code parity roadmap is paused. Other agents are no longer
+available in provider selection, Settings, or production runtime creation.
 
-Liquid Glass is the default for custom native chrome on macOS 26+, alongside
-system sidebars, toolbars, menus and sheets. Older macOS versions use native
-materials, and Reduce Transparency uses opaque surfaces. The complete
-[provider integration inventory](docs/PROVIDER_PARITY.md) tracks what is working
-and what still needs implementation and verification.
+Existing historical implementation and validation records remain in
+[porting status](docs/PORTING.md) and [provider inventory](docs/PROVIDER_PARITY.md);
+they are not the current product scope or proof that every workflow works today.
 
 ## Build and run
 
 Requires macOS 14+, a Swift 6.2+ toolchain, and Xcode Command Line Tools. Codex
 conversations use an authenticated installed, custom, or explicitly managed CLI;
 Claude conversations use the installed, authenticated `claude` CLI.
-Native OpenCode conversations use the matching installed OpenCode 1 or 2 CLI
-through separate HTTP adapters. Choose **Server Generation** before the first
-message. Both adapters have offline-fixture verification; installed conversation
-verification and complete OpenCode parity remain unfinished.
-ACP v1 agents can use other installed CLIs, such as `opencode acp`.
-
-Coincide can reuse an authenticated Codex or Claude CLI without an additional
-app API key. Provider accounts still need access to the selected model; a runtime
-check or model listing does not prove that access. OpenCode's configured provider
-can reject a model with HTTP 403 even after its native session connects. Resolve
-that provider's access or explicitly choose an accessible model; Coincide does
-not silently change models or credentials.
+Coincide reuses your authenticated Codex or Claude CLI without an additional
+app API key. Provider accounts still need access to the chosen model; a model
+listing does not prove successful execution.
 
 ```sh
 ./script/build_and_run.sh

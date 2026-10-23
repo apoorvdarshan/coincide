@@ -18,9 +18,8 @@ enum ThreadTraversal {
 }
 
 extension WorkspaceStore {
-    /// Thread IDs in sidebar order: project groups in order, then each group's
-    /// visible rows, honoring collapse, archive and search filters.
-    var visibleThreadOrder: [UUID] { orderedProjectGroups.flatMap { sidebarThreads(groupKey: $0.key).map(\.id) } }
+    /// Matches the Recents list, including its project, archive and search filters.
+    var visibleThreadOrder: [UUID] { recentSidebarThreads.map(\.id) }
 
     func adjacentThread(_ direction: ThreadTraversalDirection) -> UUID? {
         ThreadTraversal.adjacent(in: visibleThreadOrder, current: selectedThreadID, direction: direction)
@@ -33,6 +32,7 @@ extension WorkspaceStore {
     /// Selects a thread the way notification and pull-request navigation do.
     @discardableResult func selectThread(_ id: UUID) -> Bool {
         guard let target = thread(id), snapshot.projects.contains(where: { $0.id == target.projectID }) else { return false }
+        if !recentSidebarThreads.contains(where: { $0.id == id }) { sidebarProjectFilter = nil }
         selectedProjectID = target.projectID; showArchived = target.isArchived; selectedThreadID = id
         return true
     }

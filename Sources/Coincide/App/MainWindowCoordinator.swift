@@ -14,6 +14,10 @@ final class MainWindowCoordinator {
     private var awaitingPresentation = false
     private var windows: [ObjectIdentifier: Registration] = [:]
     private let restoreExisting: (@MainActor () -> Bool)?
+    var currentWindow: NSWindow? {
+        let live = windows.values.compactMap(\.window)
+        return live.first(where: \.isKeyWindow) ?? live.first(where: \.isVisible) ?? live.first
+    }
 
     init(restoreExisting: (@MainActor () -> Bool)? = nil) { self.restoreExisting = restoreExisting }
 

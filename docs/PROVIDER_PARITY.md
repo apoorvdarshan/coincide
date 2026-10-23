@@ -1,5 +1,10 @@
 # Native provider parity inventory
 
+**Scope update, 2026-10-24:** The user stopped the cloud workers and full T3
+parity work. Current development supports Codex and Claude only, prioritizing
+local chat, a ChatGPT-style UI, and CLI control. The inventory below is historical;
+its other-provider and full-parity requirements are no longer active.
+
 Coincide's completion requirement is native Swift, end-to-end support for **all
 T3 Code provider integrations**, including Claude, Codex, OpenCode, Copilot,
 Cursor, Grok, Antigravity, Pi, Muse Code, and ACP Registry agents. A selectable

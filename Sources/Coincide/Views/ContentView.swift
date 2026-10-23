@@ -20,7 +20,7 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true },
                         onSettle: { settlementThread = $0 }, onImportAgentProjects: { agentSessionImportSheetPresented = true })
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {
             NativeInspectorSplit(isPresented: store.inspectorVisible) {
                 if let thread = store.selectedThread {
@@ -60,7 +60,6 @@ struct ContentView: View {
             }
         }
         .toolbar {
-            ToolbarItem { Button { store.newThread() } label: { Label("New Thread", systemImage: "square.and.pencil") } }
             ToolbarItem {
                 Button { toggleTerminal() } label: { Label("Terminal", systemImage: "terminal") }
                     .keyboardShortcut(keybindings == nil ? KeyboardShortcut("t", modifiers: [.command, .option]) : keybindings?.menuShortcut(.terminalToggle))

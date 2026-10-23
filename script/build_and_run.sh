@@ -17,6 +17,7 @@ mkdir -p "$APP_BUNDLE/Contents/Helpers"
 cp "$BUILD_DIRECTORY/CoincideScriptHelper" "$APP_BUNDLE/Contents/Helpers/CoincideScriptHelper"
 cp "$BUILD_DIRECTORY/CoincideEnvironment" "$APP_BUNDLE/Contents/Helpers/CoincideEnvironment"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Notices"
+/usr/bin/install -m 644 "$ROOT_DIR/script/coincide" "$APP_BUNDLE/Contents/Resources/coincide"
 /usr/bin/ditto "$BUILD_DIRECTORY/SwiftMath_SwiftMath.bundle" "$APP_BUNDLE/Contents/Resources/SwiftMath_SwiftMath.bundle"
 for NOTICE_FILE in "$ROOT_DIR"/docs/*-LICENSE.txt "$ROOT_DIR"/docs/*-NOTICE.txt "$ROOT_DIR/docs/third-party-notices.json"; do
   /usr/bin/install -m 644 "$NOTICE_FILE" "$APP_BUNDLE/Contents/Resources/Notices/"

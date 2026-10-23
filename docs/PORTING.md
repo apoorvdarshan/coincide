@@ -1,5 +1,10 @@
 # Coincide native Swift port
 
+**Scope update, 2026-10-24:** The user stopped the cloud workers and full T3
+parity work. Current development supports Codex and Claude only, prioritizing
+local chat, a ChatGPT-style UI, and CLI control. The inventory below is historical;
+its other-provider and full-parity requirements are no longer active.
+
 The goal is a complete native Swift macOS port of T3 Code, including its core
 services. A running T3 Code/Node server or Electron frontend is not the intended
 final architecture. This goal is **not complete**.

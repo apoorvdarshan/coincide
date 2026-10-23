@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Control the running Coincide app through its private local connection."""
+import argparse
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def connection():
+    root = Path.home() / "Library/Application Support/Coincide/Control"
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError("The Coincide CLI directory is not private.")
+    fd = os.open(root / "connection.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1 or info.st_size > 4096:
+            raise ValueError("The Coincide CLI connection file is not private.")
+        record = json.loads(os.read(fd, 4096))
+    finally:
+        os.close(fd)
+    url = urllib.parse.urlsplit(record["endpoint"])
+    if url.scheme != "http" or url.hostname != "127.0.0.1" or not url.port or url.path != "/mcp" or url.username or url.password or url.query or url.fragment:
+        raise ValueError("Invalid local Coincide endpoint.")
+    auth = record.get("authorization", "")
+    if not auth.startswith("Bearer ") or len(auth) != 50 or any(c in auth for c in "\r\n"):
+        raise ValueError("Invalid local Coincide credential.")
+    return record
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Control the running Coincide app. Responses are JSON. No command sends a model prompt.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("status", "projects", "providers"):
+        commands.add_parser(name)
+    threads = commands.add_parser("threads")
+    threads.add_argument("--project", help="Project name, path, or UUID")
+    for name in ("thread", "select", "models"):
+        command = commands.add_parser(name)
+        command.add_argument("id", nargs="?", help="Conversation UUID; defaults to the selected conversation")
+        if name == "models":
+            command.add_argument("--refresh", action="store_true", help="Refresh the selected conversation's provider catalog without sending a prompt")
+    new = commands.add_parser("new", help="Create an empty conversation in a local folder")
+    new.add_argument("path", nargs="?", default=".")
+    screenshot = commands.add_parser("screenshot", help="Render the app window to a new PNG file without computer-use automation")
+    screenshot.add_argument("path")
+    options = vars(parser.parse_args())
+    name = options.pop("command")
+    arguments = {k: v for k, v in options.items() if v is not None}
+    if "id" in arguments:
+        arguments["id"] = str(uuid.UUID(arguments["id"]))
+    if "path" in arguments:
+        arguments["path"] = str(Path(arguments["path"]).expanduser().absolute())
+    record = connection()
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+    def rpc(method, params, notification=False):
+        payload = {"jsonrpc": "2.0", "method": method, "params": params}
+        if not notification:
+            payload["id"] = str(uuid.uuid4())
+        request = urllib.request.Request(record["endpoint"], data=json.dumps(payload).encode(), headers={
+            "Authorization": record["authorization"], "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25"})
+        # A lost reply is never retried: 'new' might already have created a chat.
+        with opener.open(request, timeout=35) as response:
+            data = response.read(1_048_577)
+        if len(data) > 1_048_576:
+            raise ValueError("Coincide response exceeded the size limit.")
+        if notification:
+            return None
+        reply = json.loads(data)
+        if "error" in reply:
+            raise ValueError(reply["error"].get("message", "Coincide rejected the request."))
+        return reply["result"]
+
+    rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "coincide-cli", "version": "1"}})
+    rpc("notifications/initialized", {}, notification=True)
+    result = rpc("tools/call", {"name": name, "arguments": arguments})
+    if result.get("isError"):
+        raise ValueError("Coincide could not complete the command.")
+    print(json.dumps(result.get("structuredContent"), indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except FileNotFoundError:
+        sys.exit("coincide: Open the updated Coincide app first; its local CLI connection is unavailable.")
+    except (urllib.error.URLError, TimeoutError):
+        sys.exit("coincide: The app did not confirm the request. Check status/threads before repeating a change.")
+    except (ValueError, KeyError, OSError) as error:
+        sys.exit("coincide: " + str(error))

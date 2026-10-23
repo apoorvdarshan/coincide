@@ -146,8 +146,7 @@ final class DeepLinkRouter {
     }
 
     private static let providerAliases: [String: ProviderKind] = [
-        "codex": .codex, "claude": .claude, "claudeagent": .claude, "claude-code": .claude, "opencode": .opencode,
-        "pi": .pi, "muse": .muse, "antigravity": .antigravity,
+        "codex": .codex, "claude": .claude, "claudeagent": .claude, "claude-code": .claude,
     ]
 
     /// Availability is captured before creation. The Store captures the requested

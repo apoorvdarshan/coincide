@@ -1,24 +1,20 @@
 # Coincide product direction
 
-The interface reference is the **ChatGPT macOS app**. T3 Code is the reference
-for integrations, workflows, and end-to-end behavior, not the visual design.
-The user confirmed this direction on 2026-10-21.
+Updated by user direction on 2026-10-24. Build a native macOS coding app focused
+on **Codex and Claude**. Full T3 Code parity and cloud-worker work are paused.
 
-- Build the application and its core in native Swift, with SwiftUI and narrow
-  AppKit integrations. Use native text, menus, windows, file panels, accessibility,
-  keyboard input, and settings.
-- Use a restrained sidebar, a centered readable conversation column, generous
-  space, a compact provider/model header, and a rounded composer near the bottom.
-- Show user messages in trailing neutral bubbles and assistant responses directly
-  in the conversation. Keep tools, reasoning, approvals, and code review readable
-  without making the default conversation look like an IDE dashboard.
-- Keep files, changes, terminal, and other workspace tools available on demand.
-  The inspector starts closed so the conversation remains the main surface.
-- Support system light/dark appearance, resizing, keyboard navigation, text
-  selection, and accessible labels. Use Coincide branding.
-- Preserve the full T3 Code functionality goal. Visual simplification must not
-  remove provider integrations, permission flows, Git/worktrees, checkpoints,
-  remote support, or the other capabilities in the upstream inventory.
+- Follow the user's ChatGPT desktop screenshots: New chat, Projects and Recents
+  in the sidebar, a centered conversation, and a provider/model menu in the composer.
+- Keep file editing, Git, terminal, approvals and useful existing functionality
+  available without making the default chat look like a dashboard.
+- Build in SwiftUI with narrow AppKit integrations, native menus and accessible
+  controls. Follow system appearance, resizing and keyboard navigation.
+- Operate the app through the local CLI where available. Computer-use automation
+  is not the default development interface.
+- During this development pass, prioritize incremental builds and live use.
+  Automated test runs are explicitly deferred; do not claim unrun checks passed.
+- Other providers are removed from the supported app. Historical schema types
+  remain internal to the existing persisted format, not selectable integrations.
 
-Visual reference: OpenAI's public ChatGPT desktop screenshots, including the
-[macOS composer](https://help.openai.com/en/articles/9295245-chatgpt-macos-app-screenshot-tool).
+The next priorities are reliable new/resumed Codex and Claude conversations,
+complete session import, a clean chat UI, and direct CLI control.

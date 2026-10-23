@@ -1,0 +1,152 @@
+import AppKit
+import CoincideCore
+import Darwin
+
+/// Separate local-owner control channel. Its credential is never passed to agents.
+/// Reuses the bounded, authenticated loopback transport without granting Engine tools.
+@MainActor
+final class LocalAppControl {
+    private let store: WorkspaceStore
+    private let windows: MainWindowCoordinator
+    private let root: URL
+    private let registry = MCPSessionRegistry()
+    private var server: MCPHTTPServer?
+    private var credential: MCPSessionCredential?
+    private let instance = UUID()
+
+    init(store: WorkspaceStore, windows: MainWindowCoordinator, root: URL) {
+        self.store = store; self.windows = windows; self.root = root.appendingPathComponent("Control", isDirectory: true)
+    }
+
+    func start() async throws {
+        guard server == nil else { return }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var info = stat()
+        guard lstat(root.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
+              info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { throw CoincideError("The local CLI directory must be private.") }
+        let scope = MCPInvocationScope(threadID: instance, projectID: instance, provider: .codex,
+            runtimeID: instance, incarnation: instance, providerInstanceID: instance,
+            workspacePath: root.path, permission: .fullAccess, capabilities: [.orchestration])
+        let credential = try await registry.issue(scope: scope)
+        self.credential = credential
+        let names = ["status", "projects", "threads", "thread", "providers", "models", "select", "new", "screenshot"]
+        let definitions = names.map { name in
+            MCPToolDefinition(name: name, description: "Coincide local CLI: " + name,
+                inputSchema: .object(["type": .string("object")]), capability: .orchestration,
+                readOnly: !["select", "new", "screenshot"].contains(name))
+        }
+        let server = try await MCPHTTPServer.start(registry: registry, tools: definitions) { [weak self] invocation in
+            guard let self else { throw MCPError(.unavailable) }
+            return try await self.invoke(invocation)
+        }
+        self.server = server
+        do {
+            let data = try JSONEncoder().encode(JSONValue.object([
+                "endpoint": .string(server.endpoint.absoluteString), "authorization": .string(credential.authorizationHeader),
+                "instance": .string(instance.uuidString), "pid": .number(Double(getpid()))]))
+            let temporary = root.appendingPathComponent(instance.uuidString + ".json")
+            let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { throw CoincideError("Cannot publish the local CLI connection.") }
+            defer { Darwin.close(fd); try? FileManager.default.removeItem(at: temporary) }
+            let written = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+            guard written == data.count, fsync(fd) == 0,
+                  rename(temporary.path, root.appendingPathComponent("connection.json").path) == 0 else {
+                throw CoincideError("Cannot publish the local CLI connection.")
+            }
+        } catch { await stop(); throw error }
+    }
+
+    func stop() async {
+        let url = root.appendingPathComponent("connection.json")
+        if let data = try? Data(contentsOf: url), data.count < 4096,
+           let record = try? JSONDecoder().decode(JSONValue.self, from: data), record["instance"].string == instance.uuidString {
+            try? FileManager.default.removeItem(at: url)
+        }
+        await registry.shutdown()
+        await server?.close()
+        server = nil; credential = nil
+    }
+
+    private func invoke(_ invocation: MCPInvocation) async throws -> MCPToolResult {
+        try Task.checkCancellation()
+        guard credential?.sessionID == invocation.scope.sessionID else { throw MCPError(.unauthorized) }
+        await registry.touch(sessionID: invocation.scope.sessionID)
+        let args = invocation.arguments
+        let result: JSONValue
+        switch invocation.toolName {
+        case "status":
+            result = .object(["running": .bool(true), "pid": .number(Double(getpid())),
+                "selectedThread": store.selectedThread.map(summary) ?? .null,
+                "projects": .number(Double(store.snapshot.projects.count)), "threads": .number(Double(store.snapshot.threads.count)),
+                "busyThreads": .array(store.snapshot.threads.filter { store.isBusy($0.id) }.map { .string($0.id.uuidString) }),
+                "ui": .object(["sidebar": .array([.string("Projects"), .string("Recents")]), "modelPicker": .string("composer")])])
+        case "projects":
+            result = .array(store.orderedProjects.prefix(500).map { .object(["id": .string($0.id.uuidString), "name": .string($0.name), "path": .string($0.path)]) })
+        case "threads":
+            let project = args["project"].string
+            let matches = store.snapshot.threads.filter { thread in
+                guard let project else { return true }
+                return thread.projectID.uuidString.caseInsensitiveCompare(project) == .orderedSame ||
+                    store.snapshot.projects.contains { $0.id == thread.projectID && ($0.name == project || $0.path == project) }
+            }.sorted { $0.updatedAt > $1.updatedAt }
+            result = .object(["threads": .array(matches.prefix(500).map(summary)), "total": .number(Double(matches.count))])
+        case "thread":
+            let thread = try target(args)
+            let messages = thread.visibleMessages.suffix(20).map { message in
+                JSONValue.object(["role": .string(message.role.rawValue), "text": .string(String(message.text.prefix(4000)))])
+            }
+            result = .object(["thread": summary(thread), "messages": .array(messages), "totalMessages": .number(Double(thread.visibleMessages.count))])
+        case "providers":
+            result = .array(ProviderKind.builtIn.map { provider in
+                .object(["id": .string(provider.rawValue), "name": .string(provider.name),
+                    "executableFound": .bool(ProcessChannel.findExecutable(provider.executable) != nil),
+                    "authentication": .string("not checked"), "modelExecution": .string("not checked")])
+            })
+        case "models":
+            let thread = try target(args)
+            if args["refresh"] == .bool(true) {
+                guard store.selectedThreadID == thread.id else { throw CoincideError("Select this conversation before refreshing its models.") }
+                await store.refreshModels(provider: thread.provider)
+            }
+            guard let current = store.thread(thread.id), current.provider == thread.provider else { throw MCPError(.unavailable) }
+            result = .object(["provider": .string(thread.provider.rawValue), "selected": .string(current.model),
+                "models": .array(store.models(for: current).prefix(500).map {
+                    .object(["id": .string($0.id), "name": .string($0.name), "reasoning": .array($0.reasoningEfforts.map { .string($0.id) })])
+                }), "note": .string("Catalog availability does not verify authentication or model execution.")])
+        case "select":
+            let thread = try target(args)
+            guard store.selectThread(thread.id) else { throw MCPError(.unavailable) }
+            store.search = ""; store.sidebarProjectFilter = nil
+            result = .object(["selected": .string(thread.id.uuidString)])
+        case "new":
+            guard let path = args["path"].string, path.hasPrefix("/"), path.utf8.count <= 4096 else { throw MCPError(.invalidParams) }
+            let id = try await store.openDraftThread(projectID: nil, folder: URL(fileURLWithPath: path), draft: "")
+            store.search = ""; store.sidebarProjectFilter = nil
+            result = .object(["threadId": .string(id.uuidString), "sent": .bool(false)])
+        case "screenshot":
+            guard let path = args["path"].string, path.hasPrefix("/"), path.hasSuffix(".png"), path.utf8.count <= 4096,
+                  let window = windows.currentWindow,
+                  let view = window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw MCPError(.unavailable) }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            guard let data = bitmap.representation(using: .png, properties: [:]) else { throw MCPError(.unavailable) }
+            try data.write(to: URL(fileURLWithPath: path), options: .withoutOverwriting)
+            result = .object(["path": .string(path), "width": .number(Double(bitmap.pixelsWide)), "height": .number(Double(bitmap.pixelsHigh))])
+        default: throw MCPError(.methodNotFound)
+        }
+        let structured = result.object != nil ? result : .object([invocation.toolName: result])
+        return MCPToolResult(content: [], structuredContent: structured)
+    }
+
+    private func target(_ arguments: JSONValue) throws -> CodingThread {
+        let id = arguments["id"].string.flatMap(UUID.init(uuidString:)) ?? (arguments["id"] == .null ? store.selectedThreadID : nil)
+        guard let id, let thread = store.thread(id) else { throw CoincideError("Conversation not found. Use threads to list IDs.") }
+        return thread
+    }
+
+    private func summary(_ thread: CodingThread) -> JSONValue {
+        .object(["id": .string(thread.id.uuidString), "projectId": .string(thread.projectID.uuidString),
+            "title": .string(String(thread.title.prefix(500))), "provider": .string(thread.provider.rawValue),
+            "model": .string(thread.model), "state": .string(thread.state.rawValue), "archived": .bool(thread.isArchived),
+            "messageCount": .number(Double(thread.visibleMessages.count))])
+    }
+}

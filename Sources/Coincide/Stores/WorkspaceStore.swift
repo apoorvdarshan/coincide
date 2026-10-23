@@ -192,6 +192,7 @@ final class WorkspaceStore {
     @ObservationIgnored private var providerSkillsDrains: [UUID: (scope: ProviderSkillsStore.Scope, task: Task<Void, Never>)] = [:]
     let acpConnections = ACPConnectionStore()
     var inspectorVisible = false
+    var sidebarProjectFilter: String?
     var fileNavigation: FileNavigation?
     private var engine: WorkspaceEngine?
     private var loadingTask: Task<Void, Never>?
@@ -1094,6 +1095,11 @@ final class WorkspaceStore {
         }.sorted { $0.isPinned != $1.isPinned ? $0.isPinned : $0.updatedAt > $1.updatedAt }
     }
     var orderedProjects: [WorkspaceProject] { snapshot.orderedProjects }
+    var recentSidebarThreads: [CodingThread] {
+        guard let key = sidebarProjectFilter, let group = orderedProjectGroups.first(where: { $0.key == key }) else { return visibleThreads }
+        let members = Set(group.memberProjectIDs)
+        return visibleThreads.filter { members.contains($0.projectID) }
+    }
     var orderedProjectGroups: [ProjectGroup] { snapshot.orderedProjectGroups }
     var projectGroupingMode: ProjectGroupingMode { snapshot.effectiveSidebarPreferences.groupingMode }
     var projectSortMode: ProjectSortMode { snapshot.effectiveSidebarPreferences.sortMode }
@@ -1980,17 +1986,9 @@ final class WorkspaceStore {
         } else { sendCommand(.editThread(id, .model(model))) }
     }
     func setProvider(_ provider: ProviderKind, id: UUID) {
+        guard provider.isSupported else { errorMessage = "Coincide supports Codex and Claude only."; return }
         let previousProvider = thread(id)?.provider
         guard provider != previousProvider else { return }
-        if provider == .pi {
-            guard let current = thread(id) else { return }
-            do {
-                let captured = try piRuntimeCapture(current.workspacePath, ProviderKind.pi.executable, UUID())
-                cancelCodexModelDefaultsRead(id)
-                sendCommand(.editThread(id, .piProvider(captured)))
-            } catch { errorMessage = "Choose an available Pi runtime and storage namespace before sending a message." }
-            return
-        }
         if provider == .claude {
             guard let current = thread(id) else { return }
             do {
@@ -2005,16 +2003,9 @@ final class WorkspaceStore {
             sendCommand(.editThread(id, .codexProvider(codexRuntime.configuration)))
             return
         }
-        cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .provider(provider)))
-        if provider == .antigravity {
-            _ = enqueuePreparing { [weak self] in
-                guard let self, !self.terminating, self.thread(id)?.provider == .antigravity else { throw CancellationError() }
-                return .editThread(id, .antigravityConfiguration(self.antigravityAccount.configuration))
-            }
-        }
     }
     func setACPAgent(_ agent: ACPAgentConfiguration, id: UUID) {
-        cancelCodexModelDefaultsRead(id); sendCommand(.editThread(id, .acpAgent(agent)))
+        errorMessage = "Coincide supports Codex and Claude only."
     }
     @discardableResult func setOpenCodeVariant(_ variant: String?, model: ProviderModel, threadID: UUID) -> Task<Bool, Never> {
         enqueueOpenCodeEdit(threadID: threadID) { [weak self] current in
@@ -2492,7 +2483,7 @@ final class WorkspaceStore {
 
     func submit(_ text: String, threadID id: UUID) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
+        guard let thread = thread(id), thread.provider.isSupported, (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !composerDraftTools.blocksSubmission(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !claudeResumeSelectionNeedsInspection(threadID: id),
@@ -2775,6 +2766,7 @@ final class WorkspaceStore {
         defer { isRefreshingModels = false }
         do {
             let kind = provider ?? selectedThread?.provider ?? .codex
+            guard kind.isSupported else { throw CoincideError("Coincide supports Codex and Claude only.") }
             if kind == .codex {
                 guard !codexRuntime.isApplying else { return }
                 let captured = selectedThread.flatMap { $0.provider == .codex ? $0 : nil }

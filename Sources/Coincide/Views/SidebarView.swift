@@ -17,30 +17,39 @@ struct SidebarView: View {
     @State private var scratchRecoveryPresented = false
     var body: some View {
         List(selection: $store.selectedThreadID) {
-            ForEach(store.orderedProjectGroups) { group in
-                Section {
-                    ForEach(store.sidebarThreads(groupKey: group.key)) { thread in
-                        threadRow(thread, group: group)
-                    }
-                    if store.isProjectGroupExpanded(group.key) {
-                        if group.members.count > 1 {
-                            Menu { newThreadCheckoutItems(group) } label: { Label("New Thread", systemImage: "plus") }
-                                .menuStyle(.borderlessButton).foregroundStyle(.secondary)
-                        } else if let project = group.members.first {
-                            Button { store.newThread(projectID: project.id) } label: { Label("New Thread", systemImage: "plus") }
-                                .buttonStyle(.plain).foregroundStyle(.secondary)
-                        }
-                    }
-                } header: { projectHeader(group) }
+            Section("Projects") {
+                ForEach(store.orderedProjectGroups.filter { $0.representative.scratch == nil }) { group in
+                    projectHeader(group)
+                }
+                .onMove(perform: projectMoveAction)
+                Button(action: onNewProject) { Label("New project", systemImage: "folder.badge.plus") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
             }
-            .onMove(perform: projectMoveAction)
+            Section {
+                ForEach(store.recentSidebarThreads) { thread in
+                    threadRow(thread, group: store.projectGroup(containing: thread.projectID))
+                }
+                if store.recentSidebarThreads.isEmpty {
+                    Text(store.search.isEmpty ? "No conversations yet" : "No matching conversations")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            } header: {
+                HStack {
+                    Text(store.sidebarProjectFilter.flatMap { key in store.orderedProjectGroups.first { $0.key == key }?.displayName } ?? "Recents")
+                    Spacer()
+                    if store.sidebarProjectFilter != nil {
+                        Button { store.sidebarProjectFilter = nil } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).help("Show all recent conversations").accessibilityLabel("Show all recent conversations")
+                    }
+                }
+            }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .top) {
             VStack(spacing: 12) {
                 HStack {
                     Button { store.newThread() } label: {
-                        Label("New conversation", systemImage: "square.and.pencil").frame(maxWidth: .infinity, alignment: .leading)
+                        Label("New chat", systemImage: "square.and.pencil").frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain)
                     Menu {
                         sortModeItem(.updatedAt)
@@ -140,7 +149,7 @@ struct SidebarView: View {
         }
     }
 
-    private func threadRow(_ thread: CodingThread, group: ProjectGroup) -> some View {
+    private func threadRow(_ thread: CodingThread, group: ProjectGroup?) -> some View {
         let project = store.snapshot.projects.first { $0.id == thread.projectID }
         return Label {
             VStack(alignment: .leading, spacing: 3) {
@@ -149,18 +158,19 @@ struct SidebarView: View {
                     Text(ProjectClonePresentation.title(clone)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 } else if store.snapshot.isEffectivelySnoozed(threadID: thread.id, at: Date()), let until = thread.workspaceLifecycle?.snoozedUntil {
                     Text("Snoozed until \(until, format: .dateTime.month(.abbreviated).day().hour().minute())").font(.caption).foregroundStyle(.secondary)
-                } else if let settlement = thread.settlement {
-                    Text(settlement.phase == .resuming ? "Resuming…" : "Settled").font(.caption).foregroundStyle(.secondary)
+                } else if thread.settlement?.phase == .resuming {
+                    Text("Resuming…").font(.caption).foregroundStyle(.secondary)
                 } else if thread.state != .idle {
                     Text(thread.state == .awaitingApproval ? "Needs your input" : thread.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
                 }
                 TerminalActivityBadge(store: store, threadID: thread.id)
-                if group.members.count > 1, let project {
+                if (group?.members.count ?? 0) > 1, let project {
                     Text(project.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                 }
             }
         } icon: {
-            Image(systemName: thread.isPinned ? "pin" : thread.isSettled ? "checkmark.circle" : thread.state == .running ? "circle.dotted" : "bubble.left")
+            Image(systemName: thread.isPinned ? "pin" : thread.state == .running ? "circle.dotted" : "bubble.left")
+                .foregroundStyle(.secondary)
         }
         .overlay(alignment: .topTrailing) { ThreadJumpHintBadge(threadID: thread.id) }
         .tag(thread.id)
@@ -189,19 +199,21 @@ struct SidebarView: View {
     }
 
     private func projectHeader(_ group: ProjectGroup) -> some View {
-        Button { store.setProjectGroupExpanded(group, expanded: !store.isProjectGroupExpanded(group.key)) } label: {
+        Button {
+            store.sidebarProjectFilter = store.sidebarProjectFilter == group.key ? nil : group.key
+            if let project = store.preferredProject(in: group) { store.selectedProjectID = project.id }
+        } label: {
             HStack(spacing: 5) {
-                Image(systemName: store.isProjectGroupExpanded(group.key) ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold)).frame(width: 10)
                 ProjectIconView(settings: store.projectSettings, project: group.representative, name: group.displayName)
                 Text(group.displayName).lineLimit(1)
                 Spacer(minLength: 0)
                 if group.members.count > 1 { Text(group.members.count, format: .number).font(.caption2).foregroundStyle(.secondary) }
+                if store.sidebarProjectFilter == group.key { Image(systemName: "checkmark").font(.caption) }
             }.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(store.isProjectGroupExpanded(group.key) ? Text("Collapse \(group.displayName)") : Text("Expand \(group.displayName)"))
-        .accessibilityValue(store.isProjectGroupExpanded(group.key) ? Text("Expanded") : Text("Collapsed"))
+        .accessibilityLabel(Text("Show conversations in \(group.displayName)"))
+        .accessibilityValue(store.sidebarProjectFilter == group.key ? Text("Selected") : Text("All conversations"))
         .contextMenu {
             if group.members.count > 1 {
                 Menu("New Thread in Checkout") { newThreadCheckoutItems(group) }

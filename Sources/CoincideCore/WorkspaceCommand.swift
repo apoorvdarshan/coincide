@@ -1064,10 +1064,8 @@ struct WorkspaceDecision: Sendable {
                   !decision.snapshot.cloneAttemptIDs.contains(plan.id) else { throw WorkspaceCommandError("This clone cannot be retried now. Refresh its status first.") }
             decision.snapshot.projects[i].clone = .init(plan: plan, now: now, previousPlans: old.previousPlans + [old.plan])
             decision.effects.append(.init(id: plan.id, request: .projectClone(projectID: projectID, plan: plan)))
-        case .client(.saveACPAgent(let agent)):
-            do { try agent.validate() } catch { throw WorkspaceCommandError(error.localizedDescription) }
-            if let i = decision.snapshot.acpAgents.firstIndex(where: { $0.id == agent.id }) { decision.snapshot.acpAgents[i] = agent }
-            else { decision.snapshot.acpAgents.append(agent) }
+        case .client(.saveACPAgent):
+            throw WorkspaceCommandError("Coincide supports Codex and Claude only.")
         case .client(.removeACPAgent(let id)): decision.snapshot.acpAgents.removeAll { $0.id == id }
         case .client(.addProject(let project)):
             guard project.clone == nil else { throw WorkspaceCommandError("Use Clone Repository to create a cloning project.") }
@@ -1183,22 +1181,8 @@ struct WorkspaceDecision: Sendable {
                     thread.claudeRuntimeConfiguration = configuration
                 case .piRuntimeConfiguration(let configuration):
                     try thread.capturePiRuntime(configuration)
-                case .piProvider(let configuration):
-                    do { try configuration.validate() }
-                    catch { throw WorkspaceCommandError("Choose a valid Pi runtime and storage namespace.") }
-                    guard configuration.registeredWorkspacePath == thread.workspacePath,
-                          !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else {
-                        throw WorkspaceCommandError("Start a new conversation to change providers.")
-                    }
-                    decision.closeRuntimes.insert(thread.id); thread.provider = .pi
-                    thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil
-                    thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []
-                    thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil
-                    thread.providerThreadID = nil; thread.runtimeID = nil; thread.openCodeConfiguration = nil
-                    thread.museConfiguration = nil; thread.antigravityConfiguration = nil; thread.codexRuntimeConfiguration = nil
-                    thread.claudeRuntimeConfiguration = nil; thread.claudeResumeSelection = nil
-                    thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
-                    thread.piConfiguration = .init(instanceID: configuration.instanceID, executable: configuration.requestedExecutable, runtime: configuration)
+                case .piProvider:
+                    throw WorkspaceCommandError("Coincide supports Codex and Claude only.")
                 case .provider, .codexProvider, .claudeProvider:
                     let kind: ProviderKind, codexConfiguration: CodexRuntimeConfiguration?, claudeConfiguration: ClaudeRuntimeConfiguration?
                     if case .provider(let value) = edit { kind = value; codexConfiguration = nil; claudeConfiguration = nil }
@@ -1211,7 +1195,7 @@ struct WorkspaceDecision: Sendable {
                         guard value.registeredWorkspacePath == thread.workspacePath else { throw ClaudeRuntimeConfiguration.invalid() }
                         kind = .claude; codexConfiguration = nil; claudeConfiguration = value
                     } else { throw WorkspaceCommandError("The provider selection is invalid.") }
-                    guard kind != .acp else { throw WorkspaceCommandError("Choose a configured ACP agent.") }
+                    guard kind.isSupported else { throw WorkspaceCommandError("Coincide supports Codex and Claude only.") }
                     guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
                     decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                     thread.openCodeConfiguration = kind == .opencode ? .init(instanceID: id) : nil
@@ -1222,17 +1206,8 @@ struct WorkspaceDecision: Sendable {
                     thread.claudeRuntimeConfiguration = claudeConfiguration; thread.claudeResumeSelection = nil
                     thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
                     if kind == .muse, thread.permission != .supervised && thread.permission != .fullAccess { thread.permission = .supervised }
-                case .acpAgent(let agent):
-                    guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change agents.") }
-                    guard decision.snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Save this agent in Settings first.") }
-                    decision.closeRuntimes.insert(thread.id); thread.provider = .acp; thread.acpAgent = agent; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.providerMetadata = nil
-                    thread.openCodeConfiguration = nil
-                    thread.piConfiguration = nil
-                    thread.museConfiguration = nil
-                    thread.antigravityConfiguration = nil; thread.codexRuntimeConfiguration = nil
-                    thread.claudeRuntimeConfiguration = nil; thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
-                    thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
-                    thread.agentConfiguration = nil; thread.providerActivity = nil; thread.runtimeRequests = []
+                case .acpAgent:
+                    throw WorkspaceCommandError("Coincide supports Codex and Claude only.")
                 case .codexServiceTier(let model, let tier, let expected):
                     try Self.validateModelControlCapture(expected, thread: thread)
                     try thread.selectCodexServiceTier(model: model, tier: tier)
@@ -1595,6 +1570,7 @@ struct WorkspaceDecision: Sendable {
     /// Compound registration shares the same insertion rules without entering
     /// the complete reducer a second time on the same task stack.
     private mutating func insertNewThread(_ thread: CodingThread, allowScratch: Bool = false) throws {
+        guard thread.provider.isSupported else { throw WorkspaceCommandError("Coincide supports Codex and Claude only.") }
         if !allowScratch { try validateScratchClientCommand(.createThread(thread)) }
         guard snapshot.projects.contains(where: { $0.id == thread.projectID }), !snapshot.threads.contains(where: { $0.id == thread.id }),
               thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, (thread.runHistory ?? []).isEmpty, thread.workspacePreparation == nil else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }

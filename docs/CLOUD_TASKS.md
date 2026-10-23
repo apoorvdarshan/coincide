@@ -1,5 +1,10 @@
 # Parallel work for Coincide
 
+**Scope update, 2026-10-24:** The user stopped the cloud workers and full T3
+parity work. Current development supports Codex and Claude only, prioritizing
+local chat, a ChatGPT-style UI, and CLI control. The inventory below is historical;
+its other-provider and full-parity requirements are no longer active.
+
 Use a normal ChatGPT Work cloud chat, or Batsy coordinating Work tasks. No dedicated Codex Cloud environment is required by this workflow. The worker needs a writable checkout, shell/Git tools, network access to the public repository, and whatever GitHub write access is available. State any unavailable capability instead of pretending work started.
 
 This is the first group of eight independently assigned implementation tasks. It is not a claim that all T3 parity work is covered or complete.

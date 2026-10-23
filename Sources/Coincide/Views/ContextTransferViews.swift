@@ -125,7 +125,6 @@ struct ContextTransferSheetContent: View {
             } else {
                 Picker("Destination provider", selection: providerBinding) {
                     ForEach(ProviderKind.builtIn) { Text($0.name).tag("provider:" + $0.rawValue) }
-                    ForEach(model.snapshot.acpAgents) { Text($0.name).tag("agent:" + $0.id.uuidString) }
                 }
                 if model.kind == .fork {
                     Picker("Destination workspace", selection: $model.workspaceID) { ForEach(model.workspaceOptions) { Text("\($0.title) · \($0.path)").tag($0.id) } }

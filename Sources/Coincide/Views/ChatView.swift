@@ -39,8 +39,7 @@ struct ChatView: View {
         if let thread {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
-                    ProviderMenu(store: store, thread: thread)
-                        .disabled(actionsLocked)
+                    Text(thread.title).font(.system(size: 15, weight: .medium)).lineLimit(1)
                     Spacer()
                     ConversationBranchChip(store: store, thread: thread)
                     Menu {
@@ -177,7 +176,8 @@ struct ChatView: View {
                                  }, stop: { Task { await store.interrupt(threadID) } },
                                  grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode,
                                  setGrokRuntimeMode: { store.setGrokRuntimeMode($0, threadID: threadID) },
-                                 skills: skillsModel, draftTools: store.composerDraftTools, draftThreadID: threadID, discardDraft: { store.discardComposerDraft(threadID) })
+                                 skills: skillsModel, draftTools: store.composerDraftTools, draftThreadID: threadID, discardDraft: { store.discardComposerDraft(threadID) },
+                                 modelControl: AnyView(ProviderMenu(store: store, thread: thread).disabled(actionsLocked)))
                 }
                 .coincideGlassGroup()
                 .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(minWidth: 0, maxWidth: .infinity)

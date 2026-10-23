@@ -2,7 +2,8 @@ import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case codex, claude, opencode, pi, muse, antigravity, acp
-    public static var builtIn: [Self] { [.codex, .claude, .opencode, .pi, .muse, .antigravity] }
+    public static var builtIn: [Self] { [.codex, .claude] }
+    public var isSupported: Bool { self == .codex || self == .claude }
     public var id: String { rawValue }
     public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .pi: "Pi"; case .muse: "Muse"; case .antigravity: "Antigravity"; case .acp: "ACP Agent" } }
     public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .pi: "pi"; case .muse: "muse"; case .antigravity: "agy_acp_server.par"; case .acp: "" } }
@@ -226,6 +227,7 @@ public enum ProviderSessions {
                             antigravityAccountRoot: URL? = nil,
                             codexInstallation: CodexInstallation = .shared,
                             codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared) throws -> any ProviderSession {
+        guard thread.provider.isSupported else { throw CoincideError("Coincide supports Codex and Claude only.") }
         if thread.provider == .codex {
             try CodexRuntimeConfigurationValidation.configuration(.init(thread: thread))
             let configuration = thread.codexRuntimeConfiguration ?? .init()
@@ -248,60 +250,6 @@ public enum ProviderSessions {
                 cwd: URL(fileURLWithPath: claudeCapture.workspacePath), resumeID: resume,
                 configuration: configuration, launchSelection: launch,
                 modelOptions: try ClaudeModelControl.options(in: claudeCapture))
-        }
-        if thread.provider == .antigravity {
-            try AntigravityConfigurationValidation.configuration(.init(thread: thread))
-            guard let configuration = thread.antigravityConfiguration else {
-                throw CoincideError("Choose the Antigravity runtime and its paired harness in Settings before sending a message.")
-            }
-            let pair = try antigravityInstallation.resolve(configuration: configuration)
-            let registryRoot = antigravityAccountRoot ?? (antigravityStateRoot?.deletingLastPathComponent() ??
-                FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Coincide", isDirectory: true))
-                .appendingPathComponent("AntigravitySettings", isDirectory: true)
-            try AntigravityAccountRegistry.validateKnownGeneration(configuration, rootURL: registryRoot)
-            return AntigravitySession(executable: pair.executable, cwd: URL(fileURLWithPath: thread.workspacePath),
-                configuration: configuration, permission: thread.permission,
-                credentialProvider: { try AntigravityCredentialStore.read(configuration: configuration) }, stateRoot: antigravityStateRoot,
-                installation: antigravityInstallation)
-        }
-        if thread.provider == .muse {
-            try MuseConfigurationValidation.configuration(.init(thread: thread))
-            guard let configuration = thread.museConfiguration, let executable = ProcessChannel.findExecutable(configuration.executable) else {
-                throw CoincideError("Install and sign in to Muse before sending a message.")
-            }
-            return MuseSession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration, permission: thread.permission)
-        }
-        if thread.provider == .pi {
-            try PiConfigurationValidation.configuration(.init(thread: thread))
-            guard let configuration = thread.piConfiguration,
-                  let executable = ProcessChannel.findExecutable(configuration.runtime?.executable ?? configuration.executable) else {
-                throw CoincideError("Install and sign in to Pi before sending a message.")
-            }
-            return PiSession(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration, permission: thread.permission,
-                             freshIntent: thread.activeRun?.configuration.piFreshSessionIntent)
-        }
-        if thread.provider == .opencode {
-            guard let configuration = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
-            try OpenCodeConfigurationValidation.thread(thread)
-            guard let executable = ProcessChannel.findExecutable(configuration.executable) else {
-                throw CoincideError("Install and sign in to the selected OpenCode version before sending a message.")
-            }
-            if configuration.generation == .v1 {
-                return OpenCodeV1Session(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration)
-            }
-            return OpenCodeV2Session(executable: executable, cwd: URL(fileURLWithPath: thread.workspacePath), configuration: configuration)
-        }
-        if thread.provider == .acp {
-            guard let agent = thread.acpAgent else { throw CoincideError("Choose an ACP agent in Settings before sending a message.") }
-            try agent.validate()
-            guard let executable = ProcessChannel.findExecutable(agent.executable) else {
-                throw CoincideError("The executable for \(agent.name) is not installed or executable.")
-            }
-            let cwd = URL(fileURLWithPath: thread.workspacePath)
-            let grokMode = try ProviderConfiguration(thread: thread).resolvedGrokRuntimeMode()
-            let arguments = grokMode.map(GrokACP.arguments(runtimeMode:)) ?? agent.arguments
-            if agent.experimentalV2 == true { return try ACP2Session(executable: executable, arguments: arguments, cwd: cwd, integration: agent.integration, grokRuntimeMode: grokMode) }
-            return try ACPSession(executable: executable, arguments: arguments, cwd: cwd, integration: agent.integration, grokRuntimeMode: grokMode)
         }
         guard let executable = ProcessChannel.findExecutable(thread.provider.executable) else {
             throw CoincideError("Install and sign in to \(thread.provider.name) CLI before sending a message.")

@@ -43,11 +43,6 @@ struct ProviderMenu: View {
                         if provider == thread.provider { Label(provider.name, systemImage: "checkmark") } else { Text(provider.name) }
                     }
                 }
-                ForEach(store.snapshot.acpAgents) { agent in
-                    Button { store.setACPAgent(agent, id: thread.id) } label: {
-                        if thread.acpAgent == agent { Label(agent.name, systemImage: "checkmark") } else { Text(agent.name) }
-                    }
-                }
                 Divider()
             }
             if thread.provider == .codex {

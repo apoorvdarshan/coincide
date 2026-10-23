@@ -1,5 +1,30 @@
 # Validation record
 
+## 2026-10-24 — Local Codex/Claude scope and CLI control
+
+- Provider selection, Settings, context-transfer choices, app-tool provider input,
+  conversation creation and production session creation now support Codex and
+  Claude only. Other-agent launch dispatch and ACP configuration UI were removed.
+  Historical schema and protocol implementation files are not fully purged.
+- Projects and Recents are separate sidebar sections. Project filtering and
+  keyboard traversal use the same visible conversations. The provider/model
+  selector is in the composer and the chat header shows its conversation title.
+- Added an authenticated local-owner CLI for status, projects, conversations,
+  selection, cached/refreshed models, empty conversation creation and native
+  window rendering. It is separate from provider-scoped app MCP authorization.
+- Final incremental build passed in 10.90 seconds. Signed development packaging
+  and launch verification passed. Live CLI status, projects and providers returned
+  the running app state; the provider list contained exactly Codex and Claude.
+  Cached model inspection returned an empty catalog without claiming model access.
+  Native content-view PNG capture succeeded; it does not capture every composited
+  system material or the window titlebar. No cua-driver was used for this check.
+- Automated tests and CI are intentionally deferred at the user's request for
+  this development pass. No provider prompt or authentication probe was sent.
+  Removed-provider and previous sidebar tests still need reconciliation with the
+  new product scope before resuming the full suite. The existing imported-Codex
+  app-tool connection failure and incomplete history import remain unresolved.
+
+
 ## 2026-10-23 — Reviewed context transfers and merge-back
 
 - Native and remote reviews pin latest-stable, recorded-run and exact current
