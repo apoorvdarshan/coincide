@@ -14,6 +14,8 @@
         A10000000000000000000008 = {isa = PBXBuildFile; fileRef = A20000000000000000000009; };
         A10000000000000000000009 = {isa = PBXBuildFile; fileRef = A20000000000000000000011; };
         A10000000000000000000010 = {isa = PBXBuildFile; fileRef = A20000000000000000000012; };
+        A10000000000000000000011 = {isa = PBXBuildFile; fileRef = A20000000000000000000013; };
+        A20000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = remote_script_seed_ui.py; sourceTree = "<group>"; };
         A20000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = pi_history_ui.py; sourceTree = "<group>"; };
         A20000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = claude_history_ui.py; sourceTree = "<group>"; };
         A20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderApp.swift; sourceTree = "<group>"; };
@@ -26,13 +28,13 @@
         A20000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = codex_models_ui.py; sourceTree = "<group>"; };
         A20000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineCLILauncher.swift; sourceTree = "<group>"; };
         A20000000000000000000010 = {isa = PBXFileReference; explicitFileType = compiled.mach-o.executable; includeInIndex = 0; path = CoincideOfflineCLI; sourceTree = BUILT_PRODUCTS_DIR; };
-        A30000000000000000000001 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000005, A20000000000000000000006, A20000000000000000000007, A20000000000000000000008, A20000000000000000000009, A20000000000000000000011, A20000000000000000000012, A30000000000000000000002); sourceTree = "<group>"; };
+        A30000000000000000000001 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000005, A20000000000000000000006, A20000000000000000000007, A20000000000000000000008, A20000000000000000000009, A20000000000000000000011, A20000000000000000000012, A20000000000000000000013, A30000000000000000000002); sourceTree = "<group>"; };
         A30000000000000000000002 = {isa = PBXGroup; children = (A20000000000000000000003, A20000000000000000000004, A20000000000000000000010); name = Products; sourceTree = "<group>"; };
         A40000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
         A40000000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002); runOnlyForDeploymentPostprocessing = 0; };
         A40000000000000000000003 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         A40000000000000000000004 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-        A40000000000000000000005 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000009, A10000000000000000000010); runOnlyForDeploymentPostprocessing = 0; };
+        A40000000000000000000005 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000009, A10000000000000000000010, A10000000000000000000011); runOnlyForDeploymentPostprocessing = 0; };
         A40000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000008); runOnlyForDeploymentPostprocessing = 0; };
         A50000000000000000000001 = {
             isa = PBXNativeTarget;

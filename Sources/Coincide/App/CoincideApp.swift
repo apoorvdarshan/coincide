@@ -48,7 +48,14 @@ struct CoincideApp: App {
             let store = WorkspaceStore(databaseURL: url, appMCPEnabled: AppLaunchConfiguration.appMCPEnabled(bundleIdentifier: Bundle.main.bundleIdentifier, environment: ProcessInfo.processInfo.environment))
             let mainWindows = MainWindowCoordinator()
             let dataRoot = url?.deletingLastPathComponent() ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Coincide", isDirectory: true)
-            let remoteStore = RemoteWorkspaceStore(root: dataRoot.appendingPathComponent("RemoteEnvironments", isDirectory: true))
+            let remoteRoot = dataRoot.appendingPathComponent("RemoteEnvironments", isDirectory: true)
+            let remoteStore: RemoteWorkspaceStore
+            if let fixtureFactory = try NativeRemoteUITestingConnection.clientFactory(bundleIdentifier: Bundle.main.bundleIdentifier,
+                bundleURL: Bundle.main.bundleURL, environment: ProcessInfo.processInfo.environment) {
+                remoteStore = RemoteWorkspaceStore(root: remoteRoot, clientFactory: fixtureFactory)
+            } else {
+                remoteStore = RemoteWorkspaceStore(root: remoteRoot)
+            }
             _store = State(initialValue: store)
             _remoteStore = State(initialValue: remoteStore)
             _mainWindows = State(initialValue: mainWindows)

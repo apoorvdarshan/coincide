@@ -11,7 +11,7 @@ GitHub Actions runs `script/test_macos_ui.sh --ci <verified-app-bundle>` after
 all SwiftPM tests, packaging, signature checks, and resource checks pass. The
 workflow partitions the complete XCTest source into four disjoint selections
 on separate macOS runners. Each runner reuses that same verified app artifact
-and executes its six or seven workflows serially with parallel XCTest execution
+and executes its seven workflows serially with parallel XCTest execution
 disabled. Use `--shard-index 0 --shard-count 4` after the app path to select a
 shard; the default still selects every workflow. Selection fails before building
 when the index/count is invalid, the shard would be empty, or a test declaration
@@ -62,6 +62,27 @@ rejects an invalid port and target while keeping the form open, cancels and
 reopens it, and verifies the local workspace and saved connections were not
 changed. It makes no SSH connection. Remote host/codec/Engine acceptance is
 covered separately by the SwiftPM process tests.
+
+The additional reviewed-remote-script workflow connects the real staged
+`CoincideEnvironment` helper over task-owned local stdio through a guarded DEBUG
+factory, using the native connection form and explicit trust. The seam requires
+the disposable bundle identity, private fixture root and separate opt-in; it
+accepts only one fixed synthetic connection and never starts SSH. Its seed peer
+uses the helper's ordinary project/thread/worktree/draft commands, then awaits
+graceful helper shutdown before the app connects. Provider and GitHub executable
+paths are `/usr/bin/false`, and all homes, Git settings and SQLite data are
+private. The original twenty-seven workflows remain selected exactly once; all
+twenty-eight workflows partition into four groups of seven.
+
+That workflow uses normal Settle, confirms discovery executes nothing, and
+requires the native review to contain a complete command larger than its 8 KiB
+preview plus the host shell and working directory. Cancelling review executes
+nothing. Explicit approval launches once, expanded output contains the real
+command's marker, and Stop must drain the recorded leader, child and grandchild.
+The conversation stays settled with the literal unsent draft and unchanged
+transcript/run audit; the local app workspace and original Git checkout remain
+unchanged. This fixture starts no provider turn. Compilation or offscreen
+controller tests do not establish that this hosted interaction has passed.
 
 The first two tests exercise light/dark actual windows, File-menu or keyboard project
 creation, an initial Git commit, project renaming, collapse with the selected

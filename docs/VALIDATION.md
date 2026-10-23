@@ -5007,3 +5007,69 @@ No installed app was replaced/opened, actual provider turn sent, authentication
 changed or real SSH host modified. Remote setup/standalone scripts, persistent
 host behavior, native GUI interaction for this new workflow, installed-provider
 acceptance and broader T3 parity remain unfinished.
+
+### Hosted remote-script workflow and OpenCode uncertainty ordering (2026-10-23)
+
+The hosted native suite now has **28 workflows**, selected exactly once across
+four seven-test shards. The new workflow connects to the real bundled
+CoincideEnvironment over private local stdio, discovers a separate worktree's
+settle script, loads a command beyond the 8 KiB preview, cancels without running,
+then explicitly approves once, checks real output and stops the exact recorded
+three-process tree. It preserves the unsent draft, empty transcript/run history,
+source checkout and local workspace; it does not claim provider-history coverage.
+
+The local transport is DEBUG-only and requires the exact UI-testing bundle,
+both explicit fixture flags, a physical private owner-0700 root and a fixed
+connection configuration. It pins/revalidates the bundled helper identity,
+uses private homes/configuration and fixed `/usr/bin/false` provider/GitHub
+executables, and passes no account credentials. Ordinary launches keep SSH.
+The seed helper uses production JSON-RPC registration/worktree/draft operations,
+not direct native-plan or snapshot injection. It rejects aliased/symlinked paths
+and foreign helpers. No new local GUI execution was performed.
+
+Separately, [hosted run 39984676572](https://github.com/apoorvdarshan/coincide/actions/runs/39984676572)
+passed Swift 6.3.3 compilation but failed its complete test job: 2302 declarations
+completed with two issues in the ambiguous-root/dropped-no-root OpenCode v2
+uncertain-command case. Its native UI shards were skipped; the aggregate native
+UI failure is not evidence that a GUI scenario ran and failed. Safe retained
+local diagnostics reproduce both cases: usage was present, one queued input was
+held, no runtime remained and no engine error occurred, but the record ended as
+`startFailed` instead of `connectionLost`. The generic failed-send effect could
+overtake the native reader after its usage event and before closure committed.
+
+The provider-start catch now waits for that exact native OpenCode v2 reader only
+when the thrown error is typed `uncertainDelivery`, then rethrows the original
+error. Usage remains before closure; no successful dispatch, fallback or retry
+is fabricated. Regression assertions retain the original end-reason, FIFO,
+restart and no-fallback requirements and additionally require recorded usage.
+
+Verification:
+
+- `swift build --build-tests` passes. The exact two-case failure reproduces
+  before the correction (16.274 seconds) and passes after it (0.380 seconds).
+- Broader selected regression run passes **40 declarations**: 11 UI in
+  0.347 seconds and 29 Core in 4.077 seconds, including command HTTP ownership,
+  usage, restart, remote script helper and test-connection guards.
+- All **75 Python checks pass in 2.631 seconds**, including exact native
+  discovery/count/shard validation. The native runner's final
+  `--build-for-testing` succeeds with its new bundled seed resource, without
+  launching any app.
+- An actual final packaged-helper seed smoke passes: native registration,
+  verified reused worktree, exact unsent draft, no transcript/run input, no
+  cleanup execution, clean helper exit and unchanged source bytes. Its private
+  synthetic fixture is removed afterward. This is protocol evidence, not GUI
+  interaction evidence.
+- Final ABI guard passes **1255 objects** (899 Core, 372 App), zero weak
+  async-default records and three local records. Build-only packaging, strict
+  deep signatures and native math resources pass. Compiled/package UUIDs match:
+  Coincide `37A97D65-E985-302D-9C35-DBF0263CD3BF`, CoincideEnvironment
+  `224230E4-4489-3F17-B161-90A3B683E24E`, CoincideScriptHelper
+  `93FFCE49-AECE-3D3D-A10C-9A1EA6BE1DF4`.
+
+Local logs use `/tmp/coincide-native-remote-script-ui-*-20261023.log` and
+`/tmp/coincide-opencode-ordering-*-20261023.log`. Run 39989401534 for the previous
+commit is still testing at this check and does not include the ordering fix.
+The next exact-head CI must verify the full suite and the new 28th native
+interaction. No installed app was replaced/opened, real SSH host changed,
+vendor model request made or authentication migrated. Full T3 parity remains
+unfinished.

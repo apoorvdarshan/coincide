@@ -110,6 +110,11 @@ func openCodeV2CommandHTTPIntegrationUnownedOrLostRootHoldsFIFOAcrossRestartWith
         }
         let stopped = try #require((await engine.current()).snapshot.threads.first { $0.id == thread.id })
         #expect(stopped.runHistory?.count == 1 && stopped.runHistory?.first?.status == .failed)
+        let failedRun = try #require(stopped.runHistory?.first), accounting = try #require(failedRun.providerUsage)
+        #expect(failedRun.endReason == .connectionLost)
+        try accounting.validate(provider: .opencode, runID: failedRun.id)
+        if case .openCode(let usage) = accounting { #expect(usage.usageStatus == .unavailable) }
+        else { Issue.record("Native OpenCode uncertainty must retain its own usage observation.") }
         #expect(stopped.queuedTurns.map(\.text) == [commandTCPSuccessor])
         #expect(stopped.queuedTurns.first?.configuration.openCodeConfiguration?.model?.variant == "fast")
         #expect(stopped.queuedTurns.first?.configuration.openCodeConfiguration?.agentID == "plan")
@@ -194,10 +199,31 @@ private struct CommandTCPFixture: Sendable {
         try FileManager.default.removeItem(at: root)
     }
     func failure(engine: WorkspaceEngine) async {
+        let update = await engine.current()
+        let thread = update.snapshot.threads.first { $0.provider == .opencode }
+        let record = thread?.runHistory?.first
+        let categories: JSONValue = .object([
+            "engineErrorPresent": .bool(update.error != nil),
+            "activeRunPresent": .bool(thread?.activeRun != nil),
+            "runtimeIDPresent": .bool(thread?.runtimeID != nil),
+            "nativeTurnPresent": .bool(thread?.activeRun?.nativeTurnID != nil),
+            "queuePaused": .bool(thread?.queuePaused == true),
+            "queueCount": .number(Double(thread?.queuedTurns.count ?? 0)),
+            "runCount": .number(Double(thread?.runHistory?.count ?? 0)),
+            "runStatus": record.map { .string($0.status.rawValue) } ?? .null,
+            "runEndReason": record?.endReason.map { .string($0.rawValue) } ?? .null,
+            "usagePresent": .bool(record?.providerUsage != nil),
+            "observedTurnCount": .number(Double(record?.turnIDs.count ?? 0))
+        ])
+        if let bytes = try? JSONEncoder().encode(categories) {
+            let file = root.appendingPathComponent("ownership-categories.json")
+            try? bytes.write(to: file, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        }
         await engine.shutdown()
         let target = root.deletingLastPathComponent().appendingPathComponent("coincide-command-http-failure-" + UUID().uuidString)
         if (try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil {
-            for name in ["wire.jsonl", "process.json", "command-posted", "command-acknowledged", "closed-after-eof"] where has(name) {
+            for name in ["wire.jsonl", "process.json", "command-posted", "command-acknowledged", "closed-after-eof", "ownership-categories.json"] where has(name) {
                 if let handle = try? FileHandle(forReadingFrom: root.appendingPathComponent(name)) {
                     let data = try? handle.read(upToCount: 131_072); try? handle.close()
                     if let data { try? data.write(to: target.appendingPathComponent(name)); try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.appendingPathComponent(name).path) }

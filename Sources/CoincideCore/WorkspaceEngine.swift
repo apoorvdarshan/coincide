@@ -3667,6 +3667,16 @@ public actor WorkspaceEngine {
             }
             return .succeeded
             } catch {
+                if runtime.session is OpenCodeV2Session,
+                   (error as? OpenCodeV2SessionError) == .uncertainDelivery,
+                   let reader = runtime.reader {
+                    // Native v2 has already emitted usage followed by its
+                    // connection-loss event. Let this exact reader commit both
+                    // before a generic failed-start effect can finish the run.
+                    // The loss transition retires the reader. This wait neither
+                    // retries input nor reports successful dispatch.
+                    await reader.value
+                }
                 if let delivery = contextDelivery { _ = try? await enqueue(.contextTransferUncertain(threadID: thread.id, runID: runID, deliveryID: delivery.id)) }
                 throw error
             }

@@ -61,6 +61,165 @@ final class CoincideDesktopUITests: XCTestCase {
         app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
+    @MainActor func testRemoteReviewedSettleScriptRequiresFullCommandApprovalAndStopDrainsOwnedJobs() throws {
+        let f = try prepareApplication(appearance: "light", diagnosticPrefix: "remote-settle-script")
+        let app = f.app, manager = FileManager.default
+        let source = f.root.appendingPathComponent("Remote Script Source"), workspace = f.root.appendingPathComponent("Remote Script Worktree")
+        try manager.createDirectory(at: source, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let command = """
+        printf 'one\\n' >> remote-script-executions
+        pwd -P > remote-script-cwd
+        printf '%s\\n' "$$" > remote-script-pids
+        /bin/sh -c 'trap "" HUP TERM; /bin/sleep 60 & child=$!; printf "%s\\n" "$$" "$child" >> remote-script-pids; wait' &
+        printf 'remote-reviewed-output😀\\n'
+        wait
+        """ + "\n" + String(repeating: "# Immutable full-command Unicode audit 🌍\n", count: 250) + "# remote-command-tail-after-preview-boundary\n"
+        XCTAssertGreaterThan(command.utf8.count, 8_192, "This workflow must hydrate the referenced command, beyond its preview.")
+        let script = ["name": "Reviewed Remote Cleanup", "command": command, "runOnSettle": true, "async": false] as [String: Any]
+        let config = source.appendingPathComponent("t3.json"), readme = source.appendingPathComponent("README.md")
+        let configuration = try JSONSerialization.data(withJSONObject: ["scripts": [script]], options: [.sortedKeys, .prettyPrinted])
+        let readmeBytes = Data("Private remote settle source stays untouched.\n".utf8)
+        try configuration.write(to: config); try readmeBytes.write(to: readme)
+        for arguments in [["init", "--initial-branch", "main"], ["add", "t3.json", "README.md"], ["commit", "--message", "Private remote settle fixture"],
+                          ["worktree", "add", "-b", "ui-remote-reviewed-cleanup", workspace.path, "main"]] {
+            _ = try runGit(["-C", source.path] + arguments, gitPath: f.gitPath, configuration: f.configuration, name: "remote-settle-" + arguments[0])
+        }
+        try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: workspace.path)
+        let head = try verifyHead(gitPath: f.gitPath, project: source, configuration: f.configuration, name: "remote-settle-source-head")
+        let headBytes = try Data(contentsOf: source.appendingPathComponent(".git/HEAD"))
+        app.launchEnvironment["COINCIDE_UI_TEST_REMOTE_SCRIPT"] = "1"
+        app.launchEnvironment["PATH"] = URL(fileURLWithPath: f.gitPath).deletingLastPathComponent().path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        let draft = "Unsent remote draft stays literal through reviewed cleanup and Stop 🌍"
+        let seeded = try seedRemoteScriptUIFixture(f.root, source: source, workspace: workspace, draft: draft, app: app)
+        let threadID = try XCTUnwrap(seeded["threadID"] as? String)
+        let remoteRoot = f.root.appendingPathComponent("coincide-ui-testing-remote-script-host")
+        let original = try claudeGUIThread(privateWorkspaceSnapshot(remoteRoot), id: threadID)
+        let originalMessages = try claudeGUIJSON(original["messages"]), originalHistory = try claudeGUIJSON(original["runHistory"])
+        let expectedWorkspace = try XCTUnwrap(seeded["workspacePath"] as? String)
+        let executions = workspace.appendingPathComponent("remote-script-executions"), pidFile = workspace.appendingPathComponent("remote-script-pids")
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        let localLoaded = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            (snapshot["projects"] as? [Any])?.isEmpty == true && (snapshot["threads"] as? [Any])?.isEmpty == true
+        }
+        let localBefore = try claudeGUIJSON(localLoaded)
+        app.menuBars.menuBarItems["Remote"].click(); app.menuItems["Remote Workspaces…"].click()
+        let window = app.windows["Remote Workspaces"]
+        XCTAssertTrue(window.waitForExistence(timeout: 10)); window.buttons["remote-add-connection"].click()
+        for (identifier, value) in [("remote-connection-name", "Private Native Script Host"), ("remote-connection-target", "coincide-ui-script"),
+                                    ("remote-connection-helper", "/coincide-ui-testing/CoincideEnvironment"),
+                                    ("remote-connection-directory", "/coincide-ui-testing/RemoteScriptData")] {
+            let field = app.textFields[identifier]
+            XCTAssertTrue(field.waitForExistence(timeout: 5)); field.click(); field.typeKey("a", modifierFlags: .command); field.typeText(value)
+        }
+        app.buttons["remote-connection-inspect"].click()
+        let trust = window.buttons["Trust and Connect"]
+        XCTAssertTrue(trust.waitForExistence(timeout: 10)); trust.click()
+        let row = window.buttons["remote-thread-" + threadID]
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.click()
+        let composer = window.textViews["Remote message"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10)); XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        let settle = window.buttons["remote-lifecycle-settle"]
+        XCTAssertTrue(settle.waitForExistence(timeout: 10)); XCTAssertTrue(settle.isEnabled && settle.isHittable); settle.click()
+        let confirm = app.buttons["Settle and Review Script"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.click()
+        let reviewButton = window.buttons["remote-settle-script-review"]
+        XCTAssertTrue(reviewButton.waitForExistence(timeout: 15))
+        XCTAssertFalse(manager.fileExists(atPath: executions.path), "Normal Settle and discovery must not execute the repository command.")
+        reviewButton.click()
+        let review = app.sheets.containing(.button, identifier: "remote-settle-script-approve").element
+        XCTAssertTrue(review.waitForExistence(timeout: 10))
+        let fullCommand = review.staticTexts["remote-settle-script-review-command"]
+        XCTAssertTrue(fullCommand.waitForExistence(timeout: 5))
+        let commandValue = (fullCommand.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? fullCommand.label
+        XCTAssertEqual(commandValue, command, "The native review must contain the complete verified command, including its omitted preview tail.")
+        for value in ["/bin/sh", expectedWorkspace] {
+            XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", value, value)).element.exists)
+        }
+        let approve = review.buttons["remote-settle-script-approve"]
+        XCTAssertTrue(approve.isEnabled && approve.isHittable)
+        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
+        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "remote-settle-full-command-native-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
+        review.buttons["Cancel"].click(); XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        XCTAssertFalse(manager.fileExists(atPath: executions.path), "Cancelling full-command review must not authorize execution.")
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        reviewButton.click(); XCTAssertTrue(review.waitForExistence(timeout: 10)); approve.click()
+        XCTAssertTrue(waitForAbsence(review, timeout: 5))
+        _ = try waitForPrivateWorkspace(remoteRoot, timeout: 15) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID),
+                  let settlement = thread["settlement"] as? [String: Any], let script = settlement["script"] as? [String: Any] else { return false }
+            return script["phase"] as? String == "running"
+        }
+        let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let text = try? String(contentsOf: pidFile, encoding: .utf8) else { return false }
+            let pids = text.split(whereSeparator: \.isNewline).compactMap { Int32($0) }
+            return pids.count == 3 && Set(pids).count == 3 && pids.allSatisfy { $0 > 1 && Darwin.kill($0, 0) == 0 }
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 10), .completed, "The exact leader, child and grandchild must be alive before Stop.")
+        let pids = try String(contentsOf: pidFile, encoding: .utf8).split(whereSeparator: \.isNewline).compactMap { Int32($0) }
+        XCTAssertEqual(pids.count, 3)
+        XCTAssertEqual(try String(contentsOf: executions, encoding: .utf8), "one\n")
+        let disclosure = window.descendants(matching: .any).matching(NSPredicate(
+            format: "(elementType == %d OR elementType == %d) AND (identifier == %@ OR label == %@ OR title == %@)",
+            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue,
+            "remote-settle-script-output-disclosure", "Settle Script Output", "Settle Script Output")).element
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5)); expandScriptOutputDisclosure(disclosure)
+        let output = window.staticTexts["remote-settle-script-output"]
+        let actualOutput = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (value CONTAINS %@ OR label CONTAINS %@)", "remote-reviewed-output😀", "remote-reviewed-output😀"), object: output)
+        XCTAssertEqual(XCTWaiter.wait(for: [actualOutput], timeout: 10), .completed)
+        let stop = window.buttons["remote-settle-script-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5)); XCTAssertTrue(stop.isEnabled && stop.isHittable); stop.click()
+        let drained = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in pids.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH } }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [drained], timeout: 10), .completed, "Stop must drain this fixture's recorded process tree.")
+        let after = try waitForPrivateWorkspace(remoteRoot, timeout: 10) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID),
+                  let settlement = thread["settlement"] as? [String: Any], let script = settlement["script"] as? [String: Any] else { return false }
+            return settlement["phase"] as? String == "settled" && script["phase"] as? String == "cancelled"
+        }
+        let thread = try claudeGUIThread(after, id: threadID)
+        XCTAssertEqual(try claudeGUIJSON(thread["messages"]), originalMessages); XCTAssertEqual(try claudeGUIJSON(thread["runHistory"]), originalHistory)
+        XCTAssertEqual(thread["draft"] as? String, draft); XCTAssertEqual(thread["workspacePath"] as? String, expectedWorkspace)
+        XCTAssertNil(thread["activeRun"]); XCTAssertTrue((thread["queuedTurns"] as? [Any])?.isEmpty == true)
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        XCTAssertEqual(try String(contentsOf: executions, encoding: .utf8), "one\n", "Metadata/output refresh and Stop must not repeat execution.")
+        let scriptCWD = try String(contentsOf: workspace.appendingPathComponent("remote-script-cwd"), encoding: .utf8).trimmingCharacters(in: .newlines)
+        let observedNode = try manager.attributesOfItem(atPath: scriptCWD), expectedNode = try manager.attributesOfItem(atPath: workspace.path)
+        XCTAssertEqual(observedNode[.systemNumber] as? NSNumber, expectedNode[.systemNumber] as? NSNumber)
+        XCTAssertEqual(observedNode[.systemFileNumber] as? NSNumber, expectedNode[.systemFileNumber] as? NSNumber)
+        XCTAssertEqual(try Data(contentsOf: readme), readmeBytes); XCTAssertEqual(try Data(contentsOf: config), configuration)
+        XCTAssertEqual(try Data(contentsOf: source.appendingPathComponent(".git/HEAD")), headBytes)
+        XCTAssertEqual(try verifyHead(gitPath: f.gitPath, project: source, configuration: f.configuration, name: "remote-settle-source-final-head"), head)
+        XCTAssertEqual(try verifyHead(gitPath: f.gitPath, project: workspace, configuration: f.configuration, name: "remote-settle-worktree-final-head"), head)
+        XCTAssertFalse(manager.fileExists(atPath: source.appendingPathComponent("remote-script-executions").path))
+        XCTAssertEqual(try claudeGUIJSON(privateWorkspaceSnapshot(f.root)), localBefore)
+        let image = XCTAttachment(screenshot: window.screenshot()); image.name = "remote-settle-stopped-with-output-and-preserved-draft"; image.lifetime = .keepAlways; add(image)
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+        XCTAssertTrue(pids.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
+    }
+
+    @MainActor private func seedRemoteScriptUIFixture(_ root: URL, source: URL, workspace: URL, draft: String, app: XCUIApplication) throws -> [String: Any] {
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        let appPath = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_APP_PATH"])
+        let helper = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Helpers/CoincideEnvironment")
+        let peer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "remote_script_seed_ui", withExtension: "py"))
+        let process = Process(), output = Pipe(), errors = Pipe(), exited = DispatchSemaphore(value: 0)
+        process.executableURL = URL(fileURLWithPath: python)
+        process.arguments = ["-I", "-S", peer.path, root.path, helper.path, source.path, workspace.path, draft]
+        process.environment = app.launchEnvironment; process.currentDirectoryURL = root
+        process.standardOutput = output; process.standardError = errors
+        process.terminationHandler = { _ in exited.signal() }
+        try process.run()
+        let completed = exited.wait(timeout: .now() + 45) == .success
+        if !completed { process.terminate(); if exited.wait(timeout: .now() + 5) != .success { Darwin.kill(process.processIdentifier, SIGKILL); _ = exited.wait(timeout: .now() + 5) } }
+        let bytes = output.fileHandleForReading.readDataToEndOfFile(), diagnostic = errors.fileHandleForReading.readDataToEndOfFile()
+        let evidence = XCTAttachment(string: "Private native-helper seed completed=\(completed) exit=\(process.terminationStatus)\n" + String(decoding: diagnostic.prefix(2_048), as: UTF8.self))
+        evidence.name = "remote-script-native-seed-lifecycle"; evidence.lifetime = .keepAlways; add(evidence)
+        XCTAssertTrue(completed); XCTAssertEqual(process.terminationStatus, 0)
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        XCTAssertEqual(value["hostExit"] as? Int, 0)
+        return value
+    }
+
     @MainActor func testNativeMainWindowCloseNewWindowAndReopenPreserveUnsentWorkspace() throws {
         let f = try prepareApplication(appearance: "light", diagnosticPrefix: "main-window")
         let app = f.app, root = f.root, manager = FileManager.default
