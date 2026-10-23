@@ -87,7 +87,7 @@ struct SettingsView: View {
                 Text("Group checkouts by repository, by repository and folder, or show them separately. Existing conversations keep their workspaces.")
                     .font(.caption).foregroundStyle(.secondary)
                 ExternalEditorSettings(store: store)
-                LabeledContent("Version", value: "0.1.0 (development)")
+                DesktopShellSettings(shell: .shared)
                 Link("Source Code", destination: URL(string: "https://github.com/apoorvdarshan/coincide")!)
                 Link("T3 Code", destination: URL(string: "https://github.com/pingdotgg/t3code")!)
                 Text("Coincide is an independent Swift port. T3 Code source is copyright © 2026 T3 Tools Inc., distributed under the MIT license.").font(.caption).foregroundStyle(.secondary)

@@ -18,30 +18,28 @@ cp "$BUILD_DIRECTORY/CoincideScriptHelper" "$APP_BUNDLE/Contents/Helpers/Coincid
 cp "$BUILD_DIRECTORY/CoincideEnvironment" "$APP_BUNDLE/Contents/Helpers/CoincideEnvironment"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Notices"
 /usr/bin/ditto "$BUILD_DIRECTORY/SwiftMath_SwiftMath.bundle" "$APP_BUNDLE/Contents/Resources/SwiftMath_SwiftMath.bundle"
-for NOTICE_FILE in "$ROOT_DIR"/docs/*-LICENSE.txt "$ROOT_DIR"/docs/*-NOTICE.txt; do
+for NOTICE_FILE in "$ROOT_DIR"/docs/*-LICENSE.txt "$ROOT_DIR"/docs/*-NOTICE.txt "$ROOT_DIR/docs/third-party-notices.json"; do
   /usr/bin/install -m 644 "$NOTICE_FILE" "$APP_BUNDLE/Contents/Resources/Notices/"
 done
-cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>$APP_NAME</string>
-<key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-<key>CFBundleName</key><string>$APP_NAME</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
-<key>NSPrincipalClass</key><string>NSApplication</string>
-<key>NSDocumentsFolderUsageDescription</key><string>Coincide and its coding agents access project files and the instructions you configure in Documents.</string>
-<key>CFBundleDocumentTypes</key><array><dict>
-<key>CFBundleTypeName</key><string>Project Folder</string>
-<key>CFBundleTypeRole</key><string>Viewer</string>
-<key>LSHandlerRank</key><string>Alternate</string>
-<key>LSItemContentTypes</key><array><string>public.folder</string></array>
-</dict></array>
-</dict></plist>
-PLIST
+# The icon is drawn from vector geometry by script/generate_app_icon.swift and cached by its hash.
+ICON_SOURCE="$ROOT_DIR/script/generate_app_icon.swift"
+ICON_CACHE="$ROOT_DIR/.build/coincide-app-icon"
+ICON_FILE="$ICON_CACHE/AppIcon-$(/usr/bin/shasum -a 256 "$ICON_SOURCE" | /usr/bin/awk '{ print $1 }').icns"
+if [[ ! -s "$ICON_FILE" ]]; then
+  ICON_WORK="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/coincide-icon.XXXXXX")"
+  swift "$ICON_SOURCE" "$ICON_WORK/AppIcon.iconset"
+  mkdir -p "$ICON_CACHE"
+  /usr/bin/iconutil -c icns -o "$ICON_WORK/AppIcon.icns" "$ICON_WORK/AppIcon.iconset"
+  /bin/mv -f "$ICON_WORK/AppIcon.icns" "$ICON_FILE"
+  /bin/rm -rf "$ICON_WORK"
+fi
+/usr/bin/install -m 644 "$ICON_FILE" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+APP_VERSION="$(/usr/bin/tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
+BUILD_NUMBER="${COINCIDE_BUILD_NUMBER:-1}"
+[[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "VERSION or COINCIDE_BUILD_NUMBER is invalid." >&2; exit 1; }
+/usr/bin/sed -e "s/@APP_NAME@/$APP_NAME/g" -e "s/@BUNDLE_ID@/$BUNDLE_ID/g" -e "s/@VERSION@/$APP_VERSION/g" -e "s/@BUILD@/$BUILD_NUMBER/g" \
+  "$ROOT_DIR/script/Info.plist.template" > "$APP_BUNDLE/Contents/Info.plist"
+/usr/bin/plutil -lint -s "$APP_BUNDLE/Contents/Info.plist"
 # A stable development identity preserves macOS file-access consent between builds.
 # Hosted CI has no identity and uses ad-hoc signing. An explicit override wins.
 SIGN_IDENTITY="${COINCIDE_SIGN_IDENTITY:-}"

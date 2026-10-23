@@ -1553,6 +1553,26 @@ final class WorkspaceStore {
             } catch { errorMessage = error.localizedDescription }
         }
     }
+    /// Deep links and the `coincide` command open a new conversation with an unsent draft.
+    /// The text is never queued, steered or submitted. A folder is added as a project first.
+    func openDraftThread(projectID: UUID?, folder: URL?, draft: String) async throws -> UUID {
+        guard !terminating, engine != nil else { throw CancellationError() }
+        var project: WorkspaceProject, addsProject = false
+        if let folder {
+            var directory: ObjCBool = false
+            guard folder.isFileURL, FileManager.default.fileExists(atPath: folder.path, isDirectory: &directory), directory.boolValue else {
+                throw CoincideError("Choose an existing project folder.")
+            }
+            project = WorkspaceProject(path: folder.path)
+            if let existing = snapshot.projects.first(where: { $0.path == project.path }) { project = existing } else { addsProject = true }
+        } else if let projectID, let existing = snapshot.projects.first(where: { $0.id == projectID }) { project = existing }
+        else { throw CoincideError("Add a project before opening this link.") }
+        var thread = newCodingThread(project: project); thread.draft = draft
+        _ = try await enqueue(addsProject ? .addProjectWithThread(project: project, thread: thread) : .createThread(thread)).value
+        guard self.thread(thread.id) != nil, !terminating else { throw CoincideError("The new conversation could not be opened.") }
+        selectedProjectID = project.id; showArchived = false; selectedThreadID = thread.id
+        return thread.id
+    }
     func setClaudeModelOptions(_ options: ClaudeModelOptions, model: ProviderModel, threadID: UUID, expected: ProviderConfiguration? = nil) {
         let captured = expected ?? thread(threadID).map { ProviderConfiguration(thread: $0) }
         let task = enqueuePreparing { [weak self] in

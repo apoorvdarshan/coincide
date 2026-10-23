@@ -67,6 +67,7 @@ struct CoincideApp: App {
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
             RemoteWorkspaceCommands()
+            DesktopShellCommands(store: store, shell: delegate.shell)
             MainWindowCommands(coordinator: mainWindows) {
                 Button("New Thread") {
                     if let remotePresentation { remotePresentation.newThread.wrappedValue = true }
@@ -137,22 +138,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var startup: Task<Void, Never>?
     private var ready = false
     private var isQuitting = false
+    let shell = DesktopShell.shared
     func attach(_ store: WorkspaceStore, mainWindows: MainWindowCoordinator, remoteStore: RemoteWorkspaceStore? = nil) {
         self.store = store
         self.remoteStore = remoteStore
         self.mainWindows = mainWindows
+        shell.attach(store: store, remoteStore: remoteStore, mainWindows: mainWindows)
         startLoading()
     }
     private func startLoading() {
         guard startup == nil, let store else { return }
         startup = Task { [weak self, weak store] in
             guard let store else { return }
+            await self?.shell.prepareEnvironment()
             await store.load()
             guard let self, self.store === store, !self.isQuitting else { return }
             self.ready = true
             let projects = self.pendingProjects; self.pendingProjects.removeAll()
             for url in projects { store.addProject(at: url) }
             self.mainWindows?.presentIfNeeded()
+            self.shell.didLoad()
         }
     }
     func waitForStartup() async { await startup?.value }
@@ -168,6 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !isQuitting else { return }
+        let urls = urls.filter { !shell.handle($0) }
+        guard !urls.isEmpty else { return }
         mainWindows?.presentIfNeeded()
         if ready, let store { for url in urls { store.addProject(at: url) } }
         else { pendingProjects.append(contentsOf: urls) }
@@ -185,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store else { return .terminateNow }
         guard !isQuitting else { return .terminateLater }
+        guard shell.confirmQuitWithRunningWork() else { return .terminateCancel }
         if !store.composerDraftTools.imports.isEmpty {
             let alert = NSAlert()
             alert.messageText = String(localized: "Quit with unfinished attachments?")
@@ -222,6 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             await store.shutdown()
+            self.shell.willTerminate()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

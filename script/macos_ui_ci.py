@@ -85,7 +85,8 @@ def verify_shards(directory, count=UI_SHARD_COUNT):
 
 def needs_native_ui(paths):
     prefixes = ("Sources/", "UITests/macOS/")
-    exact = {"Package.swift", "Package.resolved", "script/build_and_run.sh", "script/prepare_macos_signing.py", "script/test_macos_ui.sh", "script/macos_ui_ci.py", ".github/workflows/swift.yml"}
+    exact = {"Package.swift", "Package.resolved", "script/build_and_run.sh", "script/prepare_macos_signing.py", "script/test_macos_ui.sh", "script/macos_ui_ci.py", ".github/workflows/swift.yml",
+             "script/Info.plist.template", "script/generate_app_icon.swift", "VERSION"}
     return any(path.startswith(prefixes) or path in exact for path in paths)
 
 

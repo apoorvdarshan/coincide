@@ -77,6 +77,8 @@ chmod 700 "$SCRATCH"
 STAGED_APP="$SCRATCH/CoincideUITestApp.app"
 /usr/bin/ditto "$SOURCE_APP" "$STAGED_APP"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.apoorvdarshan.coincide.uitesting' "$STAGED_APP/Contents/Info.plist"
+# The synthetic copy must never become the handler for real coincide:// links.
+/usr/libexec/PlistBuddy -c 'Delete :CFBundleURLTypes' "$STAGED_APP/Contents/Info.plist" 2>/dev/null || true
 codesign --force --sign - "$STAGED_APP"
 codesign --verify --deep --strict "$STAGED_APP"
 mkdir -m 700 "$SCRATCH/coincide-ui-testing-bootstrap"

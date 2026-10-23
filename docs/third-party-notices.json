@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "id": "t3code",
+      "name": "T3 Code",
+      "version": "680152e27b2a961686389ca69a1557cbb2c55f08",
+      "license": "MIT",
+      "components": ["Coincide app"],
+      "distribution": "bundled",
+      "detail": "Coincide is an independent Swift port of T3 Code's design and behavior.",
+      "noticeFiles": ["T3-CODE-LICENSE.txt"],
+      "sourceURL": "https://github.com/pingdotgg/t3code"
+    },
+    {
+      "id": "swiftterm",
+      "name": "SwiftTerm",
+      "version": "1.99.1",
+      "license": "MIT",
+      "components": ["Terminal", "Remote environment helper"],
+      "distribution": "bundled",
+      "noticeFiles": ["SwiftTerm-LICENSE.txt"],
+      "sourceURL": "https://github.com/migueldeicaza/SwiftTerm",
+      "resolvedIdentity": "swiftterm"
+    },
+    {
+      "id": "swift-markdown",
+      "name": "Swift Markdown",
+      "version": "0.9.0",
+      "license": "Apache-2.0",
+      "components": ["Markdown"],
+      "distribution": "bundled",
+      "noticeFiles": ["SwiftMarkdown-LICENSE.txt", "SwiftMarkdown-NOTICE.txt"],
+      "sourceURL": "https://github.com/swiftlang/swift-markdown",
+      "resolvedIdentity": "swift-markdown"
+    },
+    {
+      "id": "swift-cmark",
+      "name": "swift-cmark (cmark-gfm)",
+      "version": "0.9.0",
+      "license": "BSD-2-Clause AND MIT AND CC-BY-SA-4.0",
+      "components": ["Markdown"],
+      "distribution": "bundled",
+      "noticeFiles": ["SwiftCMark-LICENSE.txt"],
+      "sourceURL": "https://github.com/swiftlang/swift-cmark",
+      "resolvedIdentity": "swift-cmark"
+    },
+    {
+      "id": "swiftmath",
+      "name": "SwiftMath",
+      "version": "1.7.3",
+      "license": "MIT",
+      "components": ["Markdown"],
+      "distribution": "bundled",
+      "noticeFiles": ["SwiftMath-LICENSE.txt"],
+      "sourceURL": "https://github.com/mgriebling/SwiftMath",
+      "resolvedIdentity": "swiftmath"
+    },
+    {
+      "id": "swiftmath-fonts",
+      "name": "SwiftMath math fonts",
+      "version": "1.7.3",
+      "license": "OFL-1.1 AND LPPL-1.3c AND MIT",
+      "components": ["Markdown"],
+      "distribution": "bundled",
+      "detail": "Math fonts and font metrics shipped inside the SwiftMath resource bundle, including STIX/XITS, Latin Modern and TeX Gyre fonts.",
+      "noticeFiles": ["SwiftMathFonts-OFL-LICENSE.txt", "SwiftMathFonts-GUST-LICENSE.txt", "SwiftMathFonts-MathChat-LICENSE.txt"],
+      "sourceURL": "https://github.com/mgriebling/SwiftMath/tree/main/Sources/SwiftMath/mathFonts.bundle"
+    },
+    {
+      "id": "yams",
+      "name": "Yams",
+      "version": "6.2.2",
+      "license": "MIT",
+      "components": ["Coincide app"],
+      "distribution": "bundled",
+      "noticeFiles": ["YAMS-LICENSE.txt", "YAMS-NOTICE.txt"],
+      "sourceURL": "https://github.com/jpsim/Yams",
+      "resolvedIdentity": "yams"
+    },
+    {
+      "id": "libyaml",
+      "name": "LibYAML",
+      "version": "Bundled with Yams 6.2.2",
+      "license": "MIT",
+      "components": ["Coincide app"],
+      "distribution": "bundled",
+      "noticeFiles": ["LIBYAML-LICENSE.txt"],
+      "sourceURL": "https://github.com/yaml/libyaml"
+    },
+    {
+      "id": "sqlite",
+      "name": "SQLite",
+      "version": "macOS system library",
+      "license": "blessing",
+      "components": ["Coincide app", "Remote environment helper"],
+      "distribution": "system",
+      "detail": "Linked from macOS. SQLite is in the public domain; Coincide does not ship a copy.",
+      "noticeFiles": [],
+      "sourceURL": "https://sqlite.org/copyright.html"
+    },
+    {
+      "id": "codex-managed-runtime",
+      "name": "Codex CLI (managed runtime)",
+      "version": "0.156.1",
+      "license": "Apache-2.0",
+      "components": ["Installed on demand"],
+      "distribution": "onDemand",
+      "detail": "Downloaded from OpenAI's GitHub release only when you install a managed Codex runtime in Settings. Its own license and notices ship inside the downloaded package.",
+      "noticeFiles": [],
+      "sourceURL": "https://github.com/openai/codex"
+    },
+    {
+      "id": "antigravity-managed-runtime",
+      "name": "Antigravity ACP server (managed runtime)",
+      "version": "1.3.0",
+      "license": "LicenseRef-Google-Terms",
+      "components": ["Installed on demand"],
+      "distribution": "onDemand",
+      "detail": "Downloaded from Google only when you install a managed Antigravity runtime in Settings. Google's own terms apply; Coincide does not redistribute it.",
+      "noticeFiles": [],
+      "sourceURL": "https://dl.google.com/agy-extensions/releases/"
+    }
+  ],
+  "excludedPins": [
+    {
+      "identity": "swift-argument-parser",
+      "reason": "Used only by SwiftTerm's Termcast tool, which Coincide does not build or ship."
+    }
+  ]
+}

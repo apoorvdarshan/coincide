@@ -82,6 +82,7 @@ struct ContentView: View {
         .focusedSceneValue(\.settlementPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $settlementThread)
         .focusedSceneValue(\.agentSessionImportPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil || scriptThread != nil ? nil : $agentSessionImportSheetPresented)
         .overlay { if store.isLoading { ProgressView("Opening workspace…").padding().coincideSurface() } }
+        .overlay(alignment: .topTrailing) { InAppBannerOverlay(center: .shared, hiddenThreadID: store.selectedThreadID) }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .disabled(store.isLoading)
         .task { await store.refreshExternalEditors() }
