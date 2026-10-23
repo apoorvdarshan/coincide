@@ -278,6 +278,7 @@ func nativeClaudeResumeBannerTracksExactSelectionAfterRecallAndShowsFailedConsum
     _ = NSApplication.shared
     let fixture = try await ClaudeHistoryUIFixture.make()
     do {
+        let sequence = await fixture.engine.current().sequence
         let (source, review, result) = try claudeUIReview(fixture, shape: "resume")
         let selection = try #require(result.selection)
         var operation = ConversationHistoryOperation(review: review, phase: .applied,
@@ -296,6 +297,8 @@ func nativeClaudeResumeBannerTracksExactSelectionAfterRecallAndShowsFailedConsum
         fixture.store.snapshot = applied
         #expect(!operation.needsPromptRecall && fixture.store.hasPendingClaudeResumeSelection(operation))
         #expect(!fixture.store.claudeResumeSelectionNeedsInspection(threadID: review.sourceThreadID))
+        let chat = ChatView(store: fixture.store, threadID: review.sourceThreadID)
+        #expect(!chat.composerHistoryLocked)
         let consumerID = UUID()
         var consuming = ProviderConfiguration(thread: applied.threads[index]); consuming.claudeLaunchSelection = selection
         let run = ActiveRun(id: consumerID, configuration: consuming, startedAt: Date())
@@ -310,6 +313,12 @@ func nativeClaudeResumeBannerTracksExactSelectionAfterRecallAndShowsFailedConsum
         applied.threads[index].claudeResumeConsumerRunID = consumerID; applied.threads[index].state = .failed
         fixture.store.snapshot = applied
         #expect(fixture.store.claudeResumeSelectionNeedsInspection(threadID: review.sourceThreadID))
+        #expect(chat.composerHistoryLocked, "A failed selected-context consumer holds nonempty composer input until read-only inspection.")
+        #expect(!fixture.store.snapshot.isConversationHistoryLocked(threadID: review.sourceThreadID), "The inspection action must remain available outside the composer hold.")
+        let held = fixture.store.snapshot
+        #expect(await fixture.store.submit("A held explicit input must remain unsent", threadID: review.sourceThreadID).value == false)
+        #expect(fixture.store.snapshot == held && fixture.capture.inputs.isEmpty && fixture.capture.captures.isEmpty)
+        #expect(await fixture.engine.current().sequence == sequence, "A held submission must not clear the draft or enter command admission.")
         let view = ConversationHistoryOperationView(store: fixture.store, operation: operation)
         let controller = NSHostingController(rootView: view)
         let size = controller.sizeThatFits(in: .init(width: 320, height: 650))
@@ -322,6 +331,7 @@ func nativeClaudeResumeBannerTracksExactSelectionAfterRecallAndShowsFailedConsum
         fixture.store.snapshot.threads[index].claudeResumeSelection = nil
         fixture.store.snapshot.threads[index].claudeResumeConsumerRunID = nil
         #expect(!fixture.store.hasPendingClaudeResumeSelection(operation))
+        #expect(!chat.composerHistoryLocked)
         #expect(fixture.capture.inputs.isEmpty)
     } catch { await fixture.close(); throw error }
     await fixture.close()

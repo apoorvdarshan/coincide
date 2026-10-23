@@ -1667,6 +1667,7 @@ final class WorkspaceStore {
         guard let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
+              !claudeResumeSelectionNeedsInspection(threadID: id),
               !isPullRequestCreationLocked(threadID: id), !isPullRequestCheckoutLocked(threadID: id) else { return Task { false } }
         let capturedClaude: ClaudeRuntimeConfiguration?
         if thread.provider == .claude, thread.claudeRuntimeConfiguration == nil {

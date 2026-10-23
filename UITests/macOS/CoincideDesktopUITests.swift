@@ -3477,6 +3477,12 @@ final class CoincideDesktopUITests: XCTestCase {
     }
 
     @MainActor private func selectedThreadIdentifier(in app: XCUIApplication) throws -> String {
+        // Foreground activation can precede workspace loading and the native
+        // outline's accessibility publication after a graceful relaunch.
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.threadRows(in: app).allElementsBoundByIndex.filter { $0.isSelected }.count == 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
         let selected = threadRows(in: app).allElementsBoundByIndex.filter { $0.isSelected }
         XCTAssertEqual(selected.count, 1)
         let row = try XCTUnwrap(selected.first)

@@ -60,8 +60,7 @@ struct CoincideApp: App {
         }
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
-            MainWindowCommands(coordinator: mainWindows)
-            CommandGroup(replacing: .newItem) {
+            MainWindowCommands(coordinator: mainWindows) {
                 Button("New Thread") { delegate.newThread() }.keyboardShortcut("n")
                 Button("New Project…") { newProjectPresentation?.wrappedValue = true }
                     .keyboardShortcut("n", modifiers: [.command, .shift]).disabled(newProjectPresentation == nil)

@@ -18,6 +18,9 @@ struct ChatView: View {
             store.isCheckpointRestoreLocked(threadID: threadID) || store.isPullRequestCreationLocked(threadID: threadID) ||
             store.isPullRequestCheckoutLocked(threadID: threadID)
     }
+    var composerHistoryLocked: Bool {
+        actionsLocked || store.claudeResumeSelectionNeedsInspection(threadID: threadID)
+    }
     private var draft: Binding<String> {
         Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
     }
@@ -150,7 +153,7 @@ struct ChatView: View {
                     ComposerView(text: draft, provider: thread.provider, providerName: thread.providerName, permission: thread.permission,
                                  busy: store.isBusy(threadID), submitting: sending || store.isAcceptingPromptSteering(threadID) || store.isPreparingWorkspace(threadID) || store.isImportingAttachments(threadID),
                                  hasAttachments: !thread.draftAttachments.isEmpty,
-                                 historyLocked: actionsLocked,
+                                 historyLocked: composerHistoryLocked,
                                  followUpBehavior: .init(rawValue: followUpBehavior) ?? .queue,
                                  steeringAvailable: store.steeringAvailability(threadID: threadID)?.canSteer == true,
                                  steeringExplanation: store.steeringExplanation(threadID: threadID),

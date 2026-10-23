@@ -84,14 +84,23 @@ final class MainWindowCoordinator {
 }
 
 @MainActor
-struct MainWindowCommands: Commands {
+struct MainWindowCommands<NewItemContent: View>: Commands {
     @Environment(\.openWindow) private var openWindow
     let coordinator: MainWindowCoordinator
+    private let newItems: NewItemContent
+
+    init(coordinator: MainWindowCoordinator, @ViewBuilder newItems: () -> NewItemContent) {
+        self.coordinator = coordinator
+        self.newItems = newItems()
+    }
 
     var body: some Commands {
         let action = openWindow
         let _ = coordinator.installOpenAction { action(id: MainWindowCoordinator.sceneID) }
-        CommandGroup(after: .newItem) {
+        // One owner for this placement: a separate replacing group removes
+        // commands inserted after the replaced .newItem anchor on macOS.
+        CommandGroup(replacing: .newItem) {
+            newItems
             Button("New Window") { coordinator.newWindow() }
                 .keyboardShortcut("n", modifiers: [.command, .option])
                 .accessibilityIdentifier("main-window-new")

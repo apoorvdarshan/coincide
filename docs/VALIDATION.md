@@ -59,6 +59,17 @@
   resource rendering pass. The async-default ABI guard checks 912 objects,
   including 604 Core and 235 app objects, with zero weak records. The installed
   application is not replaced or relaunched by these checks.
+- The older unsharded [909c1df hosted UI run](https://github.com/apoorvdarshan/coincide/actions/runs/39883323528)
+  reaches its 45-minute job limit after 16 passing and four failing workflows;
+  five workflows remain unverified. Retained accessibility trees identify a
+  missing File → New Window item, two restart assertions preceding publication
+  of an already-restored selection, and an enabled composer during Claude's
+  selected-context inspection hold. The menu now uses one replacement command
+  group; restart checks wait for exactly one actually selected native row; the
+  composer and submit preflight enforce the hold while leaving inspection
+  available. Four focused native declarations pass in 0.103 seconds and the
+  revised GUI runner compiles without launching an app. Fresh hosted acceptance
+  is still required; the timeout is not a passing UI result.
 
 ## 2026-10-23 — Installed OpenCode 2 MCP registration contract
 
