@@ -41,7 +41,7 @@ struct CoincideApp: App {
         do {
             let url = try AppLaunchConfiguration.databaseURL(bundleIdentifier: Bundle.main.bundleIdentifier,
                                                             environment: ProcessInfo.processInfo.environment)
-            _store = State(initialValue: WorkspaceStore(databaseURL: url))
+            _store = State(initialValue: WorkspaceStore(databaseURL: url, appMCPEnabled: AppLaunchConfiguration.appMCPEnabled(bundleIdentifier: Bundle.main.bundleIdentifier, environment: ProcessInfo.processInfo.environment)))
         } catch {
             FileHandle.standardError.write(Data("Coincide UI-test workspace configuration is invalid.\n".utf8))
             exit(EXIT_FAILURE)

@@ -91,7 +91,7 @@ func nativePiRejectsInvalidExecutableAndKeepsFailureTextFixed(_ executable: Stri
     #expect(try JSONDecoder().decode(ProviderConfiguration.self, from: JSONEncoder().encode(ProviderConfiguration(thread: legacy))).piConfiguration == nil)
     #expect(sqlite3_open(url.path, &raw) == SQLITE_OK)
     var statement: OpaquePointer?; #expect(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 40)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 41)
     sqlite3_finalize(statement); sqlite3_close(raw)
 }
 

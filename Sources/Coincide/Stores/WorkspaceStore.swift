@@ -222,7 +222,7 @@ final class WorkspaceStore {
     private var lastSequence: Int64 = -1
     private var terminating = false
 
-    init(databaseURL: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
+    init(databaseURL: URL? = nil, appMCPEnabled: Bool = true, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
          codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
          codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
@@ -256,10 +256,10 @@ final class WorkspaceStore {
                 codexOwnedRuntime: codexOwnedRuntime)
         }
         do {
-            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory); return }
+            if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, appMCPEnabled: appMCPEnabled, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory); return }
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Coincide", isDirectory: true)
-            engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), providerFactory: providers, projectScriptFactory: Self.managedScriptFactory)
+            engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), appMCPEnabled: appMCPEnabled, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory)
         } catch { errorMessage = error.localizedDescription }
     }
     init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,

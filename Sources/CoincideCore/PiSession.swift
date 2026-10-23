@@ -26,6 +26,9 @@ public actor PiSession: ProviderSession {
     private var bridgeOutstanding: PiInputBridgeReservation?
     private var bridgeRetirementNonce: UUID?
     private var bridgeObservationTask: Task<Void, Never>?
+    private var appMCPConnection: AppMCPConnection?
+    private var appMCPSidecar: PiMCPBridge.Sidecar?
+    private var appMCPReady = false
     private var closing = false
     private var broken = false
     private var registered = false
@@ -108,6 +111,18 @@ public actor PiSession: ProviderSession {
         self.freshIntent = freshIntent; self.historyWorkerRootURL = historyWorkerRootURL
         (events, output) = AsyncStream.makeStream()
     }
+    public nonisolated var supportsAppMCP: Bool { configuration.runtime != nil }
+
+    public func configureAppMCP(_ connection: AppMCPConnection) async throws {
+        guard configuration.runtime != nil, channel == nil, appMCPConnection == nil,
+              !closing, !broken else { throw PiMCPBridgeError.invalidConfiguration }
+        appMCPConnection = connection
+    }
+
+    private func requireAppMCPReady() throws {
+        guard appMCPConnection == nil || appMCPReady else { throw PiMCPBridgeError.invalidConfiguration }
+    }
+
     private func connect() throws {
         guard !closing, !broken else { throw CoincideError(PiProtocol.failure) }
         guard channel == nil else { return }
@@ -122,7 +137,15 @@ public actor PiSession: ProviderSession {
             if configuration.runtime != nil {
                 let reservation = root.appendingPathComponent("input-reservation.json")
                 bridgeFile = reservation
-                source = try PiProtocol.permissionExtension(permission, reservationPath: reservation.path, processEpoch: bridgeEpoch)
+                if let connection = appMCPConnection {
+                    let sidecar = try PiMCPBridge.materialize(endpoint: connection.endpoint, authorizationHeader: connection.authorizationHeader,
+                        scopeID: connection.scopeID, directory: root)
+                    appMCPSidecar = sidecar
+                    source = try PiProtocol.permissionExtension(permission, reservationPath: reservation.path, processEpoch: bridgeEpoch,
+                        mcpConfigurationPath: sidecar.configurationPath.path, mcpExtensionPath: path.path)
+                } else {
+                    source = try PiProtocol.permissionExtension(permission, reservationPath: reservation.path, processEpoch: bridgeEpoch)
+                }
             } else { source = PiProtocol.permissionExtension(permission) }
             try Data(source.utf8).write(to: path, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
@@ -140,7 +163,13 @@ public actor PiSession: ProviderSession {
                 for await event in process.events { guard let self else { return }; await self.consume(event) }
                 await self?.streamEnded()
             }
-        } catch { if let scratch { try? FileManager.default.removeItem(at: scratch) }; scratch = nil; throw CoincideError(PiProtocol.failure) }
+        } catch {
+            var owned = true
+            if let sidecar = appMCPSidecar { do { try sidecar.remove() } catch { owned = false } }
+            if owned, let scratch { try? FileManager.default.removeItem(at: scratch) }
+            appMCPSidecar = nil; scratch = nil
+            throw CoincideError(PiProtocol.failure)
+        }
     }
     public func models() async throws -> [ProviderModel] {
         guard historyOperation == nil else { throw ProviderHistoryError(.notIdle) }
@@ -536,6 +565,10 @@ public actor PiSession: ProviderSession {
         let token = UUID(); preparing = token
         do {
             let version = try await verifyVersion(); try connect()
+            if appMCPConnection != nil {
+                _ = try PiProtocol.state(await request("get_state"))
+                try requireAppMCPReady()
+            }
             let resume = captured.nativeThreadID ?? thread.providerThreadID
             let intent = captured.piFreshSessionIntent
             if let intent {
@@ -555,6 +588,7 @@ public actor PiSession: ProviderSession {
                     if let before { guard before == (try PiProtocol.resumeHeader(resume, cwd: cwd)) else { throw CoincideError(PiProtocol.rejected) } }
                 }
                 let state = try PiProtocol.state(await request("get_state"))
+                try requireAppMCPReady()
                 guard state.idle, resume == nil || resume == state.sessionFile else { throw CoincideError(PiProtocol.failure) }
                 baseline = state; nativeID = state.sessionFile; registered = true
                 appliedModel = state.model; appliedThinking = state.thinking
@@ -582,6 +616,7 @@ public actor PiSession: ProviderSession {
                 _ = try await request("set_thinking_level", fields: ["level": .string(thinking)]); appliedThinking = thinking
             }
             let before = try PiProtocol.state(await request("get_state"))
+            try requireAppMCPReady()
             let entries = try PiProtocol.entries(await request("get_entries"), state: before)
             let after = try PiProtocol.state(await request("get_state"))
             guard before == after, after.idle, after.sessionFile == nativeID,
@@ -616,6 +651,7 @@ public actor PiSession: ProviderSession {
         try durable.validate()
         do {
             let state = try PiProtocol.state(await request("get_state"))
+            try requireAppMCPReady()
             let entries = try PiProtocol.entries(await request("get_entries"), state: state)
             guard state == owned.state, state.idle, entries.observation == preparation.baseline,
                   prepared?.proof == preparation, preparing == preparation.id, generation == owned.generation,
@@ -999,6 +1035,10 @@ public actor PiSession: ProviderSession {
     private func consume(_ frame: JSONValue) throws {
         guard frame.object != nil, let type = frame["type"].string else { throw CoincideError(PiProtocol.failure) }
         if type == "extension_ui_request", frame["method"] == .string("notify"), let message = frame["message"].string {
+            if let connection = appMCPConnection {
+                if message == PiMCPBridge.readinessMessage(scopeID: connection.scopeID) { appMCPReady = true; return }
+                if message == PiMCPBridge.failureMessage(scopeID: connection.scopeID) { throw PiMCPBridgeError.invalidConfiguration }
+            }
             if message == PiInputBridge.readinessMessage(processEpoch: bridgeEpoch), bridgeFile != nil { bridgeReady = true; return }
             if message == PiInputBridge.failureMessage(processEpoch: bridgeEpoch), bridgeFile != nil { throw CoincideError(PiProtocol.historyFailure) }
         }
@@ -1234,7 +1274,7 @@ public actor PiSession: ProviderSession {
         for (id, pending) in ui { pending.deadline?.cancel(); output.yield(.sessionApprovalDismissed(id)) }; ui.removeAll(); active = nil
         let channel = channel, reader = reader, scratch = scratch, steering = Array(steeringTasks.values), version = versionTask
         let history = Array(historyTasks.values), worker = historyWorker, workerReader = historyWorkerReader
-        let bridgeObservation = bridgeObservationTask
+        let bridgeObservation = bridgeObservationTask, mcpSidecar = appMCPSidecar
         historyWorker = nil; historyWorkerReader = nil; historyWorkerRequests.removeAll()
         for task in steering { task.cancel() }
         for task in history { task.cancel() }
@@ -1246,9 +1286,15 @@ public actor PiSession: ProviderSession {
             for task in history { _ = await task.result }
             await bridgeObservation?.value
             if let version { _ = await version.result }
-            if let scratch { try? FileManager.default.removeItem(at: scratch) }
+            var mayRemoveScratch = true
+            if let mcpSidecar {
+                do { try mcpSidecar.remove() } catch { mayRemoveScratch = false }
+            }
+            if mayRemoveScratch, let scratch { try? FileManager.default.removeItem(at: scratch) }
         }
-        closeTask = task; await task.value; output.finish()
+        closeTask = task; await task.value
+        appMCPSidecar = nil; appMCPConnection = nil
+        output.finish()
     }
 }
 

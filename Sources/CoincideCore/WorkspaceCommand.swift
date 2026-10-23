@@ -8,6 +8,7 @@ public struct QueuedTurn: Codable, Sendable, Equatable, Identifiable {
     public var attachments: [ChatAttachment]? = nil
     public var checkpointPolicy: RunCheckpointPolicy? = nil
     public var existingMessageID: String? = nil
+    public var preservesTitle: Bool? = nil
 }
 public struct ActiveRun: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
@@ -69,12 +70,16 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case createThread(CodingThread)
     case editThread(UUID, ThreadEdit)
     case submit(threadID: UUID, text: String)
+    case submitFromAppMCP(threadID: UUID, text: String, queueEvenWhenIdle: Bool)
     case submitCapturedClaude(threadID: UUID, text: String, configuration: ClaudeRuntimeConfiguration)
     case submitCapturedPi(threadID: UUID, text: String, configuration: PiRuntimeConfiguration)
     case interrupt(threadID: UUID)
+    case interruptFromAppMCP(threadID: UUID, expectedRunID: UUID?, expectedRuntimeID: UUID?)
     case respond(threadID: UUID, requestID: JSONValue, response: ProviderApprovalResponse)
     case removeQueued(threadID: UUID, queuedID: UUID)
     case editQueued(threadID: UUID, queuedID: UUID)
+    case replaceQueuedText(threadID: UUID, queuedID: UUID, expectedText: String, text: String)
+    case moveQueued(threadID: UUID, queuedID: UUID, beforeID: UUID?, expectedOrder: [UUID])
     case resumeQueue(threadID: UUID)
     case addAttachments(threadID: UUID, attachments: [ChatAttachment])
     case removeAttachment(threadID: UUID, attachmentID: UUID)
@@ -105,6 +110,9 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
 // envelope indirect so decoding and broad switch dispatch copy an owned reference
 // instead of reserving every case's maximum payload on the worker stack.
 indirect enum EngineCommand: Codable, Sendable {
+    case appMCP(authority: AppMCPCommandAuthority, commands: [EngineCommand])
+    case appMCPTargetGuard(threadID: UUID, configuration: ProviderConfiguration)
+    case appMCPRequestGuard(threadID: UUID, runtimeID: UUID?, runID: UUID?, request: ApprovalRequest)
     case client(WorkspaceCommand)
     case runtimeOpened(threadID: UUID, runID: UUID, runtimeID: UUID)
     case piRunHistoryPrepared(threadID: UUID, runtimeID: UUID, preparation: PiRunHistoryPreparation, incarnation: UUID)
@@ -200,6 +208,16 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         let reduced: GeneralReduction
         switch command {
+        case .appMCPRequestGuard(let threadID, let runtimeID, let runID, let request):
+            guard request.isQuestion, let thread = snapshot.threads.first(where: { $0.id == threadID }),
+                  thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
+                  thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw WorkspaceCommandError("The pending question changed. Read the current request before answering it.") }
+            return Self(snapshot: snapshot)
+        case .appMCPTargetGuard(let threadID, let configuration):
+            guard let thread = snapshot.threads.first(where: { $0.id == threadID }), ProviderConfiguration(thread: thread) == configuration else { throw WorkspaceCommandError("The target configuration changed. Read it again before configuring this conversation.") }
+            return Self(snapshot: snapshot)
+        case .appMCP(let authority, let commands):
+            return try AppMCPAdmission.reduce(authority: authority, commands: commands, id: id, snapshot: snapshot, now: now)
         case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
              .conversationHistoryPiControlResponding, .conversationHistoryPiControlsClosed, .conversationHistoryPiCancelled, .piFreshSessionResolved:
             reduced = .init(decision: try reducePiHistory(command, snapshot: snapshot, now: now), requiresFinalization: true)
@@ -217,7 +235,7 @@ struct WorkspaceDecision: Sendable {
             reduced = .init(decision: try reduceCheckpointRestore(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.addProjectWithThread), .client(.startProjectClone):
             reduced = .init(decision: try reduceProjectRegistration(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
-        case .client(.submit), .client(.submitCapturedClaude), .client(.submitCapturedPi):
+        case .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi):
             reduced = .init(decision: try reduceSubmission(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .codexAuthenticationPreparing, .codexAccountConfigured:
             reduced = .init(decision: try reduceCodexAuthentication(command, snapshot: snapshot, now: now), requiresFinalization: true)
@@ -375,7 +393,11 @@ struct WorkspaceDecision: Sendable {
             guard let threadID = action.threadID, let index = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
             var thread = decision.snapshot.threads[index]
         switch action {
-            case .submit(_, let text), .submitCapturedClaude(_, let text, _), .submitCapturedPi(_, let text, _):
+            case .submit(_, let text), .submitFromAppMCP(_, let text, _), .submitCapturedClaude(_, let text, _), .submitCapturedPi(_, let text, _):
+                let independent: Bool
+                let queueEvenWhenIdle: Bool
+                if case .submitFromAppMCP(_, _, let queue) = action { independent = true; queueEvenWhenIdle = queue }
+                else { independent = false; queueEvenWhenIdle = false }
                 if case .submitCapturedClaude(_, _, let configuration) = action {
                     try configuration.validate()
                     guard thread.provider == .claude, configuration.registeredWorkspacePath == thread.workspacePath,
@@ -391,18 +413,20 @@ struct WorkspaceDecision: Sendable {
                 guard thread.piFreshConsumerRunID == nil || thread.isBusy else {
                     throw WorkspaceCommandError("Inspect the previous Pi empty-context attempt before sending another message.")
                 }
-                let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard (!text.isEmpty || !thread.draftAttachments.isEmpty), !thread.isArchived else { throw WorkspaceCommandError("Enter a message or attach a file in an active conversation.") }
+                let text = independent ? text : text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (!independent && !thread.draftAttachments.isEmpty)), !thread.isArchived else { throw WorkspaceCommandError("Enter a message or attach a file in an active conversation.") }
                 guard text.utf16.count <= 120_000 else { throw WorkspaceCommandError("Messages can contain up to 120,000 characters. Shorten the draft or attach it as a file.") }
                 let queued = QueuedTurn(id: id, text: text, configuration: .init(thread: thread), createdAt: now,
-                                        attachments: thread.draftAttachments.isEmpty ? nil : thread.draftAttachments, checkpointPolicy: thread.effectiveCheckpointPolicy)
-                thread.draft = ""; thread.draftAttachments = []
+                                        attachments: independent || thread.draftAttachments.isEmpty ? nil : thread.draftAttachments, checkpointPolicy: thread.effectiveCheckpointPolicy,
+                                        preservesTitle: independent && thread.title != "New thread" ? true : nil)
+                if !independent { thread.draft = ""; thread.draftAttachments = [] }
                 if thread.settlement != nil {
                     thread.queuedTurns.append(queued); thread.requestSettlementResume(now: now)
                 }
-                else if thread.isBusy || decision.snapshot.isPromptSteeringHoldingQueue(threadID: thread.id) || !decision.snapshot.providerReady(for: thread) {
-                    if thread.queuedTurns.isEmpty, !thread.isBusy, !decision.snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), thread.workspacePreparation?.cancelRequested != true, thread.workspacePreparation?.phase != .cancelled, thread.workspacePreparation?.phase != .interrupted,
+                else if queueEvenWhenIdle || (independent && !thread.queuedTurns.isEmpty) || thread.isBusy || decision.snapshot.isPromptSteeringHoldingQueue(threadID: thread.id) || !decision.snapshot.providerReady(for: thread) {
+                    if !queueEvenWhenIdle, thread.queuedTurns.isEmpty, !thread.isBusy, !decision.snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), thread.workspacePreparation?.cancelRequested != true, thread.workspacePreparation?.phase != .cancelled, thread.workspacePreparation?.phase != .interrupted,
                        ![.interrupted, .cancelled, .stopping].contains(thread.workspacePreparation?.setup?.phase) { thread.queuePaused = false }
+                    if queueEvenWhenIdle && !thread.isBusy { thread.queuePaused = true }
                     thread.queuedTurns.append(queued)
                 }
                 else {
@@ -441,7 +465,7 @@ struct WorkspaceDecision: Sendable {
              .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
              .checkpointRestoreInspected, .client(.acknowledgeCheckpointRestore),
              .client(.addProjectWithThread), .client(.startProjectClone),
-             .client(.submit), .client(.submitCapturedClaude), .client(.submitCapturedPi),
+             .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi), .appMCP, .appMCPTargetGuard, .appMCPRequestGuard,
              .codexAuthenticationPreparing, .codexAccountConfigured,
              .projectScriptStarted, .projectScriptExited, .projectScriptStopped:
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
@@ -1038,9 +1062,12 @@ struct WorkspaceDecision: Sendable {
                     thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
                     thread.workspacePath = path; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
                 }
-            case .submit, .submitCapturedClaude, .submitCapturedPi:
+            case .submit, .submitFromAppMCP, .submitCapturedClaude, .submitCapturedPi:
                 throw WorkspaceCommandError("This workspace command was routed incorrectly.")
-            case .interrupt:
+            case .interrupt, .interruptFromAppMCP:
+                if case .interruptFromAppMCP(_, let runID, let runtimeID) = action {
+                    guard thread.activeRun?.id == runID, thread.runtimeID == runtimeID else { throw WorkspaceCommandError("The target turn changed before Stop was accepted.") }
+                }
                 thread.queuePaused = true
                 if var run = thread.activeRun, !run.stopRequested {
                     run.stopRequested = true; thread.activeRun = run
@@ -1191,6 +1218,24 @@ struct WorkspaceDecision: Sendable {
             case .editQueued(_, let queuedID):
                 guard thread.draft.isEmpty, thread.draftAttachments.isEmpty, let item = thread.queuedTurns.first(where: { $0.id == queuedID }) else { throw WorkspaceCommandError("Clear the composer before editing a queued message.") }
                 thread.draft = item.text; thread.draftAttachments = item.attachments ?? []; thread.queuedTurns.removeAll { $0.id == queuedID }
+            case .replaceQueuedText(_, let queuedID, let expected, let text):
+                guard let position = thread.queuedTurns.firstIndex(where: { $0.id == queuedID }),
+                      thread.queuedTurns[position].text == expected, thread.queuedTurns[position].existingMessageID == nil,
+                      text.utf16.count <= 100_000, !text.contains("\0"),
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || thread.queuedTurns[position].attachments?.isEmpty == false else {
+                    throw WorkspaceCommandError("This queued input changed or retains an earlier steering acceptance. Read its current state before editing.")
+                }
+                thread.queuedTurns[position].text = text
+            case .moveQueued(_, let queuedID, let beforeID, let expected):
+                guard thread.queuedTurns.map(\.id) == expected, Set(expected).count == expected.count,
+                      queuedID != beforeID, let position = thread.queuedTurns.firstIndex(where: { $0.id == queuedID }),
+                      beforeID == nil || thread.queuedTurns.contains(where: { $0.id == beforeID }) else {
+                    throw WorkspaceCommandError("The queue changed. Read its current order before moving this input.")
+                }
+                let item = thread.queuedTurns.remove(at: position)
+                if let beforeID, let destination = thread.queuedTurns.firstIndex(where: { $0.id == beforeID }) {
+                    thread.queuedTurns.insert(item, at: destination)
+                } else { thread.queuedTurns.append(item) }
             case .resumeQueue:
                 guard thread.claudeResumeConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Claude resume attempt before resuming queued messages.") }
                 guard thread.piFreshConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Pi empty-context attempt before resuming queued messages.") }
@@ -1320,7 +1365,7 @@ struct WorkspaceDecision: Sendable {
             configuration.piFreshSessionIntent = intent; thread.piFreshConsumerRunID = queued.id
         }
         thread.activeRun = ActiveRun(id: queued.id, configuration: configuration, startedAt: now)
-        if thread.messages.isEmpty { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
+        if thread.messages.isEmpty && queued.preservesTitle != true { thread.title = queued.text.isEmpty ? (queued.attachments?.first?.name ?? "Attachments") : String(queued.text.prefix(80)) }
         var message: ChatMessage
         if let existingID = queued.existingMessageID, let index = thread.messages.firstIndex(where: { $0.id == existingID }) {
             message = thread.messages.remove(at: index); message.submissionError = nil
@@ -1673,7 +1718,7 @@ private extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
         case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
-        case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .submitCapturedClaude(let id, _, _), .submitCapturedPi(let id, _, _), .interrupt(let id), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
+        case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .submitFromAppMCP(let id, _, _), .submitCapturedClaude(let id, _, _), .submitCapturedPi(let id, _, _), .interrupt(let id), .interruptFromAppMCP(let id, _, _), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .replaceQueuedText(let id, _, _, _), .moveQueued(let id, _, _, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }
 }

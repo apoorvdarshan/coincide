@@ -181,6 +181,14 @@ must each be mapped and verified before declaring parity.
   Engine/Session skill/template/steering proof with a local synthetic stream,
   private configuration and OS-denied networking. This is not real account or
   model-service acceptance. See [native history boundaries](PI_HISTORY.md).
+- App MCP now has a native Swift loopback server, scoped header credentials,
+  a 30-tool catalogue and durable Engine admission, with captured Pi registration
+  composed into its existing permission/input-proof extension. The product
+  enables it by default; library callers opt in and ordinary synthetic GUI
+  fixtures remain isolated. Writes require a fresh exact active-run authority;
+  other-provider registration, background writes and broader upstream services
+  remain unfinished. This batch's verification is pending. See the
+  [implemented MCP contract and gaps](MCP.md).
 - Native Muse uses a separate MSP JSON-RPC connection with bounded framing,
   exact command admission, initialized-before-use ordering and an owned process.
   Captured model/effort/permission values govern each input; session identity and

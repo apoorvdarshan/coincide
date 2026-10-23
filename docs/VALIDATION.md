@@ -1,5 +1,71 @@
 # Validation record
 
+## 2026-10-23 — native app MCP, scoped Engine actions and Pi tools
+
+- Full serial `NSUnbufferedIO=YES swift test --no-parallel`, with the two
+  isolated pinned-Pi checks explicitly enabled, exits zero. The runners report
+  1699 test declarations: 1688 pass and eleven optional installed-provider
+  checks skip. Core reports 1470 declarations across eight suites in 334.449
+  seconds; native view/store 210 in 67.395 seconds, terminal six in 1.342 seconds
+  and Markdown thirteen in 0.143 seconds. The optional skips do not establish
+  authenticated installed-provider acceptance.
+- All forty focused MCP declarations pass in 2.419 seconds. After a final
+  local-variable naming refinement in argument validation, the same forty pass
+  again in 2.138 seconds. Coverage includes real loopback HTTP, both pinned MCP
+  versions, hostile framing/origins, capability isolation, exact request IDs,
+  explicit cancellation, response loss without replay, concurrent revocation
+  and shutdown joining an already-removed cancellation-resistant callback.
+- Real SQLite Engine checks cover literal independent input, preserved composer
+  text/attachments and explicit titles, captured FIFO settings, in-place queue
+  edits/reordering, durable retry IDs and parent-creation audit. Held metadata
+  cannot apply old model choices after a target runtime/home change. Exact Stop
+  guards refuse a successor run/runtime; pending-question guards refuse a reused
+  ID, changed question, changed runtime or an already-responding request. A
+  permission request cannot be answered through the question-only tool.
+- The intact pinned Pi 0.80.5 package runs through the production factory,
+  native RPC extension, real authenticated loopback MCP server, Engine and
+  SQLite. A synthetic in-process model reads its actual thread without an
+  approval, requests a rename that waits for supervised approval, observes the
+  native result, then reads the renamed thread on a second explicit turn using
+  the same provider runtime. Native tool rows retain exact run ownership and
+  history proof; journal rebuild/reopen retains the title and performs no replay.
+  The test verifies one owned native PID and its exit after shutdown. It passes
+  in 1.100 seconds in the full suite and 1.106 seconds in the final focused run.
+  The separate intact-package skill/template/steering test passes in 1.312
+  seconds in the full suite, retaining its independent digest-only journal proof.
+- These two package checks use private homes and a synthetic local model, with
+  OS policy denying external networking; the MCP check permits loopback only.
+  They use no saved account or paid model and make no authenticated-model claim.
+  Six generated-JavaScript HTTP peer variants additionally cover JSON/SSE,
+  wrong IDs, tool errors, redirects and exact explicit cancellation.
+- Storage 41 retains nonsecret parent-creation identities and independent queue
+  title intent; command receipt fingerprints bind scoped authority. Migration checks accept prior supported storage versions
+  and refuse storage 42 without downgrading it. Runtime bearer credentials are
+  non-Codable, passed through a private 0600 sidecar, and absent from the native
+  launch environment, extension source, journal and diagnostics.
+- The final 67 Python harness/configuration checks pass in 2.342 seconds.
+  Build-only packaging, deep strict signature verification and the packaged
+  native-resource CLI all pass, without opening or installing the desktop app.
+  The async-default ABI guard checks 889 objects (226 app and 583 Core), with
+  three local default records and zero weak records. The staged patch passes
+  the redacted secret scan. These checks do not establish notarized distribution
+  or hosted interactive GUI acceptance.
+- Hosted run `39871242182` at `b69e59d` passes its build/core/package job but
+  fails native UI: nine of 24 scenarios pass and fifteen fail. Artifact AX/logs
+  establish the three Claude cases used an over-128-character XCTest identifier
+  query and the three Pi cases searched alerts instead of actual nested sheets
+  or attempted ordinary Quit with history sheets still open. Targeted harness
+  corrections preserve exact labels, assertions, deadlines, durable unknown-state
+  evidence and normal Quit/relaunch. They have not yet passed hosted GUI testing.
+  Nine other failures show a new process with menus and no native window; their
+  cause remains unproven. No GUI pass or completion is inferred from local tests.
+
+The implemented surface and remaining services/providers are listed in
+[MCP.md](MCP.md). App MCP is enabled in the native product; library callers opt in
+explicitly. Ordinary synthetic GUI transport fixtures remain isolated from it.
+Full T3 parity, other-provider MCP registration and installed/authenticated
+provider acceptance remain unfinished.
+
 ## 2026-10-23 — native Pi/OpenCode commands, skills and expanded-input ownership
 
 - Full `NSUnbufferedIO=YES swift test --no-parallel` exits zero with 1659

@@ -4,6 +4,13 @@ import Foundation
 enum AppLaunchConfiguration {
     static let uiTestingBundleIdentifier = "com.apoorvdarshan.coincide.uitesting"
 
+    // Synthetic transport UI fixtures do not load vendor extensions. Their
+    // independent MCP acceptance run opts in explicitly; the product defaults on.
+    static func appMCPEnabled(bundleIdentifier: String?, environment: [String: String]) -> Bool {
+        guard bundleIdentifier == uiTestingBundleIdentifier else { return true }
+        return environment["COINCIDE_UI_TEST_MCP"] == "1"
+    }
+
     static func databaseURL(bundleIdentifier: String?, environment: [String: String]) throws -> URL? {
         guard bundleIdentifier == uiTestingBundleIdentifier else { return nil }
         #if DEBUG

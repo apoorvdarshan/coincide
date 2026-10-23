@@ -166,10 +166,21 @@ enum PiProtocol {
         }
         """
     }
-    static func permissionExtension(_ permission: PermissionMode, reservationPath: String, processEpoch: UUID) throws -> String {
+    static func permissionExtension(_ permission: PermissionMode, reservationPath: String, processEpoch: UUID,
+                                    mcpConfigurationPath: String? = nil, mcpExtensionPath: String? = nil) throws -> String {
         let fragment = try PiInputBridge.extensionFragment(reservationPath: reservationPath, processEpoch: processEpoch)
-        return PiInputBridge.extensionImports + "\n" + permissionExtension(permission).replacingOccurrences(
-            of: "export default function(pi) {", with: "export default function(pi) {\n" + fragment)
+        var source = permissionExtension(permission)
+        var imports = PiInputBridge.extensionImports
+        var body = fragment
+        if let mcpConfigurationPath, let mcpExtensionPath {
+            imports += "\n" + PiMCPBridge.extensionImports
+            body += "\n" + (try PiMCPBridge.extensionFragment(configurationPath: mcpConfigurationPath, extensionPath: mcpExtensionPath))
+            source = source.replacingOccurrences(of: "export default function(pi) {", with: "export default async function(pi) {")
+            source = source.replacingOccurrences(of: "if (mode === \"fullAccess\") return;",
+                with: "if (mode === \"fullAccess\") return;\n    if (" + PiMCPBridge.readOnlyToolExpression + ") return;")
+        } else if mcpConfigurationPath != nil || mcpExtensionPath != nil { throw PiMCPBridgeError.invalidConfiguration }
+        let factory = mcpConfigurationPath == nil ? "export default function(pi) {" : "export default async function(pi) {"
+        return imports + "\n" + source.replacingOccurrences(of: factory, with: factory + "\n" + body)
     }
 }
 

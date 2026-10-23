@@ -8,6 +8,26 @@ public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
     public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .pi: "pi"; case .muse: "muse"; case .antigravity: "agy_acp_server.par"; case .acp: "" } }
 }
 
+/// Ephemeral app-tool authority. Only a private provider handoff may expose
+/// the header; this value cannot enter the durable provider configuration.
+public struct AppMCPConnection: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public let endpoint: URL
+    public let authorizationHeader: String
+    public let scopeID: UUID
+    public init(endpoint: URL, authorizationHeader: String, scopeID: UUID) throws {
+        guard endpoint.scheme == "http", endpoint.host == "127.0.0.1", endpoint.port.map({ $0 > 0 && $0 <= 65_535 }) == true,
+              endpoint.path == "/mcp", endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
+              authorizationHeader.hasPrefix("Bearer "), authorizationHeader.utf8.count == 50,
+              authorizationHeader.dropFirst(7).utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }) else {
+            throw CoincideError("The app tool connection could not be configured.")
+        }
+        self.endpoint = endpoint; self.authorizationHeader = authorizationHeader; self.scopeID = scopeID
+    }
+    public var description: String { "AppMCPConnection(redacted)" }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror { Mirror(self, children: EmptyCollection<Mirror.Child>()) }
+}
+
 public enum ProviderEvent: Codable, Sendable, Equatable {
     case thread(String)
     case turn(String)
@@ -35,6 +55,8 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
 
 public protocol ProviderSession: Actor {
     nonisolated var events: AsyncStream<ProviderEvent> { get }
+    nonisolated var supportsAppMCP: Bool { get }
+    func configureAppMCP(_ connection: AppMCPConnection) async throws
     func models() async throws -> [ProviderModel]
     func codexSkills(forceReload: Bool) async throws -> ProviderSkillInventory
     func providerCommands(forceReload: Bool) async throws -> ProviderCommandInventory
@@ -86,6 +108,8 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public nonisolated var supportsAppMCP: Bool { false }
+    public func configureAppMCP(_ connection: AppMCPConnection) async throws { throw MCPError(.unavailable) }
     public func preparePiRun(input: ProviderInput, thread: CodingThread) async throws -> PiRunHistoryPreparation {
         throw ProviderHistoryError(.unsupported)
     }

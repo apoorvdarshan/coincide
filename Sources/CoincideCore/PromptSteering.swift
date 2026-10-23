@@ -41,6 +41,9 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
     public let messageID: String
     public let queuedID: UUID?
     public let configuration: ProviderConfiguration
+    /// Independent app-tool input does not consume the user's composer.
+    /// nil retains the exact legacy encoding and composer ownership behavior.
+    public var preservesComposer: Bool?
     public let createdAt: Date
     public var updatedAt: Date
     public var phase: PromptSteeringPhase
@@ -57,15 +60,15 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
     public init(id: UUID = UUID(), effectID: UUID = UUID(), threadID: UUID, projectID: UUID,
                 sourceIncarnation: UUID, runtimeID: UUID, runID: UUID, nativeThreadID: String, nativeTurnID: String,
                 input: QueuedTurn, messageID: String, queuedID: UUID? = nil, configuration: ProviderConfiguration,
-                createdAt: Date = Date(), phase: PromptSteeringPhase = .accepted) {
+                createdAt: Date = Date(), phase: PromptSteeringPhase = .accepted, preservesComposer: Bool = false) {
         self.init(id: id, effectID: effectID, threadID: threadID, projectID: projectID, sourceIncarnation: sourceIncarnation,
             runtimeID: runtimeID, runID: runID, nativeThreadID: nativeThreadID, target: .nativeTurn(nativeTurnID),
-            input: input, messageID: messageID, queuedID: queuedID, configuration: configuration, createdAt: createdAt, phase: phase)
+            input: input, messageID: messageID, queuedID: queuedID, configuration: configuration, createdAt: createdAt, phase: phase, preservesComposer: preservesComposer)
     }
     public init(id: UUID = UUID(), effectID: UUID = UUID(), threadID: UUID, projectID: UUID,
                 sourceIncarnation: UUID, runtimeID: UUID, runID: UUID, nativeThreadID: String, target: ProviderSteeringTarget,
                 input: QueuedTurn, messageID: String, queuedID: UUID? = nil, configuration: ProviderConfiguration,
-                createdAt: Date = Date(), phase: PromptSteeringPhase = .accepted) {
+                createdAt: Date = Date(), phase: PromptSteeringPhase = .accepted, preservesComposer: Bool = false) {
         self.id = id; self.effectID = effectID; self.threadID = threadID; self.projectID = projectID
         self.sourceIncarnation = sourceIncarnation; self.runtimeID = runtimeID; self.runID = runID
         self.nativeThreadID = nativeThreadID; self.input = input
@@ -74,6 +77,7 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
         case .adapterRun(let id): nativeTurnID = nil; adapterRunID = id
         }
         self.messageID = messageID; self.queuedID = queuedID; self.configuration = configuration
+        self.preservesComposer = preservesComposer ? true : nil
         self.createdAt = createdAt; updatedAt = createdAt; self.phase = phase; fallbackAllowed = true
     }
     public func validate() throws {
@@ -84,6 +88,7 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
         }
         try ProviderSteeringValidation.id(messageID); try ProviderHistoryValidation.path(configuration.workspacePath)
         try AttachmentLimits.validate(input.attachments ?? [])
+        guard preservesComposer != true || (queuedID == nil && input.attachments?.isEmpty != false) else { throw ProviderSteeringError(.invalidRequest) }
         var inputConfiguration = input.configuration; inputConfiguration.nativeThreadID = configuration.nativeThreadID
         inputConfiguration.claudeLaunchSelection = configuration.claudeLaunchSelection
         guard inputConfiguration == configuration, Set([id, effectID, threadID, projectID, runID, input.id]).count == 6,
@@ -299,7 +304,7 @@ extension WorkspaceDecision {
         if let queuedID = operation.queuedID {
             guard let queued = thread.queuedTurns.firstIndex(where: { $0.id == queuedID }), thread.queuedTurns[queued] == operation.input else { throw WorkspaceCommandError("The captured queued input changed. Choose it again.") }
             thread.queuedTurns.remove(at: queued)
-        } else {
+        } else if operation.preservesComposer != true {
             guard thread.draftAttachments == (operation.input.attachments ?? []) else { throw WorkspaceCommandError("The draft attachments changed before steering was accepted.") }
             if thread.draft.trimmingCharacters(in: .whitespacesAndNewlines) == operation.input.text { thread.draft = "" }
             thread.draftAttachments = []
@@ -369,7 +374,7 @@ extension WorkspaceDecision {
     mutating func preventDelayedPromptSteering(_ command: WorkspaceCommand, now: Date) {
         let threadIDs: Set<UUID>
         switch command {
-        case .interrupt(let id), .editThread(let id, .archived(true)): threadIDs = [id]
+        case .interrupt(let id), .interruptFromAppMCP(let id, _, _), .editThread(let id, .archived(true)): threadIDs = [id]
         case .removeProject(let project, _): threadIDs = Set(snapshot.threads.filter { $0.projectID == project }.map(\.id))
         case .removeProjectGroup(_, let projects, _): threadIDs = Set(snapshot.threads.filter { thread in projects.contains { $0.id == thread.projectID } }.map(\.id))
         case .removeQueued(let threadID, let queuedID), .editQueued(let threadID, let queuedID):

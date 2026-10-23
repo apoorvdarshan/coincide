@@ -56,6 +56,15 @@ supports one leading native skill command, while v2 attaches exact native skill
 IDs. Native slash commands and compaction are implemented for these providers.
 Other providers' commands/skills and hosted picker acceptance remain unfinished.
 
+App MCP now has source implementation for a native Swift loopback server,
+provider-session header leases, 30 capability-filtered tools and durable Engine
+mutations. Captured Pi sessions register those tools through the same awaited
+extension as permission handling and authored-input proof. Only fresh exact
+active runs can write; background writes and other providers' registration remain
+gaps. The supported MCP profiles are 2025-06-18 and 2025-11-25. Current-batch
+verification is pending; no live provider/authentication or full-parity claim is
+made here. See [the MCP contract and unsupported variants](MCP.md).
+
 Pi and Muse active steering are now implemented in native source, with new
 offline steering fixtures passing focused checks and the full local serial suite. Pi uses an explicit
 adapter-run fence instead of a native turn ID; new captured runs retain separately

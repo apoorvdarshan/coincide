@@ -100,6 +100,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var runHistory: [ThreadRunRecord]?
     public var checkpointPolicy: RunCheckpointPolicy?
     public var forkedFromHistoryOperationID: UUID?
+    public var createdByAppMCP: AppMCPThreadOrigin?
     public var pullRequestCheckoutOperationID: UUID?
     public var runtimeID: UUID?
     public var steeringCapabilityRevision: UInt64?
@@ -116,7 +117,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
+        case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, forkedFromHistoryOperationID, createdByAppMCP, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, settlement
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
         case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
         case piFreshSessionIntent, piFreshConsumerRunID, piFreshContextResolutions
@@ -168,6 +169,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         runHistory = try values.decodeIfPresent([ThreadRunRecord].self, forKey: .runHistory)
         checkpointPolicy = try values.decodeIfPresent(RunCheckpointPolicy.self, forKey: .checkpointPolicy)
         forkedFromHistoryOperationID = try values.decodeIfPresent(UUID.self, forKey: .forkedFromHistoryOperationID)
+        createdByAppMCP = try values.decodeIfPresent(AppMCPThreadOrigin.self, forKey: .createdByAppMCP)
         pullRequestCheckoutOperationID = try values.decodeIfPresent(UUID.self, forKey: .pullRequestCheckoutOperationID)
         runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
         steeringCapabilityRevision = try values.decodeIfPresent(UInt64.self, forKey: .steeringCapabilityRevision)

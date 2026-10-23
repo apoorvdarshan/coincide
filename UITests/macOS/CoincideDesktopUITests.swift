@@ -1360,7 +1360,7 @@ final class CoincideDesktopUITests: XCTestCase {
         try waitForClaudeGUIEnabled(sheet.buttons["conversation-history-close"], timeout: 10)
         capture(f.app, name: "pi-history-cancelled-without-native-copy")
         let keep = try revealPiHistoryControl("conversation-history-pi-keep-original", in: sheet); keep.click()
-        let confirm = f.app.alerts.firstMatch.buttons["conversation-history-pi-keep-original-confirm"]
+        let confirm = f.app.sheets.containing(.button, identifier: "conversation-history-pi-keep-original-confirm").firstMatch.buttons["conversation-history-pi-keep-original-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.click()
         _ = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "failed" }
         sheet.buttons["conversation-history-close"].click(); try nativeHistoryDone(in: f.app).click()
@@ -1381,19 +1381,22 @@ final class CoincideDesktopUITests: XCTestCase {
         let sourceID = try seedPiHistoryGUI(f), original = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
         let path = try XCTUnwrap(original["providerThreadID"] as? String), before = try Data(contentsOf: URL(fileURLWithPath: path))
         replaceClaudeGUIDraft("Keep original Pi draft after lost reply", in: f.app)
-        _ = try beginPiGUIRewind(f, prompt: Self.piBetaPrompt)
+        let sheet = try beginPiGUIRewind(f, prompt: Self.piBetaPrompt)
         let unknown = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "unconfirmed" }
         XCTAssertNil(latestPiGUIOperation(unknown)?["piCandidates"], "A lost fork reply cannot invent a candidate identity.")
         let orphan = try XCTUnwrap(historyWire(f.wire).last { $0["kind"] as? String == "fork-result" })
         let orphanFile = URL(fileURLWithPath: try XCTUnwrap(orphan["candidateFile"] as? String))
         XCTAssertNotEqual(orphanFile.path, path); XCTAssertTrue(FileManager.default.fileExists(atPath: orphanFile.path))
         let orphanBytes = try Data(contentsOf: orphanFile)
+        try waitForClaudeGUIEnabled(sheet.buttons["conversation-history-close"], timeout: 10)
+        sheet.buttons["conversation-history-close"].click(); try nativeHistoryDone(in: f.app).click()
+        XCTAssertEqual(try claudeGUIJSON(latestPiGUIOperation(privateWorkspaceSnapshot(f.root))), try claudeGUIJSON(latestPiGUIOperation(unknown)))
         f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
         f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
         XCTAssertEqual(try selectedThreadIdentifier(in: f.app), sourceID)
         let keep = f.app.buttons["conversation-history-pi-keep-original"]
         XCTAssertTrue(keep.waitForExistence(timeout: 10)); keep.click()
-        let confirm = f.app.alerts.firstMatch.buttons["conversation-history-pi-keep-original-confirm"]
+        let confirm = f.app.sheets.containing(.button, identifier: "conversation-history-pi-keep-original-confirm").firstMatch.buttons["conversation-history-pi-keep-original-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.click()
         let kept = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "failed" }
         let current = try claudeGUIThread(kept, id: sourceID), operation = try XCTUnwrap(latestPiGUIOperation(kept))
@@ -1442,7 +1445,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(inspect.waitForExistence(timeout: 10)); inspect.click()
         let keep = f.app.buttons["conversation-history-pi-keep-empty"]
         XCTAssertTrue(keep.waitForExistence(timeout: 10)); keep.click()
-        let alert = f.app.alerts.firstMatch
+        let alert = f.app.sheets.containing(.button, identifier: "conversation-history-pi-keep-empty-confirm").firstMatch
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
         XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "may have been processed", "may have been processed")).firstMatch.exists)
         let confirm = alert.buttons["conversation-history-pi-keep-empty-confirm"]
@@ -1980,7 +1983,8 @@ final class CoincideDesktopUITests: XCTestCase {
         return selection
     }
     @MainActor private func assertClaudeGUIPendingBanner(_ app: XCUIApplication) throws {
-        XCTAssertTrue(app.staticTexts["Your next explicit message will use the saved Claude context. Existing native transcripts are retained; this selection did not send a message."].waitForExistence(timeout: 10))
+        let pendingText = "Your next explicit message will use the saved Claude context. Existing native transcripts are retained; this selection did not send a message."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", pendingText)).firstMatch.waitForExistence(timeout: 10))
     }
     @MainActor private func replaceClaudeGUIDraft(_ text: String, in app: XCUIApplication) {
         let composer = app.textViews["composer-input"]

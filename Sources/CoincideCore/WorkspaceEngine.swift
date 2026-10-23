@@ -89,6 +89,12 @@ extension WorkspaceEngine {
     }
 
     @discardableResult public func steerPrompt(threadID: UUID, text: String, expectedRunID: UUID, queuedID: UUID? = nil) async throws -> WorkspaceCommandReceipt {
+        return try await preparePromptSteering(threadID: threadID, text: text, expectedRunID: expectedRunID, queuedID: queuedID, preservesComposer: false).receipt
+    }
+    func steerAppMCPPrompt(threadID: UUID, text: String, expectedRunID: UUID) async throws -> (receipt: WorkspaceCommandReceipt, operationID: UUID) {
+        return try await preparePromptSteering(threadID: threadID, text: text, expectedRunID: expectedRunID, queuedID: nil, preservesComposer: true)
+    }
+    private func preparePromptSteering(threadID: UUID, text: String, expectedRunID: UUID, queuedID: UUID?, preservesComposer: Bool) async throws -> (receipt: WorkspaceCommandReceipt, operationID: UUID) {
         let availability = await promptSteeringAvailability(threadID: threadID, queuedID: queuedID)
         guard availability.canSteer, availability.runID == expectedRunID,
               let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), let run = thread.activeRun,
@@ -101,17 +107,18 @@ extension WorkspaceEngine {
             guard let queued = thread.queuedTurns.first(where: { $0.id == queuedID }) else { throw WorkspaceCommandError("The selected queued input changed.") }
             input = queued
         } else {
-            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard value.utf16.count <= 120_000, !value.isEmpty || !thread.draftAttachments.isEmpty else { throw WorkspaceCommandError("Enter a message or attach a file before steering.") }
+            let value = preservesComposer ? text : text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard value.utf16.count <= 120_000, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (!preservesComposer && !thread.draftAttachments.isEmpty) else { throw WorkspaceCommandError("Enter a message or attach a file before steering.") }
             input = .init(id: UUID(), text: value, configuration: run.configuration, createdAt: Date(),
-                          attachments: thread.draftAttachments.isEmpty ? nil : thread.draftAttachments, checkpointPolicy: thread.effectiveCheckpointPolicy)
+                          attachments: preservesComposer || thread.draftAttachments.isEmpty ? nil : thread.draftAttachments, checkpointPolicy: thread.effectiveCheckpointPolicy)
         }
-        let operation = PromptSteeringOperation(threadID: threadID, projectID: thread.projectID, sourceIncarnation: incarnation,
+        var operation = PromptSteeringOperation(threadID: threadID, projectID: thread.projectID, sourceIncarnation: incarnation,
             runtimeID: runtime.id, runID: run.id, nativeThreadID: nativeID, target: target, input: input,
             messageID: "user-\(input.id.uuidString)", queuedID: queuedID, configuration: run.configuration)
+        if preservesComposer { operation.preservesComposer = true }
         let receipt = try await enqueue(.promptSteeringAccepted(operation))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
-        return receipt
+        return (receipt, operation.id)
     }
 
     private func ownsPromptSteeringEvent(_ command: EngineCommand) -> Bool {
@@ -1147,12 +1154,16 @@ extension WorkspaceEngine {
         let waiters = job.barrierWaiters
         piHistoryJobs[operationID]?.barrierWaiters = [:]
         for waiter in waiters.values { waiter.resume(throwing: CancellationError()) }
-        if let id = job.reusedRuntimeID, runtimes[job.threadID]?.id == id { runtimes.removeValue(forKey: job.threadID) }
+        let reusedSource: Runtime?
+        if let id = job.reusedRuntimeID, runtimes[job.threadID]?.id == id { reusedSource = runtimes.removeValue(forKey: job.threadID) }
+        else { reusedSource = nil }
         let failedSource: Runtime?
         if job.streamFailed, let id = job.sourceRuntimeID, id != job.reusedRuntimeID, runtimes[job.threadID]?.id == id {
             failedSource = runtimes.removeValue(forKey: job.threadID)
         } else { failedSource = nil }
+        let registry = mcpRegistry
         let close = Task {
+            for scope in [reusedSource?.mcpScope, failedSource?.mcpScope].compactMap({ $0 }) { await registry.revoke(sessionID: scope.sessionID) }
             await job.session.close()
             if let failedSource { await failedSource.session.close(); failedSource.reader?.cancel(); await failedSource.reader?.value }
             job.reader?.cancel(); await job.reader?.value
@@ -2292,9 +2303,19 @@ public actor WorkspaceEngine {
     private var settlementPrerequisites: [UUID: Task<Void, Never>] = [:]
     private var scriptCommitRuns: Set<UUID> = []
     private var scriptCommitWaiters: [CheckedContinuation<Void, Never>] = []
+    private final class MCPCommandAdmission: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+        func check() throws {
+            lock.lock(); let stopped = cancelled; lock.unlock()
+            if stopped { throw WorkspaceCommandError(AppMCPError(.cancelled).localizedDescription) }
+        }
+    }
     private struct Envelope: Sendable {
         var id: UUID
         var command: EngineCommand
+        var mcpAdmission: MCPCommandAdmission?
         var continuation: CheckedContinuation<WorkspaceCommandReceipt, any Error>
     }
     private struct Runtime: Sendable {
@@ -2314,6 +2335,7 @@ public actor WorkspaceEngine {
         var claudeLaunchSelection: ClaudeResumeSelection?
         var claudeNativeID: String?
         var reader: Task<Void, Never>?
+        var mcpScope: MCPInvocationScope?
     }
     private struct MetadataRuntime: Sendable {
         var session: any ProviderSession
@@ -2345,6 +2367,10 @@ public actor WorkspaceEngine {
         var path: String
         var task: Task<RepositoryIdentity?, any Error>
     }
+    private let appMCPEnabled: Bool
+    private let mcpRegistry = MCPSessionRegistry()
+    private var mcpServer: MCPHTTPServer?
+    private var mcpServerStart: Task<MCPHTTPServer, any Error>?
     private let database: WorkspaceDatabase
     public nonisolated let attachments: AttachmentStore
     public nonisolated let worktreesRoot: URL
@@ -2398,7 +2424,7 @@ public actor WorkspaceEngine {
     private var cloneProgressTimes: [UUID: (ContinuousClock.Instant, GitCloneProgress)] = [:]
     private let encoder: JSONEncoder = { let value = JSONEncoder(); value.outputFormatting = [.sortedKeys]; return value }()
 
-    public init(url: URL, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
+    public init(url: URL, appMCPEnabled: Bool = false, providerFactory: @escaping ProviderFactory = { try ProviderSessions.make(for: $0) },
                 cloneFactory: @escaping CloneFactory = { GitCloneService(plan: $0) },
                 identityResolver: IdentityResolver? = nil,
                 worktreeFactory: @escaping WorktreeFactory = { GitWorktreeService(request: $0) },
@@ -2407,6 +2433,7 @@ public actor WorkspaceEngine {
                 checkpointFactory: @escaping CheckpointFactory = { GitCheckpointService(root: $0) },
                 pullRequestFactory: @escaping PullRequestFactory = { GitHubPullRequestService(root: $0) },
                 pullRequestCheckoutFactory: @escaping PullRequestCheckoutFactory = { GitHubPullRequestCheckoutService(request: $0) }) throws {
+        self.appMCPEnabled = appMCPEnabled
         ownership = try WorkspaceRuntimeLock(url: url.appendingPathExtension("runtime-lock"))
         database = try WorkspaceDatabase(url: url)
         attachments = try AttachmentStore(root: url.deletingLastPathComponent().appendingPathComponent("Attachments", isDirectory: true))
@@ -2559,10 +2586,23 @@ public actor WorkspaceEngine {
     }
     private func enqueue(_ command: EngineCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         guard loaded, !closing, fatalError == nil else { throw CoincideError(fatalError ?? "The workspace is closing.") }
-        return try await withCheckedThrowingContinuation { continuation in
-            pendingCommands += 1
-            incoming.yield(.init(id: id, command: command, continuation: continuation))
-        }
+        let admitted: EngineCommand
+        if let authority = AppMCPTaskContext.authority {
+            try Task.checkCancellation()
+            switch command {
+            case .client, .promptSteeringAccepted, .conversationHistoryAccepted, .beginWorktreePreparation:
+                admitted = .appMCP(authority: authority, commands: [command])
+            default: admitted = command
+            }
+        } else { admitted = command }
+        let permit: MCPCommandAdmission?
+        if case .appMCP = admitted { permit = MCPCommandAdmission() } else { permit = nil }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pendingCommands += 1
+                incoming.yield(.init(id: id, command: admitted, mcpAdmission: permit, continuation: continuation))
+            }
+        } onCancel: { permit?.cancel() }
     }
     private func process(_ envelope: Envelope) async {
         defer {
@@ -2580,9 +2620,19 @@ public actor WorkspaceEngine {
                 if let fatalError { throw CoincideError(fatalError) }
                 let decision: WorkspaceDecision
                 do {
-                    try validateCodexDefaultCommand(envelope.command, snapshot: base.snapshot)
-                    try validateAntigravityAdmission(envelope.command, snapshot: base.snapshot)
-                    try validateCodexAuthenticationAdmission(envelope.command, snapshot: base.snapshot)
+                    try envelope.mcpAdmission?.check()
+                    let admissionCommands: [EngineCommand]
+                    if case .appMCP(let authority, let commands) = envelope.command {
+                        try validateAppMCPLiveAuthority(authority)
+                        try AppMCPAdmission.validate(authority: authority, snapshot: base.snapshot, commands: commands)
+                        admissionCommands = commands
+                    } else { admissionCommands = [envelope.command] }
+                    for command in admissionCommands {
+                        try validateCodexDefaultCommand(command, snapshot: base.snapshot)
+                        try validateAntigravityAdmission(command, snapshot: base.snapshot)
+                        try validateCodexAuthenticationAdmission(command, snapshot: base.snapshot)
+                        try validateAppMCPPreparedCommand(command)
+                    }
                     if case .promptSteeringAccepted(let operation) = envelope.command,
                        threadIncarnations[operation.threadID] != operation.sourceIncarnation {
                         throw WorkspaceCommandError("The active provider turn changed before steering was accepted.")
@@ -2617,9 +2667,10 @@ public actor WorkspaceEngine {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
                 }
-                catch let error as WorkspaceCommandError {
+                catch where error is WorkspaceCommandError || error is AppMCPError {
                     do {
-                        let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: error.message, expectedSequence: base.sequence)
+                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
+                        let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)
                         envelope.continuation.resume(returning: receipt); return
                     } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
                 }
@@ -2745,6 +2796,7 @@ public actor WorkspaceEngine {
         for id in threads {
             if let runtime = runtimes.removeValue(forKey: id) {
                 runtime.reader?.cancel(); sessions.append(runtime.session); projectIDs.insert(runtime.projectID); providerPaths.insert(runtime.path)
+                if let scope = runtime.mcpScope { let registry = mcpRegistry; jobs.append(Task { await registry.revoke(sessionID: scope.sessionID) }) }
                 if let binding = runtime.codexBinding, binding.authenticationMode == .ownedChatGPT { codexInstances.insert(binding.instanceID) }
                 if let configuration = runtime.claudeConfiguration, let native = previousThreads[id]?.providerThreadID ?? runtime.claudeNativeID {
                     claudeScopes.insert(.init(configurationDirectory: configuration.configurationDirectory, nativeSessionID: native))
@@ -3294,7 +3346,11 @@ public actor WorkspaceEngine {
                 throw CoincideError("This queued input belongs to an earlier Antigravity account or runtime. Review it before sending with the current settings.")
             }
         }
-        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, existing.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeRuntimeMatches(existing, thread: thread) { return existing }
+        if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, existing.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeRuntimeMatches(existing, thread: thread) {
+            if let scope = existing.mcpScope { await mcpRegistry.touch(sessionID: scope.sessionID) }
+            guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID), runtimes[thread.id]?.id == existing.id else { throw CancellationError() }
+            return existing
+        }
         await closeRuntime(thread.id)
         if await waitForRemovalCommit(threadID: thread.id, projectID: thread.projectID) { throw CancellationError() }
         try Task.checkCancellation()
@@ -3306,6 +3362,8 @@ public actor WorkspaceEngine {
         let id = UUID(), session = try factory(thread)
         var runtime = Runtime(id: id, projectID: thread.projectID, session: session, provider: thread.provider, path: thread.workspacePath, acpAgent: thread.acpAgent, openCodeIdentity: thread.openCodeConfiguration?.runtimeIdentity, grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, piBinding: ProviderConfiguration(thread: thread).piRuntimeBinding, museBinding: ProviderConfiguration(thread: thread).museRuntimeBinding, antigravityBinding: ProviderConfiguration(thread: thread).antigravityRuntimeBinding, codexBinding: ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeConfiguration: thread.claudeRuntimeConfiguration, claudeLaunchSelection: thread.activeRun?.configuration.claudeLaunchSelection, claudeNativeID: thread.providerThreadID)
         runtimes[thread.id] = runtime
+        do { runtime.mcpScope = try await configureAppMCP(thread: thread, runID: runID, runtimeID: id, session: session, configuration: configuration) }
+        catch { await closeRuntime(thread.id, matching: id); throw error }
         if let native = session as? AntigravitySession {
             do {
                 try await native.setFileAccessGuard { [weak self] _, writing in
@@ -3361,7 +3419,7 @@ public actor WorkspaceEngine {
     private func validateAntigravityAdmission(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
         let threadID: UUID
         switch command {
-        case .client(.submit(let id, _)), .client(.resumeQueue(let id)): threadID = id
+        case .client(.submit(let id, _)), .client(.submitFromAppMCP(let id, _, _)), .client(.resumeQueue(let id)): threadID = id
         default: return
         }
         guard let thread = snapshot.threads.first(where: { $0.id == threadID }), isAntigravityAuthenticationLocked(thread) else { return }
@@ -3416,7 +3474,9 @@ public actor WorkspaceEngine {
     private func closeRuntime(_ threadID: UUID, matching expectedID: UUID? = nil) async {
         guard let runtime = runtimes[threadID], expectedID == nil || expectedID == runtime.id else { return }
         runtimes.removeValue(forKey: threadID); runtime.reader?.cancel()
-        if let task = startCleanup(projectIDs: [runtime.projectID], threadIDs: [threadID], sessions: [runtime.session], workspacePaths: [runtime.path], codexInstances: Set(runtime.codexBinding.flatMap { $0.authenticationMode == .ownedChatGPT ? $0.instanceID : nil }.map { [$0] } ?? []),
+        let registry = mcpRegistry
+        let mcpJobs: [Task<Void, Never>] = runtime.mcpScope.map { scope in [Task { await registry.revoke(sessionID: scope.sessionID) }] } ?? []
+        if let task = startCleanup(projectIDs: [runtime.projectID], threadIDs: [threadID], sessions: [runtime.session], jobs: mcpJobs, workspacePaths: [runtime.path], codexInstances: Set(runtime.codexBinding.flatMap { $0.authenticationMode == .ownedChatGPT ? $0.instanceID : nil }.map { [$0] } ?? []),
             claudeScopes: runtime.claudeConfiguration.flatMap { configuration in
                 (revision.snapshot.threads.first(where: { $0.id == threadID })?.providerThreadID ?? runtime.claudeNativeID).map {
                     Set([ClaudeHistoryScope(configurationDirectory: configuration.configurationDirectory, nativeSessionID: $0)])
@@ -3442,6 +3502,7 @@ public actor WorkspaceEngine {
             _ = startCleanup(projectIDs: [inspection.projectID], threadIDs: [inspection.threadID], sessions: [], jobs: [Task { _ = try? await inspection.task.value }])
         }
         for id in Array(runtimes.keys) { await closeRuntime(id) }
+        await closeAppMCPServer()
         await closeAllProjectScripts()
     }
     private func cancelIdentityRefreshes() {
@@ -3646,6 +3707,7 @@ public actor WorkspaceEngine {
         for close in piCloses { await close.value }
         await closeAllProjectScripts()
         for id in Array(runtimes.keys) { await closeRuntime(id) }
+        await closeAppMCPServer()
         let metadata = Array(metadataSessions.values); metadataSessions = [:]
         for runtime in metadata { runtime.operationCancel?() }
         for runtime in metadata where runtime.closeTask == nil {
@@ -3992,7 +4054,7 @@ extension WorkspaceEngine {
     private func validateCodexAuthenticationAdmission(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
         var configurations: [ProviderConfiguration] = []
         switch command {
-        case .client(.submit(let id, _)):
+        case .client(.submit(let id, _)), .client(.submitFromAppMCP(let id, _, _)):
             if let thread = snapshot.threads.first(where: { $0.id == id }) {
                 let capture = ProviderConfiguration(thread: thread); configurations = [capture]
                 if capture.ownedCodexInstanceID != nil, capture.codexRuntimeBinding?.accountBinding == nil {
@@ -4310,5 +4372,148 @@ extension WorkspaceEngine {
         let receipt = try await enqueue(.claudeResumeInspected(threadID: threadID, incarnation: incarnation, selection: selection, run: run, result: result))
         if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
         return receipt
+    }
+}
+
+extension WorkspaceEngine {
+    /// Resolve the lease afresh for every invocation. A provider session spans
+    /// multiple app runs; a retained credential never pins an obsolete run ID.
+    func appMCPContext(threadID: UUID) throws -> AppMCPContext {
+        guard let scope = runtimes[threadID]?.mcpScope else { throw AppMCPError(.staleCaller) }
+        return try appMCPContext(scope: scope)
+    }
+    private func appMCPContext(scope: MCPInvocationScope) throws -> AppMCPContext {
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let runtime = runtimes[scope.threadID], runtime.id == scope.runtimeID,
+              runtime.mcpScope?.sessionID == scope.sessionID,
+              runtime.provider == scope.provider, runtime.path == scope.workspacePath,
+              threadIncarnations[scope.threadID] == scope.incarnation,
+              let thread = revision.snapshot.threads.first(where: { $0.id == scope.threadID }),
+              thread.projectID == scope.projectID, !thread.isArchived,
+              thread.runtimeID == scope.runtimeID, thread.provider == scope.provider,
+              thread.workspacePath == scope.workspacePath,
+              !removalCommitThreads.contains(thread.id), !removalCommitProjects.contains(thread.projectID),
+              !isAntigravityAuthenticationLocked(thread), !isCodexAuthenticationLocked(thread),
+              !revision.snapshot.isConversationHistoryLocked(threadID: thread.id) else { throw AppMCPError(.staleCaller) }
+        let configuration = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
+        guard try AppMCPAdmission.instanceID(configuration: configuration) == scope.providerInstanceID else { throw AppMCPError(.staleCaller) }
+        let runID = thread.activeRun.flatMap { $0.stopRequested ? nil : $0.id }
+        return AppMCPContext(scope: scope, runID: runID, configuration: configuration)
+    }
+    func appMCPView(_ context: AppMCPContext) async throws -> AppMCPView {
+        try Task.checkCancellation()
+        let fresh = try appMCPContext(scope: context.scope)
+        guard fresh.runID == context.runID, fresh.configuration == context.configuration else { throw AppMCPError(.staleCaller) }
+        return AppMCPView(snapshot: revision.snapshot, sequence: revision.sequence)
+    }
+    func appMCPDispatch(_ commands: [WorkspaceCommand], context: AppMCPContext, id: UUID? = nil, expectedTargets: [UUID: ProviderConfiguration] = [:]) async throws -> WorkspaceCommandReceipt {
+        _ = try await appMCPView(context)
+        let authority = try AppMCPCommandAuthority(context: context)
+        let guards = expectedTargets.keys.sorted { $0.uuidString < $1.uuidString }.map { EngineCommand.appMCPTargetGuard(threadID: $0, configuration: expectedTargets[$0]!) }
+        let receipt = try await enqueue(.appMCP(authority: authority, commands: guards + commands.map(EngineCommand.client)), id: id ?? UUID())
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+    func appMCPAnswerQuestion(threadID: UUID, request: ApprovalRequest, expectedRuntimeID: UUID?, expectedRunID: UUID?,
+                              answers: [String: String], context: AppMCPContext) async throws -> WorkspaceCommandReceipt {
+        _ = try await appMCPView(context)
+        let authority = try AppMCPCommandAuthority(context: context)
+        let commands: [EngineCommand] = [
+            .appMCPRequestGuard(threadID: threadID, runtimeID: expectedRuntimeID, runID: expectedRunID, request: request),
+            .client(.respond(threadID: threadID, requestID: request.id, response: .answers(answers)))
+        ]
+        let receipt = try await enqueue(.appMCP(authority: authority, commands: commands))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return receipt
+    }
+    private func validateAppMCPLiveAuthority(_ authority: AppMCPCommandAuthority) throws {
+        guard let runtime = runtimes[authority.threadID],
+              let scope = runtime.mcpScope, scope.sessionID == authority.sessionID,
+              scope.threadID == authority.threadID, scope.projectID == authority.projectID,
+              scope.runtimeID == authority.runtimeID, scope.incarnation == authority.incarnation,
+              scope.providerInstanceID == authority.providerInstanceID,
+              scope.provider == authority.provider, scope.workspacePath == authority.workspacePath,
+              scope.permission == authority.permission,
+              try appMCPContext(scope: scope).runID == authority.runID else { throw WorkspaceCommandError(AppMCPError(.staleCaller).localizedDescription) }
+    }
+    private func validateAppMCPPreparedCommand(_ command: EngineCommand) throws {
+        switch command {
+        case .promptSteeringAccepted(let operation):
+            guard threadIncarnations[operation.threadID] == operation.sourceIncarnation,
+                  runtimes[operation.threadID]?.id == operation.runtimeID else { throw WorkspaceCommandError(AppMCPError(.staleCaller).localizedDescription) }
+        case .conversationHistoryAccepted(let review, _):
+            guard threadIncarnations[review.sourceThreadID] == review.sourceIncarnation else { throw WorkspaceCommandError(AppMCPError(.staleCaller).localizedDescription) }
+        case .beginWorktreePreparation(let threadID, let request, _, _, let incarnation, _, _, _):
+            guard threadIncarnations[threadID] == incarnation, request.destinationRoot == worktreesRoot.path else { throw WorkspaceCommandError(AppMCPError(.staleCaller).localizedDescription) }
+        default: break
+        }
+    }
+    private func appMCPTools() -> AppMCPTools {
+        AppMCPTools(client: .init(read: { [weak self] context in
+            guard let self else { throw AppMCPError(.staleCaller) }
+            return try await self.appMCPView(context)
+        }, perform: { [weak self] action, context in
+            guard let self else { throw AppMCPError(.staleCaller) }
+            return try await self.performScopedAppMCP(action, context: context)
+        }))
+    }
+    func performScopedAppMCP(_ action: AppMCPAction, context: AppMCPContext) async throws -> JSONValue {
+        _ = try await appMCPView(context)
+        switch action {
+        case .capabilities, .wait: return try await performAppMCP(action, context: context)
+        default:
+            let authority = try AppMCPCommandAuthority(context: context)
+            return try await AppMCPTaskContext.$authority.withValue(authority) {
+                try await self.performAppMCP(action, context: context)
+            }
+        }
+    }
+    private func ensureAppMCPServer() async throws -> MCPHTTPServer {
+        guard appMCPEnabled, !closing, !stoppingEffects, fatalError == nil else { throw AppMCPError(.unavailable) }
+        if let mcpServer { return mcpServer }
+        let task: Task<MCPHTTPServer, any Error>
+        if let pending = mcpServerStart { task = pending }
+        else {
+            let registry = mcpRegistry, tools = appMCPTools()
+            task = Task { [weak self] in
+                guard let self else { throw AppMCPError(.staleCaller) }
+                return try await MCPHTTPServer.start(registry: registry, tools: tools.descriptors, requestTimeout: .seconds(660), invoke: { [weak self] invocation in
+                    guard let self else { throw AppMCPError(.staleCaller) }
+                    let context = try await self.appMCPContext(scope: invocation.scope)
+                    return await tools.call(name: invocation.toolName, arguments: invocation.arguments, context: context)
+                })
+            }
+            mcpServerStart = task
+        }
+        do {
+            let server = try await task.value
+            guard !closing, !stoppingEffects, fatalError == nil else { await server.close(); throw CancellationError() }
+            mcpServer = server; mcpServerStart = nil; return server
+        } catch { mcpServerStart = nil; throw error }
+    }
+    private func configureAppMCP(thread: CodingThread, runID: UUID, runtimeID: UUID, session: any ProviderSession,
+                                 configuration: ProviderConfiguration) async throws -> MCPInvocationScope? {
+        guard appMCPEnabled, session.supportsAppMCP else { return nil }
+        let server = try await ensureAppMCPServer()
+        guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID),
+              runtimes[thread.id]?.id == runtimeID, let incarnation = threadIncarnations[thread.id] else { throw CancellationError() }
+        let scope = MCPInvocationScope(threadID: thread.id, projectID: thread.projectID, provider: configuration.provider,
+            runtimeID: runtimeID, incarnation: incarnation, providerInstanceID: try AppMCPAdmission.instanceID(configuration: configuration),
+            workspacePath: configuration.workspacePath, permission: configuration.permission, capabilities: [.orchestration, .worktree])
+        runtimes[thread.id]?.mcpScope = scope
+        let credential = try await mcpRegistry.issue(scope: scope)
+        do {
+            guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID), runtimes[thread.id]?.mcpScope?.sessionID == scope.sessionID else { throw CancellationError() }
+            try await session.configureAppMCP(AppMCPConnection(endpoint: server.endpoint, authorizationHeader: credential.authorizationHeader, scopeID: scope.sessionID))
+            guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID), runtimes[thread.id]?.mcpScope?.sessionID == scope.sessionID else { throw CancellationError() }
+            return scope
+        } catch { await mcpRegistry.revoke(sessionID: scope.sessionID); throw error }
+    }
+    private func closeAppMCPServer() async {
+        let pending = mcpServerStart; mcpServerStart = nil; pending?.cancel()
+        let server = mcpServer; mcpServer = nil
+        await mcpRegistry.shutdown()
+        if let pending, let started = try? await pending.value { await started.close() }
+        await server?.close()
     }
 }
