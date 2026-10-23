@@ -31,6 +31,7 @@ enum CoincideMain {
 struct CoincideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store: WorkspaceStore
+    @State private var mainWindows: MainWindowCoordinator
     @FocusedValue(\.cloneRepositoryPresentation) private var cloneRepositoryPresentation: Binding<Bool>?
     @FocusedValue(\.newProjectPresentation) private var newProjectPresentation: Binding<Bool>?
     @FocusedValue(\.settlementPresentation) private var settlementPresentation: Binding<CodingThread?>?
@@ -41,22 +42,27 @@ struct CoincideApp: App {
         do {
             let url = try AppLaunchConfiguration.databaseURL(bundleIdentifier: Bundle.main.bundleIdentifier,
                                                             environment: ProcessInfo.processInfo.environment)
-            _store = State(initialValue: WorkspaceStore(databaseURL: url, appMCPEnabled: AppLaunchConfiguration.appMCPEnabled(bundleIdentifier: Bundle.main.bundleIdentifier, environment: ProcessInfo.processInfo.environment)))
+            let store = WorkspaceStore(databaseURL: url, appMCPEnabled: AppLaunchConfiguration.appMCPEnabled(bundleIdentifier: Bundle.main.bundleIdentifier, environment: ProcessInfo.processInfo.environment))
+            let mainWindows = MainWindowCoordinator()
+            _store = State(initialValue: store)
+            _mainWindows = State(initialValue: mainWindows)
+            delegate.attach(store, mainWindows: mainWindows)
         } catch {
             FileHandle.standardError.write(Data("Coincide UI-test workspace configuration is invalid.\n".utf8))
             exit(EXIT_FAILURE)
         }
     }
     var body: some Scene {
-        WindowGroup("Coincide") {
+        WindowGroup("Coincide", id: MainWindowCoordinator.sceneID) {
             ContentView(store: store)
                 .frame(minWidth: 900, minHeight: 600)
-                .task { await store.load(); delegate.attach(store) }
+                .background(MainWindowRegistration(coordinator: mainWindows))
         }
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
+            MainWindowCommands(coordinator: mainWindows)
             CommandGroup(replacing: .newItem) {
-                Button("New Thread") { store.newThread() }.keyboardShortcut("n")
+                Button("New Thread") { delegate.newThread() }.keyboardShortcut("n")
                 Button("New Project…") { newProjectPresentation?.wrappedValue = true }
                     .keyboardShortcut("n", modifiers: [.command, .shift]).disabled(newProjectPresentation == nil)
                 Button("Add Project…") { store.addProject() }.keyboardShortcut("o")
@@ -90,19 +96,54 @@ enum MainWindowSizing {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var store: WorkspaceStore?
+    private var mainWindows: MainWindowCoordinator?
     private var pendingProjects: [URL] = []
+    private var startup: Task<Void, Never>?
+    private var ready = false
     private var isQuitting = false
-    func attach(_ store: WorkspaceStore) {
+    func attach(_ store: WorkspaceStore, mainWindows: MainWindowCoordinator) {
         self.store = store
-        for url in pendingProjects { store.addProject(at: url) }
-        pendingProjects.removeAll()
+        self.mainWindows = mainWindows
+        startLoading()
+    }
+    private func startLoading() {
+        guard startup == nil, let store else { return }
+        startup = Task { [weak self, weak store] in
+            guard let store else { return }
+            await store.load()
+            guard let self, self.store === store, !self.isQuitting else { return }
+            self.ready = true
+            let projects = self.pendingProjects; self.pendingProjects.removeAll()
+            for url in projects { store.addProject(at: url) }
+            self.mainWindows?.presentIfNeeded()
+        }
+    }
+    func waitForStartup() async { await startup?.value }
+    func newThread() {
+        guard !isQuitting else { return }
+        mainWindows?.presentIfNeeded()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.waitForStartup()
+            guard !self.isQuitting else { return }
+            self.store?.newThread()
+        }
     }
     func application(_ application: NSApplication, open urls: [URL]) {
-        if let store { for url in urls { store.addProject(at: url) } }
+        guard !isQuitting else { return }
+        mainWindows?.presentIfNeeded()
+        if ready, let store { for url in urls { store.addProject(at: url) } }
         else { pendingProjects.append(contentsOf: urls) }
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !isQuitting else { return false }
+        // Settings or a panel can be visible without a conversation window.
+        mainWindows?.presentIfNeeded()
+        return false
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)
+        startLoading()
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store else { return .terminateNow }
@@ -117,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
         }
         isQuitting = true
-        Task { await store.shutdown(); sender.reply(toApplicationShouldTerminate: true) }
+        Task { await self.waitForStartup(); await store.shutdown(); sender.reply(toApplicationShouldTerminate: true) }
         return .terminateLater
     }
 }

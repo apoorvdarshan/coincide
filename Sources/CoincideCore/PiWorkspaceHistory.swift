@@ -165,9 +165,36 @@ extension WorkspaceDecision {
     }
     @inline(never)
     static func reducePiHistory(_ command: EngineCommand, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
-        do { return try mutatePiHistory(command, snapshot: snapshot, now: now) }
+        do {
+            if case .conversationHistoryPiCandidateObserved(let operationID, let candidate, let incarnation) = command {
+                return try reducePiHistoryCandidate(operationID: operationID, candidate: candidate,
+                    incarnation: incarnation, snapshot: snapshot, now: now)
+            }
+            return try mutatePiHistory(command, snapshot: snapshot, now: now)
+        }
         catch let error as WorkspaceCommandError { throw error }
         catch { throw WorkspaceCommandError("Pi could not verify this exact history owner or native proof. Inspect the current operation again.") }
+    }
+    /// Candidate validation descends through the complete source and checkpoint
+    /// proof. Keep unrelated control/fresh-context mutation buffers off its stack.
+    @inline(never)
+    private static func reducePiHistoryCandidate(operationID: UUID, candidate: PiHistoryCandidate, incarnation: UUID,
+                                                snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        let index = try decision.piHistoryOperationIndex(operationID: operationID, incarnation: incarnation)
+        var operation = decision.snapshot.conversationHistoryOperations![index]
+        if operation.piCandidates?.last == candidate { return decision }
+        try operation.review.pi!.validateCandidate(candidate, previous: operation.piCandidates ?? [])
+        try decision.snapshot.validateConversationHistorySource(operation.review, excludingOperationID: operationID)
+        if let path = candidate.nativeSessionFile {
+            guard !snapshot.threads.contains(where: { snapshot.hasPiHistoryCapture($0, nativeSessionFile: path) }),
+                  !(snapshot.conversationHistoryOperations ?? []).contains(where: { prior in
+                      prior.id != operationID && (prior.piCandidates ?? []).contains(where: { $0.nativeSessionFile.map { PiHistoryScope.sameFile($0, path) } == true })
+                  }) else { throw WorkspaceCommandError("The Pi candidate is already owned by another conversation.") }
+        }
+        operation.piCandidates = (operation.piCandidates ?? []) + [candidate]; operation.updatedAt = now
+        try operation.validate(); decision.snapshot.conversationHistoryOperations![index] = operation
+        return decision
     }
     @inline(never)
     private static func mutatePiHistory(_ command: EngineCommand, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
@@ -177,20 +204,6 @@ extension WorkspaceDecision {
             guard let index = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }),
                   !snapshot.isConversationHistoryLocked(threadID: threadID) else { throw WorkspaceCommandError("The Pi conversation is no longer available for inspection.") }
             try decision.snapshot.threads[index].resolvePiFreshSession(intent: intent, consumerRunID: consumer, inspection: inspection, now: now)
-        case .conversationHistoryPiCandidateObserved(let operationID, let candidate, let incarnation):
-            let index = try decision.piHistoryOperationIndex(operationID: operationID, incarnation: incarnation)
-            var operation = decision.snapshot.conversationHistoryOperations![index]
-            if operation.piCandidates?.last == candidate { return decision }
-            try operation.review.pi!.validateCandidate(candidate, previous: operation.piCandidates ?? [])
-            try decision.snapshot.validateConversationHistorySource(operation.review, excludingOperationID: operationID)
-            if let path = candidate.nativeSessionFile {
-                guard !snapshot.threads.contains(where: { snapshot.hasPiHistoryCapture($0, nativeSessionFile: path) }),
-                      !(snapshot.conversationHistoryOperations ?? []).contains(where: { prior in
-                          prior.id != operationID && (prior.piCandidates ?? []).contains(where: { $0.nativeSessionFile.map { PiHistoryScope.sameFile($0, path) } == true })
-                      }) else { throw WorkspaceCommandError("The Pi candidate is already owned by another conversation.") }
-            }
-            operation.piCandidates = (operation.piCandidates ?? []) + [candidate]; operation.updatedAt = now
-            try operation.validate(); decision.snapshot.conversationHistoryOperations![index] = operation
         case .conversationHistoryPiControlsOpened(let operationID, let sessionID, let incarnation):
             let index = try decision.piHistoryOperationIndex(operationID: operationID, incarnation: incarnation)
             guard decision.snapshot.conversationHistoryOperations![index].piControls == nil else { throw WorkspaceCommandError("The Pi history action already owns another control worker.") }

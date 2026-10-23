@@ -3,6 +3,7 @@ import Foundation
 /// Native stdio client for the same Codex app-server protocol used by T3 Code.
 public actor CodexSession: ProviderSession {
     public nonisolated let events: AsyncStream<ProviderEvent>
+    public nonisolated let supportsAppMCP = true
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
     private let processWorkspace: URL
@@ -28,6 +29,11 @@ public actor CodexSession: ProviderSession {
     private var accountRevision = UUID()
     private var accountReadID: UUID?
     private var accountUsageProjection: (value: CodexUsageSnapshot?, invalidated: Bool)?
+    private var appMCP: AppMCPConnection?
+    private var appMCPConfiguring = false
+    private static let appMCPServerName = "coincide"
+    private var nativeRunOwners: [String: UUID] = [:]
+    private var nativeRunOwnerOrder: [String] = []
 
     public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"],
                 environment: [String: String]? = nil, installationLease: CodexInstallationLease? = nil,
@@ -42,9 +48,24 @@ public actor CodexSession: ProviderSession {
         rpc = try JSONRPCConnection(executable: executable, arguments: arguments, cwd: cwd, maximumFrameSize: 128 * 1_024 * 1_024,
                                     environment: environment, drainProcessOnClose: true)
     }
+    /// The header is an ephemeral stdio override. It is never a process argument,
+    /// environment value, native config write, or durable provider configuration.
+    public func configureAppMCP(_ connection: AppMCPConnection) async throws {
+        guard !shuttingDown, !initialized, connectionTask == nil, eventTask == nil,
+              !working, threadID == nil, appMCP == nil, !appMCPConfiguring else { throw Self.appMCPFailure() }
+        let checked: AppMCPConnection
+        do { checked = try .init(endpoint: connection.endpoint, authorizationHeader: connection.authorizationHeader, scopeID: connection.scopeID) }
+        catch { throw Self.appMCPFailure() }
+        appMCPConfiguring = true
+        defer { appMCPConfiguring = false }
+        appMCP = checked
+        try await rpc.configureAppMCPRedaction(checked)
+        guard !shuttingDown, !initialized, connectionTask == nil, eventTask == nil else { throw Self.appMCPFailure() }
+    }
     public func connect() async throws {
         try Task.checkCancellation()
         guard !shuttingDown else { throw CancellationError() }
+        guard !appMCPConfiguring else { throw Self.appMCPFailure() }
         guard !initialized else { return }
         let id = UUID()
         try await withTaskCancellationHandler {
@@ -341,10 +362,11 @@ public actor CodexSession: ProviderSession {
         try await send(input: ProviderInput(text: text), thread: thread)
     }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
-        try validateRuntimeBinding(.init(thread: thread))
+        let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
+        try validateRuntimeBinding(captured)
         guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
         guard !working, !historyMutationInFlight else { throw CoincideError("A turn or conversation history operation is already running in this thread.") }
-        if let effort = thread.reasoningEffort {
+        if let effort = captured.reasoningEffort {
             guard !effort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, effort.utf8.count <= 256,
                   !effort.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
                 throw CoincideError("The selected Codex reasoning effort is invalid.")
@@ -354,42 +376,133 @@ public actor CodexSession: ProviderSession {
         sendGeneration += 1
         let generation = sendGeneration, submittedRunID = thread.activeRun?.id
         eventRunID = submittedRunID
-        activeConfiguration = .init(thread: thread)
+        activeConfiguration = captured
+        let requiresAppMCP = appMCP != nil
+        var promptAttempted = false
         do {
             try await connect()
+            try requireSend(generation)
             if threadID == nil {
-                var params: [String: JSONValue] = ["cwd": .string(thread.workspacePath),
-                    "approvalPolicy": thread.permission.approvalPolicy, "approvalsReviewer": thread.permission.reviewer,
-                    "sandbox": .string(thread.permission == .fullAccess ? "danger-full-access" : thread.permission == .supervised ? "read-only" : "workspace-write")]
-                if !thread.model.isEmpty { params["model"] = .string(thread.model) }
-                let response: JSONValue
-                if let existing = thread.providerThreadID {
-                    params["threadId"] = .string(existing)
-                    response = try await rpc.request("thread/resume", params: .object(params))
-                } else {
-                    // Select the durable modern contract explicitly for new
-                    // threads. Existing/legacy resumes are never migrated here.
-                    if CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile { params["historyMode"] = .string("paginated") }
-                    response = try await rpc.request("thread/start", params: .object(params))
-                    if params["historyMode"] == .string("paginated"), response["thread"]["historyMode"] != .string("paginated") {
-                        throw ProviderHistoryError(.invalidResponse)
-                    }
+                if appMCP != nil {
+                    do { try await requireAppMCPNamespaceAvailable(); try requireSend(generation) }
+                    catch { try await failAppMCPPreparation(error) }
                 }
-                guard let id = response["thread"]["id"].string else { throw CoincideError("Codex did not return a thread id.") }
-                threadID = id; emit(.thread(id))
+                var params: [String: JSONValue] = ["cwd": .string(captured.workspacePath),
+                    "approvalPolicy": captured.permission.approvalPolicy, "approvalsReviewer": captured.permission.reviewer,
+                    "sandbox": .string(captured.permission == .fullAccess ? "danger-full-access" : captured.permission == .supervised ? "read-only" : "workspace-write")]
+                if !captured.model.isEmpty { params["model"] = .string(captured.model) }
+                if let appMCP {
+                    // Override only our dotted server slot. Inherited/launch
+                    // argument MCP servers remain untouched in the native config.
+                    params["config"] = .object(["mcp_optional_startup_grace_ms": .number(10_000),
+                        "mcp_servers." + Self.appMCPServerName: .object([
+                            "url": .string(appMCP.endpoint.absoluteString), "tool_timeout_sec": .number(3_900),
+                            "http_headers": .object(["Authorization": .string(appMCP.authorizationHeader)])])])
+                }
+                let response: JSONValue
+                do {
+                    if let existing = captured.nativeThreadID {
+                        params["threadId"] = .string(existing)
+                        response = try await rpc.request("thread/resume", params: .object(params))
+                    } else {
+                        // Select the durable modern contract explicitly for new
+                        // threads. Existing/legacy resumes are never migrated here.
+                        if CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile { params["historyMode"] = .string("paginated") }
+                        response = try await rpc.request("thread/start", params: .object(params))
+                        if params["historyMode"] == .string("paginated"), response["thread"]["historyMode"] != .string("paginated") {
+                            throw ProviderHistoryError(.invalidResponse)
+                        }
+                    }
+                    try requireSend(generation)
+                    guard let id = response["thread"]["id"].string, !id.isEmpty, id.utf8.count <= 4_096 else { throw Self.appMCPFailure() }
+                    if appMCP != nil, let expected = captured.nativeThreadID, id != expected { throw Self.appMCPFailure() }
+                    threadID = id; emit(.thread(id))
+                } catch {
+                    if appMCP != nil { try await failAppMCPPreparation(error) }
+                    throw error
+                }
             }
+            if appMCP != nil {
+                do { try await requireAppMCPReady(); try requireSend(generation) }
+                catch { try await failAppMCPPreparation(error) }
+            }
+            try requireSend(generation)
             var items: [JSONValue] = input.text.isEmpty ? [] : [.object(["type": .string("text"), "text": .string(input.text)])]
             items += input.images.map { .object(["type": .string("image"), "url": .string("data:\($0.mimeType);base64,\($0.data.base64EncodedString())")]) }
-            var params: [String: JSONValue] = ["threadId": .string(threadID!), "cwd": .string(thread.workspacePath),
+            var params: [String: JSONValue] = ["threadId": .string(threadID!), "cwd": .string(captured.workspacePath),
                 "input": .array(items),
-                "approvalPolicy": thread.permission.approvalPolicy, "approvalsReviewer": thread.permission.reviewer,
-                "sandboxPolicy": thread.permission.sandbox(cwd: thread.workspacePath), "summary": .string("detailed")]
-            if !thread.model.isEmpty { params["model"] = .string(thread.model) }
-            if let effort = thread.reasoningEffort { params["effort"] = .string(effort) }
+                "approvalPolicy": captured.permission.approvalPolicy, "approvalsReviewer": captured.permission.reviewer,
+                "sandboxPolicy": captured.permission.sandbox(cwd: captured.workspacePath), "summary": .string("detailed")]
+            if !captured.model.isEmpty { params["model"] = .string(captured.model) }
+            if let effort = captured.reasoningEffort { params["effort"] = .string(effort) }
+            promptAttempted = true
             let response = try await rpc.request("turn/start", params: .object(params))
             guard let id = response["turn"]["id"].string else { throw CoincideError("Codex did not return a turn id.") }
-            if generation == sendGeneration, !completedTurnIDs.contains(id) { turnID = id; emit(.turn(id), runID: submittedRunID) }
-        } catch { if generation == sendGeneration { working = false }; throw error }
+            if generation == sendGeneration, !completedTurnIDs.contains(id) {
+                rememberNativeRun(id, runID: submittedRunID); turnID = id; emit(.turn(id), runID: submittedRunID)
+            }
+        } catch {
+            if generation == sendGeneration { working = false }
+            if requiresAppMCP, !promptAttempted { try await failAppMCPPreparation(error) }
+            throw error
+        }
+    }
+    private func failAppMCPPreparation(_ error: any Error) async throws -> Never {
+        let cancelled = error is CancellationError || Task.isCancelled
+        await close()
+        if cancelled { throw CancellationError() }
+        throw Self.appMCPFailure()
+    }
+    private func requireSend(_ generation: Int) throws {
+        try Task.checkCancellation()
+        guard !shuttingDown, generation == sendGeneration, working else { throw CancellationError() }
+    }
+    private static func appMCPFailure() -> CoincideError {
+        .init("The Codex app tool connection could not be confirmed. No prompt was sent.")
+    }
+    private func appMCPStatuses(threadID: String? = nil) async throws -> [JSONValue] {
+        var rows: [JSONValue] = [], cursor: String?, seen: Set<String> = [], bytes = 0
+        for _ in 0..<10 {
+            try Task.checkCancellation()
+            guard !shuttingDown else { throw Self.appMCPFailure() }
+            var params: [String: JSONValue] = ["serverName": .string(Self.appMCPServerName), "detail": .string("toolsAndAuthOnly"), "limit": .number(100)]
+            if let threadID { params["threadId"] = .string(threadID) }
+            if let cursor { params["cursor"] = .string(cursor) }
+            let response = try await rpc.request("mcpServerStatus/list", params: .object(params), timeout: .seconds(15))
+            try MCPProtocol.validateJSON(response)
+            guard let page = response["data"].array, page.count <= 100 else { throw Self.appMCPFailure() }
+            bytes += try JSONEncoder().encode(response).count
+            guard bytes <= 1_048_576 else { throw Self.appMCPFailure() }
+            for row in page {
+                guard let name = row["name"].string, MCPProtocol.text(name, maximum: 256) else { throw Self.appMCPFailure() }
+                if name == Self.appMCPServerName { rows.append(row) }
+            }
+            if response["nextCursor"] == .null { return rows }
+            guard let next = response["nextCursor"].string, MCPProtocol.text(next, maximum: 4_096), seen.insert(next).inserted else { throw Self.appMCPFailure() }
+            cursor = next
+        }
+        throw Self.appMCPFailure()
+    }
+    private func requireAppMCPNamespaceAvailable() async throws {
+        guard try await appMCPStatuses().isEmpty else { throw Self.appMCPFailure() }
+    }
+    private func requireAppMCPReady() async throws {
+        guard let appMCP, let threadID else { throw Self.appMCPFailure() }
+        let rows = try await appMCPStatuses(threadID: threadID)
+        guard rows.count == 1, let row = rows.first, let tools = row["tools"].object,
+              !tools.isEmpty, tools.count <= 256, row["toolsError"] == .null,
+              tools.values.contains(where: { $0["name"].string == "t3_thread_read" }) else { throw Self.appMCPFailure() }
+        // Older native catalog responses omit these newer observations. The
+        // scoped initialized tool catalog remains required on every profile;
+        // present status/identity fields must never contradict it.
+        if row["runtimeStatus"] != .null, row["runtimeStatus"].string != "connected" { throw Self.appMCPFailure() }
+        if let origin = row["httpOrigin"].string,
+           origin != "http://127.0.0.1:\(appMCP.endpoint.port!)" { throw Self.appMCPFailure() }
+        if row["httpOrigin"] != .null, row["httpOrigin"].string == nil { throw Self.appMCPFailure() }
+        if row["serverInfo"] != .null, row["serverInfo"]["name"].string != "Coincide" { throw Self.appMCPFailure() }
+        for tool in tools.values {
+            guard let name = tool["name"].string, MCPProtocol.text(name, maximum: 128), tool["inputSchema"].object != nil else { throw Self.appMCPFailure() }
+        }
     }
     public func steeringCapabilities() async -> ProviderSteeringCapabilities {
         guard initialized, CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile,
@@ -464,6 +577,7 @@ public actor CodexSession: ProviderSession {
         _ = try? await steeringTask?.task.value; steeringTask = nil
         await connecting?.value; connectionTask = nil
         let reading = eventTask; reading?.cancel(); await reading?.value; eventTask = nil; continuation.finish()
+        appMCP = nil
         installationLease?.release()
     }
     private func validateRuntimeBinding(_ configuration: ProviderConfiguration) throws {
@@ -508,7 +622,9 @@ public actor CodexSession: ProviderSession {
             switch method {
             case "serverRequest/resolved": emit(.approvalDismissed(params["requestId"]))
             case "turn/started":
-                if let id = params["turn"]["id"].string, !completedTurnIDs.contains(id), working { turnID = id; emit(.turn(id)) }
+                if let id = params["turn"]["id"].string, !completedTurnIDs.contains(id), working {
+                    rememberNativeRun(id, runID: eventRunID); turnID = id; emit(.turn(id))
+                }
             case "item/agentMessage/delta", "item/reasoning/summaryTextDelta", "item/commandExecution/outputDelta":
                 guard let id = params["itemId"].string, let delta = params["delta"].string else { return }
                 let role: MessageRole = method.contains("reasoning") ? .reasoning : method.contains("commandExecution") ? .tool : .assistant
@@ -524,6 +640,8 @@ public actor CodexSession: ProviderSession {
                     emit(.message(.init(id: id, role: .tool, text: "$ \(command)\n\(output)")))
                 } else if type == "fileChange", method == "item/completed" {
                     emit(.message(.init(id: id, role: .tool, text: "File changes\n\(item["changes"].pretty)")))
+                } else if type == "mcpToolCall" {
+                    projectMCPTool(item, params: params)
                 }
             case "turn/completed":
                 guard working, let completedID = params["turn"]["id"].string, !completedTurnIDs.contains(completedID) else { return }
@@ -531,6 +649,7 @@ public actor CodexSession: ProviderSession {
                 // Completion can precede both turn/started and the start response.
                 // Preserve its real boundary before retiring the local active run.
                 if turnID == nil { emit(.turn(completedID)) }
+                rememberNativeRun(completedID, runID: eventRunID)
                 working = false
                 completedTurnIDs.append(completedID)
                 if completedTurnIDs.count > 128 { completedTurnIDs.removeFirst() }
@@ -544,6 +663,30 @@ public actor CodexSession: ProviderSession {
             default: break
             }
         }
+    }
+    private func rememberNativeRun(_ nativeTurnID: String, runID: UUID?) {
+        guard let runID, nativeTurnID.utf8.count <= 4_096,
+              nativeRunOwners[nativeTurnID] == nil || nativeRunOwners[nativeTurnID] == runID else { return }
+        if nativeRunOwners[nativeTurnID] == nil { nativeRunOwnerOrder.append(nativeTurnID) }
+        nativeRunOwners[nativeTurnID] = runID
+        if nativeRunOwnerOrder.count > 128 { nativeRunOwners.removeValue(forKey: nativeRunOwnerOrder.removeFirst()) }
+    }
+    private func projectMCPTool(_ item: JSONValue, params: JSONValue) {
+        guard let session = threadID, let nativeTurn = params["turnId"].string, let runID = nativeRunOwners[nativeTurn],
+              let id = item["id"].string, MCPProtocol.text(id, maximum: 4_096),
+              let server = item["server"].string, MCPProtocol.text(server, maximum: 256),
+              let tool = item["tool"].string, MCPProtocol.text(tool, maximum: 256),
+              let nativeStatus = item["status"].string, ["inProgress", "completed", "failed"].contains(nativeStatus),
+              let bytes = try? JSONEncoder().encode(item), bytes.count <= MCPProtocol.maximumBodyBytes else { return }
+        let output: JSONValue
+        let result = item["result"]
+        if item["error"] != .null {
+            output = .object(["error": item["error"]["message"], "result": result["structuredContent"] != .null ? result["structuredContent"] : result["content"]])
+        } else { output = result["structuredContent"] != .null ? result["structuredContent"] : result["content"] }
+        let key = ProviderEntityKey(sessionID: session, type: "tool_call", id: id)
+        emit(.entity(.patch(key, .object(["title": .string(server + "." + tool), "kind": .string("other"),
+            "status": .string(nativeStatus == "inProgress" ? "in_progress" : nativeStatus),
+            "rawInput": item["arguments"], "rawOutput": output]))), runID: runID)
     }
     private func emit(_ event: ProviderEvent, runID: UUID? = nil) {
         if let id = runID ?? eventRunID { continuation.yield(.context(runID: id, event: event)) }

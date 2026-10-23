@@ -3347,6 +3347,12 @@ public actor WorkspaceEngine {
             }
         }
         if let existing = runtimes[thread.id], existing.provider == thread.provider, existing.path == thread.workspacePath, existing.acpAgent == thread.acpAgent, existing.openCodeIdentity == thread.openCodeConfiguration?.runtimeIdentity, existing.grokRuntimeMode == ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode, existing.piBinding == ProviderConfiguration(thread: thread).piRuntimeBinding, existing.museBinding == ProviderConfiguration(thread: thread).museRuntimeBinding, existing.antigravityBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding, existing.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding, claudeRuntimeMatches(existing, thread: thread) {
+            if let scope = existing.mcpScope, scope.permission != configuration.permission {
+                // A session's authority is immutable. Reissue it when an explicit
+                // successor captures different permissions, preserving native history.
+                await closeRuntime(thread.id, matching: existing.id)
+                return try await runtime(for: thread, runID: runID)
+            }
             if let scope = existing.mcpScope { await mcpRegistry.touch(sessionID: scope.sessionID) }
             guard ownsRun(threadID: thread.id, projectID: thread.projectID, runID: runID), runtimes[thread.id]?.id == existing.id else { throw CancellationError() }
             return existing

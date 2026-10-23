@@ -208,16 +208,8 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         let reduced: GeneralReduction
         switch command {
-        case .appMCPRequestGuard(let threadID, let runtimeID, let runID, let request):
-            guard request.isQuestion, let thread = snapshot.threads.first(where: { $0.id == threadID }),
-                  thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
-                  thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw WorkspaceCommandError("The pending question changed. Read the current request before answering it.") }
-            return Self(snapshot: snapshot)
-        case .appMCPTargetGuard(let threadID, let configuration):
-            guard let thread = snapshot.threads.first(where: { $0.id == threadID }), ProviderConfiguration(thread: thread) == configuration else { throw WorkspaceCommandError("The target configuration changed. Read it again before configuring this conversation.") }
-            return Self(snapshot: snapshot)
-        case .appMCP(let authority, let commands):
-            return try AppMCPAdmission.reduce(authority: authority, commands: commands, id: id, snapshot: snapshot, now: now)
+        case .appMCPRequestGuard, .appMCPTargetGuard, .appMCP:
+            return try reduceAppMCPCommand(command, id: id, snapshot: snapshot, now: now)
         case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
              .conversationHistoryPiControlResponding, .conversationHistoryPiControlsClosed, .conversationHistoryPiCancelled, .piFreshSessionResolved:
             reduced = .init(decision: try reducePiHistory(command, snapshot: snapshot, now: now), requiresFinalization: true)

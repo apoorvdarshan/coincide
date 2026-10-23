@@ -578,7 +578,16 @@ extension WorkspaceSnapshot {
         return nil
     }
 
+    /// Release native-source validation temporaries before checkpoint validation
+    /// descends through the retained run ledger.
+    @inline(never)
     func validateConversationHistorySource(_ review: ConversationHistoryReview, excludingOperationID: UUID? = nil) throws {
+        try validateConversationHistoryNativeSource(review, excludingOperationID: excludingOperationID)
+        try validateConversationHistoryFilesReview(review, excludingOperationID: excludingOperationID)
+    }
+
+    @inline(never)
+    private func validateConversationHistoryNativeSource(_ review: ConversationHistoryReview, excludingOperationID: UUID?) throws {
         try review.validate()
         guard canReviewConversationHistory(threadID: review.sourceThreadID, excludingOperationID: excludingOperationID),
               let thread = threads.first(where: { $0.id == review.sourceThreadID && $0.projectID == review.projectID }),
@@ -656,7 +665,6 @@ extension WorkspaceSnapshot {
             let removedMessages = thread.visibleMessages.filter { !prefixIDs.contains($0.id) }.map(\.id)
             guard review.removedRunIDs == removedRuns, review.removedMessageIDs == removedMessages else { throw WorkspaceCommandError("The conversation suffix changed. Review the rewind again.") }
         }
-        try validateConversationHistoryFilesReview(review, excludingOperationID: excludingOperationID)
     }
 
     private func validateOpenCodeV2HistoryInputs(_ evidence: OpenCodeV2HistoryReviewEvidence, thread: CodingThread,

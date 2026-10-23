@@ -1,12 +1,13 @@
 # Native app MCP
 
 Coincide now implements an app-owned MCP server, session registry, tool router
-and Engine admission path in Swift. Captured native **Pi** sessions can discover
-and invoke those tools through their native extension API. Other providers'
-app-MCP registration remains unfinished. Local protocol, Engine and intact Pi
-package checks are recorded in [VALIDATION.md](VALIDATION.md). Hosted UI acceptance
-and authenticated-provider verification remain open. This does not establish
-full T3 parity.
+and Engine admission path in Swift. Native **Pi**, **Codex**, and captured normal
+**Claude** sessions now register those tools through their own protocols. Other
+providers' app-MCP registration remains unfinished. Prior local protocol, Engine
+and intact Pi package checks are recorded in [VALIDATION.md](VALIDATION.md);
+that record separately tracks the new Codex/Claude test results. Hosted UI
+acceptance and authenticated-provider verification remain open. This does not
+establish full T3 parity.
 
 The product enables app MCP by default. `WorkspaceEngine` library callers opt in
 with `appMCPEnabled: true`; its default is false. The separate synthetic GUI app
@@ -41,16 +42,22 @@ only its SHA-256 hash. A credential binds the provider session, thread/project,
 runtime/incarnation, provider instance, workspace, captured permission and
 capabilities. It survives ordinary runs on that same runtime. Its 24-hour
 liveness is renewed only by trusted owner activity; MCP traffic cannot revive it.
+An explicit successor with different captured permissions drains the old runtime,
+revokes its lease and receives a new provider session and credential. Changing a
+future permission selection cannot expand a still-running lease's authority.
 Revocation stops new admission, cancels exact outstanding calls and joins their
 callbacks, including callbacks already draining under another revocation.
 This private app-tool connection starts no sign-in or browser authorization flow.
 
 The header is runtime-only and redacted. Pi receives it through an app-owned
-regular 0600 sidecar in a private directory. It never enters URL queries, process
-arguments, environment variables, workspace configuration, journal, audit or
-diagnostic text. Cleanup checks file ownership and identity and removes the
-sidecar only after the owned process has drained; foreign replacements are
-preserved.
+regular 0600 sidecar in a private directory. Codex and Claude receive it only in
+native stdin control/configuration frames. Coincide does not put it in URL
+queries, process arguments, environment variables, saved provider settings,
+workspace configuration, journal or audit. The stdio transport redacts both the
+exact header and bare token from inbound JSON and disconnect diagnostics before
+provider errors or notifications can reach projection; provider stderr is not
+persisted. Pi cleanup checks file ownership and identity and removes the sidecar
+only after the owned process has drained; foreign replacements are preserved.
 
 ## Native Pi composition
 
@@ -68,6 +75,46 @@ entries; adding MCP does not replace input digests, invent native turn IDs or
 upgrade unavailable history evidence. Pi itself remains the vendor CLI, which
 may use Node/TypeScript. Coincide does not run a T3 Code Node server or Electron
 frontend to provide these app services.
+
+## Native Codex and Claude registration
+
+Codex first reads native `mcpServerStatus/list` without a thread to refuse a
+collision with the owned `coincide` server name. `thread/start` or `thread/resume`
+then receives only the dotted `mcp_servers.coincide` override, leaving foreign
+servers, including `t3-code`, intact. The override carries the loopback URL,
+Authorization header and native timeout. A successful thread response and a
+scoped native tool catalogue containing the app read tool are required before
+each prompt. Present native runtime/origin/server identity fields must agree;
+older status responses may omit newer optional fields. Unsupported, partial or
+contradictory registration closes the attempt with a fixed error and no prompt
+fallback.
+
+Owned ChatGPT mode forwards the runtime-only connection through
+`CodexOwnedSession`. Its lazy child receives registration before connecting;
+credential-epoch replacement closes and joins the old child, configures the new
+one, and fences obsolete events. The MCP credential is separate from the Codex
+account credential and is never added to its saved account configuration.
+Native Codex `mcpToolCall` items project bounded arguments, status and result onto
+the observed active run. A late update after that run terminates is dropped;
+this does not establish broader background-tool ownership.
+
+Claude registration is available only for the captured normal stream-json
+launch, not arbitrary legacy argument invocations. Before prompting, native
+`mcp_status` must show no owned-name collision or other dynamic/SDK servers that
+`mcp_set_servers` could replace. The native control acknowledgement must add
+exactly `coincide`, remove nothing and report no errors. Settings/plugin servers
+remain native; Coincide does not read or copy their credential-bearing settings.
+Concurrent startup shares that registration barrier. Failure refuses input with
+a fixed error; metadata/history workers receive no app-tool connection.
+
+Separate no-model native probes confirm registration/catalog compatibility for
+installed Codex **0.163.0**, the pinned managed Codex **0.156.1** package and
+installed Claude **2.1.308**. They use private homes/configuration, an isolated
+synthetic loopback MCP catalogue, external-network denial and joined process
+cleanup. Native scratch scans found no header/token persistence. No prompt,
+tool invocation, login, saved account or authenticated model service was used.
+These observations leave Codex's existing 0.163.x history/steering gates intact;
+they do not grant those capabilities to the managed 0.156.1 runtime.
 
 ## Tools and durable authority
 
@@ -109,8 +156,9 @@ The catalogue is not a promise that every upstream argument variant works.
 Unsupported cases return fixed errors and remain visible through
 `AppMCPTools.unsupportedCapabilities`:
 
-- Other providers' native MCP registration, external-client authorization and
-  remote access; MCP Apps/resources/HTML presentation.
+- OpenCode, Muse, Antigravity and ACP providers' app-MCP registration,
+  external-client authorization and remote access; shared native MCP
+  configuration editing and MCP Apps/resources/HTML presentation.
 - Background-run write ownership, delegated/app-owned subagents and wakeups,
   scheduling, secret requests, preview/browser/device services and review guides.
 - Cross-provider or foreign-instance model changes, restart delivery, deferred
@@ -129,8 +177,11 @@ Implementation: [transport](../Sources/CoincideCore/MCPHTTPServer.swift),
 [protocol](../Sources/CoincideCore/MCPProtocol.swift),
 [authority](../Sources/CoincideCore/AppMCPAuthority.swift),
 [tool catalogue](../Sources/CoincideCore/AppMCPTools.swift),
-[Engine facade](../Sources/CoincideCore/AppMCPEngine.swift), and
-[Pi bridge](../Sources/CoincideCore/PiMCPBridge.swift).
+[Engine facade](../Sources/CoincideCore/AppMCPEngine.swift),
+[Pi bridge](../Sources/CoincideCore/PiMCPBridge.swift),
+[Codex session](../Sources/CoincideCore/CodexSession.swift),
+[owned Codex forwarding](../Sources/CoincideCore/CodexOwnedSession.swift), and
+[Claude session](../Sources/CoincideCore/ClaudeSession.swift).
 The transport follows the official versioned
 [2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
 and [2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)

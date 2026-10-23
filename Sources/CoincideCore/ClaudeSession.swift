@@ -6,10 +6,13 @@ import OSLog
 public actor ClaudeSession: ProviderSession {
     private let logger = Logger(subsystem: "com.apoorvdarshan.coincide", category: "Claude")
     public nonisolated let events: AsyncStream<ProviderEvent>
+    public nonisolated let supportsAppMCP: Bool
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     private let rpc: JSONRPCConnection
     private let runtimeConfiguration: ClaudeRuntimeConfiguration?
     private let launchSelection: ClaudeResumeSelection?
+    private var appMCPConnection: AppMCPConnection?
+    private var appMCPRedaction: Task<Void, any Error>?
     private var historyEvidence: ClaudeRunHistoryEvidence?
     private var submittedOpening = false
     private var reader: Task<Void, Never>?
@@ -42,6 +45,7 @@ public actor ClaudeSession: ProviderSession {
                 configuration: ClaudeRuntimeConfiguration? = nil, launchSelection: ClaudeResumeSelection? = nil) throws {
         let (events, continuation) = AsyncStream<ProviderEvent>.makeStream()
         self.events = events; self.continuation = continuation
+        supportsAppMCP = configuration != nil && arguments == nil
         runtimeConfiguration = configuration; self.launchSelection = launchSelection
         var environment: [String: String]?
         if let configuration {
@@ -92,6 +96,17 @@ public actor ClaudeSession: ProviderSession {
         rpc = try JSONRPCConnection(executable: executable, arguments: args, cwd: cwd, dialect: .claudeControl,
             maximumFrameSize: 128 * 1_024 * 1_024, environment: environment, drainProcessOnClose: true)
     }
+    public func configureAppMCP(_ connection: AppMCPConnection) async throws {
+        guard supportsAppMCP, !shuttingDown, !initialized, connecting == nil, appMCPConnection == nil else {
+            throw Self.appMCPFailure()
+        }
+        appMCPConnection = connection
+        let rpc = rpc
+        let redaction = Task { try await rpc.configureAppMCPRedaction(connection) }
+        appMCPRedaction = redaction
+        try await redaction.value
+        guard !shuttingDown else { throw Self.appMCPFailure() }
+    }
     public func connect() async throws {
         guard !shuttingDown else { throw CoincideError("The Claude connection is closed.") }
         guard !initialized else { return }
@@ -101,9 +116,36 @@ public actor ClaudeSession: ProviderSession {
                 let stream = rpc.events
                 reader = Task { [weak self] in for await event in stream { await self?.consume(event) } }
             }
-            let rpc = rpc
+            let rpc = rpc, appMCP = appMCPConnection, redaction = appMCPRedaction
             connectingID = UUID()
-            connecting = Task { try await rpc.request("initialize", params: .object(["hooks": .null]), timeout: .seconds(60)) }
+            connecting = Task {
+                try await redaction?.value
+                let result = try await rpc.request("initialize", params: .object(["hooks": .null]), timeout: .seconds(60))
+                if let appMCP {
+                    do {
+                        try Task.checkCancellation()
+                        // Only this private, normal-path process owns dynamic
+                        // registration. Settings/plugin servers remain native;
+                        // never copy their potentially credential-bearing config.
+                        let status = try await rpc.request("mcp_status")
+                        try Self.validateAppMCPStatus(status)
+                        let server: JSONValue = .object(["type": .string("http"),
+                            "url": .string(appMCP.endpoint.absoluteString),
+                            "headers": .object(["Authorization": .string(appMCP.authorizationHeader)]),
+                            "timeout": .number(660_000)])
+                        let registered = try await rpc.request("mcp_set_servers", params: .object([
+                            "servers": .object(["coincide": server])]), timeout: .seconds(90))
+                        try Self.validateAppMCPRegistration(registered)
+                        try Task.checkCancellation()
+                    } catch {
+                        // Native status/control errors can echo headers. A
+                        // partial/unknown registration cannot admit a prompt.
+                        await rpc.close()
+                        throw Self.appMCPFailure()
+                    }
+                }
+                return result
+            }
         }
         guard let connecting else { throw CoincideError("The Claude connection is closed.") }
         let attemptID = connectingID
@@ -121,6 +163,27 @@ public actor ClaudeSession: ProviderSession {
                 throw CoincideError("Claude startup timed out. Check for a macOS file-access dialog, then try again. This attempt did not submit a model turn.")
             }
             throw error
+        }
+    }
+    private static func appMCPFailure() -> CoincideError {
+        .init("Claude could not configure the app tools. This attempt did not submit a model turn.")
+    }
+    private static func validateAppMCPStatus(_ response: JSONValue) throws {
+        guard let servers = response["mcpServers"].array, servers.count <= 256 else { throw appMCPFailure() }
+        var names: Set<String> = []
+        for server in servers {
+            guard let name = server["name"].string, !name.isEmpty, name.utf8.count <= 512,
+                  names.insert(name.lowercased()).inserted, name.lowercased() != "coincide" else { throw appMCPFailure() }
+            // set_mcp_servers replaces other dynamic/SDK servers. A fresh
+            // normal launch should have none; refuse rather than remove one.
+            let source = server["source"].string ?? server["scope"].string
+            guard let source, !source.isEmpty, source != "dynamic", source != "sdk" else { throw appMCPFailure() }
+        }
+    }
+    private static func validateAppMCPRegistration(_ response: JSONValue) throws {
+        guard response["added"].array == [.string("coincide")],
+              response["removed"].array == [], let errors = response["errors"].object, errors.isEmpty else {
+            throw appMCPFailure()
         }
     }
     public func models() async throws -> [ProviderModel] {
@@ -280,9 +343,11 @@ public actor ClaudeSession: ProviderSession {
         if let closeTask { await closeTask.value; return }
         shuttingDown = true; working = false
         connecting?.cancel()
-        let rpc = rpc, reading = reader, steering = steeringTask?.task, initializing = connecting, continuation = continuation
+        let rpc = rpc, reading = reader, steering = steeringTask?.task, initializing = connecting,
+            redaction = appMCPRedaction, continuation = continuation
         let task = Task {
             await rpc.close()
+            _ = try? await redaction?.value
             _ = try? await initializing?.value
             _ = try? await steering?.value
             reading?.cancel(); await reading?.value
@@ -290,7 +355,7 @@ public actor ClaudeSession: ProviderSession {
         }
         closeTask = task
         await task.value
-        reader = nil; steeringTask = nil
+        reader = nil; steeringTask = nil; appMCPConnection = nil; appMCPRedaction = nil
     }
     private func consume(_ event: RPCEvent) async {
         switch event {

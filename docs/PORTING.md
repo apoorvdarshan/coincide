@@ -96,8 +96,8 @@ must each be mapped and verified before declaring parity.
   separately from account access. The existing 0.163.x history/steering and
   inferred CLI-default guards remain unchanged. A managed binary is not managed
   ChatGPT authentication: owned OAuth/account controls are a separate explicit
-  mode; real sign-in/model acceptance, broader usage, skills and MCP/configuration
-  parity remain unfinished. Installed managed-package and
+  mode; real sign-in/model acceptance, broader usage and configuration parity
+  remain unfinished. Native app-MCP registration is described below. Installed managed-package and
   conversation evidence must be recorded separately from offline checks.
 - The Codex owned-auth Core layer now implements PKCE, verified RS256/ES256
   identity, a bounded native loopback callback listener, saved registrations and
@@ -182,12 +182,22 @@ must each be mapped and verified before declaring parity.
   private configuration and OS-denied networking. This is not real account or
   model-service acceptance. See [native history boundaries](PI_HISTORY.md).
 - App MCP now has a native Swift loopback server, scoped header credentials,
-  a 30-tool catalogue and durable Engine admission, with captured Pi registration
-  composed into its existing permission/input-proof extension. The product
-  enables it by default; library callers opt in and ordinary synthetic GUI
-  fixtures remain isolated. Writes require a fresh exact active-run authority;
-  other-provider registration, background writes and broader upstream services
-  remain unfinished. This batch's verification is pending. See the
+  a 30-tool catalogue and durable Engine admission. Pi composes registration
+  into its permission/input-proof extension; Codex and captured normal Claude
+  use ephemeral native stdin configuration/control frames. Native collision and
+  acknowledgement checks gate prompting, preserve foreign servers and return
+  fixed failures; inbound private-header echoes are redacted before projection.
+  Owned Codex forwards registration lazily across credential epochs, and a
+  permission-changed successor drains/revokes the old lease before replacement.
+  Codex tool items retain active-run ownership; late post-terminal updates are
+  dropped. The product enables MCP by default; library callers opt in and
+  ordinary synthetic GUI fixtures remain isolated. Prior Pi protocol/Engine/
+  intact-package checks passed. Separate no-model registration/catalog probes
+  confirm installed Codex 0.163.0, managed 0.156.1 and Claude 2.1.308 compatibility;
+  they do not prove login, model or tool execution. New-batch test results are
+  recorded separately in VALIDATION.md. Writes require fresh exact active-run
+  authority; other-provider registration, background writes, shared configuration
+  editing and broader upstream services remain unfinished. See the
   [implemented MCP contract and gaps](MCP.md).
 - Native Muse uses a separate MSP JSON-RPC connection with bounded framing,
   exact command admission, initialized-before-use ordering and an owned process.

@@ -19,6 +19,7 @@ private actor OwnedCodexTrace {
 
 private actor OwnedCodexPeer: ProviderSession {
     nonisolated let events: AsyncStream<ProviderEvent>
+    nonisolated let supportsAppMCP: Bool
     private let continuation: AsyncStream<ProviderEvent>.Continuation
     let name: String
     let trace: OwnedCodexTrace
@@ -27,15 +28,29 @@ private actor OwnedCodexPeer: ProviderSession {
     var closeCount = 0
     var modelsGate: OwnedCodexGate?
     var closeGate: OwnedCodexGate?
+    var appMCPGate: OwnedCodexGate?
+    var appMCPConnections: [AppMCPConnection] = []
     var heldSends: [UUID: OwnedCodexGate] = [:]
     var failedSends: Set<UUID> = []
     var uncertainRevert = false
-    init(_ name: String, trace: OwnedCodexTrace) {
-        self.name = name; self.trace = trace
+    init(_ name: String, trace: OwnedCodexTrace, supportsAppMCP: Bool = false) {
+        self.name = name; self.trace = trace; self.supportsAppMCP = supportsAppMCP
         let pair = AsyncStream<ProviderEvent>.makeStream(); events = pair.stream; continuation = pair.continuation
     }
     func holdModels(_ gate: OwnedCodexGate) { modelsGate = gate }
     func holdClose(_ gate: OwnedCodexGate) { closeGate = gate }
+    func holdAppMCP(_ gate: OwnedCodexGate) { appMCPGate = gate }
+    func configureAppMCP(_ connection: AppMCPConnection) async throws {
+        calls.append("configure-mcp"); appMCPConnections.append(connection)
+        await trace.add("configure-" + name)
+        await appMCPGate?.wait() // Native setup can ignore Task cancellation until its owned process closes.
+        guard closeCount == 0 else { throw CancellationError() }
+    }
+    func hasExactAppMCP(_ expected: AppMCPConnection) -> Bool {
+        appMCPConnections.count == 1 && appMCPConnections.allSatisfy {
+            $0.scopeID == expected.scopeID && $0.endpoint == expected.endpoint && $0.authorizationHeader == expected.authorizationHeader
+        }
+    }
     func holdSend(_ id: UUID, gate: OwnedCodexGate, fail: Bool = false) {
         heldSends[id] = gate; if fail { failedSends.insert(id) }
     }
@@ -44,6 +59,7 @@ private actor OwnedCodexPeer: ProviderSession {
     func terminal(_ id: UUID) { emit(.context(runID: id, event: .completed(.idle))) }
     func endStream() { continuation.finish() }
     func models() async throws -> [ProviderModel] {
+        await trace.add("models-" + name)
         calls.append("models"); await modelsGate?.wait()
         return [.init(id: "advertised-wire-model", name: "Advertised")]
     }
@@ -104,6 +120,7 @@ private actor OwnedCodexPeer: ProviderSession {
     }
     func close() async {
         closeCount += 1; await trace.add("close-" + name)
+        await appMCPGate?.release()
         await closeGate?.wait(); for gate in heldSends.values { await gate.release() }
         continuation.finish()
     }
@@ -151,8 +168,8 @@ private struct OwnedCodexFixture: Sendable {
     let peer: OwnedCodexPeer
     let broker: OwnedCodexBroker
     let wrapper: CodexOwnedSession
-    init() {
-        let peer = OwnedCodexPeer("first", trace: trace); self.peer = peer
+    init(supportsAppMCP: Bool = false) {
+        let peer = OwnedCodexPeer("first", trace: trace, supportsAppMCP: supportsAppMCP); self.peer = peer
         let broker = OwnedCodexBroker(revision: UUID(), peer: peer, trace: trace); self.broker = broker
         wrapper = CodexOwnedSession(configuration: configuration, cwd: cwd, acquireAccess: { try await broker.acquire() },
             accountSnapshot: {
@@ -411,4 +428,117 @@ private func ownedCodexEventually(_ predicate: @escaping @Sendable () async -> B
         #expect(acquires == 1 && sends.count == 1)
     } catch { await fixture.close(reader); throw error }
     await fixture.close(reader)
+}
+
+private func ownedCodexAppMCPConnection() throws -> AppMCPConnection {
+    try .init(endpoint: URL(string: "http://127.0.0.1:1/mcp")!,
+        authorizationHeader: "Bearer " + String(repeating: "B", count: 43), scopeID: UUID())
+}
+
+@Test func codexOwnedSessionAppMCPSetterIsInertOneUseAndDoesNotAcquireCredentials() async throws {
+    let f = OwnedCodexFixture(supportsAppMCP: true), connection = try ownedCodexAppMCPConnection()
+    do {
+        #expect(f.wrapper.supportsAppMCP)
+        try await f.wrapper.configureAppMCP(connection)
+        let acquired = await f.broker.acquires, resolved = await f.broker.resolves
+        let calls = await f.peer.calls, handoffs = await f.peer.appMCPConnections
+        #expect(acquired == 0 && resolved == 0 && calls.isEmpty && handoffs.isEmpty)
+        await #expect(throws: CoincideError.self) { try await f.wrapper.configureAppMCP(connection) }
+        let afterDuplicate = await f.broker.acquires
+        #expect(afterDuplicate == 0)
+        await f.close()
+        let tickets = await f.broker.ticketReleases, resources = await f.broker.resourceReleases
+        let childCloses = await f.peer.closeCount
+        #expect(tickets.isEmpty && resources.isEmpty && childCloses == 0)
+        await #expect(throws: CoincideError.self) { try await f.wrapper.configureAppMCP(connection) }
+    } catch { await f.close(); throw error }
+}
+
+@Test func codexOwnedSessionAppMCPForwardsExactConnectionBeforeMetadataAndEveryNewCredentialChild() async throws {
+    let f = OwnedCodexFixture(supportsAppMCP: true), connection = try ownedCodexAppMCPConnection(), reader = f.record()
+    let next = OwnedCodexPeer("rotated", trace: f.trace, supportsAppMCP: true)
+    do {
+        try await f.wrapper.configureAppMCP(connection)
+        #expect(try await f.wrapper.models().map(\.id) == ["advertised-wire-model"])
+        let originalHandoff = await f.peer.hasExactAppMCP(connection)
+        #expect(originalHandoff)
+        let first = f.thread(), firstID = try #require(first.activeRun?.id)
+        try await f.wrapper.send(text: "First input on original credential child", thread: first)
+        await f.peer.terminal(firstID)
+        try await f.waitFor(.context(runID: firstID, event: .completed(.idle)))
+        await f.broker.rotate(UUID(), peer: next)
+        let second = f.thread(), secondID = try #require(second.activeRun?.id)
+        try await f.wrapper.send(text: "New input after explicit idle credential rotation", thread: second)
+        let rotatedHandoff = await next.hasExactAppMCP(connection)
+        #expect(rotatedHandoff)
+        let firstCalls = await f.peer.calls, nextCalls = await next.calls
+        #expect(firstCalls.filter { $0 == "configure-mcp" }.count == 1 && nextCalls.filter { $0 == "configure-mcp" }.count == 1)
+        let order = await f.trace.entries
+        let configureFirst = try #require(order.firstIndex(of: "configure-first"))
+        let modelsFirst = try #require(order.firstIndex(of: "models-first"))
+        let closeFirst = try #require(order.firstIndex(of: "close-first"))
+        let configureNext = try #require(order.firstIndex(of: "configure-rotated"))
+        let sendNext = try #require(order.firstIndex(of: "send-rotated"))
+        #expect(configureFirst < modelsFirst && closeFirst < configureNext && configureNext < sendNext)
+        let presented = await next.sends.first?.1
+        #expect(presented?.providerThreadID == "native-conversation" && presented?.activeRun?.id == secondID)
+        await next.terminal(secondID)
+        try await f.waitFor(.context(runID: secondID, event: .completed(.idle)))
+        await f.close(reader)
+        let firstCloses = await f.peer.closeCount, nextCloses = await next.closeCount
+        let tickets = await f.broker.ticketReleases, resources = await f.broker.resourceReleases
+        #expect(firstCloses == 1 && nextCloses == 1)
+        #expect(tickets.count == 3 && tickets.values.allSatisfy { $0 == 1 })
+        #expect(resources.count == 2 && resources.values.allSatisfy { $0 == 1 })
+    } catch { await f.close(reader); throw error }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func codexOwnedSessionAppMCPCloseDrainsBlockedChildConfigurationWithExactlyOneCloseAndRelease(sendInsteadOfModels: Bool) async throws {
+    let f = OwnedCodexFixture(supportsAppMCP: true), setup = OwnedCodexGate(), drain = OwnedCodexGate(), done = OwnedCodexTrace()
+    await f.peer.holdAppMCP(setup); await f.peer.holdClose(drain)
+    try await f.wrapper.configureAppMCP(ownedCodexAppMCPConnection())
+    let pending = Task {
+        if sendInsteadOfModels { try await f.wrapper.send(text: "Must never reach the child", thread: f.thread()) }
+        else { _ = try await f.wrapper.models() }
+    }
+    var closing: Task<Void, Never>?
+    do {
+        try await ownedCodexEventually { await f.peer.calls.contains("configure-mcp") }
+        closing = Task { await f.wrapper.close(); await done.add("closed") }
+        try await ownedCodexEventually { await f.trace.entries.contains("close-first") }
+        let beforeDrain = await done.entries, resourcesBeforeDrain = await f.broker.resourceReleases
+        let callsBeforeDrain = await f.peer.calls, sendsBeforeDrain = await f.peer.sends
+        #expect(beforeDrain.isEmpty && resourcesBeforeDrain.isEmpty)
+        #expect(callsBeforeDrain == ["configure-mcp"] && sendsBeforeDrain.isEmpty)
+        await drain.release(); await closing?.value
+        await #expect(throws: (any Error).self) { try await pending.value }
+        await f.wrapper.close()
+        let closes = await f.peer.closeCount, calls = await f.peer.calls
+        let tickets = await f.broker.ticketReleases, resources = await f.broker.resourceReleases
+        #expect(closes == 1 && calls == ["configure-mcp"])
+        #expect(tickets.count == 1 && tickets.values.allSatisfy { $0 == 1 })
+        #expect(resources.count == 1 && resources.values.allSatisfy { $0 == 1 })
+    } catch { await setup.release(); await drain.release(); _ = await pending.result; await f.close(); await closing?.value; throw error }
+}
+
+@Test(arguments: [false, true])
+func codexOwnedSessionAppMCPUnsupportedChildIsDisposedBeforeModelOrUserCalls(sendInsteadOfModels: Bool) async throws {
+    let f = OwnedCodexFixture()
+    do {
+        #expect(!f.peer.supportsAppMCP)
+        try await f.wrapper.configureAppMCP(ownedCodexAppMCPConnection())
+        await #expect(throws: MCPError(.unavailable)) {
+            if sendInsteadOfModels { try await f.wrapper.send(text: "Must not be delivered", thread: f.thread()) }
+            else { _ = try await f.wrapper.models() }
+        }
+        let calls = await f.peer.calls, sends = await f.peer.sends
+        let closes = await f.peer.closeCount, tickets = await f.broker.ticketReleases, resources = await f.broker.resourceReleases
+        #expect(calls.isEmpty && sends.isEmpty && closes == 1)
+        #expect(tickets.count == 1 && tickets.values.allSatisfy { $0 == 1 })
+        #expect(resources.count == 1 && resources.values.allSatisfy { $0 == 1 })
+        await f.close()
+        let finalCloses = await f.peer.closeCount, finalResources = await f.broker.resourceReleases
+        #expect(finalCloses == 1 && finalResources == resources)
+    } catch { await f.close(); throw error }
 }

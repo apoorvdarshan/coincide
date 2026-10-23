@@ -5,6 +5,7 @@ run used 29m59s with five paths still failing early. Individual test/command
 deadlines and all fourteen scenarios stay unchanged. Two explicit authentication
 settings scenarios and two skills workflows bring the zero-skip result gate to eighteen. Three additional synthetic Claude
 history/selection/inspection flows bring it to twenty-one without replacing them.
+Three Pi history workflows and native main-window recovery bring it to twenty-five.
 After a failed production suite, diagnostic-only report arrival polling is
 capped at thirty seconds; it never reruns tests or changes their result.
 """
@@ -69,7 +70,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
         launcher = (directory / "OfflineCLILauncher.swift").read_text()
         verifier = (directory / "verify_offline_launcher.py").read_text()
         peer = (directory / "claude_history_ui.py").read_text()
-        self.assertEqual(harness.count("@MainActor func test"), 24)
+        self.assertEqual(harness.count("@MainActor func test"), 25)
         for name in ("testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart",
                      "testNativeClaudeSelectedContextIsConsumedOnceBeforeQueuedSuccessor",
                      "testNativeClaudeContextInspectionIsReadOnlyAndNeverReplaysConsumedOrUnwrittenInput"):
@@ -115,10 +116,11 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_twenty_four_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=24, passedTests=24, failedTests=0, skippedTests=0)), 24)
-        for summary in [dict(totalTestCount=24, passedTests=23, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=24, passedTests=23, failedTests=1, skippedTests=0),
+    def test_results_require_twenty_five_real_tests_without_silent_skips(self):
+        self.assertEqual(ci.verify_results(dict(totalTestCount=25, passedTests=25, failedTests=0, skippedTests=0)), 25)
+        for summary in [dict(totalTestCount=25, passedTests=24, failedTests=0, skippedTests=1),
+                        dict(totalTestCount=25, passedTests=24, failedTests=1, skippedTests=0),
+                        dict(totalTestCount=24, passedTests=24, failedTests=0, skippedTests=0),
                         dict(totalTestCount=23, passedTests=23, failedTests=0, skippedTests=0),
                         dict(totalTestCount=21, passedTests=21, failedTests=0, skippedTests=0),
                         dict(totalTestCount=21, passedTests=20, failedTests=0, skippedTests=1),

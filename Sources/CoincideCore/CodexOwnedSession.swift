@@ -34,6 +34,7 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
     public typealias AcquireAccess = @Sendable () async throws -> CodexOwnedSessionAccess
     public typealias AccountSnapshot = @Sendable () async throws -> CodexAccountSnapshot
     public nonisolated let events: AsyncStream<ProviderEvent>
+    public nonisolated var supportsAppMCP: Bool { true }
     public nonisolated var description: String { "CodexOwnedSession(redacted)" }
     public nonisolated var debugDescription: String { description }
     public nonisolated var customMirror: Mirror { Mirror(self, children: [:]) }
@@ -57,11 +58,17 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
         let cancel: @Sendable () -> Void
         let drain: Task<Void, Never>
     }
+    private final class PreparingResource {
+        let resource: CodexOwnedSessionResource
+        var disposal: Task<Void, Never>?
+        init(_ resource: CodexOwnedSessionResource) { self.resource = resource }
+    }
     private var live: Live?
     private var launch: Launch?
     // Keep the Sendable cleanup handle separate from actor-owned mutable
     // continuations so nonisolated deinit never reads the Launch holder.
     private var launchTask: Task<Void, Never>?
+    private var preparingResource: PreparingResource?
     private var calls: [UUID: Call] = [:]
     private var admission: UUID?
     private var preparingRunID: UUID?
@@ -76,6 +83,16 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
     private var historyUncertain = false
     private var closing = false
     private var closeTask: Task<Void, Never>?
+    private var appMCPConnection: AppMCPConnection?
+
+    /// Captures the handoff without acquiring credentials or launching a child.
+    /// Each credential epoch receives the same provider-session scope privately.
+    public func configureAppMCP(_ connection: AppMCPConnection) async throws {
+        guard !closing, live == nil, launch == nil, calls.isEmpty, appMCPConnection == nil else {
+            throw CoincideError("The app tool connection must be configured before connecting Codex.")
+        }
+        appMCPConnection = connection
+    }
     // Approval IDs are arbitrary JSON values; encoding is private, bounded by
     // the already validated native request, and never used as auth identity.
     private struct JSONValueID: Hashable { let bytes: Data }
@@ -287,8 +304,24 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
                 try Task.checkCancellation(); guard !closing, launch?.id == id else { throw CancellationError() }
             }
             let resource = try await access.resolve()
+            let preparing = PreparingResource(resource)
+            preparingResource = preparing
+            do {
+                try Task.checkCancellation()
+                guard !closing, launch?.id == id, resource.credentialRevision == access.credentialRevision else { throw CancellationError() }
+                if let connection = appMCPConnection {
+                    guard resource.session.supportsAppMCP else { throw MCPError(.unavailable) }
+                    try await resource.session.configureAppMCP(connection)
+                }
+            } catch {
+                await dispose(preparing)
+                if preparingResource === preparing { preparingResource = nil }
+                throw error
+            }
             guard !Task.isCancelled, !closing, launch?.id == id, resource.credentialRevision == access.credentialRevision else {
-                await resource.session.close(); await resource.release(); throw CancellationError()
+                await dispose(preparing)
+                if preparingResource === preparing { preparingResource = nil }
+                throw CancellationError()
             }
             let epoch = UUID(), stream = resource.session.events
             let reader = Task { [weak self] in
@@ -296,7 +329,7 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
                 await self?.sourceEnded(epoch)
             }
             let value = Live(epoch: epoch, resource: resource, reader: reader)
-            live = value; blocked = false
+            live = value; preparingResource = nil; blocked = false
             await access.release(); return value
         } catch { await access.release(); throw error }
     }
@@ -341,12 +374,20 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
         child.reader.cancel(); await child.reader.value
         await child.resource.release()
     }
+    private func dispose(_ preparing: PreparingResource) async {
+        if let disposal = preparing.disposal { await disposal.value; return }
+        let resource = preparing.resource
+        let disposal = Task { await resource.session.close(); await resource.release() }
+        preparing.disposal = disposal
+        await disposal.value
+    }
     public func close() async {
         if let closeTask { await closeTask.value; return }
         closing = true; admission = nil; preparingRunID = nil
         let child = live; live = nil
         let pending = launch
         let pendingTask = launchTask
+        let preparing = preparingResource
         pendingTask?.cancel()
         if let pending {
             let waiters = pending.waiters; pending.waiters = [:]
@@ -355,12 +396,14 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
         let owned = Array(calls.values)
         for call in owned { call.cancel() }
         let task = Task {
+            if let preparing { await self.dispose(preparing) }
             await pendingTask?.value
             if let child { await self.retire(child) }
             for call in owned { await call.drain.value }
             self.continuation.finish()
         }
         closeTask = task; await task.value
+        appMCPConnection = nil
     }
     deinit {
         launchTask?.cancel()

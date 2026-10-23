@@ -1,5 +1,81 @@
 # Validation record
 
+## 2026-10-23 — Codex/Claude app tools, window recovery and history stack lifetimes
+
+- On resuming the paused work, the retained full serial run reports 1719 test
+  declarations: 1708 passes and eleven optional installed-provider skips. Core
+  finishes in 366.728 seconds, native view/store in 70.274 seconds, terminal in
+  1.376 seconds and Markdown in 0.163 seconds. A fresh focused run against the
+  recovered working tree passes all 96 declarations (86 Core and ten native
+  view/store), including MCP registration, credential redaction, permission
+  leases, window coordination and Pi history. All 67 Python harness checks pass.
+  The 25-case hosted UI runner compiles locally without launching the GUI;
+  build-only packaging, deep strict signature verification and native-resource
+  loading pass. The async-default ABI guard checks 897 objects with zero weak
+  records. These local results do not resolve the hosted failures below.
+- Native Codex and captured normal Claude sessions now receive the private app
+  MCP connection through stdin, with native registration/status acknowledgement
+  required before input. Codex preserves other servers through a dotted override;
+  Claude refuses owned-name collisions or dynamic servers its control call could
+  replace. Failed registration closes the attempt without a prompt fallback.
+  Owned Codex configuration remains lazy and forwards to each credential epoch.
+- Twenty new focused declarations pass: seventeen Core declarations in 5.812
+  seconds and three native coordinator/store declarations. Parameterized cases
+  cover registration barriers and failures, exact private HTTP calls through the
+  real Engine/SQLite facade, allow/decline, captured FIFO input, Stop, same-runtime
+  reuse, durable rebuild/reopen and no replay. The protocol children are synthetic;
+  these cases do not establish authenticated model-driven invocation.
+- Common inbound redaction covers exact headers and bare tokens in responses,
+  remote errors, notifications, native requests, callbacks and JSON keys. Outgoing
+  registration retains its header; unconfigured transports retain prior behavior.
+  Inspection has bounded depth/node work with no raw-subtree fallback. A real
+  Engine test preserves queued permissions, reuses an unchanged lease, then drains
+  and revokes it before a successor with changed captured permissions. The old
+  credential receives HTTP 401. Owned-Codex tests also join a blocked handoff and
+  prove exactly one child close, resource release and access-ticket release.
+- Separate installed CLI probes confirm actual Claude **2.1.308**, Codex
+  **0.163.0**, and managed Codex **0.156.1** registration/catalog behavior. The
+  managed arm64 archive is the pinned 127394863-byte official artifact, verified
+  against SHA-256 `fea42f9625091f011e38f059da974d52e57ba31831648bb1c7f0b1a385fde547`
+  before extraction/execution. Native initialize, status and registration succeed;
+  the managed status omits `httpOrigin`, which the compatibility check permits.
+  These probes send no user input, `turn/start`, tool calls or account sign-in.
+  Private homes, denied external networking/security services and joined owned
+  processes isolate the checks. Exact header/bare-token scans find no persistence
+  in either private namespace; the installed pair scan covers 69 files and
+  2907230 bytes with no oversized-file skips. Existing history/steering profile
+  restrictions remain unchanged.
+- Main-window startup/loading now works independently of a `ContentView`, with
+  a stable SwiftUI scene ID, weak native window registration, a deferred Commands
+  `OpenWindowAction`, New Window and Dock reopen. Offscreen checks cover pending
+  presentation, coalescing, relay replacement and queued project opens without
+  creating a provider. A twenty-fifth hosted case closes the last main window,
+  reopens through each native entry point and checks the same process, saved
+  workspace and draft. Existing 24 cases remain; CI requires all 25 to pass with
+  zero skips. Hosted execution of these changes remains unverified.
+- Prior [run 39875604721](https://github.com/apoorvdarshan/coincide/actions/runs/39875604721)
+  at `0d51e0df` passes build/test/package but reproduces nine passes and fifteen
+  failures across 24 hosted UI cases, in 1934.860 seconds. AX artifacts confirm
+  the same nine windowless processes and six Claude/Pi harness defects as the
+  earlier run. The current Claude pending-banner query accepts the exact AX
+  label **or value**, retaining the original text and deadline. The window recovery
+  implementation is not evidence that the initial windowless cause is resolved.
+- [Run 39879831113](https://github.com/apoorvdarshan/coincide/actions/runs/39879831113)
+  at `806fa53` fails Core with a native SIGBUS at a stack guard. Its sanitized
+  fault stack directly enters Pi candidate/source/files history validation and
+  retained checkpoint-path validation. Candidate reduction now bypasses the broad
+  Pi mutation frame; full native-source validation returns before files validation
+  begins, and app-MCP guard copies live outside the common command router. Static
+  extraction checks preserve all validation bodies, their order and errors.
+  Local Xcode 27.1 object inspection shows about 10.6 KiB less overlapping fixed
+  reserve and fewer metadata-sized buffers on that descent; instruction counts
+  are not byte totals or proof of hosted Xcode 26.6 success. Hosted crash recovery
+  remains to be verified without larger stacks, retries or disabled tests.
+
+Full T3 parity, the remaining providers' app-tool registration, broader setup/auth
+and hosted GUI acceptance remain unfinished. See [MCP.md](MCP.md) and
+[PROVIDER_PARITY.md](PROVIDER_PARITY.md) for the boundaries.
+
 ## 2026-10-23 — native app MCP, scoped Engine actions and Pi tools
 
 - Full serial `NSUnbufferedIO=YES swift test --no-parallel`, with the two

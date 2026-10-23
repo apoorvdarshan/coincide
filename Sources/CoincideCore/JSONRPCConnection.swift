@@ -63,6 +63,7 @@ public actor JSONRPCConnection {
     private var nextID = 0
     private var decoder: NDJSONDecoder
     private var ended = false
+    private var appMCPRedaction: AppMCPConnection?
 
     public init(executable: URL, arguments: [String], cwd: URL? = nil, dialect: StdioDialect = .jsonRPC, maximumFrameSize: Int = 16 * 1_024 * 1_024,
                 environment: [String: String]? = nil, drainProcessOnClose: Bool = false) throws {
@@ -72,6 +73,20 @@ public actor JSONRPCConnection {
         self.drainProcessOnClose = drainProcessOnClose
         decoder = NDJSONDecoder(maximumFrameSize: maximumFrameSize)
         channel = try ProcessChannel(executable: executable, arguments: arguments, cwd: cwd, environment: environment)
+    }
+    /// Install before starting the protocol reader. Outgoing registration must
+    /// retain its credential; only inbound provider data is redacted.
+    public func configureAppMCPRedaction(_ connection: AppMCPConnection) throws {
+        guard !ended, reader == nil, pending.isEmpty else {
+            throw CoincideError("The app tool connection must be configured before connecting the provider.")
+        }
+        if let existing = appMCPRedaction {
+            guard existing.scopeID == connection.scopeID, existing.endpoint == connection.endpoint,
+                  existing.authorizationHeader == connection.authorizationHeader else {
+                throw CoincideError("The app tool connection has already been configured.")
+            }
+        }
+        appMCPRedaction = connection
     }
     public func start() {
         guard reader == nil else { return }
@@ -141,6 +156,7 @@ public actor JSONRPCConnection {
             await reading?.value
         }
         closeTask = task; await task.value
+        appMCPRedaction = nil
     }
     /// Completes after the event consumer has processed all notifications already decoded.
     public func flushEvents() async {
@@ -180,6 +196,7 @@ public actor JSONRPCConnection {
         } catch { disconnect("Invalid provider protocol: \(error.localizedDescription)"); channel.stop() }
     }
     private func accept(_ frame: JSONValue) {
+        let frame = appMCPRedaction?.redacting(frame) ?? frame
         if dialect == .jsonRPC2, frame["jsonrpc"].string != "2.0" {
             disconnect("The agent sent an invalid JSON-RPC 2.0 envelope."); channel.stop(); return
         }
@@ -226,6 +243,7 @@ public actor JSONRPCConnection {
     }
     private func disconnect(_ message: String) {
         guard !ended else { return }; ended = true
+        let message = appMCPRedaction?.redacting(message) ?? message
         for id in Array(pending.keys) { fail(id, error: CoincideError(message)) }
         for id in Array(barriers.keys) { finishBarrier(id) }
         continuation.yield(.disconnected(message)); continuation.finish()

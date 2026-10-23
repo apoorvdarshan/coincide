@@ -8,6 +8,70 @@ import XCTest
 final class CoincideDesktopUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
+    @MainActor func testNativeMainWindowCloseNewWindowAndReopenPreserveUnsentWorkspace() throws {
+        let f = try prepareApplication(appearance: "light", diagnosticPrefix: "main-window")
+        let app = f.app, root = f.root, manager = FileManager.default
+        let appPath = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_APP_PATH"])
+        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
+        let project = root.appendingPathComponent("Window Workspace"), bin = root.appendingPathComponent("private-bin")
+        let home = root.appendingPathComponent("private-codex-home")
+        for directory in [project, bin, home] { try manager.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        let file = project.appendingPathComponent("README.md"), bytes = Data("Window recovery preserves workspace bytes.\n".utf8)
+        try bytes.write(to: file)
+        let state = root.appendingPathComponent("window-metadata.json"), wire = root.appendingPathComponent("window-wire.jsonl")
+        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 1]).write(to: state, options: .atomic)
+        let peer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_models_ui", withExtension: "py"))
+        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
+        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"; app.launchEnvironment["CODEX_HOME"] = home.path
+        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: "main-window")
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
+        let composer = app.textViews["composer-input"], draft = "Unsent draft across native main window recovery"
+        XCTAssertTrue(composer.waitForExistence(timeout: 10)); composer.click(); composer.typeText(draft)
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        let threadID = try selectedThreadIdentifier(in: app)
+        let saved = try waitForPrivateWorkspace(root, timeout: 5) { snapshot in
+            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID) else { return false }
+            return thread["draft"] as? String == draft && (thread["messages"] as? [Any])?.isEmpty == true
+        }
+        let savedThreads = try claudeGUIJSON(saved["threads"])
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apoorvdarshan.coincide.uitesting")
+            .filter { $0.bundleURL?.standardizedFileURL.path == URL(fileURLWithPath: appPath).standardizedFileURL.path }
+        XCTAssertEqual(running.count, 1)
+        let pid = try XCTUnwrap(running.first?.processIdentifier)
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(waitForAbsence(app.windows.firstMatch, timeout: 10))
+        XCTAssertNotEqual(app.state, .notRunning)
+        app.menuBars.menuBarItems["File"].click()
+        let newWindow = app.menuItems["New Window"]
+        XCTAssertTrue(newWindow.waitForExistence(timeout: 5)); XCTAssertTrue(newWindow.isEnabled); newWindow.click()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10)); XCTAssertEqual(app.windows.count, 1)
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10)); XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(try claudeGUIJSON(privateWorkspaceSnapshot(root)["threads"]), savedThreads)
+        capture(app, name: "main-window-new-window-retains-draft")
+
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(waitForAbsence(app.windows.firstMatch, timeout: 10))
+        let opened = XCTestExpectation(description: "The exact running disposable app receives native reopen")
+        let options = NSWorkspace.OpenConfiguration(); options.activates = true; options.createsNewApplicationInstance = false
+        options.allowsRunningApplicationSubstitution = false
+        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath), configuration: options) { running, error in
+            XCTAssertNil(error); XCTAssertEqual(running?.processIdentifier, pid)
+            XCTAssertEqual(running?.bundleURL?.standardizedFileURL.path, URL(fileURLWithPath: appPath).standardizedFileURL.path)
+            opened.fulfill()
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 10), .completed)
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10)); XCTAssertEqual(app.windows.count, 1)
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10)); XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
+        XCTAssertEqual(try claudeGUIJSON(privateWorkspaceSnapshot(root)["threads"]), savedThreads)
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+        let allowed: Set<String> = ["initialize", "model/list", "config/read", "account/read", "account/rateLimits/read"]
+        XCTAssertTrue(try historyWire(wire).allSatisfy { allowed.contains($0["method"] as? String ?? "") })
+        capture(app, name: "main-window-native-reopen-retains-draft")
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
     @MainActor func testLightCodexSkillsKeyboardInsertionRefreshAndUnsentDraftRestoration() throws {
         try exerciseCodexSkills(appearance: "light")
     }
@@ -1984,7 +2048,7 @@ final class CoincideDesktopUITests: XCTestCase {
     }
     @MainActor private func assertClaudeGUIPendingBanner(_ app: XCUIApplication) throws {
         let pendingText = "Your next explicit message will use the saved Claude context. Existing native transcripts are retained; this selection did not send a message."
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", pendingText)).firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", pendingText, pendingText)).firstMatch.waitForExistence(timeout: 10))
     }
     @MainActor private func replaceClaudeGUIDraft(_ text: String, in app: XCUIApplication) {
         let composer = app.textViews["composer-input"]

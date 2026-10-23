@@ -26,6 +26,30 @@ public struct AppMCPConnection: Sendable, CustomStringConvertible, CustomDebugSt
     public var description: String { "AppMCPConnection(redacted)" }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: EmptyCollection<Mirror.Child>()) }
+
+    /// Native providers may echo registration settings in status, tools or errors.
+    /// Scrub incoming values before they reach event projection or persistence.
+    func redacting(_ text: String) -> String {
+        text.replacingOccurrences(of: authorizationHeader, with: "[private app tool credential]")
+            .replacingOccurrences(of: String(authorizationHeader.dropFirst(7)), with: "[private app tool credential]")
+    }
+    func redacting(_ value: JSONValue) -> JSONValue {
+        var remaining = 100_000
+        return redacting(value, depth: 0, remaining: &remaining)
+    }
+    private func redacting(_ value: JSONValue, depth: Int, remaining: inout Int) -> JSONValue {
+        guard depth < 128, remaining > 0 else { return .string("[provider value exceeded the inspection limit]") }
+        remaining -= 1
+        switch value {
+        case .string(let text): return .string(redacting(text))
+        case .array(let values): return .array(values.map { redacting($0, depth: depth + 1, remaining: &remaining) })
+        case .object(let fields):
+            var result: [String: JSONValue] = [:]
+            for (name, child) in fields { result[redacting(name)] = redacting(child, depth: depth + 1, remaining: &remaining) }
+            return .object(result)
+        default: return value
+        }
+    }
 }
 
 public enum ProviderEvent: Codable, Sendable, Equatable {

@@ -159,7 +159,7 @@ exact-head hosted job runs; compilation and fixture tests alone are not GUI proo
 Screenshots and accessibility trees are retained in the `.xcresult` and exported
 by `xcresulttool` into the uploaded attachments directory after testing. The
 runner never writes directly to the shell-owned artifact directory. The result
-gate requires all eighteen tests to pass with zero
+gate requires all twenty-five tests to pass with zero
 skips. Startup or Accessibility failures remain failed verification, and are not
 reported as completed visual QA.
 
