@@ -261,6 +261,33 @@ final class WorkspaceFileRoot: @unchecked Sendable {
             device: UInt64(truncatingIfNeeded: before.st_dev), inode: before.st_ino, path: resolved, digest: Data(SHA256.hash(data: bytes)))
         return .init(relativePath: relative, contents: text, byteLength: Int(before.st_size), truncated: truncated, exists: true, revision: revision)
     }
+    func readBinary(_ relative: String, maxBytes: Int, onRead: (Int) -> Void = { _ in }) throws -> Data {
+        guard maxBytes > 0 else { throw WorkspaceFileError(.invalidQuery, "Choose a positive binary preview limit.") }
+        let (directory, name, resolved) = try parent(relative, denyMetadata: true)
+        let file = try elevatedFileFD(openat(directory.fd, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC))
+        defer { Darwin.close(file) }
+        var before = stat()
+        guard fstat(file, &before) == 0 else { throw fileFailure() }
+        guard regular(before) else { throw WorkspaceFileError(.notFile, "This workspace path is not a regular file.") }
+        guard before.st_size >= 0, before.st_size <= maxBytes else { throw WorkspaceFileError(.invalidQuery, "This binary file exceeds the preview limit.") }
+        var bytes = Data(), buffer = [UInt8](repeating: 0, count: min(65_536, maxBytes))
+        while bytes.count < Int(before.st_size) {
+            try Task.checkCancellation()
+            let count = Darwin.read(file, &buffer, min(buffer.count, Int(before.st_size) - bytes.count))
+            if count < 0 { if errno == EINTR { continue }; throw fileFailure() }
+            guard count > 0 else { throw WorkspaceFileError(.conflict, "This binary file changed while it was read.") }
+            bytes.append(contentsOf: buffer.prefix(count)); onRead(count)
+        }
+        var after = stat(), named = stat()
+        guard fstat(file, &after) == 0, fstatat(directory.fd, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+              sameFile(before, after), sameFile(after, named), regular(named), before.st_size == after.st_size,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec, before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec, before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec else {
+            throw WorkspaceFileError(.conflict, "This binary file changed while it was read.")
+        }
+        try Task.checkCancellation(); try validate(directory); try denyGit(relative, resolved: resolved)
+        return bytes
+    }
     private static func completeUTF8Prefix(_ bytes: Data) -> Data? {
         let values = Array(bytes)
         guard !values.isEmpty else { return bytes }

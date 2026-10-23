@@ -9,6 +9,9 @@ struct ContentView: View {
     @State private var newProjectSheetPresented = false
     @State private var agentSessionImportSheetPresented = false
     @State private var scriptThread: CodingThread?
+    @State private var scriptPreference: String?
+    @State private var projectActions = ProjectActionsPresenter()
+    @State private var projectActionCommands = ProjectActionCommands()
     @State private var settlementThread: CodingThread?
     @Environment(KeybindingsStore.self) private var keybindings: KeybindingsStore?
     @Environment(\.openWindow) private var openWindow
@@ -61,9 +64,8 @@ struct ContentView: View {
                     .disabled(store.selectedThread.map { !store.workspaceReady(for: $0) } ?? true)
             }
             ToolbarItem {
-                Button { scriptThread = store.selectedThread } label: { Label("Run Script…", systemImage: "play") }
-                    .disabled(store.selectedThread.map { !store.canOpenTerminal(for: $0) } ?? true)
-                    .accessibilityIdentifier("project-scripts")
+                ProjectActionsToolbarControl(store: store, terminals: terminals, commands: projectActionCommands, keybindings: keybindings, requests: .init(review: { scriptPreference = $1; scriptThread = $0 },
+                    addAction: { projectActions.addAction($0) }, settings: { projectActions.showSettings($0) }))
             }
             ToolbarItem { Button { store.inspectorVisible.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") } }
         }
@@ -77,9 +79,10 @@ struct ContentView: View {
             SettleConversationSheet(store: store, threadID: thread.id, close: { settlementThread = nil })
         }
         .sheet(item: $scriptThread) { thread in
-            ProjectScriptsSheet(store: store, thread: thread, terminals: terminals,
+            ProjectScriptsSheet(store: store, thread: thread, terminals: terminals, preferredScriptID: scriptPreference,
                 didRun: { terminals.setVisible(true, threadID: thread.id); scriptThread = nil }, close: { scriptThread = nil })
         }
+        .projectActionsPresentation(store: store, presenter: projectActions)
         .focusedSceneValue(\.cloneRepositoryPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $cloneSheetPresented)
         .focusedSceneValue(\.newProjectPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $newProjectSheetPresented)
         .focusedSceneValue(\.settlementPresentation, cloneSheetPresented || newProjectSheetPresented || agentSessionImportSheetPresented || settlementThread != nil ? nil : $settlementThread)
@@ -111,7 +114,7 @@ struct ContentView: View {
             MainWindowPresentations(newProject: { newProjectSheetPresented = true }, cloneRepository: { cloneSheetPresented = true },
                 importAgentProjects: { agentSessionImportSheetPresented = true }, settle: { settlementThread = $0 }, runScript: { scriptThread = $0 },
                 toggleTerminal: { toggleTerminal() }, terminalVisible: { store.selectedThreadID.map(terminals.isVisible) ?? false },
-                terminalTarget: { terminalCommandTarget },
+                terminalTarget: { terminalCommandTarget }, projectActions: { projectActionCommands },
                 newWindow: { openWindow(id: MainWindowCoordinator.sceneID) }, openRemote: { openWindow(id: RemoteWorkspaceStore.sceneID) },
                 openSettings: { openSettings() }, canInteract: { terminalCommandTarget != nil })
         }
@@ -122,7 +125,7 @@ struct ContentView: View {
     }
     private var terminalCommandTarget: TerminalCommandTarget? {
         guard !cloneSheetPresented, !newProjectSheetPresented, !agentSessionImportSheetPresented,
-              settlementThread == nil, scriptThread == nil else { return nil }
+              settlementThread == nil, scriptThread == nil, projectActions.settings == nil, projectActions.editor == nil else { return nil }
         return .init(terminals: terminals, thread: store.selectedThread,
             workspaceReady: store.selectedThread.map { store.workspaceReady(for: $0) } ?? false,
             canOpen: store.selectedThread.map { store.canOpenTerminal(for: $0) } ?? false,

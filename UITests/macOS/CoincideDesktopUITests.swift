@@ -3659,15 +3659,18 @@ final class CoincideDesktopUITests: XCTestCase {
     }
 
     @MainActor private func openProjectScripts(in app: XCUIApplication) {
-        let launcher = app.buttons["project-scripts"]
-        if launcher.exists {
-            XCTAssertTrue(launcher.isEnabled && launcher.isHittable); launcher.click()
+        // The project actions control is a split button: its trailing arrow opens the menu with Run Script….
+        let actions = app.toolbars.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", ["project-actions-run", "project-actions-menu"])).firstMatch
+        if actions.waitForExistence(timeout: 5), actions.isHittable {
+            XCTAssertTrue(actions.isEnabled)
+            if actions.identifier == "project-actions-menu" { actions.click() }
+            else { actions.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).click() }
         } else {
             let overflow = app.toolbars.popUpButtons["more toolbar items"]
             XCTAssertTrue(overflow.waitForExistence(timeout: 5)); XCTAssertTrue(overflow.isHittable); overflow.click()
-            let script = app.menuItems["Run Script…"]
-            XCTAssertTrue(script.waitForExistence(timeout: 5)); XCTAssertTrue(script.isEnabled && script.isHittable); script.click()
         }
+        let script = app.menuItems["Run Script…"]
+        XCTAssertTrue(script.waitForExistence(timeout: 5)); XCTAssertTrue(script.isEnabled && script.isHittable); script.click()
     }
 
     @MainActor private func toggleInspector(in app: XCUIApplication) {

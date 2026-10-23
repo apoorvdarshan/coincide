@@ -82,8 +82,13 @@ import Testing
     #expect(unicode.additions == 2 && unicode.deletions == 1)
     let created = TranscriptLineDiff.change(path: "new", old: nil, new: "x\ny\n", numbered: true)
     #expect(created.kind == .added && created.additions == 2 && created.hunks[0].header == "@@ -0,0 +1,2 @@" && created.hunks[0].lines[1].newLine == 2)
-    let far = TranscriptLineDiff.change(path: "a", old: (1...40).map(String.init).joined(separator: "\n"),
-                                       new: (1...40).map { $0 == 2 || $0 == 39 ? "x" : String($0) }.joined(separator: "\n"))
+    let originalLines: [String] = (1...40).map { String($0) }
+    let changedLines: [String] = (1...40).map { number in
+        if number == 2 || number == 39 { return "x" }
+        return String(number)
+    }
+    let far = TranscriptLineDiff.change(path: "a", old: originalLines.joined(separator: "\n"),
+                                       new: changedLines.joined(separator: "\n"))
     #expect(far.hunks.count == 2)
 }
 

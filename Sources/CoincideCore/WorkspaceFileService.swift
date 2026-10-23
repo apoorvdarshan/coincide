@@ -173,6 +173,11 @@ public actor WorkspaceFileService {
         let result = try await perform { folder, _ in try folder.write(relativePath, contents: contents, expected: expected) }
         invalidate(.mutation); return result
     }
+    /// Complete bounded bytes from the same descriptor anchor used by text reads.
+    public func readBinary(relativePath: String, maxBytes: Int = 1_048_576) async throws -> Data {
+        guard (1...2_000_000).contains(maxBytes) else { throw WorkspaceFileError(.invalidQuery, "Binary previews must be between 1 byte and 2 MB.") }
+        return try await perform { folder, _ in try folder.readBinary(relativePath, maxBytes: maxBytes) }
+    }
     public func invalidations() async -> AsyncStream<WorkspaceFileInvalidation> {
         let pair = AsyncStream<WorkspaceFileInvalidation>.makeStream(bufferingPolicy: .bufferingNewest(1))
         guard !closed else { pair.continuation.finish(); return pair.stream }

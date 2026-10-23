@@ -113,10 +113,12 @@ final class WorkspaceStore {
     let composerDraftTools: ComposerDraftToolsStore
     let agentSessionImports: AgentSessionImportStore
     let claudeRuntime: ClaudeRuntimeSettingsStore
+    let projectSettings: ProjectSettingsStore
     @ObservationIgnored private var agentSessionImportScans: [UUID: [AgentSessionProjectCandidate]] = [:]
     @ObservationIgnored private var agentSessionImportProjects: [UUID: [UUID: UUID]] = [:]
     private let projectCreator: ProjectCreator
     private let projectScriptReader: NativeProjectScriptService.Reader
+    @ObservationIgnored private var projectDefaultReads: [UUID: (projectID: UUID, task: Task<ProjectConfigurationDocument, any Error>)] = [:]
     @ObservationIgnored private let claudeRuntimeCaptureOverride: ClaudeRuntimeCapture?
     @ObservationIgnored private var neutralClaudeModelProfile: ClaudeRuntimeProfile?
     private var claudeRuntimeCapture: ClaudeRuntimeCapture {
@@ -265,6 +267,7 @@ final class WorkspaceStore {
         terminalArchives = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("TerminalHistory", isDirectory: true))
         claudeRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot)
         self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
+        projectSettings = .init(root: ProjectSettingsFiles.root(dataRoot: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot))
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot, installation: codexInstallation)
@@ -311,6 +314,7 @@ final class WorkspaceStore {
         terminalArchives = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("TerminalHistory", isDirectory: true))
         claudeRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent())
         self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
+        projectSettings = .init(root: ProjectSettingsFiles.root(dataRoot: engine.worktreesRoot.deletingLastPathComponent()))
         self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
@@ -987,6 +991,24 @@ final class WorkspaceStore {
         guard !terminating, let target = thread(id) else { return }
         selectedProjectID = target.projectID; showArchived = target.isArchived; selectedThreadID = id
     }
+    func projectDefaultsProjectIsCurrent(_ captured: WorkspaceProject) -> Bool {
+        guard !terminating, !Task.isCancelled, removalEditorLocks[captured.id] == nil,
+              let current = snapshot.projects.first(where: { $0.id == captured.id }) else { return false }
+        return ProjectSettingsPresentationScope(project: captured).matches(current)
+    }
+    func projectDefaultsConfiguration(_ project: WorkspaceProject) async -> ProjectConfiguration? {
+        await projectConfigurationDocument(project)?.configuration
+    }
+    func projectConfigurationDocument(_ project: WorkspaceProject) async -> ProjectConfigurationDocument? {
+        guard projectDefaultsProjectIsCurrent(project), canAccessWorkspaceFiles(project.path),
+              let files = try? fileService(path: project.path) else { return nil }
+        let id = UUID(), task = Task { try await ProjectConfigurationService.load(using: files) }
+        projectDefaultReads[id] = (project.id, task)
+        defer { projectDefaultReads.removeValue(forKey: id) }
+        let document = try? await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !task.isCancelled, projectDefaultsProjectIsCurrent(project), canAccessWorkspaceFiles(project.path) else { return nil }
+        return document
+    }
     func canAccessWorkspaceFiles(_ path: String) -> Bool {
         let path = Self.canonicalPath(path)
         guard canEditWorkspace(path), fileServiceCleanupTasks[path] == nil else { return false }
@@ -1026,15 +1048,18 @@ final class WorkspaceStore {
         let service = NativeProjectScriptService(resolve: { [weak self] thread in
             guard let self, self.canOpenTerminal(for: thread),
                   let project = self.snapshot.projects.first(where: { $0.id == thread.projectID }) else { throw CancellationError() }
-            return .init(projectRoot: project.path, files: try self.fileService(path: thread.workspacePath))
+            return .init(projectRoot: project.path, files: try self.fileService(path: thread.workspacePath),
+                settingsKeys: ProjectSettingsKey.candidates(for: project), projectCreatedAt: project.createdAt)
         }, authorize: { [weak self] thread, workspace in
             guard let self, self.canOpenTerminal(for: thread),
-                  self.snapshot.projects.contains(where: { $0.id == thread.projectID && $0.path == workspace.projectRoot }),
+                  let project = self.snapshot.projects.first(where: { $0.id == thread.projectID }),
+                  project.path.utf8.elementsEqual(workspace.projectRoot.utf8), project.createdAt == workspace.projectCreatedAt,
+                  ProjectSettingsKey.candidates(for: project).map({ Data($0.utf8) }) == workspace.settingsKeys.map({ Data($0.utf8) }),
                   let current = try? self.fileService(path: thread.workspacePath) else { return false }
             return current === workspace.files
         }, authorizeWindow: { [weak self] terminals in
             self?.terminalStores[ObjectIdentifier(terminals)]?.value === terminals
-        }, read: projectScriptReader)
+        }, read: projectScriptReader, settingsRoot: projectSettings.root)
         projectScriptService = service; return service
     }
     func refreshExternalEditors(forceRefresh: Bool = false) async {
@@ -1523,7 +1548,7 @@ final class WorkspaceStore {
     func canOpenTerminal(for captured: CodingThread) -> Bool {
         guard let current = thread(captured.id), current.projectID == captured.projectID,
               current.createdAt == captured.createdAt,
-              current.workspacePath == captured.workspacePath,
+              current.workspacePath.utf8.elementsEqual(captured.workspacePath.utf8),
               current.workspacePreparation?.id == captured.workspacePreparation?.id else { return false }
         return workspaceReady(for: current) && canAccessWorkspaceFiles(current.workspacePath)
     }
@@ -3569,7 +3594,10 @@ final class WorkspaceStore {
         for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
         for task in piHistoryActions { _ = await task.result }
         for task in piFreshReads { _ = await task.result }
-        await projectScriptService?.shutdown()
+        let defaultsReads = projectDefaultReads.values.map(\.task)
+        for task in defaultsReads { task.cancel() }
+        for task in defaultsReads { _ = await task.result }
+        await projectScriptService?.shutdown(); await projectSettings.shutdown()
         await externalEditorService?.shutdown()
         let creations = Array(projectCreationTasks.values)
         for task in creations { task.cancel() }

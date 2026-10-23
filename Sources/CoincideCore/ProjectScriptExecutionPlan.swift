@@ -23,6 +23,8 @@ public struct ProjectScriptExecutionRevision: Codable, Sendable, Equatable {
 
 /// Immutable local launch data. Capturing or decoding a plan never executes repository commands.
 /// Inherited environment values are deliberately absent from the persistable plan.
+/// A plan pins exactly one source: the checkout's t3.json revision, or an app-owned project action.
+/// Plans without `projectAction` encode exactly as before, so older journals decode unchanged.
 public struct ProjectScriptExecutionPlan: Codable, Sendable, Equatable, Identifiable {
     public let id: UUID
     public let scriptIndex: Int
@@ -33,7 +35,8 @@ public struct ProjectScriptExecutionPlan: Codable, Sendable, Equatable, Identifi
     public let projectRootIdentity: ProjectScriptExecutionNode
     public let workspaceIdentity: ProjectScriptExecutionNode
     public let shellIdentity: ProjectScriptExecutionNode
-    public let configurationRevision: ProjectScriptExecutionRevision
+    public let configurationRevision: ProjectScriptExecutionRevision?
+    public let projectAction: ProjectActionPin?
 
     public static func capture(scriptIndex: Int, using files: WorkspaceFileService, projectRoot: URL,
                                shell: URL, id: UUID = UUID()) async throws -> Self {
@@ -57,7 +60,7 @@ public struct ProjectScriptExecutionPlan: Codable, Sendable, Equatable, Identifi
                 workspacePath: files.root.path, shellPath: shellPath,
                 projectRootIdentity: .init(device: root.device, inode: root.inode),
                 workspaceIdentity: .init(device: revision.rootDevice, inode: revision.rootInode),
-                shellIdentity: .init(executable), configurationRevision: .init(revision))
+                shellIdentity: .init(executable), configurationRevision: .init(revision), projectAction: nil)
             try plan.validate(); return plan
         }.value
         try Task.checkCancellation()
@@ -65,11 +68,42 @@ public struct ProjectScriptExecutionPlan: Codable, Sendable, Equatable, Identifi
         return value
     }
 
+    /// Captures an app-owned action. The pinned settings file is re-read by the managed helper
+    /// before spawn, so an edit after review fails as `configurationChanged` instead of running.
+    public static func capture(action: ProjectAction, index: Int, settingsKey: String, settingsRoot: URL, workspace: URL,
+                               projectRoot: URL, shell: URL, id: UUID = UUID()) async throws -> Self {
+        let script = try action.script()
+        let pin = ProjectActionPin(action: action, settingsKey: settingsKey, settingsFile: ProjectSettingsFiles.fileURL(root: settingsRoot, key: settingsKey))
+        _ = try pin.verify(script: script)
+        let workspacePath = workspace.standardizedFileURL.resolvingSymlinksInPath()
+        _ = try ProjectScriptInvocation(script: script, projectRoot: projectRoot, worktreePath: workspacePath)
+        guard shell.isFileURL, shell.host == nil || shell.host == "" || shell.host == "localhost",
+              shell.query == nil, shell.fragment == nil else { throw ProjectScriptExecutionError(.invalidPlan) }
+        let rootPath = projectRoot.standardizedFileURL.resolvingSymlinksInPath().path
+        let shellPath = shell.standardizedFileURL.resolvingSymlinksInPath().path
+        let value = try await Task.detached {
+            try Task.checkCancellation()
+            let root = try WorkspaceFileRoot(root: URL(fileURLWithPath: rootPath)), checkout = try WorkspaceFileRoot(root: workspacePath)
+            defer { root.close(); checkout.close() }
+            var executable = stat()
+            guard lstat(shellPath, &executable) == 0, executable.st_mode & S_IFMT == S_IFREG,
+                  access(shellPath, X_OK) == 0 else { throw ProjectScriptExecutionError(.invalidPlan) }
+            let plan = Self(id: id, scriptIndex: index, script: script, projectRoot: root.path, workspacePath: checkout.path, shellPath: shellPath,
+                projectRootIdentity: .init(device: root.device, inode: root.inode), workspaceIdentity: .init(device: checkout.device, inode: checkout.inode),
+                shellIdentity: .init(executable), configurationRevision: nil, projectAction: pin)
+            try plan.validate(); return plan
+        }.value
+        try Task.checkCancellation()
+        return value
+    }
+
     public func validate() throws {
         try script.validate()
         guard (0..<50).contains(scriptIndex), Self.path(projectRoot), Self.path(workspacePath), Self.path(shellPath),
               projectRootIdentity.inode != 0, workspaceIdentity.inode != 0, shellIdentity.inode != 0,
-              configurationRevision.root == workspaceIdentity, configurationRevision.file.inode != 0,
+              (configurationRevision == nil) != (projectAction == nil) else { throw ProjectScriptExecutionError(.invalidPlan) }
+        if let projectAction { try projectAction.validate(); return }
+        guard let configurationRevision, configurationRevision.root == workspaceIdentity, configurationRevision.file.inode != 0,
               configurationRevision.digest.count == 32,
               !configurationRevision.relativePath.hasPrefix("/"), !configurationRevision.relativePath.contains("\0"),
               !configurationRevision.relativePath.isEmpty,
@@ -89,18 +123,20 @@ public struct ProjectScriptExecutionPlan: Codable, Sendable, Equatable, Identifi
         projectRootIdentity = try c.decode(ProjectScriptExecutionNode.self, forKey: .projectRootIdentity)
         workspaceIdentity = try c.decode(ProjectScriptExecutionNode.self, forKey: .workspaceIdentity)
         shellIdentity = try c.decode(ProjectScriptExecutionNode.self, forKey: .shellIdentity)
-        configurationRevision = try c.decode(ProjectScriptExecutionRevision.self, forKey: .configurationRevision)
+        configurationRevision = try c.decodeIfPresent(ProjectScriptExecutionRevision.self, forKey: .configurationRevision)
+        projectAction = try c.decodeIfPresent(ProjectActionPin.self, forKey: .projectAction)
         try validate()
     }
     private init(id: UUID, scriptIndex: Int, script: ProjectScript, projectRoot: String, workspacePath: String,
                  shellPath: String, projectRootIdentity: ProjectScriptExecutionNode, workspaceIdentity: ProjectScriptExecutionNode,
-                 shellIdentity: ProjectScriptExecutionNode, configurationRevision: ProjectScriptExecutionRevision) {
+                 shellIdentity: ProjectScriptExecutionNode, configurationRevision: ProjectScriptExecutionRevision?, projectAction: ProjectActionPin?) {
         self.id = id; self.scriptIndex = scriptIndex; self.script = script; self.projectRoot = projectRoot
         self.workspacePath = workspacePath; self.shellPath = shellPath; self.projectRootIdentity = projectRootIdentity
         self.workspaceIdentity = workspaceIdentity; self.shellIdentity = shellIdentity; self.configurationRevision = configurationRevision
+        self.projectAction = projectAction
     }
     private enum CodingKeys: String, CodingKey {
-        case id, scriptIndex, script, projectRoot, workspacePath, shellPath, projectRootIdentity, workspaceIdentity, shellIdentity, configurationRevision
+        case id, scriptIndex, script, projectRoot, workspacePath, shellPath, projectRootIdentity, workspaceIdentity, shellIdentity, configurationRevision, projectAction
     }
 }
 

@@ -26,10 +26,15 @@ private final class ScriptPinnedWorkspace {
               ProjectScriptExecutionNode(device: project.device, inode: project.inode) == plan.projectRootIdentity else {
             throw ProjectScriptExecutionError(.configurationChanged)
         }
-        let document = try workspace.read(ProjectConfigurationService.fileName, allowMissing: false, maxBytes: ProjectConfigurationService.maximumBytes)
-        guard let revision = document.revision, ProjectScriptExecutionRevision(revision) == plan.configurationRevision,
-              let configuration = try? ProjectConfiguration.parse(document.contents), configuration.scripts.indices.contains(plan.scriptIndex),
-              configuration.scripts[plan.scriptIndex] == plan.script else { throw ProjectScriptExecutionError(.configurationChanged) }
+        if let action = plan.projectAction {
+            // App-owned actions live outside the checkout; the same exact-revision rule applies to their settings file.
+            _ = try action.verify(script: plan.script)
+        } else {
+            let document = try workspace.read(ProjectConfigurationService.fileName, allowMissing: false, maxBytes: ProjectConfigurationService.maximumBytes)
+            guard let revision = document.revision, ProjectScriptExecutionRevision(revision) == plan.configurationRevision,
+                  let configuration = try? ProjectConfiguration.parse(document.contents), configuration.scripts.indices.contains(plan.scriptIndex),
+                  configuration.scripts[plan.scriptIndex] == plan.script else { throw ProjectScriptExecutionError(.configurationChanged) }
+        }
         var executable = stat()
         guard lstat(plan.shellPath, &executable) == 0, executable.st_mode & S_IFMT == S_IFREG,
               access(plan.shellPath, X_OK) == 0, ProjectScriptExecutionNode(executable) == plan.shellIdentity else {

@@ -118,6 +118,7 @@ struct ChatView: View {
                         ProjectCloneBanner(project: project, cancel: { store.cancelProjectClone(project.id) }, retry: { store.retryProjectClone(project.id) },
                                            retrying: store.isRetryingProjectClone(project.id))
                     }
+                    ProjectWorktreeDefaultBanner(store: store, thread: thread, choose: { worktreeSheet = true })
                     if let preparation = thread.workspacePreparation {
                         WorktreePreparationBanner(preparation: preparation, cancel: { store.cancelWorktreePreparation(threadID) },
                                                   retry: { store.retryWorktreePreparation(threadID) },

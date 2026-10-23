@@ -13,6 +13,7 @@ struct SidebarView: View {
     @State private var removingGroup: ProjectGroupRemovalRequest?
     @State private var pendingGroupRemoval: ProjectGroupRemovalRequest?
     @State private var snoozing: ThreadSnoozePresentation?
+    @Environment(ProjectActionsPresenter.self) private var projectActions: ProjectActionsPresenter?
     var body: some View {
         List(selection: $store.selectedThreadID) {
             ForEach(store.orderedProjectGroups) { group in
@@ -185,6 +186,7 @@ struct SidebarView: View {
             HStack(spacing: 5) {
                 Image(systemName: store.isProjectGroupExpanded(group.key) ? "chevron.down" : "chevron.right")
                     .font(.system(size: 9, weight: .semibold)).frame(width: 10)
+                ProjectIconView(settings: store.projectSettings, project: group.representative, name: group.displayName)
                 Text(group.displayName).lineLimit(1)
                 Spacer(minLength: 0)
                 if group.members.count > 1 { Text(group.members.count, format: .number).font(.caption2).foregroundStyle(.secondary) }
@@ -202,6 +204,7 @@ struct SidebarView: View {
                     }
                 }
             } else if let project = group.members.first { checkoutActions(project) }
+            if let projectActions { Divider(); Button("Project Settings…") { projectActions.showSettings(group.representative) } }
             if group.memberProjectIDs.count > 1 {
                 Divider()
                 Button("Rename Group…") { title = group.displayName; renaming = .group(group) }

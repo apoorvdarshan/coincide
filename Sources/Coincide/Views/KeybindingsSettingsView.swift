@@ -134,7 +134,7 @@ private struct KeybindingRowView: View {
     static func availabilityNote(_ availability: KeybindingCommandAvailability) -> LocalizedStringKey {
         switch availability {
         case .reserved: "Reserved for the terminal; Coincide does not run this shortcut yet."
-        case .project: "Project script shortcuts are saved but do not run scripts yet."
+        case .project: "Runs a registered action in the current main window. The original thread and checkout must still match."
         default: "Not available in Coincide. The rule is kept for T3 Code compatibility."
         }
     }

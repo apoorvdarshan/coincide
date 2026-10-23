@@ -14,6 +14,7 @@ struct MainWindowPresentations {
     var toggleTerminal: @MainActor () -> Void = {}
     var terminalVisible: @MainActor () -> Bool = { false }
     var terminalTarget: @MainActor () -> TerminalCommandTarget? = { nil }
+    var projectActions: @MainActor () -> ProjectActionCommands? = { nil }
     var newWindow: @MainActor () -> Void = {}
     var openRemote: @MainActor () -> Void = {}
     var openSettings: @MainActor () -> Void = {}
@@ -129,7 +130,10 @@ final class MainWindowController {
         focusTask?.cancel(); focusTask = nil; noticeTask?.cancel(); hintTask?.cancel(); hintTask = nil
         jumpHintsVisible = false; window = nil
     }
-    func drain() async { while !controls.isEmpty { for task in Array(controls.values) { await task.value }; await Task.yield() } }
+    func drain() async {
+        await presentations.projectActions()?.drain()
+        while !controls.isEmpty { for task in Array(controls.values) { await task.value }; await Task.yield() }
+    }
     func captureAction() -> MainWindowActionCapture {
         let thread = store.selectedThread
         let project = (store.selectedProjectID ?? thread?.projectID).flatMap { id in store.snapshot.projects.first { $0.id == id } }
@@ -165,6 +169,7 @@ final class MainWindowController {
 
     func canPerform(_ command: KeybindingCommand) -> Bool {
         guard canHandleInteraction else { return false }
+        if command.scriptID != nil { return presentations.projectActions()?.canPerform(command) == true }
         let thread = store.selectedThread
         switch command {
         case .sidebarToggle, .commandPaletteToggle, .themeSelect, .appearanceCycle, .rightPanelToggle, .windowNew, .remoteOpen,
@@ -201,6 +206,7 @@ final class MainWindowController {
     /// Runs a command; false when it does not apply in this window right now.
     @discardableResult func perform(_ command: KeybindingCommand, expected: MainWindowActionCapture? = nil) -> Bool {
         guard canPerform(command), expected.map(actionStillCurrent) ?? true else { return false }
+        if command.scriptID != nil { return presentations.projectActions()?.perform(command) == true }
         let captured = expected ?? captureAction()
         let thread = store.selectedThread
         switch command {

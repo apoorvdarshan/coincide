@@ -65,12 +65,39 @@ public struct ProjectScriptPlanningContext: Sendable {
     public let projectRoot: URL
     public let workspacePath: URL
     public let role: ProjectScriptRole
-    public init(id: UUID, projectRoot: URL, workspacePath: URL, role: ProjectScriptRole = .setup) { self.id = id; self.projectRoot = projectRoot; self.workspacePath = workspacePath; self.role = role }
+    /// App-owned project settings. When the project has its own action list, it replaces t3.json roles.
+    public let settingsRoot: URL?
+    public let settingsKeys: [String]
+    public init(id: UUID, projectRoot: URL, workspacePath: URL, role: ProjectScriptRole = .setup, settingsRoot: URL? = nil, settingsKeys: [String] = []) {
+        self.id = id; self.projectRoot = projectRoot; self.workspacePath = workspacePath; self.role = role
+        self.settingsRoot = settingsRoot; self.settingsKeys = settingsKeys
+    }
 }
 public enum ProjectScriptSetupPlanner {
     public static func plan(_ context: ProjectScriptPlanningContext) async throws -> ProjectScriptExecutionPlan? {
         if context.role == .settle,
            context.projectRoot.standardizedFileURL.resolvingSymlinksInPath().path == context.workspacePath.standardizedFileURL.resolvingSymlinksInPath().path { return nil }
+        if let root = context.settingsRoot, !context.settingsKeys.isEmpty {
+            let saved: (key: String, document: ProjectSettingsDocument)?
+            do {
+                let read = Task.detached { try ProjectSettingsFiles.load(root: root, keys: context.settingsKeys) }
+                saved = try await withTaskCancellationHandler { try await read.value } onCancel: { read.cancel() }
+                try Task.checkCancellation()
+            } catch {
+                try Task.checkCancellation()
+                throw CoincideError(ThreadProjectScriptRun.discoveryError(for: context.role))
+            }
+            if let saved, let actions = saved.document.actions {
+                // An edited role is honored exactly like T3's resolved project scripts; discovery never executes it.
+                guard let index = actions.firstIndex(where: { context.role == .setup ? $0.runOnWorktreeCreate : $0.runOnSettle }) else { return nil }
+                let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+                guard shellPath.hasPrefix("/") else { throw ProjectScriptExecutionError(.invalidPlan) }
+                let plan = try await ProjectScriptExecutionPlan.capture(action: actions[index], index: index, settingsKey: saved.key, settingsRoot: root,
+                    workspace: context.workspacePath, projectRoot: context.projectRoot, shell: URL(fileURLWithPath: shellPath), id: context.id)
+                if context.role == .settle, plan.projectRootIdentity == plan.workspaceIdentity { return nil }
+                try Task.checkCancellation(); return plan
+            }
+        }
         let files = WorkspaceFileService(root: context.workspacePath)
         do {
             let document = try await ProjectConfigurationService.load(using: files)

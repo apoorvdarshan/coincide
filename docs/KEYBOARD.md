@@ -96,7 +96,7 @@ It and `editor.openFavorite` (open the workspace in the preferred
 editor) and `project.import` are available without a default. Other T3 command
 IDs (preview, usage, model picker, composer pickers, `thread.undo` and others)
 are accepted in the file for compatibility but do nothing yet; Settings marks
-them. `script.{id}.run` rules are accepted and listed but do not run scripts yet.
+them. `script.{id}.run` rules run an action registered in the current main window. Project defaults use the same resolver as global rules; configured rules override a matching script command, and applicable app commands retain precedence. Execution rechecks the original thread, checkout, preparation and script digest. Sheets, IME input and unregistered remote windows retain their existing guards.
 
 The composer keeps its built-in keys: Return sends, ⇧Return or ⌥Return inserts a
 new line, ⌘Return uses the opposite Queue/Steer action, ⌘S stashes the prompt

@@ -843,3 +843,22 @@ func setupOutputHasOneTransportConsumerAndBoundedUnicodeSnapshotsForEveryWindowW
         }
     }
 }
+
+@Test(.timeLimit(.minutes(1)))
+func appOwnedSetupActionOverridesT3JSONAndStillRequiresExactReview() async throws {
+    let scripts: [ProjectScript] = [try .init(name: "File setup", command: "printf file", runOnWorktreeCreate: true)]
+    try await withSetupEngine(scripts: scripts) { f in
+        let key = ProjectSettingsKey.primary(for: f.project), root = ProjectSettingsFiles.root(dataRoot: f.root)
+        let actions = try ProjectActions.adding(.init(name: "App setup", command: "printf app", runOnWorktreeCreate: true, waitForSetup: true), to: [])
+        try ProjectSettingsFiles.save(.init(key: key, actions: actions), root: root)
+        try await f.completeCheckout()
+        let run = try await f.awaitingApproval(), plan = try #require(run.plan)
+        #expect(plan.script.name == "App setup" && plan.script.command == "printf app" && !plan.script.runsAsynchronously)
+        #expect(plan.configurationRevision == nil && plan.projectAction?.actionID == actions[0].id && plan.projectAction?.settingsKey == key)
+        #expect(f.harness.scriptSessions().isEmpty, "Discovery of an app-owned role never starts a script.")
+        let reopened = try WorkspaceDatabase(url: f.databaseURL)
+        #expect(try await reopened.load().threads.first?.workspacePreparation?.setup?.plan == plan, "The journal round-trips the action pin.")
+        let peer = try await f.approve(run)
+        #expect(peer.plan == plan && peer.starts == 1)
+    }
+}

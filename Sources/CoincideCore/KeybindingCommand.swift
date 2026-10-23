@@ -79,7 +79,7 @@ public enum KeybindingCommandAvailability: String, Sendable {
     case reserved
     /// A valid T3 ID whose surface does not exist in Coincide; it is accepted and never dispatched.
     case unavailable
-    /// `script.{id}.run`: accepted and listed; running scripts from a binding is not yet connected.
+    /// `script.{id}.run`: executes only while that action is registered in the current main window.
     case project
     case unknown
 }

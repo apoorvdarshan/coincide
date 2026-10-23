@@ -143,6 +143,20 @@ final class KeybindingsStore {
         }
     }
 
+    /// Dynamic defaults belong to one main window; configured rules retain priority.
+    func bindings(projectDefaults: [ResolvedKeybinding]) -> [ResolvedKeybinding] {
+        KeybindingResolver.merge(keybindings, defaults: projectDefaults)
+    }
+    func resolve(_ stroke: KeyStroke, context: KeybindingContext, projectDefaults: [ResolvedKeybinding]) -> KeybindingCommand? {
+        KeybindingResolver.resolve(stroke, in: bindings(projectDefaults: projectDefaults), context: context)
+    }
+    func isBound(_ stroke: KeyStroke, projectDefaults: [ResolvedKeybinding]) -> Bool {
+        KeybindingResolver.isBound(stroke, in: bindings(projectDefaults: projectDefaults))
+    }
+    func shortcut(for command: KeybindingCommand, context: KeybindingContext, projectDefaults: [ResolvedKeybinding]) -> KeybindingShortcut? {
+        KeybindingResolver.shortcut(for: command, in: bindings(projectDefaults: projectDefaults), context: context)
+    }
+
     func resolve(_ stroke: KeyStroke, context: KeybindingContext) -> KeybindingCommand? {
         KeybindingResolver.resolve(stroke, in: keybindings, context: context)
     }

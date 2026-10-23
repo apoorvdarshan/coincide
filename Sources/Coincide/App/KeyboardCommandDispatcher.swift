@@ -210,7 +210,25 @@ final class KeyboardCommandDispatcher {
         let stroke = KeyStroke(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
                                command: flags.contains(.command), control: flags.contains(.control), option: flags.contains(.option), shift: flags.contains(.shift))
         let context = context(for: controller, focus: controller.palette != nil ? .editableText : focus)
-        let command = keybindings.resolve(stroke, context: context)
+        let projectDefaults = controller.presentations.projectActions()?.defaults ?? []
+        let command = keybindings.resolve(stroke, context: context, projectDefaults: projectDefaults)
+        if command?.scriptID != nil {
+            if stroke.command, !stroke.control, !stroke.option,
+               !stroke.keys.isDisjoint(with: ["c", "x", "v", "a", "z"]),
+               (window.firstResponder as? NSTextView).map({ $0.isEditable || $0.isSelectable }) == true {
+                // Empty selections and unavailable clipboard contents disable a
+                // native edit action; they never turn its key into a shell run.
+                return event
+            }
+            // Project shortcuts yield to the current responder's native Edit,
+            // Window and Quit actions, including the existing quit protection.
+            if Self.nativeMenuOwns(stroke, menu: NSApp.mainMenu, window: window) { return event }
+            if (focus == .fileEditor || focus == .terminal), stroke.command, !stroke.control, !stroke.option,
+               !stroke.shift, stroke.keys.contains("f") {
+                decline(event) // Preserve MenuCommandInvocation's native Find fallback.
+                return event
+            }
+        }
         if let palette = controller.palette {
             // The palette keeps focus: number shortcuts choose its entries and only a few commands act.
             switch command {
@@ -221,7 +239,7 @@ final class KeyboardCommandDispatcher {
             case .chatFind?: controller.closePalette(returnFocus: false); controller.openFind(); return nil
             case .threadCopyReference?: controller.closePalette(); controller.copyThreadReference(); return nil
             default:
-                if keybindings.isBound(stroke) { decline(event) }
+                if keybindings.isBound(stroke, projectDefaults: projectDefaults) { decline(event) }
                 return event
             }
         }
@@ -230,7 +248,7 @@ final class KeyboardCommandDispatcher {
             if !event.isARepeat || Self.repeats(command) { controller.perform(command) }
             return nil
         }
-        if keybindings.isBound(stroke) { decline(event); return event }
+        if keybindings.isBound(stroke, projectDefaults: projectDefaults) { decline(event); return event }
         if TypeToFocus.shouldRedirect(focus: focus, hasSheet: window.attachedSheet != nil, overlayOpen: controller.find != nil,
                                       command: flags.contains(.command), control: flags.contains(.control), characters: event.characters),
            controller.focusComposer() {
@@ -241,6 +259,35 @@ final class KeyboardCommandDispatcher {
 
     /// Traversal may auto-repeat while held; toggles never do.
     static func repeats(_ command: KeybindingCommand) -> Bool { command == .threadPrevious || command == .threadNext }
+
+    private static func nativeMenuOwns(_ stroke: KeyStroke, menu: NSMenu?, window: NSWindow) -> Bool {
+        guard let menu else { return false }
+        let nativeActions: Set<String> = [
+            "copy:", "cut:", "paste:", "pasteAsPlainText:", "pasteAndMatchStyle:", "selectAll:", "undo:", "redo:",
+            "performTextFinderAction:", "performFindPanelAction:", "saveDocument:", "saveDocumentAs:", "revertDocumentToSaved:",
+            "performClose:", "terminate:", "hide:", "hideOtherApplications:", "unhideAllApplications:",
+            "miniaturize:", "performMiniaturize:", "performZoom:", "showPreferencesWindow:", "showSettingsWindow:"
+        ]
+        for item in menu.items where !item.isHidden {
+            if let submenu = item.submenu, (item.isEnabled || menu.autoenablesItems), nativeMenuOwns(stroke, menu: submenu, window: window) { return true }
+            guard !item.keyEquivalent.isEmpty, let action = item.action, nativeActions.contains(NSStringFromSelector(action)) else { continue }
+            let modifiers = item.keyEquivalentModifierMask
+            let shortcut = KeybindingShortcut(key: item.keyEquivalent.lowercased(), meta: modifiers.contains(.command),
+                control: modifiers.contains(.control), shift: modifiers.contains(.shift) || item.keyEquivalent != item.keyEquivalent.lowercased(),
+                option: modifiers.contains(.option))
+            guard shortcut.matches(stroke), let target = NSApp.target(forAction: action, to: item.target, from: item) else { continue }
+            if let view = target as? NSView, view.window !== window { continue }
+            if let targetWindow = target as? NSWindow, targetWindow !== window { continue }
+            // Autoenabled menu state may be stale until the next presentation.
+            // Ask the current target before allowing a script to consume its key.
+            if let validator = target as? NSMenuItemValidation {
+                if validator.validateMenuItem(item) { return true }
+            } else if let validator = target as? NSUserInterfaceValidations {
+                if validator.validateUserInterfaceItem(item) { return true }
+            } else if item.isEnabled { return true }
+        }
+        return false
+    }
 
     private func decline(_ event: NSEvent) { declined = (event.timestamp, event.keyCode, event.windowNumber) }
     /// A menu key equivalent that matches a keybinding the dispatcher declined
