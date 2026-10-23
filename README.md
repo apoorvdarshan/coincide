@@ -25,6 +25,13 @@ message. Both adapters have offline-fixture verification; installed conversation
 verification and complete OpenCode parity remain unfinished.
 ACP v1 agents can use other installed CLIs, such as `opencode acp`.
 
+Coincide can reuse an authenticated Codex or Claude CLI without an additional
+app API key. Provider accounts still need access to the selected model; a runtime
+check or model listing does not prove that access. OpenCode's configured provider
+can reject a model with HTTP 403 even after its native session connects. Resolve
+that provider's access or explicitly choose an accessible model; Coincide does
+not silently change models or credentials.
+
 ```sh
 ./script/build_and_run.sh
 ```
@@ -56,6 +63,18 @@ tracks fetched remote branches. Fetch, fast-forward Pull, and explicit single-br
 Push use your existing Git credentials. A folder without Git can initialize a
 repository; staging and unstaging also work before its first commit. A new thread
 can choose a Git worktree before its first message.
+
+Supported Pi, Codex, normal Claude and native OpenCode sessions automatically
+receive [Coincide app tools](docs/MCP.md), allowing the agent to inspect and manage
+conversations within its captured permissions. No separate app-tool API key or
+manual MCP configuration is needed. Installed Codex and Claude checks verify
+thread read/rename and restart persistence; installed OpenCode model acceptance
+remains blocked by provider access.
+
+**Settings → General → Thread notifications** offers notifications, sound, both,
+or Off (the default). Background alerts show the thread name and open its
+conversation; returning to Coincide clears attention counts. See
+[notification behavior and verification](docs/NOTIFICATIONS.md).
 
 Use **Refresh Models** in the header menu to load Codex's advertised models and
 reasoning options. Reasoning preferences are saved separately for each model;
@@ -91,11 +110,19 @@ OAuth/runtime and real synthetic-item Keychain verification; actual ChatGPT
 sign-in/model execution, portable profiles, broader usage, skills and MCP
 controls remain unfinished.
 
+Claude questions show native single-choice or multiple-choice controls, custom
+answers, optional previews and notes. **Submit Answers** requires an answer to
+every question; **Cancel Questions** returns an explicit cancellation. A failed
+selected-context consumer keeps Send disabled until its context is inspected,
+while the inspection action remains available.
+
 For native OpenCode, **Refresh Models** reads the current workspace's models,
 variants and primary agents. These choices apply to future inputs; queued turns
 retain their captured model, variant, agent and permissions. Approval controls
-distinguish once, conversation-only and workspace-wide grants. Direct steering
-and native OpenCode history are still unfinished.
+distinguish once, conversation-only and workspace-wide grants. The v2 adapter
+implements active-turn steering and reviewed fork/rewind; v1 has a separate
+reviewed clone/adoption history contract. Broader installed acceptance, recovery
+and history compatibility remain unfinished; see [OpenCode boundaries](docs/OPENCODE_HTTP.md).
 
 **Settings → Providers → Add Grok** saves its native ACP profile. Its composer
 offers **Ask**, **Auto**, and **Always approve**; active and queued inputs retain

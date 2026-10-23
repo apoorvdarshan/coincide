@@ -1,5 +1,42 @@
 # Validation record
 
+## 2026-10-23 — Final local checkpoint after hosted failure fixes
+
+- Implementation `4d1840d08699b2ac4867bd6e15d9106662c3de7c` passes the complete
+  local serial suite: 1743 actual passes out of 1755 declarations, with twelve
+  optional live declarations skipped. Core reports 1520 declarations in 358.738
+  seconds, native view/store 216 in 67.416 seconds, terminal six in 1.393 seconds
+  and Markdown thirteen in 0.132 seconds. Pinned Pi package acceptance is enabled.
+  This includes the native OpenCode default/readiness fixes, window command
+  placement and Claude consumer-inspection submission hold.
+- Build-only packaging, deep strict signature verification, native math resource
+  rendering and the async-default ABI guard pass again (912 objects, zero weak
+  records). Packaged and compiled app Mach-O UUIDs match. The installed app is
+  not replaced or launched; the development bundle is `dist/Coincide.app`.
+- The preceding `b716e29` batch passes the hosted full suite with 1736 actual
+  passes from 1750 declarations, fourteen optional/dependency checks skipped,
+  in 911.864 seconds. Both isolated Codex probes pass; the hosted ABI guard
+  checks 806 objects with zero weak records, and packaging/signature/resources
+  pass. Its UI jobs and the later fixes' [exact implementation run](https://github.com/apoorvdarshan/coincide/actions/runs/39889928420)
+  are separate pending acceptance. Local unit and runtime evidence does not
+  establish a passing hosted GUI result.
+- One restricted installed-Claude 2.1.308 turn observes a native multi-select
+  question, accepts both labels plus an unguessable custom answer and notes, and
+  completes with the draft and sentinel intact. The initial verifier fails its
+  exact formatting assertion because the model appends a period to the notes.
+  The completed private fixture then passes a separate offline check using the
+  revised shared validator: exact first answer line, the complete unguessable
+  notes literal, exactly one succeeded response effect with exact selections and
+  notes, journal rebuild/validation and SQLite reopen without starting a provider.
+  That retained-evidence check passes in 0.042 seconds. No second model call is
+  made, and the fresh live invocation is not rerun with the revised assertion.
+  The permanent opt-in test restricts tools to AskUserQuestion and disables hooks,
+  skills and MCP for its invocation; existing authentication is unchanged.
+  Run it explicitly with `COINCIDE_LIVE_CLAUDE_QUESTION=1 swift test --no-parallel --filter installedClaudeQuestionAcceptsNativeSelectionsNotesAndPreservesPrivateWorkspace`.
+  The same turn exposes two identical assistant rows for one native API message
+  under stream/final block suffixes `1` and `0`. This remains an unresolved
+  transcript reconciliation bug, not evidence of a second native answer effect.
+
 ## 2026-10-23 — Parallel implementation milestone
 
 - The complete serial local suite passes 1738 of 1750 declarations, with twelve
