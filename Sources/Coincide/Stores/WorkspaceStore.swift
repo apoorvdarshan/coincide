@@ -1321,6 +1321,12 @@ final class WorkspaceStore {
         next.insert(contentsOf: moving, at: insertion)
         sendCommand(.reorderProjects(projectIDs: next, expectedOrder: order))
     }
+    @ObservationIgnored private var scheduledTasksStorage: ScheduledTasksStore?
+    func scheduledTasks() -> ScheduledTasksStore? {
+        if let scheduledTasksStorage { return scheduledTasksStorage }
+        guard let engine else { return nil }
+        let value = ScheduledTasksStore(engine: engine); scheduledTasksStorage = value; return value
+    }
     func load() async {
         if let loadingTask { await loadingTask.value; return }
         let task = Task<Void, Never> { await self.loadRuntime() }
@@ -1337,6 +1343,7 @@ final class WorkspaceStore {
             apply(await engine.current())
             await composerDraftTools.load()
             await agentSessionImports.load()
+            await engine.scheduler().start()
             selectedThreadID = snapshot.effectiveSidebarPreferences.selectedThreadID
                 ?? snapshot.threads.first(where: { !$0.isArchived })?.id
             selectedProjectID = selectedThread?.projectID ?? snapshot.projects.first?.id
@@ -3590,6 +3597,8 @@ final class WorkspaceStore {
     }
     func shutdown() async {
         terminating = true
+        await engine?.closeScheduledTasks()
+        await scheduledTasksStorage?.shutdown()
         await gitSync?.shutdown()
         await agentSessionImports.shutdown()
         await threadActionUndo.shutdown()

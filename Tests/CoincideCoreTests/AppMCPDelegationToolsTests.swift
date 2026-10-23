@@ -37,7 +37,7 @@ private struct DelegationToolFixture {
 @Test func appMCPDelegationCatalogDeclaresAcknowledgingReadsAsWritesAndContextOnlyScopesNeverExposeDelegation() async throws {
     let fixture = DelegationToolFixture(), probe = DelegationToolProbe(view: DelegationToolFixture().view)
     let tools = fixture.tools(probe), names = Set(tools.descriptors.map(\.name))
-    #expect(names.count == 36 && names.isSuperset(of: ["delegate_task", "task_status", "task_cancel"]))
+    #expect(names.count == 43 && names.isSuperset(of: ["delegate_task", "task_status", "task_cancel"]))
     for name in ["delegate_task", "task_status", "task_cancel"] {
         let descriptor = try #require(tools.descriptors.first { $0.name == name }); try descriptor.validate()
         #expect(!descriptor.readOnly && descriptor.capability == .orchestration)

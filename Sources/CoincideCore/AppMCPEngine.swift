@@ -8,6 +8,7 @@ extension WorkspaceEngine {
         let view = try await appMCPView(context)
         try Task.checkCancellation()
         switch action {
+        case .scheduledTask(let request): return try await performScheduledTaskMCP(request, context: context)
         case .delegateTask(let request): return try await appMCPDelegate(request, context: context, view: view)
         case .delegatedTaskStatus(let id):
             let status = try await delegatedTaskStatus(parentThreadID: context.scope.threadID, taskID: id, acknowledge: true)
@@ -364,7 +365,9 @@ extension WorkspaceEngine {
         return .object(["parentThreadId": appMCPID(caller.id), "inheritedProviderInstanceId": appMCPID(context.scope.providerInstanceID), "inheritedModel": .string(context.configuration.model),
             "permission": .string(context.configuration.permission.rawValue), "providers": .array(providers), "unsupportedCapabilities": .array(AppMCPTools.unsupportedCapabilities.map(JSONValue.string)),
             "features": .object(["appOwnedSubagents": .bool(true), "asyncPolling": .bool(true), "cancellation": .bool(true), "batchThreadCreation": .bool(true),
-                "threadManagement": .bool(true), "incrementalThreadRead": .bool(true), "scheduledTasks": .bool(false), "maxBatchThreads": .number(20)])])
+                "threadManagement": .bool(true), "incrementalThreadRead": .bool(true), "scheduledTasks": .bool(true), "scheduledTaskPolicy": .object(["minimumIntervalMs": .number(60_000), "hostTimeZone": .string(TimeZone.current.identifier),
+                    "boundCurrentThread": .bool(true), "freshThreads": .bool(true), "fullAccessWritesRequired": .bool(true),
+                    "webhookCredentialSetup": .string("native-settings"), "listenerScope": .string("explicit-loopback-only"), "managedRelay": .bool(false)]), "maxBatchThreads": .number(20)])])
     }
 
     private func appMCPCreateThreads(_ requests: [AppMCPThreadCreation], key: String?, context: AppMCPContext, view: AppMCPView) async throws -> JSONValue {

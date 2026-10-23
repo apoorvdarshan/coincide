@@ -245,7 +245,7 @@ Unsupported cases return fixed errors and remain visible through
 - Muse, Antigravity and ACP providers' app-MCP registration,
   external-client authorization and remote access; shared native MCP
   configuration editing and MCP Apps/resources/HTML presentation.
-- Background-run write ownership, scheduling, secret requests,
+- Background-run write ownership, secret requests,
   preview/browser/device services and review guides.
 - Cross-provider or foreign-instance model changes, restart delivery, deferred
   own-run settlement and client-keyed steering without reserved native input IDs.
@@ -272,3 +272,9 @@ The transport follows the official versioned
 [2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
 and [2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 contracts.
+
+
+Scheduled task timer CRUD, bounded prompt reads, original-ID manual runs and
+explicit recovery are documented in [SCHEDULING.md](SCHEDULING.md). Webhook
+credentials are entered privately in native Settings; MCP does not accept or
+return signing secrets. Managed relay deployment is outside this implementation.

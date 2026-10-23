@@ -209,11 +209,13 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var delegatedTaskTransfers: [DelegatedTaskResultTransfer]?
     public var contextTransfers: [ContextTransfer]?
     public var agentSessionImports: [AgentSessionImportRecord]?
+    public var scheduler: ScheduledTaskLedger?
     public var workspaceLifecyclePolicy: WorkspaceLifecyclePolicy?
     public init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestActions, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
+    enum CodingKeys: String, CodingKey { case scheduler, schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestActions, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        scheduler = try values.decodeIfPresent(ScheduledTaskLedger.self, forKey: .scheduler)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         projects = try values.decodeIfPresent([WorkspaceProject].self, forKey: .projects) ?? []
         threads = try values.decodeIfPresent([CodingThread].self, forKey: .threads) ?? []
@@ -234,6 +236,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        scheduler?.recover(threads: threads)
         recoverDelegatedTasks()
         for i in (contextTransfers ?? []).indices {
             guard var transfer = contextTransfers?[i], var delivery = transfer.delivery,

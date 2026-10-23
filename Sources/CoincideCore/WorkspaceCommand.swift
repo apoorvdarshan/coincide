@@ -107,6 +107,7 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case resumeQueue(threadID: UUID)
     case addAttachments(threadID: UUID, attachments: [ChatAttachment])
     case removeAttachment(threadID: UUID, attachmentID: UUID)
+    case scheduledTask(ScheduledTaskMutation)
     case replaceComposerDraft(ComposerDraftReplacement)
     case discardComposerDraft(ThreadDraftDiscard)
     case threadActionUndo(ThreadActionUndoClaim)
@@ -284,6 +285,10 @@ struct WorkspaceDecision: Sendable {
         try guardPullRequestActionPhysicalTransitions(command, snapshot: snapshot)
         let reduced: GeneralReduction
         switch command {
+        case .client(.scheduledTask(let mutation)):
+            var prepared = Self(snapshot: snapshot)
+            try prepared.prepareClientCommand(.scheduledTask(mutation), commandID: id, now: now)
+            reduced = .init(decision: try reduceScheduledTask(mutation, id: id, snapshot: prepared.snapshot, now: now), requiresFinalization: true)
         case .client(.workspaceLifecycle(let action)):
             var decision = Self(snapshot: snapshot)
             try decision.applyWorkspaceLifecycle(action, commandID: id, now: now, policy: snapshot.workspaceLifecyclePolicy ?? .init())
@@ -1410,7 +1415,7 @@ struct WorkspaceDecision: Sendable {
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
             case .abandonContextTransfer, .replaceComposerDraft, .discardComposerDraft, .threadActionUndo, .workspaceLifecycle, .setWorkspaceLifecyclePolicy: break // Routed through their atomic reducers above.
-            case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
+            case .scheduledTask, .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -1894,6 +1899,7 @@ extension WorkspaceCommand {
     var threadID: UUID? {
         switch self {
         case .workspaceLifecycle(let action): action.threadID
+        case .scheduledTask: nil
         case .setWorkspaceLifecyclePolicy: nil
         case .replaceComposerDraft(let replacement): replacement.expected.threadID
         case .discardComposerDraft(let discard): discard.expected.threadID

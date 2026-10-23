@@ -134,6 +134,19 @@ enum AppMCPAdmission {
         case .appMCP: throw AppMCPError(.invalidRequest)
         case .client(let command):
             switch command {
+            case .scheduledTask(let mutation):
+                try environment()
+                switch mutation {
+                case .mcp(let request):
+                    guard request.source.projectID == authority.projectID, request.source.threadID == authority.threadID else { throw AppMCPError(.capabilityDenied) }
+                    _ = try target(request.source.threadID)
+                case .save(let definition, _): guard definition.source.projectID == authority.projectID else { throw AppMCPError(.capabilityDenied) }; _ = try target(definition.source.threadID)
+                case .fire(let fire): guard let task = snapshot.scheduler?.tasks.first(where: { $0.id == fire.taskID }), task.source.projectID == authority.projectID else { throw AppMCPError(.notFound) }; _ = try target(task.source.threadID)
+                case .enabled(let id, _, _, _), .delete(let id, _): guard snapshot.scheduler?.tasks.first(where: { $0.id == id })?.source.projectID == authority.projectID else { throw AppMCPError(.notFound) }
+                case .acknowledge(let id, _): guard let occurrence = snapshot.scheduler?.occurrences.first(where: { $0.id == id }), snapshot.scheduler?.tasks.first(where: { $0.id == occurrence.taskID })?.source.projectID == authority.projectID else { throw AppMCPError(.notFound) }
+                default: throw AppMCPError(.unsupported)
+                }
+
             case .createThread(let thread):
                 try newThread(thread); created[thread.id] = thread
             case .addProjectWithThread(_, let thread), .startProjectClone(_, let thread):

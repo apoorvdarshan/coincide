@@ -77,6 +77,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "cpu") }
+            if let scheduled = store.scheduledTasks() { ScheduledTasksSettingsView(store: scheduled, navigate: { store.selectThread($0) }).tabItem { Label("Scheduled Tasks", systemImage: "calendar.badge.clock") } }
             SourceControlSettingsView(store: store).tabItem { Label("Source Control", systemImage: "arrow.triangle.branch") }
             Form {
                 Picker("Appearance", selection: $appearance) { Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark") }

@@ -2492,6 +2492,8 @@ private extension WorkspaceEngine {
 
 /// Serial command decisions and durable commits are independent of provider I/O.
 public actor WorkspaceEngine {
+    private var scheduledTaskService: ScheduledTaskService?
+
     private struct HistoryRead: Sendable {
         let threadID: UUID
         let projectID: UUID
@@ -2845,6 +2847,51 @@ public actor WorkspaceEngine {
             Task { await service.requestSweep() }
         }
     }
+    public func scheduler() -> ScheduledTaskService {
+        if let scheduledTaskService { return scheduledTaskService }
+        let namespace = "coincide.scheduler." + SHA256.hash(data: Data(agentSessionDataRoot.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+        let service = ScheduledTaskService(engine: self, secrets: KeychainScheduledTaskSecrets(namespace: namespace))
+        scheduledTaskService = service; return service
+    }
+    func dispatchScheduledTaskFromAppMCP(_ action: ScheduledTaskMCPAction, source: ScheduledTaskSource, commandID: UUID, context: AppMCPContext) async throws -> JSONValue {
+        let expected: UUID?
+        if case .run(let taskID, _) = action { expected = revision.snapshot.scheduler?.tasks.first(where: { $0.id == taskID })?.revision } else { expected = nil }
+        let request = ScheduledTaskMCPCommand(action: action, source: source, managedRoot: worktreesRoot.path, expectedTaskRevision: expected)
+        let receipt = try await appMCPDispatch([.scheduledTask(.mcp(request))], context: context, id: commandID)
+        var result: [String: JSONValue] = ["commandId": .string(receipt.commandID.uuidString), "sequence": .number(Double(receipt.sequence)), "accepted": .bool(true)]
+        let taskID: UUID?
+        switch action {
+        case .save(let id, _, _, _, _, _, _, _): taskID = id ?? TaskOrchestration.derivedID(commandID, "definition")
+        case .delete(let id, _, _), .run(let id, _): taskID = id
+        case .acknowledge, .list, .read: taskID = nil
+        }
+        if let taskID {
+            result["scheduledTaskId"] = .string(taskID.uuidString)
+            if let task = revision.snapshot.scheduler?.tasks.first(where: { $0.id == taskID }) {
+                result["revision"] = .string(task.revision.uuidString); result["enabled"] = .bool(task.enabled)
+                result["nextRunAt"] = task.nextRunAt.map { .string(ISO8601DateFormatter().string(from: $0)) } ?? .null
+            }
+            if let occurrence = revision.snapshot.scheduler?.occurrences.first(where: { $0.id == commandID }) {
+                result["threadId"] = occurrence.threadID.map { .string($0.uuidString) } ?? .null; result["status"] = .string(occurrence.phase.rawValue)
+            }
+        }
+        if case .save = action { await scheduler().start() }
+        return .object(result)
+    }
+    public func closeScheduledTasks() async { await scheduledTaskService?.shutdown() }
+    public func scheduledTaskReceipt(commandID: UUID, taskID: UUID) async throws -> WorkspaceCommandReceipt? {
+        _ = try await load()
+        guard revision.snapshot.scheduler?.occurrences.contains(where: { $0.id == commandID && $0.taskID == taskID }) == true else { return nil }
+        return try await database.receipt(commandID)
+    }
+    public func fireScheduledTask(taskID: UUID, revision: UUID, trigger: ScheduledTaskOccurrence.Trigger, commandID: UUID,
+                                  dueAt: Date, observedAt: Date, prompt: String? = nil, delivery: ScheduledTaskWebhookDelivery? = nil) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        let fire = ScheduledTaskFire(taskID: taskID, revision: revision, trigger: trigger, dueAt: dueAt, observedAt: observedAt,
+            managedRoot: worktreesRoot.path, prompt: prompt, delivery: delivery)
+        return try await dispatch(.scheduledTask(.fire(fire)), id: commandID)
+    }
+
     @discardableResult public func implementTranscriptPlan(_ request: TranscriptPlanImplementation, commandID: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         guard !stoppingEffects else { throw CancellationError() }
@@ -2864,6 +2911,8 @@ public actor WorkspaceEngine {
     @discardableResult public func dispatch(_ command: WorkspaceCommand, id: UUID = UUID()) async throws -> WorkspaceCommandReceipt {
         _ = try await load()
         guard !stoppingEffects else { throw CancellationError() }
+        if case .scheduledTask(.fire(let fire)) = command, !fire.managedRoot.utf8.elementsEqual(worktreesRoot.path.utf8) { throw ScheduledTaskError.sourceChanged }
+        if case .scheduledTask(.mcp(let request)) = command, !request.managedRoot.utf8.elementsEqual(worktreesRoot.path.utf8) { throw ScheduledTaskError.sourceChanged }
         if case .setWorkspaceLifecyclePolicy(let policy) = command { try policy.validate() }
         if case .workspaceLifecycle(let action) = command { try action.validateEncoding() }
         var capturedCommand = command
@@ -3094,9 +3143,9 @@ public actor WorkspaceEngine {
                         decision = WorkspaceDecision(snapshot: base.snapshot)
                     } else { decision = try WorkspaceDecision.make(envelope.command, id: envelope.id, snapshot: base.snapshot, now: Date()) }
                 }
-                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError || error is RemoteLifecycleFailure || error is RemoteProjectScriptFailure || error is GitHubPullRequestActionError {
+                catch where error is WorkspaceCommandError || error is AppMCPError || error is ContextTransferError || error is ContextHandoffError || error is DelegatedTaskError || error is TaskIsolationError || error is AgentSessionImportError || error is WorkspaceLifecycleError || error is ScheduledTaskError || error is RemoteLifecycleFailure || error is RemoteProjectScriptFailure || error is GitHubPullRequestActionError {
                     do {
-                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? (error as? WorkspaceLifecycleError)?.localizedDescription ?? (error as? GitHubPullRequestActionError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
+                        let reason = (error as? WorkspaceCommandError)?.message ?? (error as? AppMCPError)?.localizedDescription ?? (error as? ContextTransferError)?.localizedDescription ?? (error as? ContextHandoffError)?.localizedDescription ?? (error as? DelegatedTaskError)?.localizedDescription ?? (error as? TaskIsolationError)?.localizedDescription ?? (error as? AgentSessionImportError)?.localizedDescription ?? (error as? WorkspaceLifecycleError)?.localizedDescription ?? (error as? ScheduledTaskError)?.localizedDescription ?? (error as? GitHubPullRequestActionError)?.localizedDescription ?? AppMCPError(.unavailable).localizedDescription
                         let receipt = try await database.rejectCommand(envelope.id, matching: payload, reason: reason, expectedSequence: base.sequence)
                         envelope.continuation.resume(returning: receipt); return
                     } catch WorkspaceCommitError.revisionChanged where attempt < 3 { continue }
@@ -4289,6 +4338,7 @@ public actor WorkspaceEngine {
         if let initialization { _ = try? await initialization.value }
         guard !closing else { return }
         stoppingEffects = true
+        await scheduledTaskService?.shutdown(); scheduledTaskService = nil
         await closeWorkspaceLifecycle()
         await closeAgentSessionImports()
         delegatedTaskDeliveryJob?.cancel()

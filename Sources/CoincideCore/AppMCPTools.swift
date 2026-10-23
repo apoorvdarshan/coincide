@@ -88,6 +88,7 @@ public struct AppMCPDelegation: Codable, Sendable, Equatable {
 /// The Engine MUST revalidate the live caller and target under its command queue,
 /// including after asynchronous preparation. A prior `read` is not authorization.
 public enum AppMCPAction: Sendable, Equatable {
+    case scheduledTask(ScheduledTaskMCPAction)
     case capabilities(search: String?)
     case wait(threadID: UUID, runID: UUID?, timeoutMilliseconds: Int)
     case createThreads([AppMCPThreadCreation], clientRequestID: String?)
@@ -132,7 +133,7 @@ public struct AppMCPError: Error, Sendable, Equatable, LocalizedError {
 }
 
 /// Pinned T3 app tools over the native Engine. Unsupported backends (
-/// scheduling, secret requests, browser/device automation, PR monitoring, upload,
+/// secret requests, browser/device automation, PR monitoring, upload,
 /// and active worktree handoff) are not advertised as working tools.
 public struct AppMCPTools: Sendable {
     public struct Client: Sendable {
@@ -149,7 +150,7 @@ public struct AppMCPTools: Sendable {
     private let allowedToolNames: Set<String>?
     public init(client: Client, allowedToolNames: Set<String>? = nil) { self.client = client; self.allowedToolNames = allowedToolNames }
 
-    public static let unsupportedCapabilities = ["scheduled_tasks", "secret_requests", "preview", "device", "html_render", "pull_request_links_and_watch", "review_guides", "attachment_upload", "active_worktree_handoff", "environment_preferences", "queued_steering_input_text_revision", "managed_project_allocation", "missing_workspace_creation", "restart_delivery", "remote_worktree_fetch"]
+    public static let unsupportedCapabilities = ["secret_requests", "preview", "device", "html_render", "pull_request_links_and_watch", "review_guides", "attachment_upload", "active_worktree_handoff", "environment_preferences", "queued_steering_input_text_revision", "managed_project_allocation", "missing_workspace_creation", "restart_delivery", "remote_worktree_fetch"]
     public var descriptors: [MCPToolDefinition] { Self.catalog.filter { allowedToolNames?.contains($0.name) ?? true } }
 
     public func call(name: String, arguments: JSONValue, context: AppMCPContext) async -> MCPToolResult {
@@ -260,6 +261,31 @@ public struct AppMCPTools: Sendable {
 
     private static func action(_ name: String, input: Input, view: AppMCPView, caller: CodingThread) throws -> AppMCPAction {
         switch name {
+        case "read_scheduled_task":
+            try input.only(["scheduledTaskId", "revision", "offset", "maxBytes"])
+            return try .scheduledTask(.read(id: input.uuid("scheduledTaskId", required: true)!, revision: input.uuid("revision", required: true)!,
+                offset: input.integer("offset", default: 0, range: 0...524_288), maximumBytes: input.integer("maxBytes", default: 16_384, range: 4...65_536)))
+        case "list_scheduled_tasks":
+            try input.only(["projectId", "cursor", "limit"])
+            return try .scheduledTask(.list(projectID: input.uuid("projectId"), cursor: input.integer("cursor", default: 0, range: 0...100), limit: input.integer("limit", default: 20, range: 1...20)))
+        case "schedule_task", "update_scheduled_task":
+            try input.only(["scheduledTaskId", "revision", "title", "prompt", "enabled", "schedule", "bindToCurrentThread", "commandId"])
+            let updating = name == "update_scheduled_task"
+            let schedule = try input.object["schedule"].map { try scheduledTaskSchedule($0) }
+            let enabled = try input.object["enabled"] == nil ? nil : input.boolean("enabled", default: false)
+            let bound = try input.object["bindToCurrentThread"] == nil ? nil : input.boolean("bindToCurrentThread", default: true)
+            return try .scheduledTask(.save(id: input.uuid("scheduledTaskId", required: updating), revision: input.uuid("revision", required: updating),
+                title: input.text("title", maximum: 1024, required: !updating), prompt: input.text("prompt", maximum: 120_000, required: !updating),
+                enabled: enabled, schedule: schedule, bindToCurrentThread: bound, commandID: input.uuid("commandId", required: true)!))
+        case "delete_scheduled_task":
+            try input.only(["scheduledTaskId", "revision", "commandId"])
+            return try .scheduledTask(.delete(id: input.uuid("scheduledTaskId", required: true)!, revision: input.uuid("revision", required: true)!, commandID: input.uuid("commandId", required: true)!))
+        case "run_scheduled_task_now":
+            try input.only(["taskId", "commandId"])
+            return try .scheduledTask(.run(id: input.uuid("taskId", required: true)!, commandID: input.uuid("commandId", required: true)!))
+        case "acknowledge_scheduled_task_run":
+            try input.only(["runId", "commandId"])
+            return try .scheduledTask(.acknowledge(id: input.uuid("runId", required: true)!, commandID: input.uuid("commandId", required: true)!))
         case "delegate_task":
             try input.only(["task", "title", "target", "role", "isolation", "mode", "timeoutMs", "clientRequestId", "runtimeMode", "interactionMode"])
             let task = try input.text("task", maximum: 120_000, required: true)!
@@ -638,6 +664,27 @@ public struct AppMCPTools: Sendable {
         }
     }
 
+    private static func scheduledTaskSchedule(_ value: JSONValue) throws -> ScheduledTaskSchedule {
+        guard let object = value.object, let type = object["type"]?.string else { throw AppMCPError(.invalidRequest) }
+        let schedule: ScheduledTaskSchedule
+        switch type {
+        case "interval":
+            guard Set(object.keys).isSubset(of: ["type", "everyMs"]), let raw = object["everyMs"], case .number(let number) = raw,
+                  number.isFinite, number.rounded() == number, number >= 60_000, number <= 31_536_000_000 else { throw AppMCPError(.invalidRequest) }
+            schedule = .interval(everyMilliseconds: Int64(number))
+        case "fixed_time":
+            guard Set(object.keys).isSubset(of: ["type", "timeOfDay", "weekdays"]), let time = object["timeOfDay"]?.string else { throw AppMCPError(.invalidRequest) }
+            let rawDays: [JSONValue]
+            if let raw = object["weekdays"] { guard let values = raw.array else { throw AppMCPError(.invalidRequest) }; rawDays = values } else { rawDays = [] }
+            let days = try rawDays.map { item -> Int in
+                guard case .number(let n) = item, n.rounded() == n, (0...6).contains(n) else { throw AppMCPError(.invalidRequest) }; return Int(n)
+            }
+            schedule = .fixedTime(timeOfDay: time, weekdays: days)
+        default: throw AppMCPError(.unsupported) // Webhook credentials are configured privately in native Settings.
+        }
+        try schedule.validate(); return schedule
+    }
+
     private static var catalog: [MCPToolDefinition] {
         let uuid = string(format: "uuid"), text = string(maximum: 120_000), title = string(maximum: 512)
         let optionalThread = ["threadId": uuid]
@@ -656,7 +703,16 @@ public struct AppMCPTools: Sendable {
         func tool(_ name: String, _ description: String, _ properties: [String: JSONValue] = [:], required: [String] = [], readOnly: Bool = true, capability: MCPCapability = .orchestration) -> MCPToolDefinition {
             .init(name: name, description: description, inputSchema: object(properties, required: required), capability: capability, readOnly: readOnly)
         }
+        let timer = object(["type": string(values: ["interval", "fixed_time"]), "everyMs": integer(minimum: 60_000, maximum: 31_536_000_000),
+            "timeOfDay": string(maximum: 5), "weekdays": .object(["type": .string("array"), "maxItems": .number(7), "items": integer(minimum: 0, maximum: 6)])], required: ["type"])
         return [
+            tool("read_scheduled_task", "Read one complete prompt in bounded exact UTF-8 byte chunks under its current task revision. Join chunks and verify digest; this never runs the task or exposes webhook credentials.", ["scheduledTaskId": uuid, "revision": uuid, "offset": integer(minimum: 0, maximum: 524_288), "maxBytes": integer(minimum: 4, maximum: 65_536)], required: ["scheduledTaskId", "revision"]),
+            tool("list_scheduled_tasks", "List bounded task metadata in this caller’s project. Destination mode is explicit; previews are not complete prompt exports.", ["projectId": uuid, "cursor": integer(minimum: 0, maximum: 100), "limit": integer(minimum: 1, maximum: 20)]),
+            tool("schedule_task", "Save persistent authorized automation using this thread’s captured provider/model/permission and checkout. Full-access caller required. By default, occurrences queue into this captured thread; bindToCurrentThread=false creates a fresh thread. Captured provider/settings changes fail closed. Interval minimum 60000ms; fixed times use host local timezone and skip lateness over ten minutes. Webhook credentials require native Settings; no external hosting is configured.", ["title": title, "prompt": text, "enabled": .object(["type": .string("boolean")]), "schedule": timer, "bindToCurrentThread": .object(["type": .string("boolean")]), "commandId": uuid], required: ["title", "prompt", "schedule", "commandId"], readOnly: false),
+            tool("update_scheduled_task", "Edit an exact task revision; omitted fields stay unchanged. Stable original commandId is required. Source/profile changes must be reviewed in native Settings.", ["scheduledTaskId": uuid, "revision": uuid, "title": title, "prompt": text, "enabled": .object(["type": .string("boolean")]), "schedule": timer, "bindToCurrentThread": .object(["type": .string("boolean")]), "commandId": uuid], required: ["scheduledTaskId", "revision", "commandId"], readOnly: false),
+            tool("delete_scheduled_task", "Delete an exact definition, retaining original run audit. Already accepted input is not repeated or silently stopped.", ["scheduledTaskId": uuid, "revision": uuid, "commandId": uuid], required: ["scheduledTaskId", "revision", "commandId"], readOnly: false),
+            tool("run_scheduled_task_now", "Explicitly admit one input to the saved destination under original commandId, even for a paused task. Inspect uncertain original runs before another dispatch. Provider completion is separate from admission.", ["taskId": uuid, "commandId": uuid], required: ["taskId", "commandId"], readOnly: false),
+            tool("acknowledge_scheduled_task_run", "Acknowledge an inspected failed or uncertain occurrence. This never resends its input or enables the task.", ["runId": uuid, "commandId": uuid], required: ["runId", "commandId"], readOnly: false),
             tool("delegate_task", "Delegate a self-contained brief to an app-owned child of this active parent. Only the supplied task is sent; parent history is not copied. Prefer provider-native subagent tools when their model/options support the work. This tool supports registered provider profiles and advertised models/options. Shared isolation uses the parent checkout; worktree isolation pins the parent local HEAD, excludes dirty edits and completes discovered project setup before input. Async completion notifies the parent; wait returns on settled result, question, approval or timeout without cancelling the child. Use a distinct clientRequestId for each review round and keep it stable when retrying that round. The backing child thread is not a new delegated review round.",
                  ["task": text, "title": title, "target": selection, "role": string(values: DelegatedTaskRole.allCases.map(\.rawValue)),
                   "isolation": string(values: ["shared", "worktree"]), "mode": string(values: ["async", "wait"]),

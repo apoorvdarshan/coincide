@@ -2,6 +2,7 @@ import Foundation
 
 /// Versioned, provider-neutral mutations. Metadata events exclude transcript history.
 public enum WorkspaceEvent: Codable, Sendable, Equatable {
+    case schedulerChanged(ScheduledTaskLedger?)
     case imported(WorkspaceSnapshot)
     case projectUpserted(WorkspaceProject)
     case projectRemoved(UUID)
@@ -29,6 +30,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
 
     public func apply(to snapshot: inout WorkspaceSnapshot) throws {
         switch self {
+        case .schedulerChanged(let value): snapshot.scheduler = value
         case .workspaceLifecyclePolicyChanged(let value): snapshot.workspaceLifecyclePolicy = value
         case .agentSessionImportsReplaced(let values): snapshot.agentSessionImports = values
         case .delegatedTaskTransfersReplaced(let values): snapshot.delegatedTaskTransfers = values
@@ -101,6 +103,7 @@ public struct WorkspaceRevision: Sendable, Equatable {
 
 public enum WorkspaceJournal {
     public static func validate(_ snapshot: WorkspaceSnapshot) throws {
+        try snapshot.scheduler?.validate()
         let projects = Set(snapshot.projects.map(\.id)), threads = Set(snapshot.threads.map(\.id))
         guard snapshot.schemaVersion == 1, projects.count == snapshot.projects.count, threads.count == snapshot.threads.count,
               snapshot.threads.allSatisfy({ thread in
@@ -211,6 +214,7 @@ public enum WorkspaceJournal {
     @inline(never)
     private static func changesAfterValidation(from previous: WorkspaceSnapshot, to next: WorkspaceSnapshot) -> [WorkspaceEvent] {
         var events: [WorkspaceEvent] = []
+        if previous.scheduler != next.scheduler { events.append(.schedulerChanged(next.scheduler)) }
         if previous.workspaceLifecyclePolicy != next.workspaceLifecyclePolicy { events.append(.workspaceLifecyclePolicyChanged(next.workspaceLifecyclePolicy)) }
         if previous.agentSessionImports != next.agentSessionImports { events.append(.agentSessionImportsReplaced(next.agentSessionImports)) }
         if previous.delegatedTaskTransfers != next.delegatedTaskTransfers { events.append(.delegatedTaskTransfersReplaced(next.delegatedTaskTransfers)) }
