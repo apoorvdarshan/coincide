@@ -8,6 +8,58 @@ import XCTest
 final class CoincideDesktopUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
+    @MainActor func testRemoteWindowValidatesConnectionBeforeSSHAndPreservesLocalWorkspace() throws {
+        let f = try prepareApplication(appearance: "light", diagnosticPrefix: "remote-connections")
+        let app = f.app
+        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        let initial = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
+            (snapshot["projects"] as? [Any])?.isEmpty == true && (snapshot["threads"] as? [Any])?.isEmpty == true
+        }
+        let original = try claudeGUIJSON(initial)
+        app.menuBars.menuBarItems["Remote"].click()
+        let menuItem = app.menuItems["Remote Workspaces…"]
+        XCTAssertTrue(menuItem.waitForExistence(timeout: 5)); menuItem.click()
+        let window = app.windows["Remote Workspaces"]
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        app.menuBars.menuBarItems["Thread"].click()
+        XCTAssertFalse(app.menuItems["Stop Turn"].isEnabled)
+        XCTAssertTrue(app.menuItems["Resume Queue"].exists)
+        XCTAssertFalse(app.menuItems["Toggle Inspector"].isEnabled)
+        app.typeKey(.escape, modifierFlags: [])
+        let add = window.buttons["remote-add-connection"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5)); add.click()
+        let target = app.textFields["remote-connection-target"]
+        let port = app.textFields["remote-connection-port"]
+        let directory = app.textFields["remote-connection-directory"]
+        let inspect = app.buttons["remote-connection-inspect"]
+        XCTAssertTrue(target.waitForExistence(timeout: 5)); XCTAssertFalse(inspect.isEnabled)
+        target.click(); target.typeText("example.invalid")
+        directory.click(); directory.typeText("/Users/remote/Coincide")
+        port.click(); port.typeText("70000")
+        XCTAssertTrue(inspect.isEnabled); inspect.click()
+        let validation = app.staticTexts["remote-connection-error"]
+        XCTAssertTrue(validation.waitForExistence(timeout: 5))
+        XCTAssertEqual(validation.label, "Enter a port between 1 and 65535.")
+        XCTAssertTrue(target.exists, "Invalid values must leave the form open without starting SSH.")
+        port.click(); port.typeKey("a", modifierFlags: .command); port.typeKey(.delete, modifierFlags: [])
+        target.click(); target.typeKey("a", modifierFlags: .command); target.typeText("-invalid-target")
+        inspect.click()
+        let invalidTarget = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "valid SSH alias"), object: validation)
+        XCTAssertEqual(XCTWaiter.wait(for: [invalidTarget], timeout: 5), .completed)
+        XCTAssertTrue(target.exists)
+        capture(app, name: "remote-connection-native-validation")
+        app.buttons["remote-connection-cancel"].click()
+        XCTAssertTrue(waitForAbsence(target, timeout: 5))
+        window.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(waitForAbsence(window, timeout: 5)); XCTAssertEqual(app.windows.count, 1)
+        app.typeKey("r", modifierFlags: [.command, .option])
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        XCTAssertEqual(try claudeGUIJSON(privateWorkspaceSnapshot(f.root)), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.root.appendingPathComponent("RemoteEnvironments/connections.json").path))
+        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    }
+
     @MainActor func testNativeMainWindowCloseNewWindowAndReopenPreserveUnsentWorkspace() throws {
         let f = try prepareApplication(appearance: "light", diagnosticPrefix: "main-window")
         let app = f.app, root = f.root, manager = FileManager.default

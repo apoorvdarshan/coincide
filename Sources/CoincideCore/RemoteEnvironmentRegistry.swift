@@ -1,0 +1,264 @@
+import Darwin
+import Foundation
+
+public struct RemoteEnvironmentStorageError: Error, Sendable, Equatable, LocalizedError {
+    public enum Kind: Sendable, Equatable { case unsafeFile, corruptFile, limitExceeded, pendingCommandExists, commandChanged }
+    public let kind: Kind
+    public init(_ kind: Kind) { self.kind = kind }
+    public var errorDescription: String? {
+        switch kind {
+        case .unsafeFile: "The private remote connection data could not be accessed safely. Existing files were preserved."
+        case .corruptFile: "The saved remote connection data is invalid. Existing files were preserved."
+        case .limitExceeded: "The saved remote connection data exceeds its storage limit. Existing files were preserved."
+        case .pendingCommandExists: "Check or explicitly abandon the existing uncertain remote command before starting another."
+        case .commandChanged: "The saved uncertain remote command changed. It was preserved."
+        }
+    }
+}
+
+/// Nonsecret connection metadata only. Authentication is owned by system SSH.
+public struct RemoteEnvironmentConnection: Codable, Sendable, Equatable, Identifiable {
+    public var id: UUID
+    public var name: String
+    public var configuration: SSHRemoteEnvironmentConfiguration
+    public var environmentID: UUID
+    public var lastConnectedAt: Date?
+    public init(id: UUID = UUID(), name: String, configuration: SSHRemoteEnvironmentConfiguration,
+                environmentID: UUID, lastConnectedAt: Date? = nil) {
+        self.id = id; self.name = name; self.configuration = configuration
+        self.environmentID = environmentID; self.lastConnectedAt = lastConnectedAt
+    }
+    public func validate() throws {
+        try configuration.validate()
+        do { try SkillValidation.text(name, maximum: 128, empty: false) }
+        catch { throw RemoteEnvironmentStorageError(.corruptFile) }
+        guard lastConnectedAt.map({ $0.timeIntervalSince1970.isFinite }) ?? true else { throw RemoteEnvironmentStorageError(.corruptFile) }
+    }
+}
+
+public enum RemoteEnvironmentRegistry {
+    public static let maximumConnections = 32
+    public static var defaultRoot: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Coincide/RemoteEnvironments", isDirectory: true)
+    }
+    private struct Document: Codable { var version = 1; let connections: [RemoteEnvironmentConnection] }
+    public static func load(rootURL: URL = defaultRoot) throws -> [RemoteEnvironmentConnection] {
+        try RemotePrivateFiles(root: rootURL).locked(create: false) { files in
+            guard let files, let bytes = try files.read("connections.json", maximum: 262_144) else { return [] }
+            return try decode(bytes)
+        }
+    }
+    public static func save(_ connections: [RemoteEnvironmentConnection], rootURL: URL = defaultRoot) throws {
+        try validate(connections)
+        let bytes = try JSONEncoder().encode(Document(connections: connections))
+        try RemotePrivateFiles(root: rootURL).locked(create: true) { files in
+            guard let files else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            if let prior = try files.read("connections.json", maximum: 262_144) { _ = try decode(prior) }
+            try files.write(bytes, name: "connections.json", maximum: 262_144)
+        }
+    }
+    private static func decode(_ bytes: Data) throws -> [RemoteEnvironmentConnection] {
+        do {
+            let document = try JSONDecoder().decode(Document.self, from: bytes)
+            guard document.version == 1 else { throw RemoteEnvironmentStorageError(.corruptFile) }
+            try validate(document.connections); return document.connections
+        } catch { throw error as? RemoteEnvironmentStorageError ?? RemoteEnvironmentStorageError(.corruptFile) }
+    }
+    private static func validate(_ connections: [RemoteEnvironmentConnection]) throws {
+        guard connections.count <= maximumConnections else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+        guard Set(connections.map(\.id)).count == connections.count else { throw RemoteEnvironmentStorageError(.corruptFile) }
+        for connection in connections { try connection.validate() }
+    }
+}
+
+/// Exact payload retained privately before any write. A nil receipt never
+/// authorizes replay, including after an app or SSH connection restart.
+public struct RemoteEnvironmentPendingCommand: Codable, Sendable, Equatable {
+    public let connectionID: UUID
+    public let environmentID: UUID
+    public let id: UUID
+    public let command: RemoteEnvironmentCommand
+    public init(connectionID: UUID, environmentID: UUID, id: UUID, command: RemoteEnvironmentCommand) {
+        self.connectionID = connectionID; self.environmentID = environmentID; self.id = id; self.command = command
+    }
+    public var request: RemoteEnvironmentCommandRequest { .init(environmentID: environmentID, id: id, command: command) }
+}
+
+public actor RemoteEnvironmentPendingStore {
+    private let root: URL
+    public init(root: URL) { self.root = root }
+    public func load(connectionID: UUID) throws -> RemoteEnvironmentPendingCommand? {
+        try RemotePrivateFiles(root: root).locked(create: false) { files in
+            guard let files else { return nil }
+            return try Self.load(connectionID, files: files)
+        }
+    }
+    public func save(_ pending: RemoteEnvironmentPendingCommand) throws {
+        let payload = try RemoteEnvironmentProtocol.payload(pending.request)
+        try RemotePrivateFiles(root: root).locked(create: true) { files in
+            guard let files else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            if let existing = try Self.load(pending.connectionID, files: files) {
+                guard try RemoteEnvironmentProtocol.payload(existing.request) == payload else { throw RemoteEnvironmentStorageError(.pendingCommandExists) }
+                return
+            }
+            try files.write(JSONEncoder().encode(pending), name: Self.name(pending.connectionID), maximum: 1_048_832)
+        }
+    }
+    public func remove(connectionID: UUID, commandID: UUID) throws {
+        try RemotePrivateFiles(root: root).locked(create: false) { files in
+            guard let files, let existing = try Self.load(connectionID, files: files) else { return }
+            guard existing.id == commandID else { throw RemoteEnvironmentStorageError(.commandChanged) }
+            try files.remove(Self.name(connectionID))
+        }
+    }
+    /// Explicit abandonment retains the exact private request as an audit; it
+    /// does not claim cancellation or that an uncertain command never committed.
+    public func archive(connectionID: UUID, commandID: UUID) throws {
+        try RemotePrivateFiles(root: root).locked(create: false) { files in
+            guard let files, let existing = try Self.load(connectionID, files: files) else { return }
+            guard existing.id == commandID else { throw RemoteEnvironmentStorageError(.commandChanged) }
+            let name = "abandoned-" + connectionID.uuidString.lowercased() + "-" + commandID.uuidString.lowercased() + ".json"
+            if let bytes = try files.read(name, maximum: 1_048_832) {
+                let archived = try Self.decode(bytes, connectionID: connectionID)
+                guard try RemoteEnvironmentProtocol.payload(archived.request) == RemoteEnvironmentProtocol.payload(existing.request) else { throw RemoteEnvironmentStorageError(.commandChanged) }
+            } else {
+                guard try files.count(prefix: "abandoned-") < 1_024 else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+                try files.write(JSONEncoder().encode(existing), name: name, maximum: 1_048_832)
+            }
+            try files.remove(Self.name(connectionID))
+        }
+    }
+    private static func name(_ id: UUID) -> String { "pending-" + id.uuidString.lowercased() + ".json" }
+    private static func load(_ id: UUID, files: RemotePrivateFiles.OpenDirectory) throws -> RemoteEnvironmentPendingCommand? {
+        guard let bytes = try files.read(name(id), maximum: 1_048_832) else { return nil }
+        return try decode(bytes, connectionID: id)
+    }
+    private static func decode(_ bytes: Data, connectionID: UUID) throws -> RemoteEnvironmentPendingCommand {
+        do {
+            let pending = try JSONDecoder().decode(RemoteEnvironmentPendingCommand.self, from: bytes)
+            guard pending.connectionID == connectionID else { throw RemoteEnvironmentStorageError(.corruptFile) }
+            _ = try RemoteEnvironmentProtocol.payload(pending.request); return pending
+        } catch { throw error as? RemoteEnvironmentStorageError ?? RemoteEnvironmentStorageError(.corruptFile) }
+    }
+}
+
+public actor RemoteEnvironmentDraftStore {
+    private struct Document: Codable { var version = 1; let environmentID: UUID; let drafts: [UUID: String] }
+    private let root: URL
+    public init(root: URL) { self.root = root }
+    public func load(environmentID: UUID) throws -> [UUID: String] {
+        try RemotePrivateFiles(root: root).locked(create: false) { files in
+            guard let files, let bytes = try files.read(Self.name(environmentID), maximum: 16_777_216) else { return [:] }
+            return try Self.decode(bytes, environmentID: environmentID)
+        }
+    }
+    public func save(environmentID: UUID, drafts: [UUID: String]) throws {
+        try Self.validate(drafts)
+        try RemotePrivateFiles(root: root).locked(create: true) { files in
+            guard let files else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            if let bytes = try files.read(Self.name(environmentID), maximum: 16_777_216) { _ = try Self.decode(bytes, environmentID: environmentID) }
+            try files.write(JSONEncoder().encode(Document(environmentID: environmentID, drafts: drafts)),
+                name: Self.name(environmentID), maximum: 16_777_216)
+        }
+    }
+    private static func name(_ id: UUID) -> String { "drafts-" + id.uuidString.lowercased() + ".json" }
+    private static func decode(_ bytes: Data, environmentID: UUID) throws -> [UUID: String] {
+        do {
+            let value = try JSONDecoder().decode(Document.self, from: bytes)
+            guard value.version == 1, value.environmentID == environmentID else { throw RemoteEnvironmentStorageError(.corruptFile) }
+            try validate(value.drafts); return value.drafts
+        } catch { throw error as? RemoteEnvironmentStorageError ?? RemoteEnvironmentStorageError(.corruptFile) }
+    }
+    private static func validate(_ drafts: [UUID: String]) throws {
+        guard drafts.count <= 256, drafts.values.allSatisfy({ $0.utf16.count <= 120_000 }) else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+    }
+}
+
+/// Every operation uses a private owned directory, no-follow regular files and
+/// one cross-instance/process advisory lock. Atomic replacements are fsynced;
+/// corrupt existing data is decoded by callers before any replacement/removal.
+private struct RemotePrivateFiles {
+    let root: URL
+    func locked<T>(create: Bool, _ body: (OpenDirectory?) throws -> T) throws -> T {
+        guard root.isFileURL, !root.path.contains("\0") else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+        if create {
+            do { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
+            catch { throw RemoteEnvironmentStorageError(.unsafeFile) }
+        }
+        let directory = Darwin.open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        if directory < 0 && errno == ENOENT && !create { return try body(nil) }
+        guard directory >= 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+        defer { Darwin.close(directory) }
+        var info = stat()
+        guard fstat(directory, &info) == 0, info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+        let lock = openat(directory, ".remote-data.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
+        guard lock >= 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+        defer { Darwin.close(lock) }
+        guard Self.safe(lock), flock(lock, LOCK_EX) == 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+        defer { _ = flock(lock, LOCK_UN) }
+        return try body(OpenDirectory(descriptor: directory))
+    }
+    private static func safe(_ fd: Int32) -> Bool {
+        var info = stat()
+        return fstat(fd, &info) == 0 && info.st_mode & S_IFMT == S_IFREG && info.st_uid == getuid()
+            && info.st_nlink == 1 && info.st_mode & 0o077 == 0
+    }
+    struct OpenDirectory {
+        let descriptor: Int32
+        func read(_ name: String, maximum: Int) throws -> Data? {
+            let fd = openat(descriptor, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            if fd < 0 && errno == ENOENT { return nil }
+            guard fd >= 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            defer { Darwin.close(fd) }
+            var info = stat()
+            guard RemotePrivateFiles.safe(fd), fstat(fd, &info) == 0,
+                  info.st_size >= 0, info.st_size <= maximum else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            var bytes = [UInt8](repeating: 0, count: Int(info.st_size)), offset = 0
+            while offset < bytes.count {
+                let count = bytes.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress!.advanced(by: offset), $0.count - offset) }
+                if count < 0 && errno == EINTR { continue }
+                guard count > 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }; offset += count
+            }
+            var after = stat()
+            guard fstat(fd, &after) == 0, after.st_size == info.st_size,
+                  after.st_mtimespec.tv_sec == info.st_mtimespec.tv_sec, after.st_mtimespec.tv_nsec == info.st_mtimespec.tv_nsec else {
+                throw RemoteEnvironmentStorageError(.unsafeFile)
+            }
+            return Data(bytes)
+        }
+        func write(_ data: Data, name: String, maximum: Int) throws {
+            guard data.count <= maximum else { throw RemoteEnvironmentStorageError(.limitExceeded) }
+            let temporary = ".remote-atomic-" + UUID().uuidString
+            let fd = openat(descriptor, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            defer { Darwin.close(fd); _ = unlinkat(descriptor, temporary, 0) }
+            var offset = 0
+            while offset < data.count {
+                let count = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress!.advanced(by: offset), $0.count - offset) }
+                if count < 0 && errno == EINTR { continue }
+                guard count > 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }; offset += count
+            }
+            guard fsync(fd) == 0, renameat(descriptor, temporary, descriptor, name) == 0, fsync(descriptor) == 0 else {
+                throw RemoteEnvironmentStorageError(.unsafeFile)
+            }
+        }
+        func remove(_ name: String) throws {
+            guard unlinkat(descriptor, name, 0) == 0, fsync(descriptor) == 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+        }
+        func count(prefix: String) throws -> Int {
+            let copy = dup(descriptor)
+            guard copy >= 0 else { throw RemoteEnvironmentStorageError(.unsafeFile) }
+            guard let directory = fdopendir(copy) else { Darwin.close(copy); throw RemoteEnvironmentStorageError(.unsafeFile) }
+            defer { closedir(directory) }
+            var count = 0
+            while let entry = readdir(directory) {
+                let length = Int(entry.pointee.d_namlen) + 1
+                let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                    pointer.withMemoryRebound(to: CChar.self, capacity: length) { String(cString: $0) }
+                }
+                if name.hasPrefix(prefix) { count += 1 }
+            }
+            return count
+        }
+    }
+}

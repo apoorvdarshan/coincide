@@ -140,6 +140,15 @@ their captured launch policy. Questions submit exact selected choices and notes
 together. The integration can use the CLI's existing sign-in, with offline
 protocol verification so far; installed Grok execution remains unverified.
 
+**Remote → Remote Workspaces…** connects to a preinstalled native
+`CoincideEnvironment` helper on another Mac through existing SSH key access.
+Confirm its environment identity, add a remote folder, and use Codex/Claude
+conversations, streaming, approvals and Stop. Drafts stay on this Mac; uncertain
+requests can be checked by receipt without resending them. Closing the remote
+window disconnects and stops its owned host's active work. Remote files, Git,
+terminals, automatic setup and persistent hosting remain unfinished. See
+[remote setup and boundaries](docs/REMOTE_ENVIRONMENTS.md).
+
 Pi conversations use an installed, authenticated Pi 0.80.5+ CLI over its native
 RPC protocol. **Refresh Models** loads provider/model and advertised thinking
 choices. Inputs retain their captured settings and tool approval policy; native

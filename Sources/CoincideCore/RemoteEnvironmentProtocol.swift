@@ -1,0 +1,126 @@
+import Foundation
+
+public enum RemoteEnvironmentProtocol {
+    public static let version = 1
+    public static let maximumFrameBytes = 16 * 1_024 * 1_024
+    public static let maximumRequestBytes = 1 * 1_024 * 1_024
+    public static let maximumPendingRequests = 32
+    public static let describeMethod = "remoteEnvironment.describe"
+    public static let snapshotMethod = "remoteEnvironment.snapshot"
+    public static let commandMethod = "remoteEnvironment.command"
+    public static let receiptMethod = "remoteEnvironment.receipt"
+    public static let subscribeMethod = "remoteEnvironment.subscribe"
+    public static let closeMethod = "remoteEnvironment.close"
+    public static let snapshotNotification = "remoteEnvironment.snapshotChanged"
+    public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let bytes = try encoder.encode(value)
+        guard bytes.count <= maximumFrameBytes else { throw RemoteEnvironmentError(.limitExceeded) }
+        return try JSONDecoder().decode(JSONValue.self, from: bytes)
+    }
+    public static func decode<T: Decodable>(_ type: T.Type, from value: JSONValue) throws -> T {
+        let bytes = try JSONEncoder().encode(value)
+        guard bytes.count <= maximumFrameBytes else { throw RemoteEnvironmentError(.limitExceeded) }
+        do { return try JSONDecoder().decode(type, from: bytes) }
+        catch { throw RemoteEnvironmentError(.invalidRequest) }
+    }
+    static func payload(_ request: RemoteEnvironmentCommandRequest) throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let bytes = try encoder.encode(request)
+        guard bytes.count <= maximumRequestBytes else { throw RemoteEnvironmentError(.limitExceeded) }
+        return bytes
+    }
+}
+
+public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
+    public let providers: [ProviderKind]
+    public let supportsCommandReceipts: Bool
+    public let supportsSubscriptions: Bool
+    public let supportsProjectRegistration: Bool
+    public let supportsConversationCreation: Bool
+    public let supportsExactRunStop: Bool
+    public let supportsRequestResponses: Bool
+    public let persistentDaemon: Bool
+    public init(providers: [ProviderKind] = [.codex, .claude]) {
+        self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
+        supportsProjectRegistration = true; supportsConversationCreation = true
+        supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
+    }
+}
+public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
+    public let environmentID: UUID
+    public let protocolVersion: Int
+    public let label: String
+    public let capabilities: RemoteEnvironmentCapabilities
+    public init(environmentID: UUID, protocolVersion: Int = RemoteEnvironmentProtocol.version, label: String,
+                capabilities: RemoteEnvironmentCapabilities = .init()) {
+        self.environmentID = environmentID; self.protocolVersion = protocolVersion
+        self.label = label; self.capabilities = capabilities
+    }
+}
+public struct RemoteEnvironmentSnapshotRequest: Codable, Sendable, Equatable {
+    public let environmentID: UUID
+    public let afterSequence: Int64?
+    public init(environmentID: UUID, afterSequence: Int64? = nil) { self.environmentID = environmentID; self.afterSequence = afterSequence }
+}
+public struct RemoteEnvironmentSnapshot: Codable, Sendable, Equatable {
+    public let environmentID: UUID
+    public let sequence: Int64
+    public let workspace: WorkspaceSnapshot
+    public init(environmentID: UUID, sequence: Int64, workspace: WorkspaceSnapshot) {
+        self.environmentID = environmentID; self.sequence = sequence; self.workspace = workspace
+    }
+}
+public enum RemoteEnvironmentThreadEdit: Codable, Sendable, Equatable {
+    case draft(String), title(String), model(String), permission(PermissionMode)
+}
+/// A closed client command surface. Native launch paths, internal effects and
+/// provider events can never be supplied by a remote command.
+public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
+    case addProject(id: UUID, path: String, title: String?)
+    case createThread(id: UUID, projectID: UUID, provider: ProviderKind, title: String, model: String, permission: PermissionMode)
+    case editThread(threadID: UUID, edit: RemoteEnvironmentThreadEdit, expectedConfiguration: ProviderConfiguration)
+    case submit(threadID: UUID, text: String, expectedConfiguration: ProviderConfiguration)
+    case stop(threadID: UUID, runID: UUID, runtimeID: UUID)
+    case respond(threadID: UUID, runID: UUID?, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
+    case resumeQueue(threadID: UUID, expectedConfiguration: ProviderConfiguration)
+}
+public struct RemoteEnvironmentCommandRequest: Codable, Sendable, Equatable {
+    public let environmentID: UUID
+    public let id: UUID
+    public let command: RemoteEnvironmentCommand
+    public init(environmentID: UUID, id: UUID = UUID(), command: RemoteEnvironmentCommand) {
+        self.environmentID = environmentID; self.id = id; self.command = command
+    }
+}
+public struct RemoteEnvironmentCommandResult: Codable, Sendable, Equatable {
+    public let environmentID: UUID
+    public let receipt: WorkspaceCommandReceipt
+    public init(environmentID: UUID, receipt: WorkspaceCommandReceipt) { self.environmentID = environmentID; self.receipt = receipt }
+}
+public struct RemoteEnvironmentReceiptResult: Codable, Sendable, Equatable {
+    public let environmentID: UUID
+    public let receipt: WorkspaceCommandReceipt?
+    public init(environmentID: UUID, receipt: WorkspaceCommandReceipt?) { self.environmentID = environmentID; self.receipt = receipt }
+}
+public struct RemoteEnvironmentError: Error, Codable, Sendable, Equatable, LocalizedError {
+    public enum Kind: String, Codable, Sendable { case invalidRequest, wrongEnvironment, unavailable, limitExceeded, identityInvalid, unsupported, commandCollision }
+    public let kind: Kind
+    public init(_ kind: Kind) { self.kind = kind }
+    public var errorDescription: String? {
+        switch kind {
+        case .invalidRequest: "The remote workspace request is invalid."
+        case .wrongEnvironment: "This connection reaches a different Coincide environment."
+        case .unavailable: "The remote workspace is unavailable."
+        case .limitExceeded: "The remote workspace exceeded a protocol limit."
+        case .identityInvalid: "The remote environment identity is missing, corrupt, or unsafe."
+        case .unsupported: "This remote workspace operation is unsupported."
+        case .commandCollision: "The command identity is already bound to a different request."
+        }
+    }
+}
+
+public struct RemoteEnvironmentCloseResult: Codable, Sendable, Equatable {
+    public let environmentID: UUID
+    public init(environmentID: UUID) { self.environmentID = environmentID }
+}

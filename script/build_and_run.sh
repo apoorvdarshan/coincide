@@ -15,6 +15,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 cp "$BUILD_BINARY" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 mkdir -p "$APP_BUNDLE/Contents/Helpers"
 cp "$BUILD_DIRECTORY/CoincideScriptHelper" "$APP_BUNDLE/Contents/Helpers/CoincideScriptHelper"
+cp "$BUILD_DIRECTORY/CoincideEnvironment" "$APP_BUNDLE/Contents/Helpers/CoincideEnvironment"
 mkdir -p "$APP_BUNDLE/Contents/Resources/Notices"
 /usr/bin/ditto "$BUILD_DIRECTORY/SwiftMath_SwiftMath.bundle" "$APP_BUNDLE/Contents/Resources/SwiftMath_SwiftMath.bundle"
 for NOTICE_FILE in "$ROOT_DIR"/docs/*-LICENSE.txt "$ROOT_DIR"/docs/*-NOTICE.txt; do
@@ -68,6 +69,7 @@ else
   /bin/rm -f "$APP_BUNDLE/Contents/embedded.provisionprofile"
 fi
 codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE/Contents/Helpers/CoincideScriptHelper" >/dev/null
+codesign --force --sign "${SIGN_IDENTITY:--}" "$APP_BUNDLE/Contents/Helpers/CoincideEnvironment" >/dev/null
 if [[ -n "$SIGNING_TEMP" ]]; then
   codesign --force --sign "$SIGN_IDENTITY" --entitlements "$SIGNING_TEMP/entitlements.plist" "$APP_BUNDLE" >/dev/null
 else

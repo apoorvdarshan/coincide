@@ -56,6 +56,13 @@ After an observed OutlineRow hit-testing failure, conversation selection targets
 the row's identified native title, requires it to be hittable, and verifies
 the containing row becomes selected.
 
+The remote-window workflow opens the native scene from its menu and shortcut,
+checks its remote command menu and disabled local inspector,
+rejects an invalid port and target while keeping the form open, cancels and
+reopens it, and verifies the local workspace and saved connections were not
+changed. It makes no SSH connection. Remote host/codec/Engine acceptance is
+covered separately by the SwiftPM process tests.
+
 The first two tests exercise light/dark actual windows, File-menu or keyboard project
 creation, an initial Git commit, project renaming, collapse with the selected
 conversation retained, and composer persistence across graceful quit/relaunch.

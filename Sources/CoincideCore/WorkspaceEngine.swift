@@ -2611,7 +2611,9 @@ public actor WorkspaceEngine {
         }
         if let fatalError { envelope.continuation.resume(throwing: CoincideError(fatalError)); return }
         do {
-            let payload = try encoder.encode(envelope.command)
+            let payload: Data
+            if case .remoteEnvironment(let request, _) = envelope.command { payload = try RemoteEnvironmentProtocol.payload(request) }
+            else { payload = try encoder.encode(envelope.command) }
             if let receipt = try await database.receipt(envelope.id, matching: payload) {
                 envelope.continuation.resume(returning: receipt); return
             }
@@ -2626,6 +2628,8 @@ public actor WorkspaceEngine {
                         try validateAppMCPLiveAuthority(authority)
                         try AppMCPAdmission.validate(authority: authority, snapshot: base.snapshot, commands: commands)
                         admissionCommands = commands
+                    } else if case .remoteEnvironment(let request, let preparation) = envelope.command {
+                        admissionCommands = [.client(try RemoteEnvironmentAdmission.action(request, preparation: preparation, snapshot: base.snapshot))]
                     } else { admissionCommands = [envelope.command] }
                     for command in admissionCommands {
                         try validateCodexDefaultCommand(command, snapshot: base.snapshot)
@@ -4522,5 +4526,20 @@ extension WorkspaceEngine {
         await mcpRegistry.shutdown()
         if let pending, let started = try? await pending.value { await started.close() }
         await server?.close()
+    }
+}
+
+
+extension WorkspaceEngine {
+    func dispatchRemoteEnvironment(_ request: RemoteEnvironmentCommandRequest,
+                                   preparation: RemoteEnvironmentPreparation) async throws -> WorkspaceCommandReceipt {
+        _ = try await load()
+        guard AppMCPTaskContext.authority == nil else { throw AppMCPError(.permissionDenied) }
+        guard !stoppingEffects else { throw CancellationError() }
+        return try await enqueue(.remoteEnvironment(request, preparation: preparation), id: request.id)
+    }
+    func remoteEnvironmentReceipt(_ request: RemoteEnvironmentCommandRequest) async throws -> WorkspaceCommandReceipt? {
+        _ = try await load()
+        return try await database.receipt(request.id, matching: RemoteEnvironmentProtocol.payload(request))
     }
 }

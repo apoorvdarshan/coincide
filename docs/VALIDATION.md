@@ -1,5 +1,55 @@
 # Validation record
 
+## 2026-10-23 — Native SSH environment host and remote workspace window
+
+- The complete serial run passes 1793 of 1806 declarations, with thirteen
+  optional installed/live declarations skipped. Pinned Pi package acceptance is
+  enabled. Core covers 1556 declarations in 361.373 seconds; native view/store
+  covers 226 in 70.452 seconds, terminal eleven in 1.422 seconds and Markdown
+  thirteen in 0.133 seconds. After the final app-only focused-menu and disconnect
+  diagnostic changes, an incremental compile and focused rerun pass all 39
+  matching declarations: 34 Core in 3.346 seconds and five native view/store in
+  0.746 seconds. The entire suite is not repeated after those app-only changes.
+- Build-only packaging, deep strict bundle/helper signature verification and
+  native math resource rendering pass. Both app/helper Mach-O UUIDs match their
+  final compiled products. The signed packaged helper passes descriptor/version
+  readback and graceful EOF exit without opening SQLite or a provider. Its
+  private fixture is removed after exit. The installed app is not replaced or
+  launched; the development bundle is `dist/Coincide.app`. The ABI guard checks
+  940 objects, including 630 Core and 242 app objects, with zero weak records.
+- The first integration checkpoint passes 36 focused declarations: 32 Core,
+  SSH, private-storage and native-host cases in 3.339 seconds, and four native
+  view/store cases in 0.589 seconds. The native helper uses the production
+  JSON-RPC client, SQLite journal and Engine with a generated private Codex peer.
+  This verifies streaming Unicode, exact approval payloads, stale-run Stop
+  refusal, one native interrupt, dropped committed replies, durable receipt
+  recovery, identity/protocol/sequence refusal and reconnect without input replay.
+  No installed provider account or actual SSH network connection is used.
+- Initial integration failures identify a fixture-only `/var` versus
+  `/private/var` spelling mismatch for the same physical directory, plus a client
+  defect that disconnected after a known receipt-collision response. The
+  fixture now compares the confined physical path, and the client retains a
+  valid connection for typed refusals while continuing to reject unknown/malformed
+  responses. All three real native-host integration declarations then pass.
+- Store checks cover persisted uncertain requests across app-store recreation,
+  receipt lookup without a second command, preserved newer Unicode drafts,
+  cancellation of a reconnect waiting on old-process close, per-environment
+  sequence floors, drained draft writes and failed-save text retained through
+  cancelled Quit. These are offscreen view/store checks.
+- The hosted native GUI source grows from 26 to 27 workflows. Its new remote
+  window/form case verifies menu/shortcut opening, invalid configuration before
+  SSH, remote command-menu scope, cancellation/reopening and unchanged local workspace. The runner compiles
+  locally with `--build-for-testing`; all 72 Python harness/configuration checks
+  pass with exact shard coverage `[7, 7, 7, 6]`. No local GUI test is executed.
+- Independent review catches global shortcuts targeting the local conversation
+  while the remote window is frontmost. Focused scene values now route New
+  Thread, Add Project, Stop and Resume Queue to the remote store/sheets and
+  disable its unavailable local inspector. The final GUI runner compiles again;
+  rendered shortcut ownership remains a hosted acceptance check.
+- The previous `c1873ef` hosted Core/package job passes; its 26 GUI workflows are
+  still separate pending evidence for that earlier implementation. Actual
+  two-Mac SSH/provider and new rendered remote-window acceptance remain required.
+
 ## 2026-10-23 — OpenCode steering, Claude commands and terminal restoration
 
 - The complete serial local run covers 1784 declarations: 1539 Core in 383.972
@@ -57,7 +107,10 @@
   question viewport, where the test's click instead focuses the composer.
   The test now reveals each control inside that exact viewport and verifies
   keyboard focus before typing, while retaining its exact answer receipts.
-  The `4d1840d` GUI run remains in progress; neither earlier run is a GUI pass.
+  The `4d1840d` GUI run subsequently finishes with 25 of 26 methods passing:
+  all four earlier product failures pass, and only that old Claude question
+  focus case fails. It is not an overall GUI pass. The question helper fix is
+  included in `c1873ef`; that implementation's fresh hosted run is separate.
 
 ## 2026-10-23 — Final local checkpoint after hosted failure fixes
 

@@ -110,6 +110,7 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
 // envelope indirect so decoding and broad switch dispatch copy an owned reference
 // instead of reserving every case's maximum payload on the worker stack.
 indirect enum EngineCommand: Codable, Sendable {
+    case remoteEnvironment(RemoteEnvironmentCommandRequest, preparation: RemoteEnvironmentPreparation)
     case appMCP(authority: AppMCPCommandAuthority, commands: [EngineCommand])
     case appMCPTargetGuard(threadID: UUID, configuration: ProviderConfiguration)
     case appMCPRequestGuard(threadID: UUID, runtimeID: UUID?, runID: UUID?, request: ApprovalRequest)
@@ -208,6 +209,8 @@ struct WorkspaceDecision: Sendable {
     static func make(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
         let reduced: GeneralReduction
         switch command {
+        case .remoteEnvironment:
+            return try reduceRemoteEnvironment(command, id: id, snapshot: snapshot, now: now)
         case .appMCPRequestGuard, .appMCPTargetGuard, .appMCP:
             return try reduceAppMCPCommand(command, id: id, snapshot: snapshot, now: now)
         case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
@@ -457,7 +460,7 @@ struct WorkspaceDecision: Sendable {
              .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
              .checkpointRestoreInspected, .client(.acknowledgeCheckpointRestore),
              .client(.addProjectWithThread), .client(.startProjectClone),
-             .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi), .appMCP, .appMCPTargetGuard, .appMCPRequestGuard,
+             .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi), .appMCP, .appMCPTargetGuard, .appMCPRequestGuard, .remoteEnvironment,
              .codexAuthenticationPreparing, .codexAccountConfigured,
              .projectScriptStarted, .projectScriptExited, .projectScriptStopped:
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)

@@ -1,11 +1,77 @@
-# Remote environments: contract and implementation plan
+# Remote environments
 
-Remote environments are **not implemented** in Coincide. There is no remote
-workspace host/client, pairing flow, saved environment registry, SSH provisioning,
-LAN listener, relay connection or multi-environment UI. Existing Git remotes,
-provider HTTP connections and the local app-MCP server do not establish remote
-workspace support. This document records a plan against the pinned T3 reference;
-it is not an implementation or acceptance claim.
+Coincide has a first native macOS remote workspace slice: a Swift host, an SSH
+stdio client and a separate **Remote → Remote Workspaces…** window. It supports
+saved connections, environment identity confirmation, existing remote projects,
+Codex/Claude conversations, streamed snapshots, questions/approvals, queued input
+and exact-run Stop. Full T3 remote parity remains unfinished.
+
+The client owns the SSH process and the host it launches. **Disconnecting,
+closing the remote window or quitting stops that host's active work.** Saved
+conversations remain in its SQLite database; uncertain or interrupted work is
+not automatically repeated. This version is not a persistent remote daemon.
+
+## Setup and behavior
+
+1. Build Coincide on the remote Mac. The package produces `CoincideEnvironment`;
+   app packaging also includes it at
+   `Coincide.app/Contents/Helpers/CoincideEnvironment`. Select an absolute path to
+   that preinstalled helper. Automatic installation/update is not implemented.
+2. Install and sign into Codex or Claude on that Mac using their existing CLI
+   setup. The host captures that remote executable and home for new threads.
+   Local accounts, API keys and provider configuration are not transferred.
+3. Configure SSH access and verify its host key yourself in Terminal. Coincide
+   invokes `/usr/bin/ssh` with batch mode, strict host-key checking, no TTY,
+   no forwarding and no local command. It cannot prompt for a password or accept
+   a new host key. Saved SSH aliases and key-based access work with this route;
+   a literal IPv6 destination is not yet accepted by the connection form.
+4. Choose **Add SSH Connection…**, enter its target and optional port, the helper
+   path and an absolute private data directory on the remote Mac. Inspect the
+   descriptor, then explicitly confirm its environment UUID. Future connections
+   must return that identity. Discovery does not open the workspace database or
+   start a provider, although it creates/reads the private environment identity.
+5. Add an existing remote folder and create a Codex or Claude conversation. Paths
+   displayed in this window belong to that machine. Remote file links are not
+   resolved against this Mac, and remote state never enters the local workspace
+   store. New remote conversations have automatic checkpoints disabled until
+   remote checkpoint review and restoration are available.
+
+Connection metadata, per-environment drafts and unconfirmed requests are stored
+in private files under the local app's `RemoteEnvironments` directory. Each
+command's UUID and full payload are saved before transmission. If a reply is
+lost, **Check Result** asks for its durable receipt; it never resends the command.
+A missing receipt leaves the request unresolved. **Dismiss Unconfirmed Request**
+retains a private local record and requires explicit confirmation. Check the
+remote conversation before deciding to send any new input.
+
+Drafts remain editable while disconnected. An acknowledged submit clears only
+the unchanged text it sent, preserving newer typing. Quit drains pending draft
+writes and asks before discarding text if saving fails.
+
+## Native service boundary
+
+`CoincideEnvironment` owns a normal `WorkspaceEngine`, SQLite journal and runtime
+lock. A closed command allow-list reaches the Engine's serial admission queue;
+clients cannot supply internal Engine commands, arbitrary provider launch
+arguments or authentication configuration. Captured configuration guards edits
+and submission; exact run/runtime/request guards protect Stop and responses.
+Accepted and rejected commands use the original UUID/payload fingerprint for
+durable receipt lookup, including preparation failures.
+
+The native JSON-RPC protocol is version **1**, independent of T3's protocol.
+Requests are bounded to 1 MiB, response frames to 16 MiB and in-flight requests
+to 32. Subscription delivery coalesces complete snapshots with a monotonic
+sequence; it is not a lossless event/delta replay stream. A sequence floor is
+retained across reconnects within the running client/store. It is not a durable
+cross-app-restart rollback attestation. Oversized workspaces require a future
+paginated projection protocol.
+
+Graceful disconnect asks the exact trusted host to drain its Engine before
+joining the owned SSH process. EOF/signals also trigger host shutdown. Neither
+this contract nor an SSH process exit proves every arbitrary provider-created
+descendant on a remote machine has exited. Only one host can own a data directory
+at a time. No LAN listener, relay, pairing credential or external daemon is
+created by this feature.
 
 ## Pinned behavior to preserve
 
@@ -42,43 +108,19 @@ The reference is T3 Code
   [direct endpoints](https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/apps/server/src/environment/DirectEndpoints.ts)
   and [route contracts](https://github.com/pingdotgg/t3code/blob/680152e27b2a961686389ca69a1557cbb2c55f08/packages/contracts/src/remoteAccess.ts).
 
-## Native implementation sequence
+## Remaining implementation sequence
 
-1. Add an environment service boundary above `WorkspaceEngine`, with a local
-   implementation and explicit environment-scoped project/thread references.
-   Proposed files: `ExecutionEnvironment.swift`, `EnvironmentCapabilities.swift`,
-   `WorkspaceEnvironmentClient.swift` and `LocalWorkspaceEnvironmentClient.swift`.
-   Route `WorkspaceStore` through it. Remote paths must never reach local file,
-   Git or terminal services. Remote provider sessions alone cannot cover this
-   boundary because the environment also owns those services and authentication.
-2. Add a native `CoincideEnvironment` executable, owning its Engine, SQLite
-   database, runtime lock and persistent environment ID. Start with a macOS host:
-   current Core services depend on Darwin and Security. Linux/Windows support
-   requires deliberate process, file, credential and platform portability work.
-   The Swift host is the intended architecture; the T3 Node server is the
-   behavioral reference. Coincide's wire DTOs need their own explicit version
-   negotiation; this plan does not claim T3 RPC wire compatibility.
-3. Build the first complete slice over SSH stdio to an explicitly selected,
-   preinstalled native helper. Proposed files: `SSHEnvironmentSession.swift`,
-   `RemoteWorkspaceEnvironmentClient.swift` and `EnvironmentRPCServer.swift`.
-   Reuse `ProcessChannel` and the `JSONRPCConnection` codec/lifecycle, with
-   explicit remote frame, backlog, request-count and deadline bounds. Expose a
-   method allow-list mapped to typed Engine admission; internal `EngineCommand`
-   values must not become an unrestricted remote API.
-   Implement descriptor/capabilities, project/thread listing, submit, streamed
-   output, question answer and exact-run Stop, followed by disconnect/reconnect.
-   The initial stdio route is an implementation choice; pinned T3 instead uses
-   SSH forwarding to its HTTP/WebSocket server. Automatic native helper
-   provisioning/update and additional routes follow the working control path.
-4. Preserve durable command UUID/payload binding using Engine admission and
-   `WorkspaceDatabase.receipt(_:matching:)`. After a lost reply, inspect the
-   receipt rather than repeating provider work. Use `journal(after:limit:)` for
-   ordered catch-up. Engine `updates()` coalesces full snapshots with
-   `bufferingNewest(1)`, so it can wake journal readers but cannot itself carry a
-   lossless delta stream. Initial snapshot and subsequent replay need a gap-free
-   handoff; missing sequences require explicit resynchronization. Delayed Stop
-   and approval commands require atomic expected-run/runtime ownership checks.
-5. Add native HTTPS/LAN transport, pairing, scoped authorization, revocation,
+1. Verify a real SSH connection between two Macs, including installed-provider
+   execution, interruption, disconnect and reconnect. Controlled local-process
+   acceptance does not establish remote network or provider authentication.
+2. Extend the environment boundary to complete remote files, Git/worktrees,
+   attachments, checkpoints/history, provider setup/authentication and PTYs.
+   Preserve the current separation between local and remote paths/services.
+3. Add persistent-host ownership, signed helper provisioning/update and bounded
+   paginated projections with explicit incomplete-history state. Ordered journal
+   catch-up needs a gap-free handoff and explicit resynchronization; coalesced
+   complete snapshots must never be reinterpreted as a lossless delta stream.
+4. Add native HTTPS/LAN transport, pairing, scoped authorization, revocation,
    Keychain-backed client credentials and saved route/environment controls on the
    same service boundary. Proposed files: `EnvironmentHTTPServer.swift`,
    `EnvironmentAuthorization.swift`, `EnvironmentCredentialStore.swift` and
@@ -86,22 +128,21 @@ The reference is T3 Code
    existing private MCP listener is loopback-only and closes each response; it
    is not a remote listener. General bounded HTTP client machinery may be shared
    without weakening provider-specific origin or credential rules.
-6. Complete remote attachments, file browsing/edit/search, Git/worktrees,
-   checkpoints/history/PR operations, provider setup/authentication and PTY
-   create/input/resize/replay. `LocalTerminalSession` couples AppKit with process
+5. Complete PTY create/input/resize/replay. `LocalTerminalSession` couples AppKit with process
    creation; remote terminal support needs a headless host PTY service and a
-   separate SwiftTerm display adapter. Add signed helper distribution/update,
-   private-route discovery, relay behavior and cross-platform acceptance before
-   calling remote parity complete.
+   separate SwiftTerm display adapter. Add private-route discovery, relay
+   behavior and Linux/Windows portability before calling remote parity complete.
+   Current Core services depend on Darwin and Security.
 
 ## First-slice verification gate
 
 Use two isolated native processes, the real wire codec and temporary SQLite to
 verify submit/output, question ownership, exact-run Stop, a dropped response with
 one provider execution, reconnect replay, persisted environment identity and
-identity/protocol refusal. Test client disconnect independently from stopping an
-owned host; preserve external processes and unresolved work. Subsequent pairing
+identity/protocol refusal. Test graceful host shutdown and owned-process drain;
+preserve external processes and unresolved work. Subsequent pairing
 checks must cover atomic single use, expiry, scope refusal, revocation and a wrong
-machine refusing before credential consumption. No such remote acceptance has
-been run yet, and no remote infrastructure or authentication was changed for
-this plan.
+machine refusing before credential consumption. Current tests and results are
+recorded in [VALIDATION.md](VALIDATION.md); native form/window interaction runs
+only in hosted GUI CI. No remote infrastructure or authentication has been
+changed by the local implementation checks.

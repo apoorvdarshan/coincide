@@ -1,0 +1,359 @@
+import AppKit
+import CoincideCore
+import CoincideMarkdown
+import SwiftUI
+
+struct RemoteWorkspacePresentation {
+    var newThread: Binding<Bool>
+    var addProject: Binding<Bool>
+}
+private struct RemoteWorkspacePresentationKey: FocusedValueKey {
+    typealias Value = RemoteWorkspacePresentation
+}
+extension FocusedValues {
+    var remoteWorkspacePresentation: RemoteWorkspacePresentation? {
+        get { self[RemoteWorkspacePresentationKey.self] }
+        set { self[RemoteWorkspacePresentationKey.self] = newValue }
+    }
+}
+
+struct RemoteWorkspaceCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+    var body: some Commands {
+        CommandMenu("Remote") {
+            Button("Remote Workspaces…") { openWindow(id: RemoteWorkspaceStore.sceneID) }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+        }
+    }
+}
+
+struct RemoteWorkspaceView: View {
+    @Bindable var store: RemoteWorkspaceStore
+    @AppStorage("appearance") private var appearance = "system"
+    @State private var addingConnection = false
+    @State private var addingProject = false
+    @State private var addingThread = false
+    @State private var dismissingRequest = false
+
+    var body: some View {
+        NavigationSplitView {
+            List {
+                Section("Connections") {
+                    ForEach(store.connections) { connection in
+                        Button {
+                            Task { await store.connect(connection) }
+                        } label: {
+                            HStack {
+                                Image(systemName: store.connection?.id == connection.id && store.isConnected ? "network" : "desktopcomputer")
+                                Text(connection.name)
+                                Spacer()
+                                if store.connection?.id == connection.id && store.isConnected { Image(systemName: "checkmark") }
+                            }
+                        }
+                        .disabled(store.isWorking)
+                        .contextMenu {
+                            Button("Forget Connection") { Task { await store.forget(connection) } }
+                                .disabled(store.isWorking || (store.connection?.id == connection.id && store.isConnected))
+                        }
+                    }
+                    Button("Add SSH Connection…", systemImage: "plus") { addingConnection = true }
+                        .accessibilityIdentifier("remote-add-connection").disabled(store.isWorking)
+                }
+                ForEach(store.projects) { project in
+                    Section(project.name) {
+                        ForEach(store.threads.filter { $0.projectID == project.id }) { thread in
+                            Button { store.selectThread(thread.id) } label: {
+                                HStack {
+                                    Text(thread.title).lineLimit(2)
+                                    Spacer()
+                                    if thread.isBusy { ProgressView().controlSize(.mini) }
+                                    if store.selectedThreadID == thread.id { Image(systemName: "checkmark") }
+                                }
+                            }
+                            .accessibilityIdentifier("remote-thread-\(thread.id.uuidString)")
+                        }
+                        Button("New Conversation…", systemImage: "square.and.pencil") {
+                            store.selectedProjectID = project.id; addingThread = true
+                        }.disabled(!store.canWrite)
+                    }
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+        } detail: {
+            VStack(spacing: 0) {
+                connectionStatus
+                if let error = store.errorMessage {
+                    HStack {
+                        Label(error, systemImage: "exclamationmark.triangle").textSelection(.enabled)
+                        Spacer(); Button("Dismiss") { store.errorMessage = nil }
+                    }.font(.callout).padding(12).background(.red.opacity(0.08))
+                }
+                if store.needsTrust { trustPanel }
+                else if let thread = store.selectedThread { conversation(thread) }
+                else {
+                    ContentUnavailableView {
+                        Label(store.isConnected ? "Choose a remote project" : "Connect to another Mac", systemImage: "network")
+                    } description: {
+                        Text(store.isConnected ? "Add an existing folder on the remote Mac, then start a conversation." :
+                            "Use an SSH connection and the Coincide environment helper installed on that Mac. Provider sign-in stays on the remote machine.")
+                    } actions: {
+                        if store.isConnected { Button("Add Remote Project…") { addingProject = true }.disabled(!store.canWrite) }
+                        else { Button("Add SSH Connection…") { addingConnection = true }.disabled(store.isWorking) }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Remote Workspaces")
+        .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject))
+        .toolbar {
+            ToolbarItem { Button("Add Remote Project", systemImage: "folder.badge.plus") { addingProject = true }.disabled(!store.canWrite) }
+            ToolbarItem {
+                if store.isConnected {
+                    Button("Disconnect", systemImage: "network.slash") { Task { await store.disconnect() } }.disabled(store.isWorking)
+                } else if store.connection != nil {
+                    Button("Reconnect", systemImage: "arrow.clockwise") { Task { await store.reconnect() } }.disabled(store.isWorking)
+                }
+            }
+        }
+        .task { await store.load() }
+        .onDisappear { Task { await store.disconnect() } }
+        .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+        .sheet(isPresented: $addingConnection) { RemoteConnectionSheet(store: store) }
+        .sheet(isPresented: $addingProject) { RemoteProjectSheet(store: store) }
+        .sheet(isPresented: $addingThread) { RemoteThreadSheet(store: store) }
+        .confirmationDialog("Dismiss the unconfirmed request?", isPresented: $dismissingRequest) {
+            Button("Keep Draft and Dismiss") { Task { await store.dismissPending() } }
+        } message: {
+            Text("Inspect the remote conversation first: the request may already have run. Its local record will be retained, and nothing will be sent again automatically.")
+        }
+    }
+
+    private var connectionStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(store.connection?.name ?? "No connection", systemImage: "desktopcomputer")
+                Text(store.isConnected ? "Connected" : store.needsTrust ? "Confirm environment" : "Disconnected").foregroundStyle(.secondary)
+                Spacer()
+                if store.isWorking { ProgressView().controlSize(.small) }
+            }
+            Text("Closing this window disconnects the owned host and stops its active work. Saved conversations and local drafts remain available.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let notice = store.notice { Text(notice).font(.callout).textSelection(.enabled) }
+            if store.pending != nil {
+                HStack {
+                    Button("Check Result") { Task { await store.checkPendingResult() } }.disabled(!store.isConnected || store.isWorking)
+                    Button("Dismiss Unconfirmed Request…") { dismissingRequest = true }.disabled(store.isWorking)
+                }
+            }
+        }.padding(12).coincideSurface(cornerRadius: 0)
+    }
+
+    private var trustPanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Label("Confirm this remote environment", systemImage: "checkmark.shield").font(.title2)
+            Text("SSH has verified the host. Check this environment identity before saving the connection. Future connections must return the same identity.")
+            if let descriptor = store.descriptor {
+                LabeledContent("Environment", value: descriptor.label)
+                LabeledContent("Identity") { Text(descriptor.environmentID.uuidString).font(.system(.callout, design: .monospaced)).textSelection(.enabled) }
+            }
+            HStack {
+                Button("Cancel") { Task { await store.disconnect() } }
+                Button("Trust and Connect") { Task { await store.trustDiscoveredEnvironment() } }.buttonStyle(.borderedProminent)
+            }.disabled(store.isWorking)
+        }.padding(30).frame(maxWidth: 680, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func conversation(_ thread: CodingThread) -> some View {
+        VStack(spacing: 0) {
+            RemoteConversationHeader(store: store, thread: thread)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 24) {
+                        ForEach(thread.visibleMessages) { message in RemoteMessageView(message: message) }
+                        if thread.isBusy { Label("\(thread.providerName) is working on the remote Mac…", systemImage: "ellipsis").font(.caption).foregroundStyle(.secondary) }
+                        Color.clear.frame(height: 1).id("remote-latest")
+                    }.frame(maxWidth: 760, alignment: .leading).padding(24).frame(maxWidth: .infinity)
+                }
+                .defaultScrollAnchor(.bottom)
+                .onChange(of: thread.visibleMessages.count) { proxy.scrollTo("remote-latest", anchor: .bottom) }
+            }
+            if let request = thread.runtimeRequests.first {
+                ApprovalView(request: request.request, isResponding: request.responding || !store.canWrite,
+                    onDecision: { response(thread, request.request, .decision($0)) },
+                    onAnswer: { response(thread, request.request, .answers($0)) },
+                    onOption: { response(thread, request.request, .option($0)) },
+                    onSelections: { response(thread, request.request, .selections($0)) },
+                    onSelectionsWithNotes: { response(thread, request.request, .selectionsWithNotes(selections: $0, notes: $1)) })
+                    .id(request.id).padding(.horizontal, 20)
+            }
+            if !thread.queuedTurns.isEmpty {
+                HStack {
+                    Text("\(thread.queuedTurns.count) queued").font(.caption)
+                    if thread.queuePaused {
+                        Button("Resume Queue") {
+                            Task { await store.perform(.resumeQueue(threadID: thread.id, expectedConfiguration: .init(thread: thread))) }
+                        }.disabled(!store.canWrite)
+                    }
+                    Spacer()
+                }.padding(.horizontal, 24)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                TextEditor(text: Binding(get: { store.drafts[thread.id] ?? thread.draft }, set: { store.setDraft($0, threadID: thread.id) }))
+                    .font(.body).scrollContentBackground(.hidden).frame(minHeight: 72, maxHeight: 120)
+                    .accessibilityLabel("Remote message")
+                HStack {
+                    Text(store.draftPersistenceFailed ? "Draft could not be saved" : store.draftsSaving ? "Saving draft…" : "Drafts stay on this Mac")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if thread.isBusy {
+                        Button("Stop") { Task { await store.stop(thread) } }.disabled(!store.canWrite || thread.runtimeID == nil)
+                    }
+                    Button(thread.isBusy ? "Queue" : "Send") { Task { await store.submit() } }
+                        .keyboardShortcut(.return, modifiers: .command).buttonStyle(.borderedProminent)
+                        .disabled(!store.canWrite || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }.padding(14).coincideSurface(cornerRadius: 20).padding(18)
+        }
+    }
+
+    private func response(_ thread: CodingThread, _ request: ApprovalRequest, _ value: ProviderApprovalResponse) {
+        Task { await store.respond(request, thread: thread, response: value) }
+    }
+}
+
+private struct RemoteConversationHeader: View {
+    @Bindable var store: RemoteWorkspaceStore
+    let thread: CodingThread
+    @State private var model = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(thread.title).font(.headline)
+                Text(thread.providerName).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Picker("Permissions", selection: Binding(get: { thread.permission }, set: { edit(.permission($0)) })) {
+                    ForEach(PermissionMode.allCases) { Text($0.title).tag($0) }
+                }.fixedSize().disabled(!store.canWrite)
+            }
+            Text(thread.workspacePath).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            HStack {
+                TextField("Model identifier (empty uses CLI default)", text: $model).onSubmit { edit(.model(model)) }
+                Button("Use Model") { edit(.model(model)) }.disabled(!store.canWrite || model == thread.model)
+            }.disabled(!store.canWrite)
+        }.padding(14)
+        .onAppear { model = thread.model }
+        .onChange(of: thread.id) { model = thread.model }
+        .onChange(of: thread.model) { model = thread.model }
+    }
+    private func edit(_ value: RemoteEnvironmentThreadEdit) {
+        Task { await store.perform(.editThread(threadID: thread.id, edit: value, expectedConfiguration: .init(thread: thread))) }
+    }
+}
+
+private struct RemoteMessageView: View {
+    let message: ChatMessage
+    var body: some View {
+        Group {
+            if message.role == .tool || message.role == .reasoning {
+                DisclosureGroup(message.role == .tool ? "Tool activity" : "Reasoning") {
+                    Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                }.font(.caption)
+            } else if message.role == .user {
+                HStack { Spacer(minLength: 60); Text(message.text).textSelection(.enabled).padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 18)) }
+            } else {
+                // No local workspace URL: a remote file link must never resolve
+                // against files on this Mac.
+                MarkdownView(message.text)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct RemoteConnectionSheet: View {
+    @Bindable var store: RemoteWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var target = ""
+    @State private var port = ""
+    @State private var helper = "/usr/local/bin/CoincideEnvironment"
+    @State private var directory = ""
+    @State private var error: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Add SSH Connection").font(.title2)
+            Form {
+                TextField("Name", text: $name).accessibilityIdentifier("remote-connection-name")
+                TextField("SSH host or user@host", text: $target).accessibilityIdentifier("remote-connection-target")
+                TextField("Port (optional)", text: $port).accessibilityIdentifier("remote-connection-port")
+                TextField("Helper path on remote Mac", text: $helper).accessibilityIdentifier("remote-connection-helper")
+                TextField("Data directory on remote Mac", text: $directory).accessibilityIdentifier("remote-connection-directory")
+            }
+            Text("Install the CoincideEnvironment helper on the remote Mac first. Use absolute remote paths. SSH uses your configured keys and known hosts; first-time host verification and password sign-in must be completed in Terminal.")
+                .font(.callout).foregroundStyle(.secondary)
+            if let error { Text(error).foregroundStyle(.red).accessibilityIdentifier("remote-connection-error") }
+            HStack {
+                Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).accessibilityIdentifier("remote-connection-cancel")
+                Button("Inspect Connection") { connect() }.keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("remote-connection-inspect")
+                    .disabled(target.isEmpty || directory.isEmpty || store.isWorking)
+            }
+        }.padding(24).frame(width: 570)
+    }
+    private func connect() {
+        let number = port.isEmpty ? nil : Int(port)
+        guard port.isEmpty || number.map({ (1...65_535).contains($0) }) == true else { error = "Enter a port between 1 and 65535."; return }
+        let configuration = SSHRemoteEnvironmentConfiguration(target: target, port: number, helperPath: helper, dataDirectory: directory)
+        do { try configuration.validate() }
+        catch { self.error = error.localizedDescription; return }
+        let selected = RemoteWorkspaceConnection(name: name.isEmpty ? target : name, configuration: configuration)
+        dismiss(); Task { await store.connect(selected) }
+    }
+}
+
+private struct RemoteProjectSheet: View {
+    @Bindable var store: RemoteWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var path = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Add Remote Project").font(.title2)
+            TextField("Absolute folder path on the remote Mac", text: $path)
+            Text("Choose an existing folder on \(store.connection?.name ?? "the remote Mac").").foregroundStyle(.secondary)
+            HStack {
+                Spacer(); Button("Cancel") { dismiss() }
+                Button("Add Project") {
+                    Task { if await store.perform(.addProject(id: UUID(), path: path, title: nil)) { dismiss() } }
+                }.disabled(!store.canWrite || !path.hasPrefix("/"))
+            }
+        }.padding(24).frame(width: 500)
+    }
+}
+
+private struct RemoteThreadSheet: View {
+    @Bindable var store: RemoteWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var provider: ProviderKind = .codex
+    @State private var title = "New thread"
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("New Remote Conversation").font(.title2)
+            TextField("Title", text: $title)
+            Picker("Provider", selection: $provider) {
+                ForEach(store.descriptor?.capabilities.providers ?? []) { Text($0.name).tag($0) }
+            }
+            Text("The provider uses its existing sign-in on the remote Mac. New conversations start with supervised permissions.").font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Spacer(); Button("Cancel") { dismiss() }
+                Button("Create") {
+                    guard let projectID = store.selectedProjectID else { return }
+                    let id = UUID()
+                    Task {
+                        if await store.perform(.createThread(id: id, projectID: projectID, provider: provider, title: title, model: "", permission: .supervised)) {
+                            store.selectThread(id); dismiss()
+                        }
+                    }
+                }.disabled(!store.canWrite || store.selectedProjectID == nil)
+            }
+        }.padding(24).frame(width: 490)
+    }
+}
