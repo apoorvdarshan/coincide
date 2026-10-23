@@ -398,15 +398,17 @@ private struct RemoteConversationHeader: View {
 private struct RemoteMessageView: View {
     let message: ChatMessage
     let source: AttachmentAccess?
+    @State private var expanded = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let attachments = message.attachments, !attachments.isEmpty, let source { AttachmentShelf(source: source, attachments: attachments) }
-            if message.role == .tool || message.role == .reasoning {
-                DisclosureGroup(message.role == .tool ? "Tool activity" : "Reasoning") {
-                    Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                }.font(.caption)
+            // Remote paths never resolve against this Mac: no workspace and no file opening.
+            if message.role == .tool {
+                ToolCardView(card: TranscriptToolPresentation.card(for: message), entity: message.providerEntity, expanded: $expanded)
+            } else if message.role == .reasoning {
+                ReasoningRowView(text: message.text, live: false, duration: nil, expanded: $expanded)
             } else if message.role == .user {
-                HStack { Spacer(minLength: 60); Text(message.text).textSelection(.enabled).padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 18)) }
+                HStack { Spacer(minLength: 60); UserMessageBody(text: message.text, expanded: $expanded).padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 18)) }
             } else {
                 // No local workspace URL: a remote file link must never resolve
                 // against files on this Mac.
