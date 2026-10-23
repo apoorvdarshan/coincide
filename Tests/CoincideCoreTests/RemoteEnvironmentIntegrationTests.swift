@@ -302,3 +302,45 @@ func remoteNativeHostAndClientRefuseUntrustedWrongProtocolAndForeignEnvironmentB
         for client in clients { await client.close() }; await raw?.close(); throw error
     }
 }
+
+/// Actual packaged helper wiring is exercised without ever sending open or
+/// input. Discovery and unknown-reference reads cannot start a login shell.
+@Test(.timeLimit(.minutes(1)))
+func remoteNativeHostTerminalDiscoveryAndUnknownReferenceReadsNeverOpenAShell() async throws {
+    let fixture = try RemoteAcceptanceFixture.make(), connection = try fixture.connection()
+    let client = RemoteEnvironmentClient(factory: { connection })
+    do {
+        let descriptor = try await client.discover()
+        #expect(descriptor.capabilities.supportsRemoteTerminal,
+                "The actual helper must truthfully advertise its injected native PTY driver.")
+        try await client.trust(environmentID: descriptor.environmentID)
+        _ = try await client.connect()
+        let project = WorkspaceProject(path: fixture.workspace.path), thread = CodingThread(project: project)
+        let target = RemoteWorkspaceTarget(environmentID: descriptor.environmentID, projectID: project.id, threadID: thread.id,
+            configuration: .init(thread: thread), rootID: UUID())
+        let unknown = RemoteTerminalReference(target: target, terminalID: UUID(), incarnation: UUID())
+        await #expect(throws: RemoteTerminalFailure(.notFound)) { _ = try await client.attachTerminal(unknown) }
+        await #expect(throws: RemoteTerminalFailure(.notFound)) { _ = try await client.readTerminal(.init(reference: unknown)) }
+        await #expect(throws: RemoteTerminalFailure(.notFound)) {
+            _ = try await client.terminalInputReceipt(.init(reference: unknown, sequence: 1,
+                digest: RemoteTerminalProtocol.inputDigest(Data([0]))))
+        }
+        await #expect(throws: RemoteTerminalFailure(.invalidTarget)) { _ = try await client.listTerminals(target) }
+        do {
+            _ = try await connection.request("remoteEnvironment.terminal.execute", params: .object([:]))
+            Issue.record("An unallowlisted terminal execution method must be refused.")
+        } catch let error as JSONRPCRemoteError {
+            #expect(error.code == -32_000 && error.data["kind"] == .string("unsupported"))
+        }
+        let unchanged = try await client.snapshot()
+        #expect(unchanged.workspace.projects.isEmpty && unchanged.workspace.threads.isEmpty)
+        #expect(try fixture.rows("launch").isEmpty)
+        // The owned transport closes without a terminal open. Host shutdown
+        // must still await the engine/driver service before its exact PID ends.
+        await connection.close(); await client.close()
+        try await fixture.expectDrained(); try fixture.remove()
+    } catch {
+        fixture.retainFailure(await client.currentSnapshot())
+        await connection.close(); await client.close(); throw error
+    }
+}

@@ -4,12 +4,12 @@ import Foundation
 /// Native helper entrypoint. Stdio carries only bounded JSON-RPC frames; all
 /// diagnostics use fixed text on stderr. There is no listener or login flow.
 public enum RemoteEnvironmentStdio {
-    public static func run(arguments: [String]) async -> Int32 {
+    public static func run(arguments: [String], driverFactory: RemotePTYDriverFactory? = nil) async -> Int32 {
         var service: RemoteEnvironmentService?
         do {
             let parsed = try Arguments(arguments)
             let current = try RemoteEnvironmentService(dataDirectory: parsed.directory, label: parsed.label,
-                expectedEnvironmentID: parsed.expected, options: parsed.options)
+                expectedEnvironmentID: parsed.expected, options: parsed.options, driverFactory: driverFactory)
             service = current
             let input = try RemoteEnvironmentStdioInput(), writer = try RemoteEnvironmentStdioWriter()
             let workspaceReads = RemoteWorkspaceReadResponses()
@@ -89,14 +89,63 @@ public enum RemoteEnvironmentStdio {
                                 try RemoteEnvironmentProtocol.encode(try await current.cancelWorkspaceOperation(request))
                             }, writer: writer, disconnect: { input.stop() })
                             continue requestLoop
+                        case RemoteEnvironmentProtocol.terminalOpenMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteTerminalOpenRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.openTerminal(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteEnvironmentProtocol.terminalAttachMethod:
+                            let reference = try RemoteEnvironmentProtocol.decode(RemoteTerminalReference.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.attachTerminal(reference))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteEnvironmentProtocol.terminalReadMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteTerminalReadRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.readTerminal(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteEnvironmentProtocol.terminalWriteMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteTerminalInputRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.writeTerminal(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteEnvironmentProtocol.terminalInputReceiptMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteTerminalInputReceiptRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.terminalInputReceipt(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteEnvironmentProtocol.terminalResizeMethod:
+                            let request = try RemoteEnvironmentProtocol.decode(RemoteTerminalResizeRequest.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.resizeTerminal(request))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteEnvironmentProtocol.terminalCloseMethod:
+                            let reference = try RemoteEnvironmentProtocol.decode(RemoteTerminalReference.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.closeTerminal(reference))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
+                        case RemoteEnvironmentProtocol.terminalListMethod:
+                            let target = try RemoteEnvironmentProtocol.decode(RemoteWorkspaceTarget.self, from: params)
+                            try await workspaceReads.submit(id: id, operation: {
+                                try RemoteEnvironmentProtocol.encode(try await current.listTerminals(target))
+                            }, writer: writer, disconnect: { input.stop() })
+                            continue requestLoop
                         case RemoteEnvironmentProtocol.closeMethod:
                             let request = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentSnapshotRequest.self, from: params)
                             guard request.environmentID == current.environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
                             subscription?.cancel()
                             if let subscription { await subscription.value }
                             subscription = nil
+                            async let serviceClose: Void = current.close()
                             await workspaceReads.close()
-                            await current.close()
+                            await serviceClose
                             result = try RemoteEnvironmentProtocol.encode(RemoteEnvironmentCloseResult(environmentID: current.environmentID))
                             try await writer.send(response(id: id, result: result))
                             break requestLoop
@@ -110,8 +159,9 @@ public enum RemoteEnvironmentStdio {
             } catch { status = 1 }
             subscription?.cancel()
             input.stop(); await input.join()
+            async let serviceClose: Void = current.close()
             await workspaceReads.close()
-            await current.close()
+            await serviceClose
             if let subscription { await subscription.value }
             for source in signals { source.cancel() }
             return status
@@ -147,7 +197,8 @@ public enum RemoteEnvironmentStdio {
     }
     fileprivate static func errorResponse(id: JSONValue, error: any Error) -> JSONValue {
         let code: Int, kind: String, message: String
-        if let safe = error as? RemoteWorkspaceFailure { code = -32_001; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        if let safe = error as? RemoteTerminalFailure { code = -32_002; kind = safe.kind.rawValue; message = safe.localizedDescription }
+        else if let safe = error as? RemoteWorkspaceFailure { code = -32_001; kind = safe.kind.rawValue; message = safe.localizedDescription }
         else { let safe = error as? RemoteEnvironmentError ?? .init(.unavailable); code = -32_000; kind = safe.kind.rawValue; message = safe.localizedDescription }
         return .object(["jsonrpc": .string("2.0"), "id": id, "error": .object([
             "code": .number(Double(code)), "message": .string(message), "data": .object(["kind": .string(kind)])])])

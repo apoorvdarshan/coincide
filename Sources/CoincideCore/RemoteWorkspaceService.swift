@@ -20,6 +20,7 @@ actor RemoteWorkspaceService {
     private var revisions: [UUID: Revision] = [:]
     private var jobs: [UUID: Task<Void, Never>] = [:]
     private var busyRoots: [UUID: UUID] = [:]
+    private var terminalRoots: [UUID: UUID] = [:]
     private var closing = false
     private var journalFailed = false
     private var closeTask: Task<Void, Never>?
@@ -155,7 +156,7 @@ actor RemoteWorkspaceService {
             root = try await self.root(request.target)
             try await authorize(request.target, mutating: true)
             try validate(request.mutation)
-            guard busyRoots[root.id] == nil, jobs.count < 8 else { throw RemoteWorkspaceFailure(.busy) }
+            guard busyRoots[root.id] == nil, !terminalRoots.values.contains(root.id), jobs.count < 8 else { throw RemoteWorkspaceFailure(.busy) }
         } catch { return try journal.insert(request, failure: safe(error)) }
         let accepted = try journal.insert(request)
         busyRoots[root.id] = request.id
@@ -261,6 +262,16 @@ actor RemoteWorkspaceService {
         guard let thread = snapshot.threads.first(where: { $0.id == id }) else { return }
         guard !busyRoots.keys.contains(where: { roots[$0].map { samePath($0.path, thread.workspacePath) } == true }) else { throw RemoteWorkspaceFailure(.busy) }
     }
+    func acquireTerminalRoot(_ target: RemoteWorkspaceTarget, owner: UUID) async throws {
+        let root = try await self.root(target)
+        guard !closing, busyRoots[root.id] == nil else { throw RemoteWorkspaceFailure(.busy) }
+        terminalRoots[owner] = root.id
+    }
+    func validateTerminalRoot(_ target: RemoteWorkspaceTarget, owner: UUID) async throws {
+        let root = try await self.root(target)
+        guard terminalRoots[owner] == root.id else { throw RemoteWorkspaceFailure(.invalidTarget) }
+    }
+    func releaseTerminalRoot(owner: UUID) { terminalRoots.removeValue(forKey: owner) }
     private func safe(_ error: any Error) -> RemoteWorkspaceFailure {
         if let error = error as? RemoteWorkspaceFailure { return error }
         if error is CancellationError { return .init(.interrupted) }

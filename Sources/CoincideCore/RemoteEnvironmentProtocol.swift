@@ -20,6 +20,14 @@ public enum RemoteEnvironmentProtocol {
     public static let workspaceBeginMethod = "remoteEnvironment.workspace.begin"
     public static let workspaceOperationMethod = "remoteEnvironment.workspace.operation"
     public static let workspaceCancelMethod = "remoteEnvironment.workspace.cancel"
+    public static let terminalOpenMethod = "remoteEnvironment.terminal.open"
+    public static let terminalAttachMethod = "remoteEnvironment.terminal.attach"
+    public static let terminalReadMethod = "remoteEnvironment.terminal.read"
+    public static let terminalWriteMethod = "remoteEnvironment.terminal.write"
+    public static let terminalInputReceiptMethod = "remoteEnvironment.terminal.inputReceipt"
+    public static let terminalResizeMethod = "remoteEnvironment.terminal.resize"
+    public static let terminalCloseMethod = "remoteEnvironment.terminal.close"
+    public static let terminalListMethod = "remoteEnvironment.terminal.list"
     public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let bytes = try encoder.encode(value)
@@ -50,15 +58,17 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsRequestResponses: Bool
     public let persistentDaemon: Bool
     public let supportsWorkspaceFilesAndGit: Bool
-    public init(providers: [ProviderKind] = [.codex, .claude]) {
+    public let supportsRemoteTerminal: Bool
+    public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
         supportsExactRunStop = true; supportsRequestResponses = true; persistentDaemon = false
         supportsWorkspaceFilesAndGit = true
+        self.supportsRemoteTerminal = supportsRemoteTerminal
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -71,6 +81,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRequestResponses = try values.decode(Bool.self, forKey: .supportsRequestResponses)
         persistentDaemon = try values.decode(Bool.self, forKey: .persistentDaemon)
         supportsWorkspaceFilesAndGit = try values.decodeIfPresent(Bool.self, forKey: .supportsWorkspaceFilesAndGit) ?? false
+        supportsRemoteTerminal = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteTerminal) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {

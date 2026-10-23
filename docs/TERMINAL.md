@@ -31,8 +31,19 @@ workspace's private app-data directory.
 
 This is cold display restoration, not process reattachment. ANSI styling,
 alternate-screen applications, images and cursor state are not reconstructed.
-Live terminal survival across app/server restart, remote replay/attachment,
+Live terminal survival across app/server restart,
 split groups, activity detection and idle-tab policies remain parity gaps.
+
+## Remote workspaces
+
+The remote window has a separate terminal panel. **New Terminal** explicitly
+opens a host PTY; the local SwiftTerm view only renders output and forwards ordered
+input and resize requests. Hidden tabs keep their sessions. Disconnect freezes
+the transcript and closes the owned host; reconnect never opens a shell or repeats
+input. Explicit attachment inspects the exact existing incarnation, and missing
+output is restored as inert text with a visible gap notice. Remote transcripts
+stay in memory for the current app lifetime. See
+[remote terminal behavior and limits](REMOTE_ENVIRONMENTS.md#remote-terminals).
 
 ## Search and text size
 

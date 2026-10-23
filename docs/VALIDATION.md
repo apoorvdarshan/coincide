@@ -1,5 +1,61 @@
 # Validation record
 
+## 2026-10-23 — Remote PTYs and terminal panel
+
+- The complete serial suite passes 1838 of 1851 declarations, with thirteen
+  optional installed/live checks skipped and pinned Pi package acceptance enabled.
+  Core covers 1579 declarations in 371.967 seconds; native view/store 242 in
+  74.037 seconds; terminal seventeen in 10.278 seconds; Markdown thirteen in
+  0.144 seconds. No source changes follow this full run.
+- Build-only packaging, deep strict signatures and native math resources pass.
+  Packaged app and environment-helper Mach-O UUIDs match their compiled products.
+  Signed helper discovery advertises Files/Git and terminal support, opens no
+  SQLite database, exits on EOF and leaves no fixture. The ABI guard inspects
+  975 Mach-O objects (664 Core, 262 app) with zero weak async default contexts.
+  The installed app is neither replaced nor launched; the development bundle is
+  `dist/Coincide.app`.
+- Final focused verification passes all 23 declarations: nine Core (including
+  fourteen expanded malformed-peer cases), six actual native PTY/service checks,
+  and eight offscreen native renderer/store checks. Core takes 2.165 seconds,
+  terminal 8.779 seconds and view/store 0.273 seconds after a 10.66-second build.
+- The host injects a headless SwiftTerm `LocalProcess` driver. Private non-login
+  Python programs verify exact binary/Unicode output and input, workspace and
+  environment, geometry changes, final exit bytes, foreground escalation and
+  exact owned-process drain. The production service plus private SQLite verifies
+  duplicate input executes once, live-terminal file mutation exclusion, lease
+  release after close, and cold identity lookup without relaunch.
+- A bounded inherited-writer fixture verifies finite drain, explicit incomplete
+  output while a residual session member remains, and eventual fixture PID exit.
+  Darwin can revoke the slave and return EIO immediately; this is not evidence of
+  an observed drain timeout. Session-member enumeration is observation only.
+  No arbitrary reparented descendant cleanup is claimed.
+- Core checks cover the 512 KiB output ring and visible gaps, exact incarnations,
+  seventy ordered writes with bounded rolling receipt metadata, refusal to replay
+  expired/uncertain inputs, no raw-keystroke persistence, and overflow during an
+  existing close. The ring test caught and fixed nonzero `Data.startIndex` after
+  prefix removal. A malformed stdio peer checks wrong incarnations and gaps,
+  lost/malformed input acknowledgments, read-only receipt recovery across
+  reconnect, and uncertain opens that are never retried.
+- Offscreen checks cover explicit opens, retained tabs, ordered binary input,
+  close without deadlocking on blocked input, confirmation and queued-input
+  refusal, stale connection replies, multi-page inert gap replay and old-view
+  callbacks arriving after a renderer replacement. Replay uses sanitized text;
+  clipboard automation, links and bells are disabled. A display-only renderer
+  never starts a local process. Actual remote panel interaction remains hosted
+  GUI acceptance work.
+- The actual native helper advertises terminal capability and responds to
+  unknown-reference/read-only requests without opening a shell; unsupported
+  methods are refused. The native GUI runner compiles without launching an app,
+  and all 72 supporting Python checks pass. Prior hosted run 39897554190 passed
+  Core/package and 26 of 27 GUI workflows; its only failure read a validation
+  StaticText label while the captured accessibility tree exposed its text as
+  value. The test now accepts that native value with label fallback, preserving
+  both validation assertions and the workflow count. Its hosted rerun is pending.
+
+This is local protocol, driver and service acceptance. No real SSH connection,
+provider authentication, login-shell startup, persistent host, cross-platform
+host or complete T3 Code parity is established by these checks.
+
 ## 2026-10-23 — Remote Files and Git inspector
 
 - The full serial run passes 1815 of 1828 declarations, with thirteen optional

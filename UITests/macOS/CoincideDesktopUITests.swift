@@ -40,12 +40,13 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(inspect.isEnabled); inspect.click()
         let validation = app.staticTexts["remote-connection-error"]
         XCTAssertTrue(validation.waitForExistence(timeout: 5))
-        XCTAssertEqual(validation.label, "Enter a port between 1 and 65535.")
+        let validationText = (validation.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? validation.label
+        XCTAssertEqual(validationText, "Enter a port between 1 and 65535.")
         XCTAssertTrue(target.exists, "Invalid values must leave the form open without starting SSH.")
         port.click(); port.typeKey("a", modifierFlags: .command); port.typeKey(.delete, modifierFlags: [])
         target.click(); target.typeKey("a", modifierFlags: .command); target.typeText("-invalid-target")
         inspect.click()
-        let invalidTarget = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", "valid SSH alias"), object: validation)
+        let invalidTarget = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (value CONTAINS %@ OR label CONTAINS %@)", "valid SSH alias", "valid SSH alias"), object: validation)
         XCTAssertEqual(XCTWaiter.wait(for: [invalidTarget], timeout: 5), .completed)
         XCTAssertTrue(target.exists)
         capture(app, name: "remote-connection-native-validation")

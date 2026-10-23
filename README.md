@@ -147,8 +147,11 @@ conversations, streaming, approvals and Stop. Drafts stay on this Mac; uncertain
 requests can be checked by receipt without resending them. Closing the remote
 window disconnects and stops its owned host's active work. The Files/Changes
 inspector supports remote search, revision-checked text saves,
-staging, commits, branch controls, fetch, fast-forward pull and explicit push. Remote
-worktrees, terminals, automatic setup and persistent hosting remain unfinished. See
+staging, commits, branch controls, fetch, fast-forward pull and explicit push.
+Remote terminal tabs explicitly open host shells, stream output, accept ordered
+input and resize; disconnect keeps a read-only transcript without restarting a
+shell or repeating input. Remote worktrees, automatic setup and persistent
+hosting remain unfinished. See
 [remote setup and boundaries](docs/REMOTE_ENVIRONMENTS.md).
 
 Pi conversations use an installed, authenticated Pi 0.80.5+ CLI over its native

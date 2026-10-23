@@ -55,6 +55,10 @@ public actor RemoteEnvironmentClient {
     private var activeRequests = 0
     private var activeWorkspaceBytes = 0
     private var attemptedWorkspaceOperations: Set<UUID> = []
+    private var attemptedTerminalOpens: Set<UUID> = []
+    private var terminalInputAttempts: [UUID: Int64] = [:]
+    private var terminalInputInFlight: Set<UUID> = []
+    private var haltedTerminalInputs: Set<UUID> = []
 
     public init(factory: @escaping ConnectionFactory, expectedEnvironmentID: UUID? = nil) {
         (events, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(8))
@@ -267,6 +271,213 @@ public actor RemoteEnvironmentClient {
         }
         _ = try RemoteWorkspaceJournal.payload(request)
         attemptedWorkspaceOperations.insert(request.id)
+    }
+    public func openTerminal(_ request: RemoteTerminalOpenRequest) async throws -> RemoteTerminalSnapshot {
+        try terminalContext(request.target)
+        try Self.validateTerminalSize(cols: request.cols, rows: request.rows)
+        guard !attemptedTerminalOpens.contains(request.id) else {
+            throw RemoteEnvironmentClientError(.commandAlreadyAttempted, commandID: request.id)
+        }
+        guard attemptedTerminalOpens.count < 4_096 else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        attemptedTerminalOpens.insert(request.id)
+        let owned = generation
+        let result: RemoteTerminalSnapshot = try await terminalRequest(RemoteEnvironmentProtocol.terminalOpenMethod,
+            request: request, target: request.target, uncertainID: request.id)
+        do {
+            try validateWorkspaceResponse(generation: owned) {
+                try Self.validateTerminalSnapshot(result, target: request.target)
+                guard result.reference.terminalID == request.terminalID else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            }
+        } catch { throw RemoteEnvironmentClientError(.commandUncertain, commandID: request.id) }
+        return result
+    }
+    public func attachTerminal(_ reference: RemoteTerminalReference) async throws -> RemoteTerminalSnapshot {
+        let owned = generation
+        let result: RemoteTerminalSnapshot = try await terminalRequest(RemoteEnvironmentProtocol.terminalAttachMethod,
+            request: reference, target: reference.target)
+        try validateWorkspaceResponse(generation: owned) { try Self.validateTerminalSnapshot(result, reference: reference) }
+        return result
+    }
+    public func listTerminals(_ target: RemoteWorkspaceTarget) async throws -> [RemoteTerminalSnapshot] {
+        let owned = generation
+        let result: [RemoteTerminalSnapshot] = try await terminalRequest(RemoteEnvironmentProtocol.terminalListMethod,
+            request: target, target: target)
+        try validateWorkspaceResponse(generation: owned) {
+            guard result.count <= 4_096, Set(result.map(\.id)).count == result.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            for snapshot in result { try Self.validateTerminalSnapshot(snapshot, target: target) }
+        }
+        return result
+    }
+    public func readTerminal(_ request: RemoteTerminalReadRequest) async throws -> RemoteTerminalReadResult {
+        guard request.afterSequence >= 0, (1...65_536).contains(request.maxBytes) else { throw RemoteTerminalFailure(.invalidRequest) }
+        let owned = generation
+        let result: RemoteTerminalReadResult = try await terminalRequest(RemoteEnvironmentProtocol.terminalReadMethod,
+            request: request, target: request.reference.target)
+        try validateWorkspaceResponse(generation: owned) {
+            try Self.validateTerminalSnapshot(result.snapshot, reference: request.reference)
+            guard result.data.count <= request.maxBytes, result.startSequence >= 0,
+                  result.nextSequence >= result.startSequence,
+                  result.nextSequence - result.startSequence == Int64(result.data.count),
+                  result.nextSequence <= result.snapshot.outputSequence else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            if result.snapshot.state == .lost {
+                guard result.gap, result.data.isEmpty, result.startSequence == 0, result.nextSequence == 0,
+                      result.snapshot.outputSequence == 0, result.snapshot.inputHalted else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            } else if result.gap {
+                guard result.startSequence == result.snapshot.retainedStartSequence,
+                      result.startSequence > request.afterSequence else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            } else {
+                guard result.startSequence == request.afterSequence,
+                      result.startSequence >= result.snapshot.retainedStartSequence else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            }
+        }
+        return result
+    }
+    /// An attempt consumes its sequence before suspension. Only a receipt lookup
+    /// may follow an uncertain write; reconnect never grants permission to resend.
+    public func writeTerminal(_ request: RemoteTerminalInputRequest) async throws -> RemoteTerminalInputReceipt {
+        try terminalContext(request.reference.target)
+        let incarnation = request.reference.incarnation
+        guard request.sequence > 0, request.sequence < Int64.max, !request.data.isEmpty,
+              request.data.count <= 65_536 else { throw RemoteTerminalFailure(.invalidRequest) }
+        guard !haltedTerminalInputs.contains(incarnation) else { throw RemoteTerminalFailure(.inputUncertain) }
+        guard !terminalInputInFlight.contains(incarnation) else { throw RemoteTerminalFailure(.busy) }
+        guard request.sequence > (terminalInputAttempts[incarnation] ?? 0) else { throw RemoteTerminalFailure(.inputExpired) }
+        guard terminalInputAttempts[incarnation] != nil || terminalInputAttempts.count < 4_096 else {
+            throw RemoteEnvironmentClientError(.limitExceeded)
+        }
+        terminalInputAttempts[incarnation] = request.sequence
+        terminalInputInFlight.insert(incarnation)
+        defer { terminalInputInFlight.remove(incarnation) }
+        let owned = generation, digest = RemoteTerminalProtocol.inputDigest(request.data)
+        do {
+            let result: RemoteTerminalInputReceipt = try await terminalRequest(RemoteEnvironmentProtocol.terminalWriteMethod,
+                request: request, target: request.reference.target)
+            try validateWorkspaceResponse(generation: owned) {
+                try Self.validateTerminalReceipt(result, reference: request.reference, sequence: request.sequence, digest: digest)
+                guard result.byteCount == request.data.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            }
+            if result.state != .delivered { haltedTerminalInputs.insert(incarnation) }
+            return result
+        } catch {
+            haltedTerminalInputs.insert(incarnation)
+            if let failure = error as? RemoteTerminalFailure { throw failure }
+            throw RemoteTerminalFailure(.inputUncertain)
+        }
+    }
+    public func terminalInputReceipt(_ request: RemoteTerminalInputReceiptRequest) async throws -> RemoteTerminalInputReceipt? {
+        guard request.sequence > 0, Self.isTerminalDigest(request.digest) else { throw RemoteTerminalFailure(.invalidRequest) }
+        let incarnation = request.reference.incarnation
+        guard terminalInputAttempts[incarnation] != nil || terminalInputAttempts.count < 4_096 else {
+            throw RemoteEnvironmentClientError(.limitExceeded)
+        }
+        terminalInputAttempts[incarnation] = max(terminalInputAttempts[incarnation] ?? 0, request.sequence)
+        // Recovery is read-only even when lookup itself loses its response.
+        // A subsequent connection must not turn that loss into writable state.
+        haltedTerminalInputs.insert(incarnation)
+        let owned = generation
+        let result: RemoteTerminalInputReceipt? = try await terminalRequest(RemoteEnvironmentProtocol.terminalInputReceiptMethod,
+            request: request, target: request.reference.target)
+        if let result {
+            try validateWorkspaceResponse(generation: owned) {
+                try Self.validateTerminalReceipt(result, reference: request.reference, sequence: request.sequence, digest: request.digest)
+            }
+        }
+        // A lookup cannot prove that a lost write never ran, including nil.
+        if result?.state != .delivered { haltedTerminalInputs.insert(incarnation) }
+        return result
+    }
+    public func resizeTerminal(_ request: RemoteTerminalResizeRequest) async throws -> RemoteTerminalSnapshot {
+        try Self.validateTerminalSize(cols: request.cols, rows: request.rows)
+        let owned = generation
+        let result: RemoteTerminalSnapshot = try await terminalRequest(RemoteEnvironmentProtocol.terminalResizeMethod,
+            request: request, target: request.reference.target)
+        try validateWorkspaceResponse(generation: owned) {
+            try Self.validateTerminalSnapshot(result, reference: request.reference)
+            guard result.cols == request.cols, result.rows == request.rows else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    public func closeTerminal(_ reference: RemoteTerminalReference) async throws -> RemoteTerminalSnapshot {
+        let owned = generation
+        let result: RemoteTerminalSnapshot = try await terminalRequest(RemoteEnvironmentProtocol.terminalCloseMethod,
+            request: reference, target: reference.target)
+        try validateWorkspaceResponse(generation: owned) {
+            try Self.validateTerminalSnapshot(result, reference: reference)
+            guard [.exited, .failed, .lost].contains(result.state) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    private func terminalContext(_ target: RemoteWorkspaceTarget) throws {
+        let (_, _, environment) = try context()
+        guard environment == target.environmentID else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
+        guard target.rootID != nil else { throw RemoteTerminalFailure(.invalidTarget) }
+        guard descriptor?.capabilities.supportsRemoteTerminal == true else { throw RemoteEnvironmentClientError(.unsupported) }
+    }
+    private func terminalRequest<Request: Encodable & Sendable, Response: Decodable & Sendable>(
+        _ method: String, request: Request, target: RemoteWorkspaceTarget, uncertainID: UUID? = nil
+    ) async throws -> Response {
+        try terminalContext(target)
+        let (connection, owned, _) = try context()
+        let bytes = try JSONEncoder().encode(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumRequestBytes,
+              activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else {
+            throw RemoteEnvironmentClientError(.limitExceeded)
+        }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(30))
+            guard generation == owned, rpc != nil else { throw CancellationError() }
+            do { return try RemoteEnvironmentProtocol.decode(Response.self, from: raw) }
+            catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+        } catch {
+            if generation == owned {
+                if let failure = error as? JSONRPCRemoteError, failure.code == -32_002,
+                   let value = failure.data["kind"].string, let kind = RemoteTerminalFailure.Kind(rawValue: value) {
+                    throw RemoteTerminalFailure(kind)
+                }
+                if let rejection = workspaceRejection(error) { throw rejection }
+                if let rejection = nativeRejection(error) { throw rejection }
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
+            if let uncertainID { throw RemoteEnvironmentClientError(.commandUncertain, commandID: uncertainID) }
+            throw error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
+        }
+    }
+    private static func validateTerminalSize(cols: Int, rows: Int) throws {
+        guard (1...1_000).contains(cols), (1...500).contains(rows) else { throw RemoteTerminalFailure(.invalidRequest) }
+    }
+    private static func isTerminalDigest(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+    private static func sameTerminal(_ lhs: RemoteTerminalReference, _ rhs: RemoteTerminalReference) -> Bool {
+        sameWorkspace(lhs.target, rhs.target) && lhs.target.rootID == rhs.target.rootID &&
+            lhs.terminalID == rhs.terminalID && lhs.incarnation == rhs.incarnation
+    }
+    private static func validateTerminalSnapshot(_ value: RemoteTerminalSnapshot, reference: RemoteTerminalReference) throws {
+        try validateTerminalSnapshot(value, target: reference.target)
+        guard sameTerminal(value.reference, reference) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+    }
+    private static func validateTerminalSnapshot(_ value: RemoteTerminalSnapshot, target: RemoteWorkspaceTarget) throws {
+        guard sameWorkspace(value.reference.target, target), value.reference.target.rootID == target.rootID,
+              target.rootID != nil, (1...1_000).contains(value.cols), (1...500).contains(value.rows),
+              value.outputSequence >= 0, value.retainedStartSequence >= 0,
+              value.outputSequence >= value.retainedStartSequence,
+              value.outputSequence - value.retainedStartSequence <= 512 * 1_024,
+              value.nextInputSequence > 0,
+              (value.nextInputSequence == 1 ? value.inputDigest.isEmpty : isTerminalDigest(value.inputDigest)),
+              value.exitCode == nil || [.closing, .exited, .failed].contains(value.state),
+              value.exitSignal == nil || [.closing, .exited, .failed].contains(value.state) else {
+            throw RemoteEnvironmentClientError(.invalidResponse)
+        }
+    }
+    private static func validateTerminalReceipt(_ value: RemoteTerminalInputReceipt, reference: RemoteTerminalReference,
+        sequence: Int64, digest: String) throws {
+        guard sameTerminal(value.reference, reference), value.sequence == sequence, value.digest == digest,
+              (1...65_536).contains(value.byteCount), isTerminalDigest(value.inputDigest) else {
+            throw RemoteEnvironmentClientError(.invalidResponse)
+        }
     }
     private func workspaceRequest<Request: Encodable & Sendable, Response: Decodable & Sendable>(
         _ method: String, request: Request, environmentID: UUID, uncertainID: UUID? = nil

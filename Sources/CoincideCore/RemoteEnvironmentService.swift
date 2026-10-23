@@ -20,8 +20,10 @@ public actor RemoteEnvironmentService {
     private let label: String
     private let options: RemoteEnvironmentOptions
     private let providerFactory: WorkspaceEngine.ProviderFactory
+    private let driverFactory: RemotePTYDriverFactory?
     private var engine: WorkspaceEngine?
     private var workspaceService: RemoteWorkspaceService?
+    private var terminalService: RemoteTerminalService?
     private var initializing: Task<WorkspaceEngine, any Error>?
     private var subscriptions: [UUID: Task<Void, Never>] = [:]
     private var closing = false
@@ -48,14 +50,15 @@ public actor RemoteEnvironmentService {
 
     public init(dataDirectory: URL, label: String = ProcessInfo.processInfo.hostName,
                 expectedEnvironmentID: UUID? = nil, options: RemoteEnvironmentOptions = .init(),
-                providerFactory: @escaping WorkspaceEngine.ProviderFactory = { try ProviderSessions.make(for: $0) }) throws {
+                providerFactory: @escaping WorkspaceEngine.ProviderFactory = { try ProviderSessions.make(for: $0) },
+                driverFactory: RemotePTYDriverFactory? = nil) throws {
         guard !label.isEmpty, label.utf8.count <= 256,
               !label.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw RemoteEnvironmentError(.invalidRequest) }
         environmentID = try RemoteEnvironmentIdentity.load(dataDirectory: dataDirectory, expected: expectedEnvironmentID)
-        self.dataDirectory = dataDirectory; self.label = label; self.options = options; self.providerFactory = providerFactory
+        self.dataDirectory = dataDirectory; self.label = label; self.options = options; self.providerFactory = providerFactory; self.driverFactory = driverFactory
     }
     public func descriptor() -> RemoteEnvironmentDescriptor {
-        .init(environmentID: environmentID, label: label)
+        .init(environmentID: environmentID, label: label, capabilities: .init(supportsRemoteTerminal: driverFactory != nil))
     }
     private func require(_ id: UUID) throws {
         guard id == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
@@ -151,6 +154,48 @@ public actor RemoteEnvironmentService {
         try require(request.target.environmentID)
         return try await (try await workspaceOperations()).cancel(request)
     }
+    private func terminals() async throws -> RemoteTerminalService {
+        guard !closing, let driverFactory else { throw RemoteTerminalFailure(.unavailable) }
+        let workspace = try await workspaceOperations()
+        guard !closing else { throw RemoteTerminalFailure(.unavailable) }
+        if let terminalService { return terminalService }
+        let service = try RemoteTerminalService(workspace: workspace, factory: driverFactory, dataDirectory: dataDirectory)
+        terminalService = service; return service
+    }
+    public func openTerminal(_ request: RemoteTerminalOpenRequest) async throws -> RemoteTerminalSnapshot {
+        try await acquireWorkspaceAdmission()
+        defer { releaseWorkspaceAdmission() }
+        try Task.checkCancellation(); try require(request.target.environmentID)
+        return try await (try await terminals()).open(request)
+    }
+    public func attachTerminal(_ reference: RemoteTerminalReference) async throws -> RemoteTerminalSnapshot {
+        try require(reference.target.environmentID)
+        return try await (try await terminals()).attach(reference)
+    }
+    public func readTerminal(_ request: RemoteTerminalReadRequest) async throws -> RemoteTerminalReadResult {
+        try require(request.reference.target.environmentID)
+        return try await (try await terminals()).read(request)
+    }
+    public func writeTerminal(_ request: RemoteTerminalInputRequest) async throws -> RemoteTerminalInputReceipt {
+        try require(request.reference.target.environmentID)
+        return try await (try await terminals()).write(request)
+    }
+    public func terminalInputReceipt(_ request: RemoteTerminalInputReceiptRequest) async throws -> RemoteTerminalInputReceipt? {
+        try require(request.reference.target.environmentID)
+        return try await (try await terminals()).inputReceipt(request)
+    }
+    public func resizeTerminal(_ request: RemoteTerminalResizeRequest) async throws -> RemoteTerminalSnapshot {
+        try require(request.reference.target.environmentID)
+        return try await (try await terminals()).resize(request)
+    }
+    public func closeTerminal(_ reference: RemoteTerminalReference) async throws -> RemoteTerminalSnapshot {
+        try require(reference.target.environmentID)
+        return try await (try await terminals()).close(reference)
+    }
+    public func listTerminals(_ target: RemoteWorkspaceTarget) async throws -> [RemoteTerminalSnapshot] {
+        try require(target.environmentID)
+        return try await (try await terminals()).list(target)
+    }
     private func prepare(_ command: RemoteEnvironmentCommand, engine: WorkspaceEngine) async throws -> RemoteEnvironmentPreparation {
         switch command {
         case .addProject(let id, let path, let title):
@@ -222,9 +267,10 @@ public actor RemoteEnvironmentService {
         closing = true
         let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
         for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
-        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService
+        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService
         for task in subscriptions { task.cancel() }
         let task = Task {
+            await terminalService?.close()
             await workspaceService?.close()
             if let engine { await engine.shutdown() }
             else if let initializing, let value = try? await initializing.value { await value.shutdown() }

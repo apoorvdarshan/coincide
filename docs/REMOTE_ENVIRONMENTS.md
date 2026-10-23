@@ -5,7 +5,8 @@ stdio client and a separate **Remote → Remote Workspaces…** window. It suppo
 saved connections, environment identity confirmation, existing remote projects,
 Codex/Claude conversations, streamed snapshots, questions/approvals, queued input
 and exact-run Stop. The Files/Changes inspector adds remote text editing and
-source control. Full T3 remote parity remains unfinished.
+source control. A separate terminal panel opens and controls host PTYs without
+starting a local shell. Full T3 remote parity remains unfinished.
 
 The client owns the SSH process and the host it launches. **Disconnecting,
 closing the remote window or quitting stops that host's active work.** Saved
@@ -86,6 +87,36 @@ refuses further mutations at capacity. It does not silently delete receipt
 history or replay interrupted operations. Capacity/recovery management remains a
 follow-up; deleting the journal is not a safe retry procedure.
 
+## Remote terminals
+
+Toggle the terminal panel, then choose **New Terminal** to start the remote
+account's default login shell in the selected workspace. Merely showing the
+panel, changing conversations, connecting or reconnecting never starts a shell.
+Tabs and output remain in memory when hidden or when another conversation is
+selected. Find and text-size controls use the native terminal renderer.
+
+The host permits eight active terminals. Input is ordered, bounded and identified
+by an incarnation and sequence. Duplicate input never executes twice; a lost or
+unconfirmed response pauses further input. **Check Input Result** inspects metadata
+without resending keystrokes. Raw input is never journaled or logged. The host
+retains the last 512 KiB of output and reports expired output explicitly. The
+client retains up to 256 KiB per tab; missed or restored output renders as inert
+text, with no terminal replies, clipboard access, or link automation. Live output
+uses SwiftTerm's terminal emulator. Remote paths never resolve against local files.
+
+Closing a foreground command asks for confirmation and waits for the owned PTY
+to drain. A live terminal prevents Files/Changes mutations of the same root;
+conversation work can coexist. Disconnect closes the owned helper and its PTYs.
+Retained tabs become read-only. An explicit Attach inspects the same incarnation;
+a stopped helper reports its old sessions as lost and never recreates them.
+New Terminal is the explicit way to launch another shell.
+
+The private host journal stores open identities and lifecycle metadata only,
+with a limit of 1,024 records or 8 MiB. At capacity it refuses new opens; identity
+pruning remains future work. Terminal output and input are not persisted by this
+remote feature. Persistent process reattachment, remote project-script controls,
+styled cold restoration and real two-Mac acceptance remain unfinished.
+
 ## Native service boundary
 
 `CoincideEnvironment` owns a normal `WorkspaceEngine`, SQLite journal and runtime
@@ -101,7 +132,9 @@ Conversation requests are bounded to 1 MiB. Workspace requests allow 14 MiB to
 carry JSON-escaped 2 MB files; aggregate queued requests are bounded to 32 MiB.
 Response frames are bounded to 16 MiB and in-flight requests to 32, with at most
 eight owned read/cancel replies and eight mutation jobs. The descriptor's
-optional Files/Git capability defaults to unsupported for older helpers. Subscription delivery coalesces complete snapshots with a monotonic
+optional Files/Git and remote-terminal capabilities default to unsupported for
+older helpers. Terminal byte polling is separate from workspace snapshots.
+Subscription delivery coalesces complete snapshots with a monotonic
 sequence; it is not a lossless event/delta replay stream. A sequence floor is
 retained across reconnects within the running client/store. It is not a durable
 cross-app-restart rollback attestation. Oversized workspaces require a future
@@ -155,7 +188,7 @@ The reference is T3 Code
    execution, interruption, disconnect and reconnect. Controlled local-process
    acceptance does not establish remote network or provider authentication.
 2. Complete remote worktree/PR controls, media files, attachments,
-   checkpoints/history, provider setup/authentication and PTYs; add workspace
+   checkpoints/history and provider setup/authentication; add workspace
    receipt-capacity management and crash recovery for unsaved editor buffers.
    Preserve the current separation between local and remote paths/services.
 3. Add persistent-host ownership, signed helper provisioning/update and bounded
@@ -170,13 +203,11 @@ The reference is T3 Code
    existing private MCP listener is loopback-only and closes each response; it
    is not a remote listener. General bounded HTTP client machinery may be shared
    without weakening provider-specific origin or credential rules.
-5. Complete PTY create/input/resize/replay. `LocalTerminalSession` couples AppKit with process
-   creation; remote terminal support needs a headless host PTY service and a
-   separate SwiftTerm display adapter. A Core driver protocol can inject SwiftTerm
-   `LocalProcess` from `CoincideTerminal`; the client should render through
-   `TerminalView` without creating a local shell. Keep byte-sequenced terminal
-   output on a separate bounded channel with explicit gaps; restored output must
-   not send input, terminal-query responses or clipboard operations. Add private-route discovery, relay
+5. Complete persistent terminal reattachment, remote script controls, styled cold
+   restoration and terminal-identity capacity management. Preserve the existing
+   separation between the headless SwiftTerm `LocalProcess` driver and the
+   display-only `TerminalView` adapter, bounded byte polling and inert replay.
+   Add private-route discovery, relay
    behavior and Linux/Windows portability before calling remote parity complete.
    Current Core services depend on Darwin and Security.
 

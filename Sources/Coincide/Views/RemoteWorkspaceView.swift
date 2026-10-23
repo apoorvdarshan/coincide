@@ -92,18 +92,29 @@ struct RemoteWorkspaceView: View {
                 if store.needsTrust { trustPanel }
                 else {
                     HSplitView {
-                        Group {
-                            if let thread = store.selectedThread { conversation(thread) }
-                            else {
-                                ContentUnavailableView {
-                                    Label(store.isConnected ? "Choose a remote project" : "Connect to another Mac", systemImage: "network")
-                                } description: {
-                                    Text(store.isConnected ? "Add an existing folder on the remote Mac, then start a conversation." :
-                                        "Use an SSH connection and the Coincide environment helper installed on that Mac. Provider sign-in stays on the remote machine.")
-                                } actions: {
-                                    if store.isConnected { Button("Add Remote Project…") { addingProject = true }.disabled(!store.canWrite) }
-                                    else { Button("Add SSH Connection…") { addingConnection = true }.disabled(store.isWorking) }
+                        VSplitView {
+                            Group {
+                                if let thread = store.selectedThread { conversation(thread) }
+                                else {
+                                    ContentUnavailableView {
+                                        Label(store.isConnected ? "Choose a remote project" : "Connect to another Mac", systemImage: "network")
+                                    } description: {
+                                        Text(store.isConnected ? "Add an existing folder on the remote Mac, then start a conversation." :
+                                            "Use an SSH connection and the Coincide environment helper installed on that Mac. Provider sign-in stays on the remote machine.")
+                                    } actions: {
+                                        if store.isConnected { Button("Add Remote Project…") { addingProject = true }.disabled(!store.canWrite) }
+                                        else { Button("Add SSH Connection…") { addingConnection = true }.disabled(store.isWorking) }
+                                    }
                                 }
+                            }.frame(minHeight: 240)
+                            if store.terminalsVisible {
+                                VStack(spacing: 0) {
+                                    if store.isConnected && store.descriptor?.capabilities.supportsRemoteTerminal != true {
+                                        Text("This remote helper does not support terminals. Update CoincideEnvironment on that Mac to enable them.")
+                                            .font(.caption).foregroundStyle(.secondary).padding(8)
+                                    }
+                                    RemoteTerminalPanel(store: store.terminals, hide: { store.terminalsVisible = false })
+                                }.frame(minHeight: 160, idealHeight: 260)
                             }
                         }.frame(minWidth: 380)
                         if store.inspectorVisible {
@@ -117,6 +128,10 @@ struct RemoteWorkspaceView: View {
         .navigationTitle("Remote Workspaces")
         .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject, inspectorVisible: $store.inspectorVisible))
         .toolbar {
+            ToolbarItem {
+                Button("Toggle Remote Terminal", systemImage: "terminal") { store.terminalsVisible.toggle() }
+                    .accessibilityIdentifier("remote-toggle-terminal")
+            }
             ToolbarItem {
                 Button("Toggle Files and Git", systemImage: "sidebar.trailing") { store.inspectorVisible.toggle() }
                     .accessibilityIdentifier("remote-toggle-inspector")
@@ -132,6 +147,7 @@ struct RemoteWorkspaceView: View {
         }
         .task { await store.load() }
         .task(id: store.inspectorSelection) { await store.updateInspector() }
+        .task(id: store.terminalSelection) { await store.updateTerminals() }
         .onDisappear { Task { await store.disconnect() } }
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .sheet(isPresented: $addingConnection) { RemoteConnectionSheet(store: store) }

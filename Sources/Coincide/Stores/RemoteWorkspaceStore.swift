@@ -34,7 +34,9 @@ final class RemoteWorkspaceStore {
     private(set) var draftsSaving = false
     private(set) var draftPersistenceFailed = false
     let inspector: RemoteWorkspaceInspectorStore
+    let terminals = RemoteTerminalStore()
     var inspectorVisible = true
+    var terminalsVisible = false
     var selectedThreadID: UUID?
     var selectedProjectID: UUID?
     var errorMessage: String?
@@ -79,9 +81,15 @@ final class RemoteWorkspaceStore {
             $0.workspacePath.utf8.elementsEqual(selected.workspacePath.utf8) &&
                 ($0.isBusy || !$0.runtimeRequests.isEmpty || !$0.queuedTurns.isEmpty || $0.settlement != nil)
         } } ?? true
+        let terminalBusy = thread.flatMap { selected in
+            connection?.environmentID.map { environmentID in
+                terminals.hasLiveTerminals(in: .init(environmentID: environmentID, projectID: selected.projectID,
+                    threadID: selected.id, configuration: .init(thread: selected)))
+            }
+        } ?? false
         return .init(environmentID: connection?.environmentID, threadID: thread?.id,
             path: Data((thread?.workspacePath ?? "").utf8), generation: generation,
-            connected: isConnected, canMutate: canWrite && available && !busy)
+            connected: isConnected, canMutate: canWrite && available && !busy && !terminalBusy)
     }
     func updateInspector() async {
         guard !stopping, let environmentID = connection?.environmentID, let thread = selectedThread else {
@@ -89,6 +97,28 @@ final class RemoteWorkspaceStore {
         }
         await inspector.select(environmentID: environmentID, thread: thread,
             client: isConnected ? client : nil, canMutate: inspectorSelection.canMutate)
+    }
+    struct TerminalSelection: Hashable {
+        let environmentID: UUID?, threadID: UUID?, path: Data
+        let generation: Int
+        let connected: Bool, ready: Bool
+    }
+    var terminalSelection: TerminalSelection {
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID,
+            path: Data((selectedThread?.workspacePath ?? "").utf8), generation: generation,
+            connected: isConnected,
+            ready: selectedThread.map { snapshot?.workspace.workspaceReady(for: $0) == true } ?? false)
+    }
+    func updateTerminals() async {
+        guard !stopping, let environmentID = connection?.environmentID, let thread = selectedThread else {
+            terminals.clearSelection(); return
+        }
+        let target = RemoteWorkspaceTarget(environmentID: environmentID, projectID: thread.projectID,
+            threadID: thread.id, configuration: .init(thread: thread))
+        // Selecting a workspace still being prepared disables new opens there,
+        // while other threads keep their existing terminal transport and tabs.
+        let supported = descriptor?.capabilities.supportsRemoteTerminal == true
+        await terminals.select(target: terminalSelection.ready && supported ? target : nil, client: isConnected ? client : nil)
     }
 
     func load() async {
@@ -185,6 +215,7 @@ final class RemoteWorkspaceStore {
     private func disconnectTransport(owner: Int) async {
         isConnected = false; needsTrust = false
         inspector.disconnect()
+        terminals.disconnect()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -195,9 +226,10 @@ final class RemoteWorkspaceStore {
         stopping = true
         await disconnect()
         await inspector.shutdown()
+        await terminals.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; inspector.cancelShutdown() }
+    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -217,7 +249,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
-        if selectedThreadID != id { inspector.clearSelection() }
+        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection() }
         selectedThreadID = id
         if let thread = selectedThread { selectedProjectID = thread.projectID }
     }
@@ -352,7 +384,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; inspector.disconnect(); notice = message.localizedDescription
+            isConnected = false; inspector.disconnect(); terminals.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -367,6 +399,8 @@ final class RemoteWorkspaceStore {
         if let selectedThread { selectedProjectID = selectedThread.projectID }
         else if !projects.contains(where: { $0.id == selectedProjectID }) { selectedProjectID = projects.first?.id }
         let nextSelection = inspectorSelection
-        if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path { inspector.clearSelection() }
+        if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path {
+            inspector.clearSelection(); terminals.clearSelection()
+        }
     }
 }
