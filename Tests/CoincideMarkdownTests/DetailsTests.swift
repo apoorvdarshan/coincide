@@ -34,7 +34,7 @@ import Testing
     }
     let fenced = MarkdownDocument(parsing: "<details>\n<summary>Code sample</summary>\n\n```html\n</details>\n```\n\nRetained after code.\n\n</details>")
     guard case .some(.details(_, _, let blocks)) = fenced.blocks.first else { Issue.record("A code sample closed its owning details"); return }
-    #expect(blocks.contains { if case .code(_, let code) = $0 { code.contains("</details>") } else { false } })
+    #expect(blocks.contains { if case .code(_, let code, _, _) = $0 { code.contains("</details>") } else { false } })
     #expect(blocks.contains { if case .paragraph(let spans) = $0 { spans.map(\.text).joined().contains("Retained after code.") } else { false } })
 }
 

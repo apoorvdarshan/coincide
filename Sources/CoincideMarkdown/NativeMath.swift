@@ -4,36 +4,42 @@ import SwiftUI
 
 @MainActor public enum NativeMath {
     final class Rendered: NSObject {
-        let image: NSImage
-        let descent: CGFloat
+        let image: NSImage, descent: CGFloat
+        /// Rasterized once; drawing-handler images otherwise redraw on every request.
+        private(set) lazy var cgImage: CGImage? = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
         init(image: NSImage, descent: CGFloat) { self.image = image; self.descent = descent }
     }
     private static let cache: NSCache<NSString, Rendered> = {
         let value = NSCache<NSString, Rendered>(); value.countLimit = 128; value.totalCostLimit = 8_388_608; return value
     }()
     public static func image(_ latex: String, dark: Bool, display: Bool = true) -> NSImage? {
-        render(latex, dark: dark, display: display)?.image
+        rendered(latex, dark: dark, display: display, fontSize: display ? 22 : 15)?.image
     }
     static func render(_ latex: String, dark: Bool, display: Bool) -> Rendered? {
+        rendered(latex, dark: dark, display: display, fontSize: display ? 22 : 15)
+    }
+    /// A formula image plus its descent, so inline formulas sit on the text baseline.
+    static func rendered(_ latex: String, dark: Bool, display: Bool, fontSize: CGFloat) -> Rendered? {
         guard !latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              fontSize.isFinite, (1...256).contains(fontSize),
               latex.utf8.count <= 4_096, latex.filter({ $0 == "\\" }).count <= 128 else { return nil }
-        let key = "\(dark)|\(display)|\(latex)" as NSString
-        if let image = cache.object(forKey: key) { return image }
+        let key = "\(dark)|\(display)|\(fontSize)|\(latex)" as NSString
+        if let cached = cache.object(forKey: key) { return cached }
         var depth = 0
         for character in latex {
             if character == "{" { depth += 1; if depth > 48 { return nil } }
             if character == "}" { depth = max(0, depth - 1) }
         }
-        var renderer = MathImage(latex: latex, fontSize: display ? 22 : 15,
+        var renderer = MathImage(latex: latex, fontSize: fontSize,
                                  textColor: dark ? NSColor(calibratedWhite: 0.9, alpha: 1) : NSColor(calibratedWhite: 0.12, alpha: 1),
                                  labelMode: display ? .display : .text, textAlignment: .left)
         let (error, image, layout) = renderer.asImage()
         guard error == nil, let image, image.size.width.isFinite, image.size.height.isFinite,
               image.size.width > 0, image.size.height > 0, image.size.width <= 16_384, image.size.height <= 4_096 else { return nil }
+        let result = Rendered(image: image, descent: max(0, layout?.descent ?? 0))
         let cost = Int(image.size.width * image.size.height * 4)
-        let value = Rendered(image: image, descent: layout?.descent ?? 0)
-        if cost <= 4_194_304 { cache.setObject(value, forKey: key, cost: cost) }
-        return value
+        if cost <= 4_194_304 { cache.setObject(result, forKey: key, cost: cost) }
+        return result
     }
 }
 

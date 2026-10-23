@@ -80,10 +80,13 @@ func markdownGithubAlertsRequireTheFirstPlainTextMarkerToOwnItsLine(source: Stri
     // The pinned remark plugin inspects decoded text, not raw source spelling.
     #expect(MarkdownDocument(parsing: "> \\[!NOTE]\n> Body").blocks == [.alert(kind: .note, blocks: [.paragraph([.init(text: "Body")])])])
     let protected = MarkdownDocument(parsing: "```text\n> [!NOTE]\n> Code only\n```\n\n<blockquote>\n[!WARNING]\nHTML only\n</blockquote>")
-    guard protected.blocks.count == 2, case .code(_, let code) = protected.blocks[0], case .literal(let html) = protected.blocks[1] else {
+    guard protected.blocks.count == 2, case .code(_, let code, _, _) = protected.blocks[0], case .quote(let htmlBody) = protected.blocks[1],
+          case .some(.paragraph(let htmlSpans)) = htmlBody.first else {
         Issue.record("Code or HTML was interpreted as an alert"); return
     }
-    #expect(code.contains("[!NOTE]") && html.contains("[!WARNING]"))
+    #expect(code.contains("[!NOTE]"))
+    #expect(htmlSpans.map(\.text).joined() == "[!WARNING] HTML only")
+    #expect(!htmlBody.contains { if case .alert = $0 { true } else { false } })
 }
 
 @MainActor @Test(arguments: [240.0, 700.0])

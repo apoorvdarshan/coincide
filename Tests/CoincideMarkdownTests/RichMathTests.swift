@@ -96,7 +96,7 @@ private func richMathFormulas(_ blocks: [MarkdownBlock]) -> [String] {
     let combined = source + "\n\n```math\nx^2\n```", parser = MarkdownParser()
     let enabled = await parser.parse(combined), disabled = await parser.parse(combined, mathEnabled: false)
     #expect(!richMathFormulas(enabled.blocks).isEmpty && richMathFormulas(disabled.blocks).isEmpty)
-    #expect(disabled.blocks.contains { if case .code(let language, _) = $0 { language == "math" } else { false } })
+    #expect(disabled.blocks.contains { if case .code(let language, _, _, _) = $0 { language == "math" } else { false } })
     #expect(await parser.parse(combined) == enabled)
 }
 

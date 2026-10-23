@@ -20,8 +20,9 @@ import Testing
 @Test func markdownHandlesIncompleteStreamedFencesWithoutLosingCode() throws {
     for suffix in ["", "\n```"] {
         let document = MarkdownDocument(parsing: "Before\n\n```swift\nlet emoji = \"🪁\"\nprint(emoji)" + suffix)
-        guard case .code(language: "swift", let code) = document.blocks.last else { Issue.record("Missing code block"); continue }
+        guard case .code(language: "swift", let code, _, let closed) = document.blocks.last else { Issue.record("Missing code block"); continue }
         #expect(code == "let emoji = \"🪁\"\nprint(emoji)\n")
+        #expect(closed == !suffix.isEmpty)
     }
     let after = MarkdownDocument(parsing: "```\nx\n```\n\nAfter")
     #expect(after.blocks.count == 2)
@@ -40,11 +41,16 @@ import Testing
 }
 
 @Test func markdownKeepsHTMLAndImageAlternativesInert() {
-    let document = MarkdownDocument(parsing: "<script>alert('x')</script>\n\n![a diagram](https://example.com/image.png) [bad](javascript:alert) <b>raw</b>")
+    let source = "<script>alert('x')</script>\n\n![a diagram](https://example.com/image.png) [bad](javascript:alert) <b>raw</b> <span onclick=\"x()\">tap</span>"
+    let document = MarkdownDocument(parsing: source)
     guard case .literal(let html) = document.blocks[0], case .paragraph(let spans) = document.blocks[1] else { Issue.record("Missing inert content"); return }
     #expect(html.contains("<script>"))
     #expect(spans.map(\.text).joined().contains("Image: a diagram"))
-    #expect(spans.map(\.text).joined().contains("<b>raw</b>"))
+    #expect(spans.first { $0.text == "raw" }?.style == .strong)
+    #expect(spans.map(\.text).joined().contains("tap") && !spans.map(\.text).joined().contains("onclick"))
+    let literal = MarkdownDocument(parsing: source, options: .init(rawHTML: false))
+    guard case .paragraph(let userSpans) = literal.blocks[1] else { Issue.record("Missing user paragraph"); return }
+    #expect(userSpans.map(\.text).joined().contains("<b>raw</b>"))
     #expect(MarkdownLinkTarget.resolve("javascript:alert", workspace: nil) == nil)
     #expect(MarkdownLinkTarget.resolve("data:text/html,test", workspace: nil) == nil)
     #expect(MarkdownLinkTarget.resolve("https://user:secret@example.com", workspace: nil) == nil)
@@ -72,12 +78,17 @@ import Testing
     let highlighted = CodeHighlight.attributed(source, language: "swift")
     #expect(highlighted.string == source)
     let ns = source as NSString
-    #expect(highlighted.attribute(.foregroundColor, at: ns.range(of: "let").location, effectiveRange: nil) as? NSColor == .systemPurple)
-    #expect(highlighted.attribute(.foregroundColor, at: ns.range(of: "not a comment").location, effectiveRange: nil) as? NSColor == .systemRed)
-    #expect(highlighted.attribute(.foregroundColor, at: ns.range(of: "// comment").location, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
+    let tokens = CodeHighlight.tokens(source, language: "swift")
+    func kind(at text: String) -> CodeTokenKind? { tokens.first { $0.range.contains(ns.range(of: text).location) }?.kind }
+    #expect(kind(at: "let") == .keyword)
+    #expect(kind(at: "not a comment") == .string)
+    #expect(kind(at: "// comment") == .comment)
+    #expect(kind(at: "print") == .function)
+    #expect(String(CodeHighlight.attributedString(source, language: "swift", dark: true).characters) == source)
     #expect(CodeHighlight.attributed(source, language: "unknown").string == source)
     let large = String(repeating: "x", count: 70_000)
     #expect(CodeHighlight.attributed(large, language: "swift").string == large)
+    #expect(CodeHighlight.tokens(large, language: "swift").isEmpty)
 }
 
 @Test func markdownLargeInputHasLosslessFallbackAndCacheDoesNotMixStreams() async {

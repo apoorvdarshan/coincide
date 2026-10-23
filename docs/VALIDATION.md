@@ -5073,3 +5073,56 @@ The next exact-head CI must verify the full suite and the new 28th native
 interaction. No installed app was replaced/opened, real SSH host changed,
 vendor model request made or authentication migrated. Full T3 parity remains
 unfinished.
+
+### Native rich Markdown integration (2026-10-23)
+
+Integrated the clean `claude/markdown-ext` feature commits `5bfc6b3` and
+`e89561b` through a three-way merge onto current main, preserving the intervening
+Claude profile/lifecycle/settings, usage, remote script and uncertainty-ordering
+changes. No other Claude worktree or its uncommitted changes was edited.
+The app now renders native safe HTML, footnotes, Codex directives, code metadata,
+language/wrap/copy controls, table text/CSV/TSV exports, richer lexical coloring
+and supported native flowchart/sequence diagrams. No WebKit, JavaScript, external
+image fetch or added dependency is used.
+
+Main's `mathEnabled` parsing/view APIs, public formula/source/copy metadata,
+`NativeMath.render`, existing canonical `renderMathInMarkdown` default-off
+preference and settings accessibility ID remain. New wrapping preferences do not
+introduce a second enabled-by-default math key. Source replacement shows an inert
+literal fallback until the matching parsed document is ready, rather than old
+blocks/actions. Internal markers are selected outside the authored scalar set.
+Incomplete or unsafe disclosures remain literal; HTML construction has limits
+before intermediate/tree growth (1 MiB source, 32768 tokens, depth 32, 8192
+nodes), with whole-block literal fallback. Existing quoted-task source proofs,
+private-use Unicode and link containment protections remain covered.
+
+Local verification on Apple Swift 6.4:
+
+- Final `swift build --build-tests` passes; ABI guard reports **1274 objects**,
+  zero weak async-default records and three local records (899 Core, 372 App).
+- The complete **73-test Markdown suite passes in 1.435 seconds**, including
+  deep/wide/unfinished HTML, implied closing tags, inert assets/unsafe links,
+  formula source/copy metadata, footnotes, diagrams and preserved main coverage.
+  Two relevant UI declarations pass in 1.160 seconds and one Core declaration
+  in 0.001 seconds.
+- The complete **378-declaration UI unit suite passes in 80.263 seconds**.
+- Initial integration exposed 14 behavior issues, then one existing flow-math
+  precedence regression. Production corrections preserve all expected cases:
+  hard-break alert rejection, nested/footnote/inline display math, shell/currency
+  exclusions, GFM cell serialization, disclosure newlines and ownership of code
+  text inside an already-open display flow. No test cases or expected behaviors
+  were removed to pass the merge.
+- Build-only packaging, strict deep code signing and actual native math-resource
+  rendering pass. Compiled/package UUIDs match: Coincide
+  `EAC5D0A1-D771-3A94-888B-E3AA826D5A87`, CoincideEnvironment
+  `224230E4-4489-3F17-B161-90A3B683E24E`, CoincideScriptHelper
+  `93FFCE49-AECE-3D3D-A10C-9A1EA6BE1DF4`.
+
+Logs use `/tmp/coincide-markdown-integration-*-20261023.log`; final build is
+`build-verified`, final Markdown selection `tests-verified`, whole UI `ui`.
+Hosted run 39993961762 passed compilation and is still testing at this check.
+There is no new exact-head hosted/native interaction result for this merge.
+The optional shell callback remains unwired in the product, and remote Markdown
+never executes through a local terminal. Broader diagram grammars, directive
+actions, media and full T3 parity remain unfinished. No installed app, account,
+provider session, live SSH host or other session's working tree was changed.
