@@ -1,4 +1,5 @@
 import CoincideCore
+import CoincideMarkdown
 import SwiftUI
 
 struct SettingsView: View {
@@ -87,6 +88,7 @@ struct SettingsView: View {
                 Text("Group checkouts by repository, by repository and folder, or show them separately. Existing conversations keep their workspaces.")
                     .font(.caption).foregroundStyle(.secondary)
                 ExternalEditorSettings(store: store)
+                MarkdownSettingsSection()
                 LabeledContent("Version", value: "0.1.0 (development)")
                 Link("Source Code", destination: URL(string: "https://github.com/apoorvdarshan/coincide")!)
                 Link("T3 Code", destination: URL(string: "https://github.com/pingdotgg/t3code")!)

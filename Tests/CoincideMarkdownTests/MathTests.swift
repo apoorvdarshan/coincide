@@ -12,7 +12,7 @@ import Testing
 
 @Test func explicitMathFencesRequireAClosingMarkerAndWorkInsideQuotes() {
     #expect(MarkdownDocument(parsing: "```math\nx^2\n```").blocks == [.math("x^2\n")])
-    #expect(MarkdownDocument(parsing: "```math\nx^2").blocks == [.code(language: "math", text: "x^2\n")])
+    #expect(MarkdownDocument(parsing: "```math\nx^2").blocks == [.code(language: "math", text: "x^2\n", meta: "", closed: false)])
     let quoted = MarkdownDocument(parsing: "> ~~~math\n> \\sqrt{x}\n> ~~~")
     #expect(quoted.blocks == [.quote([.math("\\sqrt{x}\n")])])
 }
