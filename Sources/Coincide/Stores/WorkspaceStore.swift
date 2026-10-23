@@ -303,7 +303,7 @@ final class WorkspaceStore {
             }
             self.codexMetadataScope = UUID()
             self.codexModels.removeAll(); self.providerModels.removeValue(forKey: .codex)
-            let skills = self.retireSkills()
+            let skills = self.retireSkills { $0.provider == .codex }
             let catalogs = Array(self.codexCatalogReads.values)
             for task in catalogs { task.cancel() }
             let defaults = self.codexModelDefaultsReads.values.map(\.task)
@@ -363,7 +363,7 @@ final class WorkspaceStore {
               codexAuthenticationChanges.insert(configuration.instanceID).inserted else { throw CancellationError() }
         let instanceID = configuration.instanceID
         codexMetadataScope = UUID(); codexModels.removeAll(); providerModels.removeValue(forKey: .codex)
-        let skills = retireSkills { $0.configuration.authenticationMode == .ownedChatGPT && $0.configuration.instanceID == instanceID }
+        let skills = retireSkills { $0.provider == .codex && $0.configuration.authenticationMode == .ownedChatGPT && $0.configuration.instanceID == instanceID }
         let catalogs = Array(codexCatalogReads.values), defaults = codexModelDefaultsReads.values.map(\.task)
         codexModelDefaultsReads.removeAll()
         catalogs.forEach { $0.cancel() }; defaults.forEach { $0.cancel() }
@@ -1932,10 +1932,15 @@ final class WorkspaceStore {
         catch { if !terminating { errorMessage = error.localizedDescription } }
     }
     func skillsScope(threadID: UUID) -> ProviderSkillsStore.Scope? {
-        guard !terminating, !codexRuntime.isApplying, let thread = thread(threadID), thread.provider == .codex,
+        guard !terminating, let thread = thread(threadID), [.codex, .pi, .opencode].contains(thread.provider),
               workspaceReady(for: thread), snapshot.providerReady(for: thread) else { return nil }
         let scope = ProviderSkillsStore.Scope(thread)
-        guard scope.configuration.authenticationMode != .ownedChatGPT || !codexAuthenticationChanges.contains(scope.configuration.instanceID) else { return nil }
+        if thread.provider == .codex {
+            guard !codexRuntime.isApplying,
+                  scope.configuration.authenticationMode != .ownedChatGPT || !codexAuthenticationChanges.contains(scope.configuration.instanceID) else { return nil }
+        } else if thread.provider == .pi {
+            guard scope.piConfiguration?.runtime != nil else { return nil }
+        } else if scope.openCodeConfiguration == nil { return nil }
         return scope
     }
     func skillsStore(threadID: UUID) -> ProviderSkillsStore? {
@@ -1943,12 +1948,20 @@ final class WorkspaceStore {
         if let cached = providerSkills[threadID], cached.scope == scope, !cached.isClosed { return cached }
         _ = retireSkills { $0.threadID == threadID }
         let id = UUID()
-        let model = ProviderSkillsStore(id: id, scope: scope, read: { forceReload in
-            try await engine.skills(thread: thread, forceReload: forceReload)
-        }, isCurrent: { [weak self] in
+        let isCurrent: @MainActor () -> Bool = { [weak self] in
             guard let self else { return false }
             return self.providerSkills[threadID]?.id == id && self.skillsScope(threadID: threadID) == scope
-        })
+        }
+        let model: ProviderSkillsStore
+        if thread.provider == .codex {
+            model = .init(id: id, scope: scope, read: { forceReload in
+                try await engine.skills(thread: thread, forceReload: forceReload)
+            }, isCurrent: isCurrent)
+        } else {
+            model = .init(id: id, scope: scope, commandRead: { forceReload in
+                try await engine.commands(thread: thread, forceReload: forceReload)
+            }, isCurrent: isCurrent)
+        }
         providerSkills[threadID] = model; return model
     }
     /// Cancel synchronously so no old result can publish, then retain every

@@ -36,6 +36,10 @@ struct ComposerView: View {
     @State private var manualSkillQuery = ""
     @State private var dismissedSkillTrigger: ComposerSkillMention?
     @State private var highlightedSkillID: String?
+    @State private var manualCommandAnchor: ComposerCommandMention?
+    @State private var manualCommandQuery = ""
+    @State private var dismissedCommandTrigger: ComposerCommandMention?
+    @State private var highlightedCommandID: String?
     @State private var insertionError: String?
     private var canSend: Bool { !historyLocked && !submitting && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
     private var canSteer: Bool { steeringAvailable && steer != nil }
@@ -45,7 +49,12 @@ struct ComposerView: View {
     private var height: CGFloat { min(150, max(40, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let skills, skillAnchor != nil {
+            if let skills, commandAnchor != nil {
+                ProviderCommandPicker(model: skills, query: Binding(get: { commandQuery }, set: { manualCommandQuery = $0 }),
+                    searchField: manualCommandAnchor != nil, selectedID: selectedCommand?.id,
+                    choose: insertCommandSuggestion, move: moveCommandSelection, confirm: confirmCommand, dismiss: dismissCommands,
+                    showSkills: $showSkillsInSlashMenu)
+            } else if let skills, skillAnchor != nil {
                 SkillPicker(model: skills, query: Binding(get: { skillQuery }, set: { manualSkillQuery = $0 }),
                             searchField: manualSkillAnchor != nil, selectedID: selectedSkill?.id,
                             choose: insertSkill, move: moveSkillSelection, confirm: confirmSkill, dismiss: dismissSkills,
@@ -95,8 +104,11 @@ struct ComposerView: View {
         .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false) } }
         .background { geometry("bounds") }
         .coordinateSpace(name: "composer-layout")
-        .task(id: skillReadKey) { if skillAnchor != nil { await skills?.refresh() } }
-        .onChange(of: skills?.id) { _, _ in manualSkillAnchor = nil; dismissedSkillTrigger = nil; highlightedSkillID = nil }
+        .task(id: skillReadKey) { if skillAnchor != nil || commandAnchor != nil { await skills?.refresh() } }
+        .onChange(of: skills?.id) { _, _ in
+            manualSkillAnchor = nil; dismissedSkillTrigger = nil; highlightedSkillID = nil
+            manualCommandAnchor = nil; dismissedCommandTrigger = nil; highlightedCommandID = nil
+        }
     }
     @ViewBuilder private var attachmentControls: some View {
         Button(action: attach) { Image(systemName: "plus").frame(width: 24, height: 24) }
@@ -110,6 +122,12 @@ struct ComposerView: View {
             Button(action: openSkills) { Image(systemName: "dollarsign").frame(width: 24, height: 24) }
                 .buttonStyle(.plain).help("Choose a workspace skill, or type $ to search")
                 .accessibilityLabel("Choose a skill").accessibilityIdentifier("composer-skills")
+                .disabled(submitting || historyLocked || skills?.isClosed == true)
+        }
+        if skills?.supportsCommands == true {
+            Button(action: openCommands) { Text("/").font(.system(.body, design: .monospaced)).frame(width: 24, height: 24) }
+                .buttonStyle(.plain).help("Choose a provider command at the start of your message")
+                .accessibilityLabel("Choose a command").accessibilityIdentifier("composer-commands")
                 .disabled(submitting || historyLocked || skills?.isClosed == true)
         }
     }
@@ -197,13 +215,14 @@ struct ComposerView: View {
         }
         .coincidePrimaryAction().controlSize(.small).buttonBorderShape(.circle)
         .keyboardShortcut(.return, modifiers: .command)
-        .accessibilityLabel(skillAnchor == nil ? delivery.label : String(localized: "Insert selected skill"))
+        .accessibilityLabel(commandAnchor != nil ? String(localized: "Insert selected command or skill") : skillAnchor == nil ? delivery.label : String(localized: "Insert selected skill"))
         .accessibilityIdentifier("composer-send")
         .help(delivery == .steer ? "Send into the running turn using its current settings" : busy ? "Send after the current turn" : "Send message")
         .disabled(!canSend)
         .background { geometry("send") }
     }
     func activate(alternate: Bool) {
+        if commandAnchor != nil { confirmCommand(); return }
         if skillAnchor != nil { confirmSkill(); return }
         guard canSend else { return }
         if ComposerDelivery.resolve(running: busy, preference: followUpBehavior, alternate: alternate, canSteer: canSteer) == .steer {
@@ -218,7 +237,7 @@ struct ComposerView: View {
         ComposerSkillMention.trigger(in: text, selection: effectiveSelection, showSlash: showSkillsInSlashMenu)
     }
     private var skillAnchor: ComposerSkillMention? {
-        guard skills?.isClosed == false, !historyLocked, !submitting else { return nil }
+        guard skills?.isClosed == false, !historyLocked, !submitting, manualCommandAnchor == nil else { return nil }
         if let manualSkillAnchor { return manualSkillAnchor }
         let trigger = typedSkillTrigger
         return trigger == dismissedSkillTrigger ? nil : trigger
@@ -227,14 +246,33 @@ struct ComposerView: View {
     private var matchingSkills: [ProviderSkill] { SkillPicker.matching(skills?.skills ?? [], query: skillQuery) }
     private var selectedSkill: ProviderSkill? { matchingSkills.first(where: { $0.id == highlightedSkillID }) ?? matchingSkills.first }
     private var skillReadKey: String? {
-        guard skillAnchor != nil, let skills else { return nil }
+        guard skillAnchor != nil || commandAnchor != nil, let skills else { return nil }
         return skills.id.uuidString
+    }
+    private var typedCommandTrigger: ComposerCommandMention? {
+        ComposerCommandMention.trigger(in: text, selection: effectiveSelection)
+    }
+    private var commandAnchor: ComposerCommandMention? {
+        guard skills?.supportsCommands == true, skills?.isClosed == false, !historyLocked, !submitting else { return nil }
+        if let manualCommandAnchor { return manualCommandAnchor }
+        guard manualSkillAnchor == nil, typedSkillTrigger == nil else { return nil }
+        let trigger = typedCommandTrigger
+        return trigger == dismissedCommandTrigger ? nil : trigger
+    }
+    private var commandQuery: String { manualCommandAnchor == nil ? commandAnchor?.query ?? "" : manualCommandQuery }
+    private var matchingCommands: [ProviderComposerSuggestion] {
+        ProviderCommandPicker.matching(commands: skills?.commands ?? [], skills: skills?.skills ?? [], query: commandQuery,
+                                       showSkills: showSkillsInSlashMenu)
+    }
+    private var selectedCommand: ProviderComposerSuggestion? {
+        matchingCommands.first(where: { $0.id == highlightedCommandID }) ?? matchingCommands.first
     }
     private func observeSelection(_ value: String, _ range: NSRange) {
         guard value != observedEditorText || selectedRange != range else { return }
         observedEditorText = value; selectedRange = range
     }
     private func openSkills() {
+        manualCommandAnchor = nil; dismissedCommandTrigger = typedCommandTrigger; highlightedCommandID = nil
         insertionError = nil; manualSkillQuery = ""; highlightedSkillID = nil
         manualSkillAnchor = typedSkillTrigger ?? ComposerSkillMention.selection(in: text, range: effectiveSelection)
     }
@@ -259,18 +297,51 @@ struct ComposerView: View {
         selectionRequest = .init(text: replacement.text, range: replacement.selection)
         manualSkillAnchor = nil; highlightedSkillID = nil; dismissedSkillTrigger = nil; insertionError = nil; editorFocused = true
     }
+    private func openCommands() {
+        manualSkillAnchor = nil; dismissedSkillTrigger = typedSkillTrigger; highlightedSkillID = nil
+        manualCommandQuery = ""; highlightedCommandID = nil
+        manualCommandAnchor = typedCommandTrigger ?? ComposerCommandMention.selection(in: text, range: effectiveSelection)
+        insertionError = manualCommandAnchor == nil ? String(localized: "Provider commands start the message. Move the cursor to the beginning and choose the command again.") : nil
+    }
+    private func dismissCommands() {
+        dismissedCommandTrigger = typedCommandTrigger; manualCommandAnchor = nil; highlightedCommandID = nil; editorFocused = true
+    }
+    private func moveCommandSelection(_ offset: Int) {
+        let values = matchingCommands; guard !values.isEmpty else { return }
+        let current = values.firstIndex { $0.id == selectedCommand?.id } ?? 0
+        highlightedCommandID = values[(current + offset + values.count) % values.count].id
+    }
+    private func confirmCommand() {
+        if let selectedCommand { insertCommandSuggestion(selectedCommand) } else { dismissCommands() }
+    }
+    private func insertCommandSuggestion(_ suggestion: ProviderComposerSuggestion) {
+        guard let anchor = commandAnchor, matchingCommands.contains(suggestion) else { return }
+        let replacement: (text: String, selection: NSRange)?
+        switch suggestion {
+        case .command(let command): replacement = anchor.inserting(command: command.name, into: text, selection: effectiveSelection)
+        case .skill(let skill):
+            replacement = skill.promptToken.flatMap { anchor.anchor.inserting(token: $0, into: text, selection: effectiveSelection) }
+        }
+        guard let replacement else {
+            insertionError = String(localized: "The draft or selection changed. Choose the command or skill again."); dismissCommands(); return
+        }
+        text = replacement.text; selectedRange = replacement.selection; observedEditorText = replacement.text
+        selectionRequest = .init(text: replacement.text, range: replacement.selection)
+        manualCommandAnchor = nil; highlightedCommandID = nil; dismissedCommandTrigger = nil; insertionError = nil; editorFocused = true
+    }
     private func handleSkillKey(_ event: NSEvent) -> Bool {
-        guard skillAnchor != nil else { return false }
+        let commands = commandAnchor != nil
+        guard commands || skillAnchor != nil else { return false }
         switch event.keyCode {
-        case 53: dismissSkills(); return true
+        case 53: if commands { dismissCommands() } else { dismissSkills() }; return true
         case 125 where event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty:
-            moveSkillSelection(1); return true
+            if commands { moveCommandSelection(1) } else { moveSkillSelection(1) }; return true
         case 126 where event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty:
-            moveSkillSelection(-1); return true
-        case 48 where !event.modifierFlags.contains(.shift): confirmSkill(); return true
+            if commands { moveCommandSelection(-1) } else { moveSkillSelection(-1) }; return true
+        case 48 where !event.modifierFlags.contains(.shift): if commands { confirmCommand() } else { confirmSkill() }; return true
         case 36, 76:
             guard event.modifierFlags.intersection([.shift, .option]).isEmpty else { return false }
-            confirmSkill(); return true
+            if commands { confirmCommand() } else { confirmSkill() }; return true
         default: return false
         }
     }

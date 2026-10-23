@@ -27,6 +27,7 @@ public enum OpenCodeV2SessionError: Error, Sendable, Equatable, LocalizedError {
 protocol OpenCodeV2SessionTransport: Sendable {
     func connect() async throws -> AsyncThrowingStream<OpenCodeSSEEvent, any Error>
     func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot
+    func commands(directory: URL) async throws -> ProviderCommandInventory
     func agentPathRules(directory: URL, agentID: String) async throws -> [OpenCodeV2PermissionRule]
     func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse
     func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse
@@ -34,6 +35,7 @@ protocol OpenCodeV2SessionTransport: Sendable {
 }
 
 extension OpenCodeV2SessionTransport {
+    func commands(directory: URL) async throws -> ProviderCommandInventory { throw ProviderCommandError(.unsupported) }
     func agentPathRules(directory: URL, agentID: String) async throws -> [OpenCodeV2PermissionRule] { [] }
     func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
         guard query.isEmpty else { throw ProviderHistoryError(.unsupported) }
@@ -89,6 +91,9 @@ public actor OpenCodeV2Session: ProviderSession {
     private var historyWatch: OpenCodeHistoryWatch?
     private var historyUnsafe = false
     private var historyMayHaveWritten = false
+    private var commandScanSignals: Set<String> = []
+    private var commandScanWaiters: [UUID: OpenCodeCommandScanWaiter] = [:]
+    private var commandInputWaiters: [UUID: OpenCodeCommandInputWaiter] = [:]
 
     public init(executable: URL, cwd: URL, configuration: OpenCodeConfiguration) {
         let pair = AsyncStream<ProviderEvent>.makeStream()
@@ -119,6 +124,56 @@ public actor OpenCodeV2Session: ProviderSession {
             .init(id: $0.selection.catalogID, name: $0.name,
                   openCodeSelection: $0.selection, openCodeVariants: $0.variants)
         }
+    }
+
+    public func providerCommands(forceReload: Bool = false) async throws -> ProviderCommandInventory {
+        try await connect()
+        var inventory = try await transport.commands(directory: cwd)
+        var scanIncomplete = false
+        // The first read starts the native background workspace scan. Listen
+        // before it (connect above), then read once more after both updates or
+        // the bounded deadline, matching the pinned native catalog contract.
+        if inventory.commands.allSatisfy({ $0.source == "builtin" }),
+           !inventory.problems.contains(where: { $0.component == .commands }) {
+            scanIncomplete = !(await awaitCommandScan())
+            try Task.checkCancellation()
+            guard !closing, !uncertain else { throw ProviderCommandError(.unavailable) }
+            inventory = try await transport.commands(directory: cwd)
+        }
+        guard !closing, !uncertain, CodexSkillInventory.sameWorkspace(inventory.cwd, historyWorkspacePath) else { throw ProviderCommandError(.unavailable) }
+        try inventory.validate()
+        var problems = inventory.problems
+        if scanIncomplete {
+            guard problems.count < 256 else { throw ProviderCommandError(.invalidResponse) }
+            problems.append(.init(component: .commands, message: "The native workspace scan has not finished. Refresh before selecting missing commands or skills."))
+        }
+        return .init(cwd: historyWorkspacePath, commands: inventory.commands, skills: inventory.skills,
+            problems: problems, checkedAt: inventory.checkedAt)
+    }
+
+    private func awaitCommandScan() async -> Bool {
+        if commandScanSignals.count == 2 { return true }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled, !closing, !uncertain else { continuation.resume(returning: false); return }
+                if commandScanSignals.count == 2 { continuation.resume(returning: true); return }
+                let deadline = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                    await self?.finishCommandScan(id, ready: false)
+                }
+                commandScanWaiters[id] = .init(continuation: continuation, deadline: deadline)
+            }
+        } onCancel: { Task { await self.finishCommandScan(id, ready: false) } }
+    }
+
+    private func finishCommandScan(_ id: UUID, ready: Bool) {
+        guard let waiter = commandScanWaiters.removeValue(forKey: id) else { return }
+        waiter.deadline.cancel(); waiter.continuation.resume(returning: ready)
+    }
+
+    private func finishCommandScans(ready: Bool) {
+        for id in Array(commandScanWaiters.keys) { finishCommandScan(id, ready: ready) }
     }
 
     public func openCodeV2HistorySnapshot(threadID: String) async throws -> OpenCodeV2HistorySnapshot {
@@ -446,7 +501,7 @@ public actor OpenCodeV2Session: ProviderSession {
         let token = UUID(), runID = thread.activeRun?.id ?? UUID()
         guard !inFlightSends.contains(runID) else { throw OpenCodeV2SessionError.busy }
         let inputID = Self.inputID(instance: selected.instanceID, run: runID)
-        let promptBody = try Self.prompt(input, inputID: inputID)
+        var promptBody = try Self.prompt(input, inputID: inputID)
         inFlightSends.insert(runID)
         preparing = token
         defer {
@@ -457,6 +512,19 @@ public actor OpenCodeV2Session: ProviderSession {
         var posted = false
         do {
             try await connect(); try requirePreparation(token)
+            let catalog: ProviderCommandInventory?
+            if try ProviderCommandCatalog.requiresInventory(input.text) {
+                do { catalog = try await providerCommands() }
+                catch let error as ProviderCommandError where error.kind == .unsupported { catalog = nil }
+                try requirePreparation(token)
+            } else { catalog = nil }
+            let command = try catalog.flatMap { try ProviderCommandCatalog.selection(in: input.text, inventory: $0) }
+            let skills = try catalog.map { try ProviderCommandCatalog.skillIDs(in: input.text, inventory: $0) } ?? []
+            let compact = command?.name == "compact"
+            guard !compact || (command?.arguments.isEmpty == true && input.images.isEmpty) else { throw OpenCodeV2SessionError.unsupportedInput }
+            if !skills.isEmpty, var object = promptBody.object {
+                object["skills"] = .array(skills.map { .object(["id": .string($0)]) }); promptBody = .object(object)
+            }
             let inventory = try await openCodeInventory(); try requirePreparation(token)
             let model = try Self.resolveModel(selected.model, inventory: inventory)
             guard inventory.agents.contains(where: { $0.id == selected.agentID && $0.mode != .subagent && !$0.hidden }) else {
@@ -487,18 +555,45 @@ public actor OpenCodeV2Session: ProviderSession {
             try requirePreparation(token)
             guard current.agentID == selected.agentID, current.model == model,
                   current.permissions?.map(\.json) == rules.array, !current.hasRevert else { throw OpenCodeV2SessionError.invalidConfiguration }
+            let commandPriorIDs = command != nil && !compact ? try await commandMessageIDs(sessionID: nativeID, token: token) : []
+            try requirePreparation(token)
             guard runs.count < 256 || activeRunID == nil else { throw OpenCodeV2SessionError.invalidResponse }
             trimRuns()
-            runs[runID] = .init(id: runID, sessionID: nativeID, inputID: inputID, autonomous: false)
+            runs[runID] = .init(id: runID, sessionID: nativeID, inputID: command != nil && !compact ? "" : inputID, autonomous: false)
             runs[runID]?.configuration = captured
+            runs[runID]?.nativeCommand = command != nil && !compact
+            runs[runID]?.compaction = compact
+            runs[runID]?.commandPriorIDs = commandPriorIDs
             activeRunID = runID; owners[nativeID] = runID
             let projectionOwner = OpenCodeProjectionOwner(sessionID: nativeID, runID: runID)
             if projectors[projectionOwner] == nil { projectors[projectionOwner] = .init(instanceID: selected.instanceID, sessionID: nativeID) }
             preparing = nil
             posted = true
-            let response = try await call(method: "POST", path: ["api", "session", nativeID, "prompt"], body: promptBody)
+            let endpoint: String
+            if compact {
+                endpoint = "compact"
+                promptBody = .object(["id": .string(inputID), "delivery": .string("queue")])
+            } else if let command {
+                endpoint = "command"
+                var object = promptBody.object ?? [:]
+                object.removeValue(forKey: "id"); object.removeValue(forKey: "resume")
+                object["name"] = .string(command.name); object["text"] = .string(command.arguments)
+                promptBody = .object(object)
+            } else { endpoint = "prompt" }
+            let response = try await call(method: "POST", path: ["api", "session", nativeID, endpoint], body: promptBody)
             guard !closing else { throw CancellationError() }
-            _ = try OpenCodeV2Protocol.admission(response, sessionID: nativeID, inputID: inputID)
+            if command != nil && !compact {
+                try Self.noContent(response)
+                // Command callbacks have no caller input ID. Only an actual
+                // newly enqueued root user input can bind this local run. A
+                // callback with no root input (or only a detached child) cannot
+                // be reported as a completed user turn from HTTP 204 alone.
+                try await awaitCommandInput(runID)
+                try await verifyCommandInput(runID)
+            } else {
+                _ = try OpenCodeV2Protocol.admission(response, sessionID: nativeID, inputID: inputID,
+                    type: compact ? "compaction" : "user")
+            }
             if var run = runs[runID] {
                 run.admitted = true; runs[runID] = run
                 announceInput(runID)
@@ -511,7 +606,7 @@ public actor OpenCodeV2Session: ProviderSession {
                 // HTTP acknowledgement. In particular, a completed predecessor's
                 // lost reply cannot invalidate its already-running successor.
                 if connected, !closing, !uncertain, let observed = runs[runID],
-                   observed.delivered, observed.inputObserved {
+                   observed.delivered, observed.inputObserved, !observed.nativeCommand || observed.finished {
                     return
                 }
                 if Self.definitelyRejected(error), runs[runID]?.inputObserved != true {
@@ -531,7 +626,7 @@ public actor OpenCodeV2Session: ProviderSession {
     public func steeringCapabilities() async -> ProviderSteeringCapabilities {
         pruneSteers()
         guard !closing, !uncertain, connected, preparing == nil, interrupting == nil, historyToken == nil, !historyUnsafe,
-              let id = activeRunID, let run = runs[id], !run.autonomous, !run.stopped, !run.finished,
+              let id = activeRunID, let run = runs[id], !run.autonomous, !run.compaction, !run.nativeCommand, !run.stopped, !run.finished,
               run.configuration != nil, run.started, run.delivered, run.announced,
               !pending.values.contains(where: { $0.owner == id }), run.steerIDs.count < 128, steers.count < 1_024 else {
             return .init(unavailableReason: ProviderSteeringError(.noActiveTurn).localizedDescription)
@@ -545,7 +640,7 @@ public actor OpenCodeV2Session: ProviderSession {
         try ProviderSteeringValidation.id(clientMessageID)
         try ProviderSteeringValidation.input(input)
         guard !closing, !uncertain, connected, preparing == nil, interrupting == nil, historyToken == nil, !historyUnsafe,
-              let id = activeRunID, let run = runs[id], !run.autonomous, !run.finished, !run.stopped,
+              let id = activeRunID, let run = runs[id], !run.autonomous, !run.compaction, !run.nativeCommand, !run.finished, !run.stopped,
               run.started, run.delivered, run.announced, let captured = run.configuration,
               !pending.values.contains(where: { $0.owner == id }) else { throw ProviderSteeringError(.noActiveTurn) }
         try ProviderSteeringValidation.target(thread, provider: .opencode, configuration: captured, runID: id,
@@ -556,8 +651,21 @@ public actor OpenCodeV2Session: ProviderSession {
         }
         let inboxID = try OpenCodeV2HistoryRunInput.steeringMessageID(instanceID: configuration.instanceID,
             sessionID: run.sessionID, runID: id, clientMessageID: clientMessageID)
-        let body: JSONValue
-        do { body = try Self.prompt(input, inputID: inboxID, delivery: "steer") }
+        var body: JSONValue
+        do {
+            body = try Self.prompt(input, inputID: inboxID, delivery: "steer")
+            if try ProviderCommandCatalog.requiresInventory(input.text) {
+                let catalog = try await providerCommands()
+                // Native commands cannot target this already-running turn.
+                guard try ProviderCommandCatalog.selection(in: input.text, inventory: catalog) == nil else { throw ProviderSteeringError(.unsupported) }
+                let skills = try ProviderCommandCatalog.skillIDs(in: input.text, inventory: catalog)
+                if !skills.isEmpty, var object = body.object {
+                    object["skills"] = .array(skills.map { .object(["id": .string($0)]) }); body = .object(object)
+                }
+                guard activeRunID == id, runs[id]?.finished == false, runs[id]?.stopped == false,
+                      runs[id]?.inputID == expectedTurnID else { throw ProviderSteeringError(.staleTarget) }
+            }
+        } catch let safe as ProviderSteeringError { throw safe }
         catch { throw ProviderSteeringError(.invalidRequest) }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let fingerprint = Self.digest(String(decoding: try encoder.encode(body), as: UTF8.self))
@@ -684,6 +792,71 @@ public actor OpenCodeV2Session: ProviderSession {
         try requirePreparation(token)
     }
 
+    private func awaitCommandInput(_ id: UUID) async throws {
+        if runs[id]?.inputObserved == true { return }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                guard !Task.isCancelled, !closing, !uncertain else { continuation.resume(throwing: CancellationError()); return }
+                if runs[id]?.inputObserved == true { continuation.resume(); return }
+                guard commandInputWaiters[id] == nil else { continuation.resume(throwing: OpenCodeV2SessionError.busy); return }
+                let deadline = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                    await self?.finishCommandInput(id, error: OpenCodeV2SessionError.uncertainDelivery)
+                }
+                commandInputWaiters[id] = .init(continuation: continuation, deadline: deadline)
+            }
+        } onCancel: { Task { await self.finishCommandInput(id, error: CancellationError()) } }
+    }
+
+    private func finishCommandInput(_ id: UUID, error: (any Error)?) {
+        guard let waiter = commandInputWaiters.removeValue(forKey: id) else { return }
+        waiter.deadline.cancel()
+        if let error { waiter.continuation.resume(throwing: error) } else { waiter.continuation.resume() }
+    }
+
+    private func finishCommandInputs(error: any Error) {
+        for id in Array(commandInputWaiters.keys) { finishCommandInput(id, error: error) }
+    }
+
+    private func verifyCommandInput(_ id: UUID) async throws {
+        guard let run = runs[id], run.nativeCommand, run.inputObserved, !run.inputID.isEmpty else { throw OpenCodeV2SessionError.uncertainDelivery }
+        let records = try await commandMessages(sessionID: run.sessionID, token: nil)
+        let inbox = try OpenCodeV2Protocol.inbox(try await call(method: "GET", path: ["api", "session", run.sessionID, "inbox"]), sessionID: run.sessionID)
+        guard !closing, !uncertain, let current = runs[id], current.inputID == run.inputID,
+              !current.finished, inbox.allSatisfy({ $0.type == "user" && $0.id == run.inputID }) else { throw OpenCodeV2SessionError.uncertainDelivery }
+        let newUsers = Set(records.filter { $0.kind == .user && !run.commandPriorIDs.contains($0.id) }.map(\.id))
+            .union(inbox.map(\.id))
+        guard newUsers == [run.inputID] else { throw OpenCodeV2SessionError.uncertainDelivery }
+    }
+
+    private func commandMessageIDs(sessionID: String, token: UUID) async throws -> Set<String> {
+        Set(try await commandMessages(sessionID: sessionID, token: token).map(\.id))
+    }
+
+    private func commandMessages(sessionID: String, token: UUID?) async throws -> [OpenCodeV2HistoryMessage] {
+        var values: [JSONValue] = [], ids = Set<String>(), cursor: String?, cursors = Set<String>(), bytes = 0
+        for pageIndex in 0..<100 {
+            var query = [URLQueryItem(name: "limit", value: "200")]
+            if let cursor { query.append(.init(name: "cursor", value: cursor)) }
+            else { query.append(.init(name: "order", value: "asc")) }
+            let response = try await call(method: "GET", path: ["api", "session", sessionID, "message"], query: query)
+            if let token { try requirePreparation(token) }
+            else { try Task.checkCancellation(); guard !closing, !uncertain else { throw CancellationError() } }
+            bytes += response.body.count
+            guard bytes <= 16_777_216 else { throw OpenCodeV2SessionError.unsupportedInput }
+            let page = try OpenCodeV2HistoryWire.page(response)
+            for value in page.values {
+                let id = try OpenCodeV2Bounds.messageID(value["id"])
+                guard ids.insert(id).inserted, ids.count <= 10_000 else { throw OpenCodeV2SessionError.invalidResponse }
+                values.append(value)
+            }
+            guard let next = page.next else { return try OpenCodeV2HistoryWire.records(values) }
+            guard pageIndex < 99, cursors.insert(next).inserted else { throw OpenCodeV2SessionError.invalidResponse }
+            cursor = next
+        }
+        throw OpenCodeV2SessionError.invalidResponse
+    }
+
     private func requirePreparation(_ token: UUID) throws {
         try Task.checkCancellation()
         guard !closing, !uncertain, preparing == token, !stoppedPreparations.contains(token) else { throw CancellationError() }
@@ -715,6 +888,13 @@ public actor OpenCodeV2Session: ProviderSession {
                 throw OpenCodeV2SessionError.invalidResponse
             }
             let data = envelope["data"]
+            if let kind = envelope["type"].string, ["command.updated", "skill.updated"].contains(kind) {
+                if envelope["location"]["directory"] == .string(cwd.path) {
+                    commandScanSignals.insert(kind)
+                    if commandScanSignals.count == 2 { finishCommandScans(ready: true) }
+                }
+                return
+            }
             if let kind = envelope["type"].string,
                ["session.execution.started", "session.execution.succeeded", "session.execution.interrupted", "session.execution.failed"].contains(kind) {
                 _ = try OpenCodeV2Bounds.sessionID(data["sessionID"])
@@ -784,10 +964,17 @@ public actor OpenCodeV2Session: ProviderSession {
         if root {
             switch event.kind {
             case .inboxEnqueued, .inboxDelivered:
-                if event.inboxID == run.inputID {
+                if run.nativeCommand, event.kind == .inboxEnqueued, let inbox = event.inbox {
+                    guard inbox.type == "user", !run.commandPriorIDs.contains(inbox.id),
+                          run.inputID.isEmpty || run.inputID == inbox.id else { throw OpenCodeV2SessionError.uncertainDelivery }
+                    run.inputID = inbox.id
+                }
+                if !run.inputID.isEmpty, event.inboxID == run.inputID {
                     run.inputObserved = true
                     if event.kind == .inboxDelivered { run.delivered = true }
-                    runs[owner] = run; announceInput(owner); try flushBuffered(owner); finishIfReady(owner)
+                    runs[owner] = run
+                    if run.nativeCommand { finishCommandInput(owner, error: nil) }
+                    announceInput(owner); try flushBuffered(owner); finishIfReady(owner)
                 }
                 return
             case .inboxCancelled:
@@ -832,7 +1019,8 @@ public actor OpenCodeV2Session: ProviderSession {
     }
 
     private func announceInput(_ id: UUID) {
-        guard var run = runs[id], !run.announced, !run.autonomous, run.admitted || run.inputObserved else { return }
+        guard var run = runs[id], !run.announced, !run.autonomous, !run.compaction, !run.inputID.isEmpty,
+              run.admitted || run.inputObserved else { return }
         run.announced = true; runs[id] = run
         continuation.yield(.context(runID: id, event: .turn(run.inputID)))
     }
@@ -922,6 +1110,7 @@ public actor OpenCodeV2Session: ProviderSession {
 
     private func finishIfReady(_ id: UUID) {
         guard var run = runs[id], !run.finished, let terminal = run.terminal,
+              !run.nativeCommand || run.admitted,
               (run.started && run.delivered && (run.admitted || run.inputObserved)) || (run.stopped && !run.delivered) else { return }
         if terminal == .executionSucceeded, !run.stopped,
            (!run.pendingSteers.isEmpty || run.awaitingSteerStart) { return }
@@ -967,6 +1156,9 @@ public actor OpenCodeV2Session: ProviderSession {
                 guard activeRunID == id || activeRunID == nil else { throw OpenCodeV2SessionError.staleRequest }
                 strandedSteers.remove(inboxID)
             }
+        }
+        if let id = activeRunID, let run = runs[id], run.nativeCommand, !run.admitted {
+            failConnection(.uncertainDelivery); await close(); throw OpenCodeV2SessionError.uncertainDelivery
         }
         if let id = activeRunID, let run = runs[id], !run.autonomous, !run.inputID.isEmpty {
             if !run.admitted && !run.inputObserved {
@@ -1116,12 +1308,16 @@ public actor OpenCodeV2Session: ProviderSession {
     private func failConnection(_ error: OpenCodeV2SessionError) {
         guard !closing, !uncertain else { return }
         uncertain = true
+        finishCommandScans(ready: false)
+        finishCommandInputs(error: error)
         continuation.yield(.connectionClosed(error.localizedDescription))
     }
 
     public func close() async {
         if let closingTask { await closingTask.value; return }
         closing = true
+        finishCommandScans(ready: false)
+        finishCommandInputs(error: CancellationError())
         let task = Task { await self.finishClose() }
         closingTask = task
         await task.value
@@ -1245,6 +1441,16 @@ public actor OpenCodeV2Session: ProviderSession {
     }
 }
 
+private struct OpenCodeCommandInputWaiter {
+    let continuation: CheckedContinuation<Void, any Error>
+    let deadline: Task<Void, Never>
+}
+
+private struct OpenCodeCommandScanWaiter {
+    let continuation: CheckedContinuation<Bool, Never>
+    let deadline: Task<Void, Never>
+}
+
 private struct OpenCodeHistoryWatch {
     let sourceID: String
     var clearing = false
@@ -1261,8 +1467,11 @@ private struct OpenCodeProjectionOwner: Hashable {
 private struct OpenCodeNativeRun {
     let id: UUID
     let sessionID: String
-    let inputID: String
+    var inputID: String
     let autonomous: Bool
+    var nativeCommand = false
+    var compaction = false
+    var commandPriorIDs: Set<String> = []
     var configuration: ProviderConfiguration?
     var steerIDs: Set<String> = []
     var pendingSteers: Set<String> = []
@@ -1349,6 +1558,11 @@ private actor OpenCodeV2OwnedRuntime: OpenCodeV2SessionTransport {
     func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot {
         guard !closing, let metadata else { throw OpenCodeV2SessionError.closed }
         return try await metadata.inventory(directory: directory)
+    }
+
+    func commands(directory: URL) async throws -> ProviderCommandInventory {
+        guard !closing, let metadata else { throw OpenCodeV2SessionError.closed }
+        return try await metadata.commands(directory: directory)
     }
 
     func agentPathRules(directory: URL, agentID: String) async throws -> [OpenCodeV2PermissionRule] {

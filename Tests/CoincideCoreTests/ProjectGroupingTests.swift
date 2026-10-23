@@ -140,7 +140,7 @@ private func groupingDecision(_ command: WorkspaceCommand, _ snapshot: Workspace
     let database = try WorkspaceDatabase(url: url)
     #expect(try await database.load() == legacy)
     #expect(sqlite3_prepare_v2(connection, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
-    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 39); sqlite3_finalize(statement)
+    #expect(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 40); sqlite3_finalize(statement)
     var changed = legacy
     changed.projects[0] = try groupedProject(root.path)
     changed.projects[0].id = project.id; changed.projects[0].createdAt = project.createdAt; changed.projects[0].updatedAt = project.updatedAt
@@ -152,7 +152,7 @@ private func groupingDecision(_ command: WorkspaceCommand, _ snapshot: Workspace
     #expect(try await WorkspaceDatabase(url: url).load() == changed)
     let future = root.appendingPathComponent("future.sqlite")
     var futureConnection: OpaquePointer?; #expect(sqlite3_open(future.path, &futureConnection) == SQLITE_OK)
-    #expect(sqlite3_exec(futureConnection, "PRAGMA user_version=40", nil, nil, nil) == SQLITE_OK); sqlite3_close(futureConnection)
+    #expect(sqlite3_exec(futureConnection, "PRAGMA user_version=41", nil, nil, nil) == SQLITE_OK); sqlite3_close(futureConnection)
     #expect(throws: (any Error).self) { try WorkspaceDatabase(url: future) }
 }
 

@@ -111,6 +111,14 @@ def handle(frame):
         with lock:
             state["thinkingLevel"] = frame["level"]
         reply(frame)
+    elif kind == "compact":
+        with lock:
+            state["isCompacting"] = True
+        while options().get("holdCompact"):
+            time.sleep(.005)
+        with lock:
+            state["isCompacting"] = False
+        reply(frame, {"summary": "Synthetic compact summary"})
     elif kind == "prompt":
         if opts.get("rejectPrompt"):
             reply(frame, success=False)

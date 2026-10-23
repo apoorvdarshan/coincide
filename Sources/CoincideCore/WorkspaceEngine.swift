@@ -221,7 +221,7 @@ extension WorkspaceEngine {
         try preparation.validate(); try Task.checkCancellation()
         guard steeringTargetIsActive(operation), preparation.runID == operation.runID,
               preparation.runtimeIdentity == operation.configuration.piConfiguration?.runtimeIdentity,
-              preparation.input == (try PiHistoryInputEvidence.steering(clientMessageID: operation.messageID, input: input)),
+              preparation.input.matchesAuthored(try PiHistoryInputEvidence.steering(clientMessageID: operation.messageID, input: input)),
               revision.snapshot.threads.first(where: { $0.id == operation.threadID })?.runHistory?.first(where: { $0.id == operation.runID })?.pi?.preparation.id == preparation.runPreparationID else {
             return steeringUnsentResult(operation)
         }
@@ -2324,6 +2324,7 @@ public actor WorkspaceEngine {
         let launchConfiguration: ProviderConfiguration
         var operationCancel: (@Sendable () -> Void)?
         var operationDrain: Task<Void, Never>?
+        var joinsOperation = false
         var closeTask: Task<Void, Never>?
     }
     private struct ClaudeHistoryScope: Sendable, Hashable {
@@ -2762,7 +2763,7 @@ public actor WorkspaceEngine {
                 // Legacy metadata results are incarnation-fenced and may finish
                 // after project removal. Owned auth additionally retains every
                 // credential-bound operation until account mutation can proceed.
-                if metadata.launchConfiguration.ownedCodexInstanceID != nil || metadata.launchConfiguration.claudeRuntimeConfiguration != nil, let drain = metadata.operationDrain { jobs.append(drain) }
+                if metadata.joinsOperation || metadata.launchConfiguration.ownedCodexInstanceID != nil || metadata.launchConfiguration.claudeRuntimeConfiguration != nil, let drain = metadata.operationDrain { jobs.append(drain) }
             }
         }
         for effect in removedEffects where effect.status == .running && effect.leaseOwner == workerID {
@@ -3515,10 +3516,32 @@ public actor WorkspaceEngine {
         // after proving that the response names this physical workspace.
         return .init(cwd: current.workspacePath, skills: inventory.skills, problems: inventory.problems, checkedAt: inventory.checkedAt)
     }
+    /// Native commands and skills are read on a separate, captured workspace
+    /// connection. No active run, resume selection or native session is passed
+    /// to that metadata actor, and its exact operation is joined on cancellation.
+    public func commands(thread: CodingThread, forceReload: Bool = false) async throws -> ProviderCommandInventory {
+        _ = try await load(); try Task.checkCancellation()
+        guard thread.provider == .pi || thread.provider == .opencode else { throw ProviderCommandError(.unsupported) }
+        guard !closing, !stoppingEffects, fatalError == nil,
+              let incarnation = threadIncarnations[thread.id],
+              let current = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
+              ProviderConfiguration(thread: current) == ProviderConfiguration(thread: thread),
+              revision.snapshot.providerReady(for: current) else { throw CancellationError() }
+        let inventory = try await queryProviderMetadata(thread: current, owned: true, joinOperation: true) {
+            try await $0.providerCommands(forceReload: forceReload)
+        }
+        try inventory.validate()
+        guard threadIncarnations[thread.id] == incarnation,
+              let latest = revision.snapshot.threads.first(where: { $0.id == thread.id && $0.projectID == thread.projectID }),
+              ProviderConfiguration(thread: latest) == ProviderConfiguration(thread: current) else { throw CancellationError() }
+        guard CodexSkillInventory.sameWorkspace(inventory.cwd, current.workspacePath) else { throw ProviderCommandError(.invalidResponse) }
+        return .init(cwd: current.workspacePath, commands: inventory.commands, skills: inventory.skills,
+            problems: inventory.problems, checkedAt: inventory.checkedAt)
+    }
     private func queryModels(thread: CodingThread, owned: Bool) async throws -> [ProviderModel] {
         try await queryProviderMetadata(thread: thread, owned: owned) { try await $0.models() }
     }
-    private func queryProviderMetadata<Value: Sendable>(thread: CodingThread, owned: Bool,
+    private func queryProviderMetadata<Value: Sendable>(thread: CodingThread, owned: Bool, joinOperation: Bool = false,
                                                        operation: @escaping @Sendable (any ProviderSession) async throws -> Value) async throws -> Value {
         guard !isCodexAuthenticationLocked(.init(thread: thread)) else { throw Self.codexChanging() }
         guard !isAntigravityAuthenticationLocked(thread) else { throw WorkspaceCommandError("Wait for the Antigravity account change before refreshing models.") }
@@ -3533,17 +3556,22 @@ public actor WorkspaceEngine {
               !revision.snapshot.isClaudeHistoryScopeLocked(configuration: .init(thread: thread), nativeThreadID: thread.providerThreadID),
               !revision.snapshot.isCheckpointRestoreLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCreationLocked(path: thread.workspacePath), !revision.snapshot.isPullRequestCheckoutLocked(path: thread.workspacePath) else { throw CancellationError() }
         var metadataLaunch = thread
-        if metadataLaunch.provider == .codex || metadataLaunch.provider == .claude {
+        if metadataLaunch.provider == .codex || metadataLaunch.provider == .claude || metadataLaunch.provider == .pi || metadataLaunch.provider == .opencode {
             // Metadata owns the original conversation binding, but it must not
             // ask the factory for a live turn's actor or carry its submissions.
             metadataLaunch.activeRun = nil; metadataLaunch.runtimeID = nil
             metadataLaunch.runtimeRequests = []; metadataLaunch.queuedTurns = []
             metadataLaunch.state = .idle
+            if metadataLaunch.provider == .pi || metadataLaunch.provider == .opencode {
+                metadataLaunch.providerThreadID = nil
+                metadataLaunch.piFreshSessionIntent = nil; metadataLaunch.piFreshConsumerRunID = nil
+            }
         }
         let id = UUID(), session = try factory(metadataLaunch)
         metadataSessions[id] = .init(session: session, path: thread.workspacePath, threadID: owned ? thread.id : nil,
                                      projectID: owned ? thread.projectID : nil, configuration: owned ? .init(thread: thread) : nil,
                                      launchConfiguration: .init(thread: metadataLaunch))
+        metadataSessions[id]?.joinsOperation = joinOperation
         do {
             let task = Task { try await operation(session) }
             metadataSessions[id]?.operationCancel = { task.cancel() }
@@ -3585,7 +3613,7 @@ public actor WorkspaceEngine {
         guard let metadata = metadataSessions[id] else { return nil }
         if let task = metadata.closeTask { return task }
         metadata.operationCancel?()
-        let ownedOperations = (metadata.launchConfiguration.ownedCodexInstanceID != nil || metadata.launchConfiguration.claudeRuntimeConfiguration != nil) ? metadata.operationDrain.map { [$0] } ?? [] : []
+        let ownedOperations = (metadata.joinsOperation || metadata.launchConfiguration.ownedCodexInstanceID != nil || metadata.launchConfiguration.claudeRuntimeConfiguration != nil) ? metadata.operationDrain.map { [$0] } ?? [] : []
         let task = startCleanup(projectIDs: Set(metadata.projectID.map { [$0] } ?? []), threadIDs: Set(metadata.threadID.map { [$0] } ?? []), sessions: [metadata.session], jobs: ownedOperations, workspacePaths: [metadata.path], codexInstances: Set(metadata.launchConfiguration.ownedCodexInstanceID.map { [$0] } ?? []), claudeScopes: Self.claudeScopes(metadata.launchConfiguration).union(metadata.configuration.map(Self.claudeScopes) ?? []))
         metadataSessions[id]?.closeTask = task
         return task
@@ -3621,7 +3649,7 @@ public actor WorkspaceEngine {
         let metadata = Array(metadataSessions.values); metadataSessions = [:]
         for runtime in metadata { runtime.operationCancel?() }
         for runtime in metadata where runtime.closeTask == nil {
-            let ownedOperations = (runtime.launchConfiguration.ownedCodexInstanceID != nil || runtime.launchConfiguration.claudeRuntimeConfiguration != nil) ? runtime.operationDrain.map { [$0] } ?? [] : []
+            let ownedOperations = (runtime.joinsOperation || runtime.launchConfiguration.ownedCodexInstanceID != nil || runtime.launchConfiguration.claudeRuntimeConfiguration != nil) ? runtime.operationDrain.map { [$0] } ?? [] : []
             _ = startCleanup(projectIDs: Set(runtime.projectID.map { [$0] } ?? []), threadIDs: Set(runtime.threadID.map { [$0] } ?? []), sessions: [runtime.session], jobs: ownedOperations, workspacePaths: [runtime.path], codexInstances: Set(runtime.launchConfiguration.ownedCodexInstanceID.map { [$0] } ?? []), claudeScopes: Self.claudeScopes(runtime.launchConfiguration).union(runtime.configuration.map(Self.claudeScopes) ?? []))
         }
         for job in jobs { await job.value }

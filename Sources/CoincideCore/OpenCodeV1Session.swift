@@ -25,6 +25,7 @@ public enum OpenCodeV1SessionError: Error, Sendable, Equatable, LocalizedError {
 protocol OpenCodeV1SessionTransport: Sendable {
     func connect() async throws -> AsyncThrowingStream<OpenCodeSSEEvent, any Error>
     func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot
+    func commands(directory: URL) async throws -> ProviderCommandInventory
     func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule]
     func request(method: String, path: [String], body: JSONValue?) async throws -> OpenCodeHTTPResponse
     func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse
@@ -32,6 +33,7 @@ protocol OpenCodeV1SessionTransport: Sendable {
 }
 
 extension OpenCodeV1SessionTransport {
+    func commands(directory: URL) async throws -> ProviderCommandInventory { throw ProviderCommandError(.unsupported) }
     func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
         guard query.isEmpty else { throw ProviderHistoryError(.unsupported) }
         return try await request(method: method, path: path, body: body)
@@ -119,6 +121,15 @@ public actor OpenCodeV1Session: ProviderSession {
             .init(id: $0.selection.catalogID, name: $0.name,
                   openCodeSelection: $0.selection, openCodeVariants: $0.variants)
         }
+    }
+
+    public func providerCommands(forceReload: Bool = false) async throws -> ProviderCommandInventory {
+        try await connect()
+        let inventory = try await transport.commands(directory: cwd)
+        guard !closing, !uncertain, CodexSkillInventory.sameWorkspace(inventory.cwd, historyWorkspacePath) else { throw ProviderCommandError(.unavailable) }
+        try inventory.validate()
+        return .init(cwd: historyWorkspacePath, commands: inventory.commands, skills: inventory.skills,
+            problems: inventory.problems, checkedAt: inventory.checkedAt)
     }
 
     public func openCodeV1HistorySnapshot(threadID: String) async throws -> OpenCodeV1HistorySnapshot {
@@ -419,6 +430,21 @@ public actor OpenCodeV1Session: ProviderSession {
         var posted = false
         do {
             try await connect(); try requirePreparation(token)
+            let command: ProviderCommandSelection?
+            if try ProviderCommandCatalog.requiresInventory(input.text) {
+                let catalog: ProviderCommandInventory?
+                do { catalog = try await providerCommands() }
+                catch let error as ProviderCommandError where error.kind == .unsupported {
+                    // Only an unsupported discovery endpoint means no known
+                    // intent. A resolver's explicit refusal must never become
+                    // an ordinary prompt after its native skill was recognized.
+                    catalog = nil
+                }
+                try requirePreparation(token)
+                command = try catalog.flatMap { try ProviderCommandCatalog.v1Selection(in: input.text, inventory: $0) }
+            } else { command = nil }
+            let compact = command?.name == "compact"
+            guard !compact || (command?.arguments.isEmpty == true && input.images.isEmpty) else { throw OpenCodeV1SessionError.unsupportedInput }
             let inventory = try await openCodeInventory(); try requirePreparation(token)
             let model = try Self.resolveModel(selected.model, inventory: inventory)
             guard inventory.agents.contains(where: { $0.id == selected.agentID && $0.mode != .subagent && !$0.hidden }) else {
@@ -447,20 +473,55 @@ public actor OpenCodeV1Session: ProviderSession {
                 body["model"] = .object(["providerID": .string(model.providerID), "modelID": .string(model.id)])
                 if let variant = model.variant { body["variant"] = .string(variant) }
             }
+            if let command {
+                body = ["messageID": .string(inputID), "agent": .string(selected.agentID),
+                    "command": .string(command.name), "arguments": .string(command.arguments)]
+                if let model {
+                    body["model"] = .string(model.providerID + "/" + model.id)
+                    if let variant = model.variant { body["variant"] = .string(variant) }
+                }
+                let files = parts.filter { $0["type"] == .string("file") }
+                if !files.isEmpty { body["parts"] = .array(files) }
+            }
+            if compact {
+                guard let compactModel = model ?? (inventory.defaults.count == 1 ? inventory.defaults.first : nil) else { throw OpenCodeV1SessionError.invalidConfiguration }
+                body = ["providerID": .string(compactModel.providerID), "modelID": .string(compactModel.id), "auto": .bool(false)]
+            }
             let prompt = JSONValue.object(body)
             guard try JSONEncoder().encode(prompt).count <= 4 * 1_024 * 1_024 else { throw OpenCodeV1SessionError.unsupportedInput }
             trimRuns()
             guard runs.count < 256 else { throw OpenCodeV1SessionError.invalidResponse }
             runs[runID] = .init(id: runID, sessionID: nativeID, inputID: inputID, autonomous: false)
+            runs[runID]?.compaction = compact
             nativeOwners[nativeID] = runID; activeRunID = runID
             let inputKey = Self.messageKey(nativeID, inputID)
-            messageOwners[inputKey] = runID; userMessages.insert(inputKey)
+            if !compact { messageOwners[inputKey] = runID; userMessages.insert(inputKey) }
             let key = OpenCodeV1ProjectionOwner(sessionID: nativeID, runID: runID)
             projectors[key] = .init(instanceID: selected.instanceID, sessionID: nativeID)
             preparing = nil; posted = true
-            let response = try await call(method: "POST", path: ["session", nativeID, "prompt_async"], body: prompt)
+            let endpoint = compact ? "summarize" : command == nil ? "prompt_async" : "command"
+            let response = try await call(method: "POST", path: ["session", nativeID, endpoint], body: prompt)
             guard !closing, !uncertain else { throw CancellationError() }
-            guard response.status == 204 else { throw OpenCodeV1SessionError.invalidResponse }
+            if compact {
+                guard try Self.commandJSON(response) == .bool(true) else { throw OpenCodeV1SessionError.invalidResponse }
+                // summarize returns only after its native loop has settled. No
+                // caller message ID exists for this internal compaction input.
+                finish(runID, state: runs[runID]?.stopped == true ? .interrupted : .idle)
+                return
+            } else if command != nil {
+                let value = try Self.commandJSON(response)
+                let message = try OpenCodeV1Protocol.message(value["info"])
+                guard message.sessionID == nativeID, message.role == "assistant", message.parentID == inputID,
+                      let rows = value["parts"].array, rows.count <= 8_192 else { throw OpenCodeV1SessionError.invalidResponse }
+                try await receive(message, event: .init(kind: .messageUpdated, sessionID: nativeID, message: message))
+                for row in rows {
+                    let part = try OpenCodeV1Protocol.part(row)
+                    guard part.sessionID == nativeID, part.messageID == message.id else { throw OpenCodeV1SessionError.invalidResponse }
+                    try await consume(.init(kind: .partUpdated, sessionID: nativeID, part: part))
+                }
+            } else {
+                guard response.status == 204 else { throw OpenCodeV1SessionError.invalidResponse }
+            }
             if var run = runs[runID], !run.stopped {
                 run.accepted = true; runs[runID] = run
                 announce(runID); reconcileEarlyIdle(runID)
@@ -480,6 +541,14 @@ public actor OpenCodeV1Session: ProviderSession {
             if let safe = error as? OpenCodeV1SessionError { throw safe }
             throw OpenCodeV1SessionError.invalidResponse
         }
+    }
+
+    private static func commandJSON(_ response: OpenCodeHTTPResponse) throws -> JSONValue {
+        let type = response.headers["content-type"]?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased()
+        guard response.status == 200, let type, type == "application/json" || type.hasSuffix("+json"),
+              response.body.count <= 4_194_304,
+              let value = try? JSONDecoder().decode(JSONValue.self, from: response.body) else { throw OpenCodeV1SessionError.invalidResponse }
+        return value
     }
 
     private func ensureSession(captured: ProviderConfiguration, rules: [OpenCodeV1PermissionRule], token: UUID) async throws -> String {
@@ -690,7 +759,7 @@ public actor OpenCodeV1Session: ProviderSession {
     }
 
     private func announce(_ id: UUID) {
-        guard var run = runs[id], run.inputObserved, !run.announced, !run.finished else { return }
+        guard var run = runs[id], !run.compaction, run.inputObserved, !run.announced, !run.finished else { return }
         run.announced = true; runs[id] = run
         continuation.yield(.context(runID: id, event: .turn(run.inputID)))
     }
@@ -710,6 +779,13 @@ public actor OpenCodeV1Session: ProviderSession {
             return
         }
         guard var run = runs[owner], !run.finished else { return }
+        if run.compaction {
+            // A session idle frame carries no compaction input identity. The
+            // exact owned summarize response, or explicit Stop, settles it.
+            if interrupted || run.stopped { finish(owner, state: .interrupted) }
+            else if failed { throw OpenCodeV1SessionError.uncertainDelivery }
+            return
+        }
         if failed || interrupted {
             guard run.inputObserved else { throw OpenCodeV1SessionError.invalidResponse }
             finish(owner, state: interrupted || run.stopped ? .interrupted : .failed); return
@@ -1047,6 +1123,7 @@ private struct OpenCodeV1Run {
     let sessionID: String
     let inputID: String
     let autonomous: Bool
+    var compaction = false
     var accepted = false
     var inputObserved = false
     var assistantObserved = false
@@ -1103,6 +1180,11 @@ private actor OpenCodeV1OwnedRuntime: OpenCodeV1SessionTransport {
     func inventory(directory: URL) async throws -> OpenCodeMetadataSnapshot {
         guard !closing, let metadata else { throw OpenCodeV1SessionError.closed }
         return try await metadata.inventory(directory: directory)
+    }
+
+    func commands(directory: URL) async throws -> ProviderCommandInventory {
+        guard !closing, let metadata else { throw OpenCodeV1SessionError.closed }
+        return try await metadata.commands(directory: directory)
     }
 
     func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule] {

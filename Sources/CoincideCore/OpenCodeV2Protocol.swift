@@ -281,9 +281,10 @@ public enum OpenCodeV2Protocol {
     }
 
     public static func admission(_ response: OpenCodeHTTPResponse, sessionID: String,
-                                 inputID: String) throws -> OpenCodeV2InboxAdmission {
+                                 inputID: String, type: String = "user") throws -> OpenCodeV2InboxAdmission {
+        guard ["user", "compaction"].contains(type) else { throw OpenCodeV2ProtocolError.invalidOwner }
         let result = try inboxItem(json(response)["data"])
-        guard result.sessionID == sessionID, result.id == inputID, result.type == "user" else {
+        guard result.sessionID == sessionID, result.id == inputID, result.type == type else {
             throw OpenCodeV2ProtocolError.invalidOwner
         }
         return result

@@ -103,6 +103,45 @@ public actor OpenCodeMetadataConnection {
         for read in owned { _ = try? await read.value }
     }
 
+    public func commands(directory: URL) async throws -> ProviderCommandInventory {
+        guard !closed else { throw OpenCodeProtocolError.closed }
+        let path = directory.path
+        guard directory.isFileURL, directory.host == nil || directory.host == "" || directory.host == "localhost",
+              directory.user == nil, directory.password == nil, directory.query == nil, directory.fragment == nil,
+              path.hasPrefix("/"), path == directory.standardizedFileURL.path, path.utf8.count <= 16_384,
+              !path.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw OpenCodeProtocolError.wrongDirectory }
+        let before = try await identify()
+        let query = [URLQueryItem(name: before.generation == .v2 ? "location[directory]" : "directory", value: path)]
+        let prefix = before.generation == .v2 ? ["api"] : []
+        async let commandsRead = read(path: prefix + ["command"], query: query)
+        async let skillsRead = read(path: prefix + ["skill"], query: query)
+        let responses = try await (commandsRead, skillsRead)
+        var values: [JSONValue?] = [], problems: [ProviderCommandProblem] = []
+        let components: [ProviderCommandProblem.Component] = [.commands, .skills]
+        var unsupported = 0
+        for (index, response) in [responses.0, responses.1].enumerated() {
+            if response.status == 401 || response.status == 403 { throw OpenCodeProtocolError.unauthorized }
+            if response.status == 404 || response.status == 405 {
+                unsupported += 1; values.append(nil)
+                problems.append(.init(component: components[index], message: "This native endpoint does not advertise this inventory."))
+            } else if response.status != 200 {
+                values.append(nil)
+                problems.append(.init(component: components[index], message: "This part of the native inventory could not be refreshed."))
+            } else {
+                let value = try Self.json(response)
+                values.append(before.generation == .v2 ? try OpenCodeCatalog.located(value, directory: path) : value)
+            }
+        }
+        guard values.contains(where: { $0 != nil }) else {
+            throw ProviderCommandError(unsupported == 2 ? .unsupported : .unavailable)
+        }
+        let after = try await identify()
+        guard before == after, !closed else { throw OpenCodeProtocolError.invalidIdentity }
+        try Task.checkCancellation()
+        return try ProviderCommandCatalog.openCode(commands: values[0], skills: values[1], generation: before.generation,
+            cwd: path, problems: problems)
+    }
+
     // The HTTP client can also own a live event subscription. Closing this
     // metadata reader cancels only its own requests, never that shared client.
     private func read(path: [String], query: [URLQueryItem] = [], maximumBytes: Int = 4_194_304) async throws -> OpenCodeHTTPResponse {

@@ -39,6 +39,22 @@ enum PiProtocol {
     static let rejected = "Pi did not accept the request."
     static let modelFailure = "The Pi model catalog could not be read safely."
     static let historyFailure = "Pi could not prove the exact native history boundary. No history operation was enabled."
+    static func inputCommand(_ input: ProviderInput) throws -> (name: String, fields: [String: JSONValue]) {
+        let text = input.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("/compact") {
+            let rest = text.dropFirst("/compact".count)
+            if rest.isEmpty || rest.first?.isWhitespace == true {
+                guard input.images.isEmpty else { throw ProviderSteeringError(.invalidRequest) }
+                let instructions = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+                return ("compact", instructions.isEmpty ? [:] : ["customInstructions": .string(instructions)])
+            }
+        }
+        var fields: [String: JSONValue] = ["message": .string(input.text), "streamingBehavior": .string("steer")]
+        if !input.images.isEmpty {
+            fields["images"] = .array(input.images.map { .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())]) })
+        }
+        return ("prompt", fields)
+    }
     static func forkAccepted(_ value: JSONValue) throws -> Bool {
         guard value.object != nil, case .bool(let cancelled) = value["cancelled"] else { throw ProviderHistoryError(.invalidResponse) }
         if value["text"] != .null {
@@ -149,6 +165,11 @@ enum PiProtocol {
           });
         }
         """
+    }
+    static func permissionExtension(_ permission: PermissionMode, reservationPath: String, processEpoch: UUID) throws -> String {
+        let fragment = try PiInputBridge.extensionFragment(reservationPath: reservationPath, processEpoch: processEpoch)
+        return PiInputBridge.extensionImports + "\n" + permissionExtension(permission).replacingOccurrences(
+            of: "export default function(pi) {", with: "export default function(pi) {\n" + fragment)
     }
 }
 

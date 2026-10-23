@@ -37,6 +37,7 @@ public protocol ProviderSession: Actor {
     nonisolated var events: AsyncStream<ProviderEvent> { get }
     func models() async throws -> [ProviderModel]
     func codexSkills(forceReload: Bool) async throws -> ProviderSkillInventory
+    func providerCommands(forceReload: Bool) async throws -> ProviderCommandInventory
     func openCodeInventory() async throws -> OpenCodeMetadataSnapshot
     func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection
     func codexAccountSnapshot() async throws -> CodexAccountSnapshot
@@ -107,6 +108,9 @@ extension ProviderSession {
     public func piHistoryEventBarrier(_ id: UUID) async throws { throw ProviderHistoryError(.unsupported) }
     public func codexSkills(forceReload: Bool = false) async throws -> ProviderSkillInventory {
         throw ProviderSkillError(.unsupported)
+    }
+    public func providerCommands(forceReload: Bool = false) async throws -> ProviderCommandInventory {
+        throw ProviderCommandError(.unsupported)
     }
     /// The default retains older adapters' behavior. Adapters with weak native
     /// turn identities can additionally fence interruption by the local run.

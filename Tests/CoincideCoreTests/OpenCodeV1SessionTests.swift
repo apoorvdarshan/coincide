@@ -392,6 +392,69 @@ private actor V1Record {
     var backgroundOwners: Set<UUID> { Set(events.compactMap { if case .runEntity(let id, _) = $0 { id } else { nil } }) }
     private static func inner(_ event: ProviderEvent) -> ProviderEvent { if case .context(_, let value) = event { value } else { event } }
 }
+@Test func openCodeV1AdvertisedCommandUsesNativeEndpointLiteralArgumentsAndCapturedControls() async throws {
+    try await withV1Session { f in
+        var thread = f.thread()
+        thread.openCodeConfiguration = f.configuration.selecting(model: nil)
+        try await f.session.send(text: "/review literal \"quotes\"\nsecond line", thread: thread)
+        let calls = await f.peer.calls
+        let body = try #require(calls.first { $0.path.last == "command" }?.body)
+        #expect(body["command"] == .string("review"))
+        #expect(body["arguments"] == .string("literal \"quotes\"\nsecond line"))
+        #expect(body["model"] == .string(f.model.providerID + "/" + f.model.id))
+        #expect(body["variant"] == .string("balanced"))
+        #expect(body["agent"] == .string("build"))
+        #expect(!calls.contains { $0.path.last == "prompt_async" })
+        let before = await f.record.completions
+        #expect(before.isEmpty)
+        try await f.peer.begin(); try await f.peer.text("native command snapshot"); try await f.peer.idle()
+        try await v1Eventually { await f.record.completions == [.idle] }
+        let turns = await f.record.turns
+        let inputID = try #require(body["messageID"].string)
+        #expect(turns == [inputID])
+    }
+}
+
+@Test func openCodeV1LeadingNativeSkillIsCommandButInlineSkillsRefuseBeforeSessionCreation() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "$review\tinspect the change", thread: f.thread())
+        let calls = await f.peer.calls
+        let body = try #require(calls.first { $0.path.last == "command" }?.body)
+        #expect(body["command"] == .string("review"))
+        #expect(body["arguments"] == .string("inspect the change"))
+    }
+    for text in ["inspect $review", "$review $review inspect", "$review $audit inspect"] {
+        try await withV1Session { f in
+            await #expect(throws: (any Error).self) { try await f.session.send(text: text, thread: f.thread()) }
+            let calls = await f.peer.calls
+            #expect(!calls.contains { $0.method == "POST" || $0.method == "PATCH" })
+            #expect(!calls.contains { $0.path.last == "prompt_async" || $0.path.last == "command" })
+        }
+    }
+}
+
+@Test func openCodeV1UnknownDollarVariableRemainsExactOrdinaryPrompt() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "Show $HOME and $100 without expansion", thread: f.thread())
+        let calls = await f.peer.calls
+        let body = try #require(calls.first { $0.path.last == "prompt_async" }?.body)
+        #expect(body["parts"].array?.first?["text"] == .string("Show $HOME and $100 without expansion"))
+        #expect(!calls.contains { $0.path.last == "command" })
+    }
+}
+
+@Test func openCodeV1CompactUsesSummarizeAuthorityWithoutInventingUserTurn() async throws {
+    try await withV1Session { f in
+        try await f.session.send(text: "/compact", thread: f.thread())
+        try await v1Eventually { await f.record.completions == [.idle] }
+        let calls = await f.peer.calls, turns = await f.record.turns
+        let body = try #require(calls.first { $0.path.last == "summarize" }?.body)
+        #expect(body == .object(["providerID": .string(f.model.providerID), "modelID": .string(f.model.id), "auto": .bool(false)]))
+        #expect(turns.isEmpty)
+        #expect(!calls.contains { $0.path.last == "command" || $0.path.last == "prompt_async" })
+    }
+}
+
 private struct V1Fixture: Sendable {
     let root: URL
     let model: OpenCodeModelSelection
@@ -457,6 +520,14 @@ private actor V1Peer: OpenCodeV1SessionTransport {
             agents: [.init(id: "build", name: "Build", description: nil, mode: .primary, hidden: false),
                      .init(id: "plan", name: "Plan", description: nil, mode: .primary, hidden: false)], defaults: [model])
     }
+    func commands(directory: URL) async throws -> ProviderCommandInventory {
+        try ProviderCommandCatalog.openCode(commands: .array([
+            .object(["name": .string("review"), "source": .string("skill")]),
+            .object(["name": .string("audit"), "source": .string("skill")])]),
+            skills: .array([.object(["name": .string("review"), "location": .string(directory.path + "/review/SKILL.md")]),
+                .object(["name": .string("audit"), "location": .string(directory.path + "/audit/SKILL.md")])]),
+            generation: .v1, cwd: directory.path)
+    }
     func agentPermissionRules(directory: URL, agentID: String) async throws -> [OpenCodeV1PermissionRule] { agentRules }
     func setAgentRules(_ rules: [OpenCodeV1PermissionRule]) { agentRules = rules }
     func setMode(_ value: V1Fault) { mode = value }
@@ -490,6 +561,11 @@ private actor V1Peer: OpenCodeV1SessionTransport {
             sessions[path[1]] = .object(fields)
             if path[1] == "ses_child" { childPatched = true }
             return try response(.object(fields))
+        }
+        if path.last == "summarize" { return try response(.bool(true)) }
+        if path.last == "command" {
+            inputID = body?["messageID"].string
+            return try response(.object(["info": message(id: "msg_assistant", role: "assistant", session: path[1], parent: inputID), "parts": .array([])]))
         }
         if path.last == "prompt_async" {
             inputID = body?["messageID"].string

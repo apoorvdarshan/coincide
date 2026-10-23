@@ -76,11 +76,45 @@ connection loss has no retained underlying category, so its precise cause remain
 unproven even though the independent fragmentation defect has a deterministic
 regression.
 
+## Native commands and skills
+
+The native composer discovers commands and skills for the captured generation
+and exact workspace through a separate metadata connection. Invalid, partial,
+unsupported and unavailable inventories stay distinct. Disabled, agent-only and
+conflicting names cannot be selected; incomplete inventory cannot silently
+convert a potential native invocation into an ordinary prompt. V2 cold scans
+wait for both exact-workspace command and skill update signals, then reread once.
+
+V1 sends an advertised slash command through its native `command` endpoint,
+retaining captured agent/model/variant and supported files. Its skill endpoint
+requires one leading advertised skill with a matching native skill command;
+multiple, repeated or inline known skills refuse before mutation. V2 attaches
+exact native skill IDs to prompt and steering payloads in mention order. Friendly
+display names never substitute for wire IDs. Healthy unknown variables and
+ordinary prose remain unchanged.
+
+V2 command callbacks provide no caller input ID and can enqueue arbitrary work.
+The actor saves a bounded prior message inventory, installs ownership before
+POST, and binds only an actually observed fresh root input. It waits for the
+callback's HTTP 204, checks the message/inbox union for exactly that root, and
+requires native delivery and terminal execution before releasing FIFO. A first
+terminal while the callback is pending cannot complete the command. Multiple
+roots, no root or a lost callback reply remain uncertain and are not retried or
+converted to an ordinary prompt. This is local quiet-state proof, not a server
+compare-and-swap against external writers. Command history mapping remains
+unavailable when the callback's authored-to-native relationship is unproved.
+
+Both generations route `/compact` through native summarization/compaction;
+admission alone does not imply execution completion or a new user turn. Active
+steering refuses slash commands whose semantics cannot be represented safely.
+Installed command, skill and compaction acceptance remains separate from the
+offline protocol and loopback HTTP/SSE evidence in [VALIDATION.md](VALIDATION.md).
+
 ## Captured native conversation configuration
 
 The native provider choice is separate from ACP. Storage version 36 introduced
 the native configuration, run, effect and message-history recovery fields; the
-current workspace version is 38. Older binaries cannot reopen unfamiliar storage.
+current workspace version is 40. Older binaries cannot reopen unfamiliar storage.
 Legacy Codex, Claude and ACP payloads still
 decode without native OpenCode settings. The durable value captures instance identity, generation,
 one local executable, exact provider/model/variant IDs and agent ID. Runtime

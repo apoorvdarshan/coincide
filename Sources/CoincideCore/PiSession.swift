@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Native Pi JSONL RPC. The exact process, session file, and captured run own
 /// output. ACKs are command admission; only settled+idle native evidence ends it.
@@ -19,6 +20,12 @@ public actor PiSession: ProviderSession {
     private var closeTask: Task<Void, Never>?
     private var decoder = NDJSONDecoder(maximumFrameSize: 128 * 1_024 * 1_024)
     private var scratch: URL?
+    private let bridgeEpoch = UUID()
+    private var bridgeFile: URL?
+    private var bridgeReady = false
+    private var bridgeOutstanding: PiInputBridgeReservation?
+    private var bridgeRetirementNonce: UUID?
+    private var bridgeObservationTask: Task<Void, Never>?
     private var closing = false
     private var broken = false
     private var registered = false
@@ -111,7 +118,13 @@ public actor PiSession: ProviderSession {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             scratch = root
             let path = root.appendingPathComponent("permission.ts")
-            try Data(PiProtocol.permissionExtension(permission).utf8).write(to: path, options: .atomic)
+            let source: String
+            if configuration.runtime != nil {
+                let reservation = root.appendingPathComponent("input-reservation.json")
+                bridgeFile = reservation
+                source = try PiProtocol.permissionExtension(permission, reservationPath: reservation.path, processEpoch: bridgeEpoch)
+            } else { source = PiProtocol.permissionExtension(permission) }
+            try Data(source.utf8).write(to: path, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
             args = ["--mode", "rpc", "--extension", path.path]
         }
@@ -135,6 +148,22 @@ public actor PiSession: ProviderSession {
         try connect()
         let result = try await request("get_available_models")
         return try PiProtocol.models(result)
+    }
+
+    public func providerCommands(forceReload: Bool = false) async throws -> ProviderCommandInventory {
+        guard configuration.runtime != nil else { throw ProviderCommandError(.unsupported) }
+        guard historyOperation == nil, active == nil, preparing == nil, !closing, !broken else {
+            throw ProviderCommandError(.unavailable)
+        }
+        do {
+            _ = try await verifyVersion(); try connect()
+            let value = try await request("get_commands", timeout: .seconds(10))
+            try Task.checkCancellation()
+            guard !closing, !broken else { throw CancellationError() }
+            return try ProviderCommandCatalog.pi(value, cwd: configuration.runtime!.registeredWorkspacePath)
+        } catch is CancellationError { throw CancellationError() }
+        catch let error as ProviderCommandError { throw error }
+        catch { throw ProviderCommandError(.unavailable) }
     }
 
     public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities {
@@ -406,8 +435,98 @@ public actor PiSession: ProviderSession {
         }
     }
 
+    private func makeBridgeReservation(clientMessageID: String, digest: String, preparationID: UUID,
+                                       state: PiState) throws -> PiInputBridgeReservation? {
+        guard bridgeReady else { return nil }
+        guard bridgeFile != nil, bridgeOutstanding == nil, state.sessionFile == nativeID,
+              state.sessionID == baseline?.sessionID, !closing, !broken else { throw PiHistoryGraphError(.invalidWindow) }
+        return try .init(nonce: UUID(), processEpoch: bridgeEpoch, runPreparationID: preparationID,
+            clientMessageID: clientMessageID, originalDigest: digest, nativeSessionID: state.sessionID,
+            nativeSessionFile: state.sessionFile, retirementNonce: bridgeRetirementNonce)
+    }
+    private func requireSkillBridge(_ input: ProviderInput) async throws {
+        guard !bridgeReady, !(try ProviderCommandCatalog.skillMentions(input.text)).isEmpty else { return }
+        let inventory = try ProviderCommandCatalog.pi(await request("get_commands", timeout: .seconds(10)), cwd: cwd.path)
+        guard try ProviderCommandCatalog.skillIDs(in: input.text, inventory: inventory).isEmpty else {
+            throw ProviderCommandError(.unsupported)
+        }
+    }
+    /// Publication occurs only after Engine committed the matching preparation.
+    /// The private final name never exposes a partially written reservation.
+    private func publishBridgeReservation(_ reservation: PiInputBridgeReservation?) throws {
+        guard let reservation else { return }
+        try reservation.validate()
+        guard bridgeReady, bridgeOutstanding == nil, let file = bridgeFile,
+              reservation.processEpoch == bridgeEpoch, reservation.nativeSessionFile == nativeID,
+              reservation.nativeSessionID == baseline?.sessionID,
+              reservation.retirementNonce == bridgeRetirementNonce, !closing, !broken else { throw PiHistoryGraphError(.invalidWindow) }
+        let bytes = try reservation.encoded(), temporary = file.appendingPathExtension(reservation.nonce.uuidString + ".tmp")
+        let fd = Darwin.open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
+        guard fd >= 0 else { throw PiHistoryGraphError(.invalidWindow) }
+        defer { Darwin.close(fd); try? FileManager.default.removeItem(at: temporary) }
+        try bytes.withUnsafeBytes { buffer in
+            guard let pointer = buffer.baseAddress else { throw PiHistoryGraphError(.invalidWindow) }
+            var offset = 0
+            while offset < bytes.count {
+                let count = Darwin.write(fd, pointer.advanced(by: offset), bytes.count - offset)
+                if count < 0, errno == EINTR { continue }
+                guard count > 0 else { throw PiHistoryGraphError(.invalidWindow) }
+                offset += count
+            }
+        }
+        guard fsync(fd) == 0 else { throw PiHistoryGraphError(.invalidWindow) }
+        try FileManager.default.moveItem(at: temporary, to: file)
+        bridgeOutstanding = reservation; bridgeRetirementNonce = nil
+    }
+    private func removeBridgeReservation(_ expected: PiInputBridgeReservation) throws -> Bool {
+        guard let file = bridgeFile else { throw PiHistoryGraphError(.invalidWindow) }
+        let fd = Darwin.open(file.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if fd < 0, errno == ENOENT { return false }
+        guard fd >= 0 else { throw PiHistoryGraphError(.invalidWindow) }
+        defer { Darwin.close(fd) }
+        var before = stat()
+        guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_nlink == 1,
+              before.st_uid == getuid(), before.st_mode & 0o7777 == 0o600,
+              before.st_size > 0, before.st_size <= Int64(PiInputBridge.maximumReservationBytes) else { throw PiHistoryGraphError(.invalidWindow) }
+        var data = Data(), block = [UInt8](repeating: 0, count: 4096)
+        while data.count < Int(before.st_size) {
+            let count = Darwin.read(fd, &block, min(block.count, Int(before.st_size) - data.count))
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { throw PiHistoryGraphError(.invalidWindow) }
+            data.append(contentsOf: block.prefix(count))
+        }
+        var after = stat(), named = stat()
+        guard fstat(fd, &after) == 0, lstat(file.path, &named) == 0,
+              before.st_dev == after.st_dev, before.st_ino == after.st_ino, before.st_size == after.st_size,
+              after.st_dev == named.st_dev, after.st_ino == named.st_ino, named.st_mode & S_IFMT == S_IFREG,
+              try PiInputBridgeReservation(json: JSONDecoder().decode(JSONValue.self, from: data)) == expected else {
+            throw PiHistoryGraphError(.invalidWindow)
+        }
+        guard unlink(file.path) == 0 else { throw PiHistoryGraphError(.invalidWindow) }
+        return true
+    }
+    private func observeBridgeInput(runID: UUID, reservation: PiInputBridgeReservation) async {
+        defer { bridgeObservationTask = nil }
+        guard active?.id == runID, bridgeOutstanding == reservation, let history = active?.history else { return }
+        do {
+            let raw = try await request("get_entries", runID: runID)
+            guard active?.id == runID, bridgeOutstanding == reservation, let state = baseline else { return }
+            let entries = try PiProtocol.entries(raw, state: state)
+            let owners = history.inputs.filter { $0.kind != .compact }.compactMap(\.bridgeReservation)
+            _ = try PiInputBridge.prove(reservations: owners, entries: entries.entries,
+                baseline: history.preparation.baseline, finalObservation: entries.observation)
+            guard active?.id == runID, bridgeOutstanding == reservation else { return }
+            bridgeOutstanding = nil; bridgeRetirementNonce = nil
+            emit(.steeringCapabilitiesChanged, runID: runID)
+        } catch {
+            // A user callback is not append proof. Retain the fence until a
+            // later owned read/terminal proves consumption or explicit drain.
+        }
+    }
+
     public func preparePiRun(input: ProviderInput, thread: CodingThread) async throws -> PiRunHistoryPreparation {
         try ProviderSteeringValidation.input(input)
+        let command = try PiProtocol.inputCommand(input)
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         guard let runID = thread.activeRun?.id, let runtime = captured.piConfiguration?.runtime,
               captured.provider == .pi, captured.piConfiguration?.runtimeIdentity == configuration.runtimeIdentity,
@@ -468,7 +587,10 @@ public actor PiSession: ProviderSession {
             guard before == after, after.idle, after.sessionFile == nativeID,
                   model == nil || after.model == model, thinking == nil || after.thinking == thinking,
                   preparing == token, !closing, !broken, ui.isEmpty else { throw CoincideError(PiProtocol.historyFailure) }
-            let opening = try PiHistoryInputEvidence(clientMessageID: openingID, inputDigest: PiHistoryInputEvidence.digest(input), kind: .opening)
+            let digest = try PiHistoryInputEvidence.digest(input)
+            try await requireSkillBridge(input)
+            let bridge = command.name == "prompt" ? try makeBridgeReservation(clientMessageID: openingID, digest: digest, preparationID: token, state: after) : nil
+            let opening = try PiHistoryInputEvidence(clientMessageID: openingID, inputDigest: digest, kind: .opening, bridgeReservation: bridge)
             let proof = try PiRunHistoryPreparation(id: token, runID: runID, runtimeIdentity: configuration.runtimeIdentity,
                 observedVersion: version, openingInput: opening, baseline: entries.observation, freshIntentID: intent?.id, freshEmptyObservation: freshEmpty)
             prepared = .init(proof: proof, configuration: captured, state: after, generation: generation)
@@ -482,6 +604,7 @@ public actor PiSession: ProviderSession {
 
     public func sendPreparedPi(input: ProviderInput, thread: CodingThread, preparation: PiRunHistoryPreparation) async throws {
         try preparation.validate(); try Task.checkCancellation()
+        let command = try PiProtocol.inputCommand(input)
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         guard let owned = prepared, owned.proof == preparation, preparing == preparation.id,
               preparation.runID == thread.activeRun?.id, owned.configuration == captured,
@@ -498,15 +621,14 @@ public actor PiSession: ProviderSession {
                   prepared?.proof == preparation, preparing == preparation.id, generation == owned.generation,
                   !closing, !broken, ui.isEmpty else { throw CoincideError(PiProtocol.historyFailure) }
             try Task.checkCancellation()
+            try publishBridgeReservation(preparation.openingInput.bridgeReservation)
             prepared = nil; preparing = nil; generation &+= 1; steeringMessages.removeAll()
             active = .init(id: preparation.runID, configuration: captured, history: durable, admissionGeneration: generation,
                 projection: .init(scope: "pi-\(configuration.instanceID)-\(preparation.nativeSessionFile)-\(preparation.runID)"))
-            var fields: [String: JSONValue] = ["message": .string(input.text), "streamingBehavior": .string("steer")]
-            if !input.images.isEmpty { fields["images"] = .array(input.images.map { .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())]) }) }
-            let acknowledgement = try await request("prompt", fields: fields, timeout: .seconds(300), runID: preparation.runID)
+            let acknowledgement = try await request(command.name, fields: command.fields, timeout: .seconds(300), runID: preparation.runID)
             if active?.id == preparation.runID {
                 active?.acknowledged = true
-                if acknowledgement["disposition"].string == "handled" { scheduleSettle(preparation.runID, allowNoStart: true) }
+                if command.name == "compact" || acknowledgement["disposition"].string == "handled" { scheduleSettle(preparation.runID, allowNoStart: true) }
             }
         } catch {
             if error is PiObservedCompletion { return }
@@ -516,6 +638,7 @@ public actor PiSession: ProviderSession {
     public func send(text: String, thread: CodingThread) async throws { try await send(input: .init(text: text), thread: thread) }
     public func send(input: ProviderInput, thread: CodingThread) async throws {
         try ProviderSteeringValidation.input(input)
+        let command = try PiProtocol.inputCommand(input)
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         guard captured.piConfiguration?.runtime == nil else { throw CoincideError("Commit the prepared Pi input before sending it.") }
         let resumeID = captured.nativeThreadID ?? thread.providerThreadID
@@ -563,19 +686,18 @@ public actor PiSession: ProviderSession {
                   thinking == nil || observed.thinking == thinking,
                   preparing == token, !closing, !broken else { throw CoincideError(PiProtocol.failure) }
             try Task.checkCancellation()
+            try await requireSkillBridge(input)
             preparing = nil
             generation &+= 1
             steeringMessages.removeAll()
             active = .init(id: runID, configuration: captured, projection: .init(scope: "pi-\(configuration.instanceID)-\(observed.sessionFile)-\(runID)"))
-            var fields: [String: JSONValue] = ["message": .string(input.text), "streamingBehavior": .string("steer")]
-            if !input.images.isEmpty { fields["images"] = .array(input.images.map { .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())]) }) }
             active?.posted = true
             // Async command response may be held by an extension dialog. The
             // ordered reader remains live; send completes after admission ACK.
-            let acknowledgement = try await request("prompt", fields: fields, timeout: .seconds(300), runID: runID)
+            let acknowledgement = try await request(command.name, fields: command.fields, timeout: .seconds(300), runID: runID)
             if active?.id == runID {
                 active?.acknowledged = true
-                if acknowledgement["disposition"].string == "handled" { scheduleSettle(runID, allowNoStart: true) }
+                if command.name == "compact" || acknowledgement["disposition"].string == "handled" { scheduleSettle(runID, allowNoStart: true) }
             }
         } catch {
             // Stronger than a command ACK: the exact owned run actually
@@ -597,7 +719,8 @@ public actor PiSession: ProviderSession {
               run.started, !run.interrupted, nativeID != nil else {
             return .init(unavailableReason: ProviderSteeringError(.noActiveTurn).localizedDescription)
         }
-        guard !compacting, steeringTasks.isEmpty, steeringPreparation == nil, !hasSteeringAdmission(run.id), steeringMessages.count < 64 else {
+        guard !compacting, steeringTasks.isEmpty, steeringPreparation == nil, !hasSteeringAdmission(run.id),
+              bridgeOutstanding == nil, steeringMessages.count < 64 else {
             return .init(unavailableReason: "Wait for Pi to finish its pending input or compaction before steering again.")
         }
         // Pi's tools finish before queued steering is consumed. There is no
@@ -612,9 +735,17 @@ public actor PiSession: ProviderSession {
         guard steeringPreparation == nil, steeringTasks.isEmpty, !hasSteeringAdmission(runID),
               steeringMessages.count < 64, !steeringMessages.contains(clientMessageID),
               let history = active?.history else { throw ProviderSteeringError(.rejected) }
-        let input = try PiHistoryInputEvidence.steering(clientMessageID: clientMessageID, input: input)
+        guard bridgeOutstanding == nil else { throw ProviderSteeringError(.rejected) }
+        var evidence = try PiHistoryInputEvidence.steering(clientMessageID: clientMessageID, input: input)
+        if evidence.kind != .compact, bridgeReady {
+            guard let session = baseline else { throw ProviderSteeringError(.staleTarget) }
+            let bridge = try makeBridgeReservation(clientMessageID: clientMessageID, digest: evidence.inputDigest,
+                preparationID: history.preparation.id, state: session)
+            evidence = try .init(clientMessageID: clientMessageID, inputDigest: evidence.inputDigest,
+                kind: evidence.kind, bridgeReservation: bridge)
+        }
         let reservation = try PiSteeringHistoryPreparation(runID: runID, runPreparationID: history.preparation.id,
-            runtimeIdentity: history.runtimeIdentity, input: input)
+            runtimeIdentity: history.runtimeIdentity, input: evidence)
         steeringPreparation = reservation; generation &+= 1; settleTask?.cancel(); settleTask = nil
         emit(.steeringCapabilitiesChanged, runID: runID)
         return reservation
@@ -624,7 +755,7 @@ public actor PiSession: ProviderSession {
         try preparation.validate()
         defer { releaseSteeringPreparation(preparation.id) }
         guard steeringPreparation == preparation, target == .adapterRun(preparation.runID),
-              preparation.input == (try PiHistoryInputEvidence.steering(clientMessageID: clientMessageID, input: input)),
+              preparation.input.matchesAuthored(try PiHistoryInputEvidence.steering(clientMessageID: clientMessageID, input: input)),
               active?.history?.preparation.id == preparation.runPreparationID else { throw ProviderSteeringError(.staleTarget) }
         return try await steer(input: input, thread: thread, target: target, clientMessageID: clientMessageID)
     }
@@ -649,24 +780,14 @@ public actor PiSession: ProviderSession {
         }
         if configuration.runtime != nil {
             let expected = try PiHistoryInputEvidence.steering(clientMessageID: clientMessageID, input: input)
-            guard steeringPreparation?.input == expected, steeringPreparation?.runID == runID,
+            guard let held = steeringPreparation?.input, held.matchesAuthored(expected), steeringPreparation?.runID == runID,
                   steeringPreparation?.runPreparationID == active?.history?.preparation.id,
-                  active?.history?.inputs.contains(expected) == true else { throw ProviderSteeringError(.staleTarget) }
+                  active?.history?.inputs.contains(held) == true else { throw ProviderSteeringError(.staleTarget) }
         }
-        var fields: [String: JSONValue] = ["message": .string(input.text), "streamingBehavior": .string("steer")]
-        var command = "prompt"
-        let trimmed = input.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rest = trimmed.hasPrefix("/compact") ? String(trimmed.dropFirst("/compact".count)) : nil
-        if let rest, rest.isEmpty || rest.first?.isWhitespace == true {
-            guard input.images.isEmpty else { throw ProviderSteeringError(.invalidRequest) }
-            command = "compact"; fields = [:]
-            let instructions = rest.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !instructions.isEmpty { fields["customInstructions"] = .string(instructions) }
-        }
-        if !input.images.isEmpty {
-            fields["images"] = .array(input.images.map { .object(["type": .string("image"), "mimeType": .string($0.mimeType), "data": .string($0.data.base64EncodedString())]) })
-        }
+        let selected = try PiProtocol.inputCommand(input)
+        let command = selected.name, fields = selected.fields
         try ProviderSteeringValidation.frame(.object(fields))
+        if command == "prompt" { try publishBridgeReservation(steeringPreparation?.input.bridgeReservation) }
         steeringMessages.insert(clientMessageID)
         let id = UUID(), payload = fields, nativeCommand = command
         let task = Task { try await self.submitSteering(command: nativeCommand, fields: payload, thread: thread, runID: runID) }
@@ -844,7 +965,7 @@ public actor PiSession: ProviderSession {
     private func requestCancelled(_ id: String) async {
         guard let wait = pending[id] else { return }
         if wait.steering { await requestFailed(id) }
-        else if ["get_state", "get_entries", "get_available_models"].contains(wait.command) {
+        else if ["get_state", "get_entries", "get_available_models", "get_commands"].contains(wait.command) {
             pending.removeValue(forKey: id); wait.timeout?.cancel()
             wait.continuation.resume(throwing: CancellationError())
         } else { await requestFailed(id) }
@@ -877,6 +998,10 @@ public actor PiSession: ProviderSession {
     }
     private func consume(_ frame: JSONValue) throws {
         guard frame.object != nil, let type = frame["type"].string else { throw CoincideError(PiProtocol.failure) }
+        if type == "extension_ui_request", frame["method"] == .string("notify"), let message = frame["message"].string {
+            if message == PiInputBridge.readinessMessage(processEpoch: bridgeEpoch), bridgeFile != nil { bridgeReady = true; return }
+            if message == PiInputBridge.failureMessage(processEpoch: bridgeEpoch), bridgeFile != nil { throw CoincideError(PiProtocol.historyFailure) }
+        }
         if type == "response" {
             guard let id = frame["id"].string, let wait = pending[id] else { return }
             guard frame["command"].string == wait.command, case .bool(let success) = frame["success"] else { throw CoincideError(PiProtocol.failure) }
@@ -898,6 +1023,13 @@ public actor PiSession: ProviderSession {
         if let file = frame["sessionFile"].string, file != nativeID { return }
         if let sessionID = frame["sessionId"].string, let expected = baseline?.sessionID, sessionID != expected { return }
         if type == "extension_ui_request" { try extensionUI(frame); return }
+        if type == "message_end", frame["message"]["role"] == .string("user"),
+           let runID = active?.id, let reservation = bridgeOutstanding, bridgeObservationTask == nil {
+            bridgeObservationTask = Task { [weak self] in
+                guard let self else { return }
+                await self.observeBridgeInput(runID: runID, reservation: reservation)
+            }
+        }
         if type == "agent_start" {
             guard active?.posted == true else { throw CoincideError(PiProtocol.failure) }
             generation &+= 1; settleTask?.cancel(); active?.started = true; active?.settleRequested = false
@@ -1015,6 +1147,14 @@ public actor PiSession: ProviderSession {
                 evidence = try PiRunHistoryEvidence(preparation: history.preparation, inputs: history.inputs,
                     finalObservation: nil, openingUserEntryID: nil, nativeUserEntryIDs: [], captureStatus: .unavailable, terminalStatus: status)
             }
+            if let held = bridgeOutstanding {
+                if evidence.captureStatus == .proven {
+                    bridgeOutstanding = nil; bridgeRetirementNonce = nil
+                } else if evidence.captureStatus == .noNativeChange {
+                    let unclaimed = try removeBridgeReservation(held)
+                    bridgeOutstanding = nil; bridgeRetirementNonce = unclaimed ? nil : held.nonce
+                }
+            }
             emit(.piHistoryEvidence(evidence), runID: id)
             finish(id, state); return true
         } catch {
@@ -1033,10 +1173,19 @@ public actor PiSession: ProviderSession {
         let userIDs = window.filter(\.isUser).map(\.id), expected = before.inputs.filter { $0.kind != .compact }
         guard !userIDs.isEmpty, expected.count == userIDs.count else { throw PiHistoryGraphError(.invalidWindow) }
         let raw = Dictionary(uniqueKeysWithValues: entries.entries.map { ($0.id, $0) })
+        let bridged: [PiInputBridgeEvidence]
+        if before.preparation.openingInput.bridgeReservation != nil {
+            bridged = try PiInputBridge.prove(reservations: expected.compactMap(\.bridgeReservation), entries: entries.entries,
+                baseline: before.preparation.baseline, finalObservation: entries.observation)
+        } else { bridged = [] }
         var mapped = before.inputs, ordinal = 0
         for index in mapped.indices where mapped[index].kind != .compact {
             let native = userIDs[ordinal]; ordinal += 1
-            guard let entry = raw[native], try PiProtocol.inputDigest(entry) == mapped[index].inputDigest else { throw PiHistoryGraphError(.invalidWindow) }
+            guard let entry = raw[native] else { throw PiHistoryGraphError(.invalidWindow) }
+            if mapped[index].bridgeReservation != nil {
+                guard bridged.indices.contains(ordinal - 1) else { throw PiHistoryGraphError(.invalidWindow) }
+                mapped[index].bridgeEvidence = bridged[ordinal - 1]
+            } else { guard try PiProtocol.inputDigest(entry) == mapped[index].inputDigest else { throw PiHistoryGraphError(.invalidWindow) } }
             mapped[index].nativeUserEntryID = native
         }
         return try .init(preparation: before.preparation, inputs: mapped, finalObservation: entries.observation,
@@ -1062,6 +1211,7 @@ public actor PiSession: ProviderSession {
     private func streamEnded() async { if !closing { await failConnection() } }
     private func failConnection() async {
         guard !broken, !closing else { return }; broken = true; preparing = nil; prepared = nil; steeringPreparation = nil; versionTask?.cancel(); settleTask?.cancel()
+        bridgeObservationTask?.cancel()
         let run = active?.id; active = nil
         for wait in pending.values {
             wait.timeout?.cancel()
@@ -1075,6 +1225,7 @@ public actor PiSession: ProviderSession {
     public func close() async {
         if let closeTask { await closeTask.value; return }
         closing = true; preparing = nil; prepared = nil; steeringPreparation = nil; versionTask?.cancel(); settleTask?.cancel(); reader?.cancel()
+        bridgeObservationTask?.cancel()
         for wait in pending.values {
             wait.timeout?.cancel()
             if wait.steering { wait.continuation.resume(throwing: ProviderSteeringError(wait.writeStarted ? .outcomeUncertain : .rejected)) }
@@ -1083,6 +1234,7 @@ public actor PiSession: ProviderSession {
         for (id, pending) in ui { pending.deadline?.cancel(); output.yield(.sessionApprovalDismissed(id)) }; ui.removeAll(); active = nil
         let channel = channel, reader = reader, scratch = scratch, steering = Array(steeringTasks.values), version = versionTask
         let history = Array(historyTasks.values), worker = historyWorker, workerReader = historyWorkerReader
+        let bridgeObservation = bridgeObservationTask
         historyWorker = nil; historyWorkerReader = nil; historyWorkerRequests.removeAll()
         for task in steering { task.cancel() }
         for task in history { task.cancel() }
@@ -1092,6 +1244,7 @@ public actor PiSession: ProviderSession {
             await worker?.close(); await workerReader?.value
             for task in steering { _ = await task.result }
             for task in history { _ = await task.result }
+            await bridgeObservation?.value
             if let version { _ = await version.result }
             if let scratch { try? FileManager.default.removeItem(at: scratch) }
         }

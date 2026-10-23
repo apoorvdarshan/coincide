@@ -412,7 +412,7 @@ public struct PiHistoryReviewEvidence: Codable, Sendable, Equatable {
             for input in owner.inputs {
                 guard let id = input.nativeUserEntryID else { continue }
                 guard let position = positions[id], position > previousPosition, mapped.insert(id).inserted,
-                      branch[position].isUserMessage, try PiProtocol.inputDigest(branch[position]) == input.inputDigest else { throw PiHistoryGraphError(.invalidWindow) }
+                      branch[position].isUserMessage, try PiProtocol.inputDigest(branch[position]) == input.nativeInputDigest else { throw PiHistoryGraphError(.invalidWindow) }
                 previousPosition = position
             }
             inputs.append(owner)

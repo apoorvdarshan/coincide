@@ -83,9 +83,19 @@ public struct PiHistoryService: Sendable {
             let owners = consumer.inputs.filter { $0.kind != .compact }
             guard !users.isEmpty, users.count == owners.count else { return .unavailable }
             let entries = Dictionary(uniqueKeysWithValues: file.graph.entries.map { ($0.id, $0) })
-            for (id, owner) in zip(users, owners) {
+            let bridged = preparation.openingInput.bridgeReservation != nil
+                ? try PiInputBridge.prove(reservations: owners.compactMap(\.bridgeReservation), entries: file.graph.entries,
+                    baseline: preparation.baseline, finalObservation: observation) : []
+            for (index, pair) in zip(users, owners).enumerated() {
+                let (id, owner) = pair
+                let digest: String
+                if owner.bridgeReservation != nil {
+                    guard bridged.indices.contains(index), bridged[index].nativeUserEntryID == id,
+                          owner.bridgeEvidence == nil || owner.bridgeEvidence == bridged[index] else { return .unavailable }
+                    digest = bridged[index].expandedDigest
+                } else { digest = owner.inputDigest }
                 guard owner.nativeUserEntryID == nil || owner.nativeUserEntryID == id,
-                      let entry = entries[id], try PiProtocol.inputDigest(entry) == owner.inputDigest else { return .unavailable }
+                      let entry = entries[id], try PiProtocol.inputDigest(entry) == digest else { return .unavailable }
             }
             let revision = try PiHistoryFileRevision(file)
             guard consumer.persistedFileRevision == nil || consumer.persistedFileRevision == revision else { return .unavailable }

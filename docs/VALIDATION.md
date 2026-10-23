@@ -1,5 +1,81 @@
 # Validation record
 
+## 2026-10-23 — native Pi/OpenCode commands, skills and expanded-input ownership
+
+- Full `NSUnbufferedIO=YES swift test --no-parallel` exits zero with 1659
+  declarations: 1647 pass and twelve optional checks skip. Core's 1430
+  declarations across eight suites finish in 333.761 seconds; native view/store
+  210 in 67.770 seconds, terminal six in 1.389 seconds and Markdown thirteen in
+  0.138 seconds. Eleven skips are installed-provider checks; the twelfth is the
+  opt-in full Pi package test, independently exercised below.
+- After the last narrow Pi hook admission refinement, all fifteen affected
+  bridge, crash-recovery, compaction and intact-package declarations pass in
+  3.418 seconds. This includes seven selected-skill refusal cases, exact handled
+  refusal for foreign/replayed/invalid input and all later inputs on the invalid
+  bridge. The actual pinned-package case passes again in 1.564 seconds. Unrelated
+  production code and native UI remain as checked by the full run above.
+- Focused command, metadata, Engine, bridge and composer checks pass 48
+  declarations: 43 Core declarations in 2.777 seconds and five native view/store
+  declarations in 1.966 seconds. Parameterized cases cover partial catalogs,
+  conflicts, disabled invocations, exact native IDs, captured settings,
+  cancellation, stale ownership, callback-before-terminal and
+  terminal-before-callback ordering, uncertain delivery, FIFO and restart.
+  Sixteen offscreen command/composer layouts cover narrow/wide, light/dark and
+  both text directions; these do not establish hosted interactive acceptance.
+- Real loopback HTTP/SSE tests pass both successful v2 callback orderings and
+  the ambiguous/lost-root cases. They exercise the default production factory,
+  actor, Engine and SQLite with actual native root IDs, unchanged authored
+  text, held FIFO and no ordinary-prompt fallback. The callback must finish
+  before terminal completion; bounded post-callback message/inbox inspection
+  refuses multiple roots. This is local ownership proof, not external-writer CAS.
+- Pi input reservations are committed before publication/write. The app-owned
+  extension binds the authored digest to its actual native user object; terminal
+  reads independently verify nonce, marker adjacency, actual expanded input,
+  complete baseline and ordered owners. Selected skill read/UTF-8/size failures
+  and ambiguous names invalidate admission instead of proving literal fallback.
+  Unknown variables remain literal. Native templates and leading `/skill:`
+  expansion remain in Pi's own pipeline. Normal `/compact` now uses its actual
+  RPC, optional instructions and completed/quiet observation without a fake turn.
+- The opt-in intact-package Engine/Session check passes in 1.581 seconds using
+  Pi 0.80.5, four locally implemented synthetic model streams, private homes,
+  explicit fixture resources and an OS network denial. It proves repeated and
+  multiple inline skills, active steering while the first stream is held,
+  actual native template and leading-skill expansion, nonce-bound actual native
+  user mappings, digest-only journal records, SQLite rebuild and restart without
+  replay. No real account, credential or model-service request is exercised.
+  The test is enabled only by `COINCIDE_NATIVE_PI_PACKAGE_ROOT` and
+  `COINCIDE_NATIVE_PI_NODE`; it does not install a runtime or use the user's
+  provider data. Its initial harness-only failure enforced the project's exact
+  registered workspace spelling; the fixture now captures that same spelling.
+- Reusable `script/verify_pi_native_history.py` independently verifies all 821
+  original files against the exact official 0.80.5 archive and 128 installed
+  dependency versions against its published runtime lock. Dependencies were
+  prepared in private scratch without installation scripts; the original
+  package manifest/payload remain unchanged. Actual network-denied RPC passes
+  historical fork, first-user cut and CLI `--fork`, with unchanged source,
+  exact retained entries and zero-exit owned drain. This check sends no prompt
+  and has no credentials. The first-user result contains four model/thinking
+  metadata entries but no persisted candidate file: production still refuses
+  that unsupported nonempty-unpersisted reset rather than calling it empty.
+- Four crash-inspection cases independently reprove expanded native inputs from
+  the exact anchored file after loss before terminal journal persistence; wrong
+  nonces, later replacement and foreign users remain unavailable. Storage 40
+  preserves bridge ownership; migrations retain older versions and refuse 41.
+- The new Node bridge helper originally stalled in Foundation `waitUntilExit`
+  after its child exited, confirmed by a process sample. It now uses the existing
+  bounded asynchronous `ProcessChannel`, owns cancellation/drain, and passes all
+  retirement, unsafe-file, replay and selected-skill-failure cases without longer
+  deadlines. Production process handling was not changed by this test fix.
+- All 67 Python harness checks pass in 4.003 seconds. The compiled async-default
+  guard passes on 873 Mach-O objects (app 226, Core 567), with three local default
+  records and zero weak records. The final app packages with `--build-only`,
+  passes deep strict signature verification and renders bundled math through
+  `--verify-resources`. These checks neither open an app window nor install a
+  system app.
+- Full provider parity, authenticated acceptance, MCP, session import, usage and
+  hosted interactive command/skill acceptance remain unfinished. Current native
+  UI CI results remain separate from the offline and isolated-package evidence.
+
 ## 2026-10-23 — durable Pi fork, rewind and explicit fresh context
 
 - Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with
@@ -55,10 +131,13 @@
 - Hosted [run 39863932911](https://github.com/apoorvdarshan/coincide/actions/runs/39863932911)
   at `5c71a5c92006b02f3569119dd46408f246747380` passes its Swift build/test,
   async-default guard, packaging, signature and resource-loading steps. Its
-  separate 21-scenario native GUI job is still running when this batch is
-  recorded. The current harness also repairs two Claude-history lookups to use
-  the Codable `review.id`; the computed operation `id` is not a serialized key.
-  That repair does not establish a hosted GUI result.
+  separate 21-scenario native GUI job finishes with eighteen passes and three
+  Claude-history failures at two stale operation-ID lookups. The harness repair
+  in `b69e59d9d835dea196a7f291e2eb026ec0040db5` uses Codable `review.id`;
+  the computed operation `id` is not a serialized key. That repair's hosted
+  [run 39871242182](https://github.com/apoorvdarshan/coincide/actions/runs/39871242182)
+  passes its production build/test, async guard, packaging, signature and
+  resource checks. Its separate 24-scenario native GUI result is pending.
 - Pi 0.80.5 installed-package/RPC acceptance remains unverified. In particular,
   nonempty cuts that have not produced a native session file, including a
   model/thinking-only first-user reset, remain unavailable rather than being

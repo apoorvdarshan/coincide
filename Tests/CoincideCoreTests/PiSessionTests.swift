@@ -113,6 +113,41 @@ private func piObservedStart(_ peer: PiPeer, _ thread: CodingThread) async throw
     }
 }
 
+@Test func piNormalCompactUsesNativeRPCAndWaitsForItsActualCompletionWithoutInventingATurn() async throws {
+    try await withPi(["holdCompact": .bool(true)]) { peer in
+        let first = peer.thread()
+        let send = Task { try await peer.session.send(text: " /compact\nKeep decisions 工作 ", thread: first) }
+        do {
+            try await piEventually { try peer.frames().contains { $0["type"] == .string("compact") } }
+            #expect(await peer.observed.completions.isEmpty)
+            #expect(await peer.observed.turnIDs.isEmpty)
+            let command = try #require(peer.frames().first { $0["type"] == .string("compact") })
+            #expect(command["customInstructions"] == .string("Keep decisions 工作"))
+            #expect(command["message"] == .null && command["images"] == .null)
+            try peer.set("holdCompact", .bool(false))
+            try await send.value
+            try await piEventually { await peer.observed.completions.count == 1 }
+            #expect(await peer.observed.completions.first?.0 == first.activeRun?.id)
+            #expect(try peer.frames().filter { $0["type"] == .string("prompt") }.isEmpty)
+            try await peer.session.send(text: "/compacted is ordinary text", thread: peer.thread())
+            #expect(try peer.frames().filter { $0["type"] == .string("prompt") }.count == 1)
+            try peer.signal("finish")
+            try await piEventually { await peer.observed.completions.count == 2 }
+        } catch {
+            try? peer.set("holdCompact", .bool(false)); send.cancel(); _ = try? await send.value; throw error
+        }
+    }
+}
+
+@Test func piCompactRejectsImagesBeforeLaunchingOrWriting() async throws {
+    try await withPi { peer in
+        let input = ProviderInput(text: "/compact", images: [.init(mimeType: "image/png", data: Data([1, 2, 3]))])
+        await #expect(throws: ProviderSteeringError.self) { try await peer.session.send(input: input, thread: peer.thread()) }
+        let frames = try peer.frames()
+        #expect(frames.isEmpty)
+    }
+}
+
 @Test func piPromptACKAndAgentEndDoNotReleaseUntilNativeSettledIdleWithExactUTF8AndTools() async throws {
     try await withPi(["foreignResponse": .bool(true)]) { peer in
         let thread = peer.thread()

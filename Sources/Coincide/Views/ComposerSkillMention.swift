@@ -51,13 +51,15 @@ struct ComposerSkillMention: Equatable {
         return .init(range: range, selection: range, expectedText: String(text[selected]), query: "")
     }
     func inserting(token: String, into latest: String, selection: NSRange) -> (text: String, selection: NSRange)? {
-        guard token.hasPrefix("$"), token.count > 1, !token.contains(where: { $0.isWhitespace }),
-              selection == self.selection,
+        guard token.hasPrefix("$"), token.count > 1, !token.contains(where: { $0.isWhitespace }) else { return nil }
+        return replacing(with: token + " ", into: latest, selection: selection)
+    }
+    func replacing(with replacement: String, into latest: String, selection: NSRange) -> (text: String, selection: NSRange)? {
+        guard selection == self.selection,
               ComposerUTF16Selection.isValid(selection, in: latest), ComposerUTF16Selection.isValid(range, in: latest),
               let target = Range(range, in: latest), String(latest[target]) == expectedText else { return nil }
         var end = target.upperBound
         if end < latest.endIndex && latest[end] == " " { end = latest.index(after: end) }
-        let replacement = token + " "
         let result = latest.replacingCharacters(in: target.lowerBound..<end, with: replacement)
         return (result, .init(location: range.location + replacement.utf16.count, length: 0))
     }

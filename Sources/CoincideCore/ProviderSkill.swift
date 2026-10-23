@@ -13,10 +13,15 @@ public struct ProviderSkill: Sendable, Equatable, Identifiable {
     public let scope: String
     public let enabled: Bool
     public let userInvocable: Bool
+    /// Opaque provider identity, distinct from the skill's advertised name.
+    /// It never authorizes opening the display path.
+    public let nativeID: String?
     public init(name: String, path: String, displayName: String? = nil, description: String = "",
-                shortDescription: String? = nil, scope: String = "", enabled: Bool = true, userInvocable: Bool = true) {
+                shortDescription: String? = nil, scope: String = "", enabled: Bool = true, userInvocable: Bool = true,
+                nativeID: String? = nil) {
         self.name = name; self.path = path; self.displayName = displayName; self.description = description
         self.shortDescription = shortDescription; self.scope = scope; self.enabled = enabled; self.userInvocable = userInvocable
+        self.nativeID = nativeID
     }
     public var id: String {
         var bytes = Data()
@@ -33,6 +38,7 @@ public struct ProviderSkill: Sendable, Equatable, Identifiable {
         try SkillValidation.text(description, maximum: 16_384, multiline: true)
         if let displayName { try SkillValidation.text(displayName, maximum: 256) }
         if let shortDescription { try SkillValidation.text(shortDescription, maximum: 4_096, multiline: true) }
+        if let nativeID { try SkillValidation.text(nativeID, maximum: 4_096, empty: false) }
     }
     /// Pinned T3's skill-token grammar, including its currency/number exclusion.
     public var canInvokeFromComposer: Bool {

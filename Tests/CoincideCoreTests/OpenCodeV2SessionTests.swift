@@ -763,6 +763,155 @@ private actor OpenCodeSessionRecord {
     static func inner(_ event: ProviderEvent) -> ProviderEvent { if case .context(_, let inner) = event { inner } else { event } }
 }
 
+@Test func openCodeV2NativeSkillsAttachExactIDsInMentionOrderAndPreserveLiteralText() async throws {
+    try await withOpenCodeV2Session { f in
+        let text = "Inspect $skill-b $skill-a $skill-b with $HOME and $100"
+        try await f.session.send(text: text, thread: f.thread())
+        let calls = await f.transport.calls
+        let body = try #require(calls.first { $0.path.last == "prompt" }?.body)
+        #expect(body["text"] == .string(text))
+        #expect(body["skills"] == .array([.object(["id": .string("skill-b")]), .object(["id": .string("skill-a")])]))
+        #expect(!calls.contains { $0.path.last == "command" })
+    }
+}
+
+@Test func openCodeV2ActiveSteerAttachesNativeSkillsButRefusesNativeCommandsBeforeWrite() async throws {
+    try await withOpenCodeV2Session { f in
+        let thread = try await f.readyToSteer()
+        let target = try #require(thread.activeRun?.nativeTurnID)
+        let receipt = try await f.session.steer(input: .init(text: "also $skill-b"), thread: thread,
+            expectedTurnID: target, clientMessageID: "skill-steer")
+        #expect(receipt.turnID == target)
+        let calls = await f.transport.calls
+        let body = try #require(calls.last { $0.path.last == "prompt" }?.body)
+        #expect(body["delivery"] == .string("steer"))
+        #expect(body["skills"] == .array([.object(["id": .string("skill-b")])]))
+        let before = calls.count
+        await #expect(throws: ProviderSteeringError(.unsupported)) {
+            try await f.session.steer(input: .init(text: "/review now"), thread: thread,
+                expectedTurnID: target, clientMessageID: "command-steer")
+        }
+        let after = await f.transport.calls
+        #expect(after.count == before)
+    }
+}
+
+@Test func openCodeV2CommandAdoptsObservedNativeInboxInsteadOfInventingCallerMessageID() async throws {
+    try await withOpenCodeV2Session { f in
+        try await f.session.send(text: "/review quoted \"argument\"\nline two", thread: f.thread())
+        try await openCodeSessionEventually { await f.record.turns == ["msg_native_command"] }
+        let calls = await f.transport.calls
+        let body = try #require(calls.first { $0.path.last == "command" }?.body)
+        #expect(body["name"] == .string("review"))
+        #expect(body["text"] == .string("quoted \"argument\"\nline two"))
+        #expect(body["delivery"] == .string("queue"))
+        #expect(body["id"] == .null && body["resume"] == .null)
+        #expect(!calls.contains { $0.path.last == "prompt" })
+        let before = await f.record.completions
+        #expect(before.isEmpty)
+        try await f.transport.text("native command result", assistant: "msg_assistant_one")
+        try await f.transport.emit(.executionSucceeded)
+        try await openCodeSessionEventually { await f.record.completions == [.idle] }
+    }
+}
+
+@Test(arguments: [false, true])
+func openCodeV2CommandTerminalBeforeCallbackReplyCannotReleaseSuccessorOrHideLostReply(lost: Bool) async throws {
+    try await withOpenCodeV2Session(mode: lost ? .holdPromptReplyLost : .holdPromptReply) { f in
+        let send = Task { try await f.session.send(text: "/review held callback", thread: f.thread()) }
+        do {
+            try await openCodeSessionEventually { await f.record.turns == ["msg_native_command"] }
+            try await f.transport.emit(.executionSucceeded)
+            try await f.transport.snapshotBarrier("Terminal reached while callback still owns the command")
+            try await openCodeSessionEventually { await f.record.assistantText.contains("Terminal reached") }
+            let before = await f.record.completions
+            #expect(before.isEmpty)
+            await #expect(throws: OpenCodeV2SessionError.busy) { try await f.session.send(text: "Must not start early", thread: f.thread()) }
+            let calls = await f.transport.calls
+            #expect(!calls.contains { $0.path.last == "prompt" })
+            await f.transport.releasePrompt()
+            if lost {
+                await #expect(throws: OpenCodeV2SessionError.uncertainDelivery) { try await send.value }
+                try await openCodeSessionEventually { await f.record.connectionFailures == 1 }
+                let completions = await f.record.completions
+                #expect(completions.isEmpty)
+            } else {
+                try await send.value
+                try await openCodeSessionEventually { await f.record.completions == [.idle] }
+            }
+        } catch { await f.transport.releasePrompt(); _ = await send.result; throw error }
+    }
+}
+
+@Test func openCodeV2SecondRootAfterFirstTerminalIsAmbiguousUntilCallbackReturns() async throws {
+    try await withOpenCodeV2Session(mode: .holdPromptReply) { f in
+        let send = Task { try await f.session.send(text: "/review multiple roots", thread: f.thread()) }
+        do {
+            try await openCodeSessionEventually { await f.record.turns == ["msg_native_command"] }
+            try await f.transport.emit(.executionSucceeded)
+            try await f.transport.emit(.inboxEnqueued, fields: ["inboxID": .string("msg_second_command_root"),
+                "item": .object(["type": .string("user"), "delivery": .string("queue"), "payload": .object(["text": .string("Second native root")])])])
+            try await openCodeSessionEventually { await f.record.connectionFailures == 1 }
+            await f.transport.releasePrompt()
+            await #expect(throws: OpenCodeV2SessionError.uncertainDelivery) { try await send.value }
+            let completions = await f.record.completions, calls = await f.transport.calls
+            #expect(completions.isEmpty)
+            #expect(!calls.contains { $0.path.last == "prompt" })
+        } catch { await f.transport.releasePrompt(); _ = await send.result; throw error }
+    }
+}
+
+@Test func openCodeV2CompactionAdmissionIsNotExecutionCompletionAndHasNoFakeUserTurn() async throws {
+    try await withOpenCodeV2Session { f in
+        try await f.session.send(text: "/compact", thread: f.thread())
+        let before = await f.record.completions
+        #expect(before.isEmpty)
+        try await f.transport.beginCompaction()
+        try await f.transport.emit(.executionSucceeded)
+        try await openCodeSessionEventually { await f.record.completions == [.idle] }
+        let calls = await f.transport.calls, turns = await f.record.turns
+        let body = try #require(calls.first { $0.path.last == "compact" }?.body)
+        #expect(body["delivery"] == .string("queue"))
+        #expect(body["id"].string?.hasPrefix("msg_") == true)
+        #expect(turns.isEmpty)
+        #expect(!calls.contains { $0.path.last == "prompt" || $0.path.last == "command" })
+    }
+}
+
+@Test func openCodeV2ColdCommandScanRereadsOnlyAfterBothExactWorkspaceSignals() async throws {
+    try await withOpenCodeV2Session { f in
+        await f.transport.setCatalogCold(true)
+        let read = Task { try await f.session.providerCommands() }
+        try await openCodeSessionEventually { await f.transport.commandReads == 1 }
+        try await f.transport.catalogSignal("command.updated", directory: f.root.path + "/foreign")
+        try await f.transport.catalogSignal("skill.updated", directory: f.root.path)
+        let before = await f.transport.commandReads
+        #expect(before == 1)
+        await f.transport.setCatalogCold(false)
+        try await f.transport.catalogSignal("command.updated", directory: f.root.path)
+        let inventory = try await read.value
+        #expect(inventory.commands.contains { $0.name == "review" })
+        #expect(!inventory.isPartial)
+        let after = await f.transport.commandReads
+        #expect(after == 2)
+    }
+}
+
+@Test func openCodeV2CancelColdCatalogWaitDoesNotCloseSharedEventConnection() async throws {
+    try await withOpenCodeV2Session { f in
+        await f.transport.setCatalogCold(true)
+        let read = Task { try await f.session.providerCommands() }
+        try await openCodeSessionEventually { await f.transport.commandReads == 1 }
+        read.cancel()
+        await #expect(throws: CancellationError.self) { try await read.value }
+        let closed = await f.transport.closeCount
+        #expect(closed == 0)
+        await f.transport.setCatalogCold(false)
+        let inventory = try await f.session.providerCommands()
+        #expect(inventory.commands.contains { $0.name == "review" })
+    }
+}
+
 private struct OpenCodeSessionFixture: Sendable {
     let root: URL
     let configuration: OpenCodeConfiguration
@@ -830,6 +979,8 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
     var promptHeldBeforeAdmission = false
     var nativeAdmissions = 0
     var closeCount = 0
+    var commandReads = 0
+    private var catalogCold = false
     var promptCount: Int { calls.filter { $0.method == "POST" && $0.path.last == "prompt" }.count }
     var nativeID: String? { info?["id"].string }
 
@@ -843,6 +994,29 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
         .init(server: .init(generation: .v2, version: .init(major: 2, minor: 1, patch: 2), processIdentifier: 1), directory: directory.path,
               models: [.init(selection: model, name: "Fixture", variants: ["balanced", "fast"], enabled: true, input: ["text", "image"], output: ["text"], tools: true)],
               agents: [.init(id: "build", name: "Build", description: nil, mode: .primary, hidden: false)], defaults: [model])
+    }
+    func commands(directory: URL) async throws -> ProviderCommandInventory {
+        commandReads += 1
+        return try ProviderCommandCatalog.openCode(commands: .array(catalogCold ? [] : [.object(["name": .string("review")])]),
+            skills: .array(catalogCold ? [] : [
+                .object(["id": .string("skill-a"), "name": .string("Friendly A"), "path": .string(directory.path + "/a/SKILL.md")]),
+                .object(["id": .string("skill-b"), "name": .string("Friendly B"), "path": .string(directory.path + "/b/SKILL.md")])]),
+            generation: .v2, cwd: directory.path)
+    }
+    func setCatalogCold(_ value: Bool) { catalogCold = value }
+    func catalogSignal(_ kind: String, directory: String) throws {
+        let value: JSONValue = .object(["type": .string(kind), "location": .object(["directory": .string(directory)]), "data": .object([:])])
+        let data = try JSONEncoder().encode(value)
+        raw(String(decoding: data, as: UTF8.self))
+    }
+    func request(method: String, path: [String], query: [URLQueryItem], body: JSONValue?) async throws -> OpenCodeHTTPResponse {
+        if method == "GET", path.last == "message" {
+            calls.append(.init(method: method, path: path, body: body))
+            let rows: [JSONValue] = inputID.map { [.object(["id": .string($0), "type": .string("user"),
+                "time": .object(["created": .number(1)]), "text": .string("Native command expansion")])] } ?? []
+            return try response(.object(["data": .array(rows), "cursor": .object([:])]))
+        }
+        return try await request(method: method, path: path, body: body)
     }
     func setMode(_ mode: OpenCodeSessionFault) { self.mode = mode }
     func releasePrompt() async { await promptGate.release() }
@@ -882,6 +1056,20 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
         }
         if method == "PATCH" { setInfo("permissions", body?["permissions"] ?? .null); return empty() }
         if method == "POST", path.last == "model" { setInfo("model", body?["model"] ?? .null); return empty() }
+        if method == "POST", path.last == "command" {
+            inputID = "msg_native_command"
+            try beginInput()
+            let saved = mode
+            if saved == .holdPromptReply || saved == .holdPromptReplyLost { await promptGate.wait() }
+            guard !closed else { throw CancellationError() }
+            if saved == .holdPromptReplyLost { throw OpenCodeHTTPError.transportFailure }
+            return empty()
+        }
+        if method == "POST", path.last == "compact" {
+            inputID = body?["id"].string
+            return try response(.object(["data": .object(["id": body?["id"] ?? .null, "sessionID": .string(nativeID!),
+                "type": .string("compaction"), "delivery": .string("queue"), "payload": .object([:])])]))
+        }
         if method == "POST", path.last == "prompt" {
             inputID = body?["id"].string
             let saved = body ?? .null
@@ -907,6 +1095,12 @@ private actor OpenCodeSessionFixtureTransport: OpenCodeV2SessionTransport {
         }
         if method == "DELETE" || path.last == "reply" { return empty() }
         throw CoincideError("The private OpenCode fixture received an unexpected route.")
+    }
+    func beginCompaction() throws {
+        guard let inputID else { throw CoincideError("The private fixture has no compaction.") }
+        try emit(.inboxEnqueued, fields: ["inboxID": .string(inputID), "item": .object(["type": .string("compaction"), "delivery": .string("queue"), "payload": .object([:])])])
+        try emit(.executionStarted)
+        try emit(.inboxDelivered, fields: ["inboxID": .string(inputID)])
     }
     func beginInput(assistant: String = "msg_assistant_one", includeStart: Bool = true) throws {
         guard let inputID else { throw CoincideError("The private fixture has no admitted input.") }

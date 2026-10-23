@@ -6,7 +6,7 @@ admission, then save an exact live-history baseline before sending. Reviewed
 fork/rewind, native lifecycle controls and explicit recovery are connected to
 the durable workspace ledger. The current mutation profile is exactly Pi
 0.80.5. Full T3 parity remains unfinished; this implementation does not establish
-installed-package or model acceptance, session browsing/import, or compatibility
+authenticated model acceptance, session browsing/import, or compatibility
 with later mutation profiles. See [validation evidence](VALIDATION.md).
 
 ## Captured runtime and admission
@@ -46,6 +46,33 @@ settles or is canceled; releasing it transmits nothing. A proven-unsent request
 may follow the existing explicit-input fallback policy in a separate new run.
 Unknown delivery is never replayed.
 
+## Native commands and expanded skills
+
+The composer discovers Pi's native extension commands, prompt templates and
+skills through bounded `get_commands` metadata. It keeps the builtin `/compact`
+separate and sends that selection through native `compact`, including optional
+instructions; its awaited response and quiet-state read establish completion.
+It does not create a fake user entry or provider turn ID.
+
+Captured runtimes install an app-owned RPC input hook for T3-style inline
+`$skill` mentions. Only uniquely advertised skills can expand; repeated mentions
+are deduplicated, leading native `/skill:` expansion stays with Pi, and prompt
+templates still run in Pi's own pipeline. Unknown variables remain literal.
+Ambiguous names or a selected skill that cannot be read stop admission and
+invalidate that process's bridge. A missing bridge cannot silently execute a
+known skill as ordinary text.
+
+Engine saves a one-use reservation before the actor publishes its private
+sidecar and writes the prompt. The generated hook binds the authored digest to
+the same native user-message object and appends a digest-only marker immediately
+before that user entry. The actor independently hashes the actual native entry,
+checks marker adjacency, exact nonce, session, ordered ownership and the complete
+unchanged baseline. Terminal proof and read-only crash inspection both reprove
+this mapping. A hook notification alone never establishes native ownership.
+Journal records contain bounded identities and digests, not skill bodies or
+expanded prompt copies. Steering waits for independently observed consumption of
+the previous reservation; uncertain input is never replayed.
+
 ## Native evidence and its limits
 
 Append inventory and active ancestry are separate. The terminal read requires
@@ -68,7 +95,7 @@ Stale admission markers are ordinary command rejections. Malformed proof from
 the current scoped provider closes that runtime without failing the workspace
 database or unrelated conversations. An obsolete outer run context stays ignored.
 Process-loss recovery retains the preparation and audit without replaying input.
-Workspace storage version 39 prevents an older binary from dropping the new
+Workspace storage version 40 prevents an older binary from dropping the new
 capture and admission fields.
 
 ## Reviewed native history
