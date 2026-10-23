@@ -10,6 +10,9 @@ struct ContentView: View {
     @State private var agentSessionImportSheetPresented = false
     @State private var scriptThread: CodingThread?
     @State private var settlementThread: CodingThread?
+    @Environment(KeybindingsStore.self) private var keybindings: KeybindingsStore?
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     var body: some View {
         NavigationSplitView {
             SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true },
@@ -91,9 +94,17 @@ struct ContentView: View {
         }
         .onDisappear { store.unregisterTerminals(terminals) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in terminals.suspend() }
+        .mainWindowKeyboard(store: store, keybindings: keybindings) {
+            MainWindowPresentations(newProject: { newProjectSheetPresented = true }, cloneRepository: { cloneSheetPresented = true },
+                importAgentProjects: { agentSessionImportSheetPresented = true }, settle: { settlementThread = $0 }, runScript: { scriptThread = $0 },
+                toggleTerminal: { toggleTerminal() }, terminalVisible: { terminals.panelVisible },
+                newWindow: { openWindow(id: MainWindowCoordinator.sceneID) }, openRemote: { openWindow(id: RemoteWorkspaceStore.sceneID) },
+                openSettings: { openSettings() })
+        }
     }
     private func toggleTerminal() {
         terminals.panelVisible.toggle()
+        if terminals.panelVisible, let thread = store.selectedThread { terminals.requestFocus(threadID: thread.id) }
         guard terminals.panelVisible, !terminals.isRestoring, let thread = store.selectedThread,
               terminals.sessions[thread.id, default: []].isEmpty, store.canOpenTerminal(for: thread) else { return }
         do { try terminals.add(for: thread) } catch { store.errorMessage = error.localizedDescription }

@@ -147,6 +147,7 @@ struct SidebarView: View {
         } icon: {
             Image(systemName: thread.isPinned ? "pin" : thread.isSettled ? "checkmark.circle" : thread.state == .running ? "circle.dotted" : "bubble.left")
         }
+        .overlay(alignment: .topTrailing) { ThreadJumpHintBadge(threadID: thread.id) }
         .tag(thread.id)
         .accessibilityIdentifier("thread-\(thread.id.uuidString)")
         .contextMenu {

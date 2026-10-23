@@ -33,6 +33,7 @@ final class TerminalWorkspaceStore {
         workspacePaths[thread.id] = thread.workspacePath
         sessions[thread.id, default: []].append(session)
         selection[thread.id] = session.id
+        session.requestFocus()
     }
     @discardableResult func run(_ invocation: ProjectScriptInvocation, for thread: CodingThread) throws -> LocalTerminalSession {
         try canCreate()
@@ -42,7 +43,13 @@ final class TerminalWorkspaceStore {
         workspacePaths[thread.id] = thread.workspacePath
         sessions[thread.id, default: []].append(session)
         selection[thread.id] = session.id
+        session.requestFocus()
         return session
+    }
+    /// An explicit open or tab switch focuses that terminal (T3 keyboard focus).
+    func requestFocus(threadID: UUID) {
+        let tabs = sessions[threadID] ?? []
+        (tabs.first { $0.id == selection[threadID] } ?? tabs.first)?.requestFocus()
     }
     func close(_ session: LocalTerminalSession, threadID: UUID) {
         closeOwned(session)

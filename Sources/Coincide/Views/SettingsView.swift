@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage("followUpBehavior") private var followUpBehavior = ComposerFollowUpBehavior.queue.rawValue
     @State private var provider = ProviderKind.codex
     @State private var editingAgent: ACPAgentConfiguration?
+    @Environment(KeybindingsStore.self) private var keybindings: KeybindingsStore?
     var body: some View {
         TabView {
             Form {
@@ -92,6 +93,7 @@ struct SettingsView: View {
                 Link("T3 Code", destination: URL(string: "https://github.com/pingdotgg/t3code")!)
                 Text("Coincide is an independent Swift port. T3 Code source is copyright © 2026 T3 Tools Inc., distributed under the MIT license.").font(.caption).foregroundStyle(.secondary)
             }.formStyle(.grouped).tabItem { Label("General", systemImage: "gear") }
+            if let keybindings { KeybindingsSettingsView(keybindings: keybindings).tabItem { Label("Keyboard", systemImage: "keyboard") } }
         }.padding().frame(width: 650, height: 520)
             .task(id: provider) {
                 if provider == .codex, store.codexRuntime.configuration.authenticationMode == .cliDefault { await store.refreshCodexAccount() }

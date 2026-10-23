@@ -74,6 +74,18 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
             isCommand: isCommand, exitCode: code)
     }
 
+    /// Focuses the terminal now, or once its view joins a window. Restoration and
+    /// thread switches never call this, so they leave the composer's focus alone.
+    /// - Parameter origin: the responder that had focus when the user asked; an
+    ///   unknown origin (no key window) focuses on attach.
+    public func requestFocus(from origin: NSResponder? = NSApp.keyWindow?.firstResponder) {
+        guard let view = view as? WorkspaceTerminalView else { return }
+        if let window = view.window { window.makeFirstResponder(view); return }
+        view.pendingFocus = .init(origin: origin, hasOrigin: origin != nil)
+    }
+    /// Whether a responder is a native terminal view, for keyboard focus contexts.
+    public static func isTerminalResponder(_ responder: NSResponder?) -> Bool { responder is TerminalView }
+
     public func showFind() {
         let item = NSMenuItem(); item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
         view.performTextFinderAction(item)
@@ -155,9 +167,17 @@ public final class LocalTerminalSession: Identifiable, LocalProcessTerminalViewD
 }
 
 private final class WorkspaceTerminalView: LocalProcessTerminalView {
+    struct PendingFocus { weak var origin: NSResponder?; let hasOrigin: Bool; let deadline = Date().addingTimeInterval(3) }
+    var pendingFocus: PendingFocus?
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if let window { window.makeFirstResponder(self) }
+        // An explicit open focuses the terminal once it is attached, unless the
+        // user has moved focus elsewhere (for example back to typing) meanwhile.
+        guard let window, let pending = pendingFocus else { return }
+        pendingFocus = nil
+        let current = window.firstResponder
+        guard Date() < pending.deadline, !pending.hasOrigin || current === pending.origin || current === window || current == nil else { return }
+        window.makeFirstResponder(self)
     }
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .textArea }

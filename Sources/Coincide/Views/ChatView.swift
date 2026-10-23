@@ -88,6 +88,7 @@ struct ChatView: View {
                             ForEach(thread.visibleMessages) { message in
                                 MessageView(store: store, message: message, providerName: thread.providerName, workspacePath: thread.workspacePath,
                                             openFile: { url, line in store.openFile(url, line: line, workspacePath: thread.workspacePath) })
+                                    .threadFindHighlight(message.id)
                             }
                             if thread.state == .running || thread.state == .awaitingApproval {
                                 HStack(spacing: 8) {
@@ -107,6 +108,7 @@ struct ChatView: View {
                     }
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: thread.visibleMessages.count) { proxy.scrollTo("latest", anchor: .bottom) }
+                    .threadFind(threadID: threadID, messages: thread.visibleMessages, proxy: proxy)
                 }
                 VStack(spacing: 10) {
                     if let group = store.projectGroup(containing: thread.projectID), group.members.count > 1 {

@@ -20,7 +20,7 @@ struct TerminalPanel: View {
                     HStack(spacing: 8) {
                         ForEach(sessions) { session in
                             HStack(spacing: 6) {
-                                Button(session.title) { terminals.selection[thread.id] = session.id }
+                                Button(session.title) { terminals.selection[thread.id] = session.id; session.requestFocus() }
                                     .foregroundStyle(selected?.id == session.id ? .primary : .secondary)
                                     .lineLimit(1).frame(maxWidth: 180)
                                 Button {

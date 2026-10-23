@@ -87,10 +87,13 @@ final class MainWindowCoordinator {
 struct MainWindowCommands<NewItemContent: View>: Commands {
     @Environment(\.openWindow) private var openWindow
     let coordinator: MainWindowCoordinator
+    private let newWindowShortcut: KeyboardShortcut?
     private let newItems: NewItemContent
 
-    init(coordinator: MainWindowCoordinator, @ViewBuilder newItems: () -> NewItemContent) {
+    init(coordinator: MainWindowCoordinator, newWindowShortcut: KeyboardShortcut? = KeyboardShortcut("n", modifiers: [.command, .option]),
+         @ViewBuilder newItems: () -> NewItemContent) {
         self.coordinator = coordinator
+        self.newWindowShortcut = newWindowShortcut
         self.newItems = newItems()
     }
 
@@ -102,7 +105,7 @@ struct MainWindowCommands<NewItemContent: View>: Commands {
         CommandGroup(replacing: .newItem) {
             newItems
             Button("New Window") { coordinator.newWindow() }
-                .keyboardShortcut("n", modifiers: [.command, .option])
+                .keyboardShortcut(newWindowShortcut)
                 .accessibilityIdentifier("main-window-new")
         }
     }

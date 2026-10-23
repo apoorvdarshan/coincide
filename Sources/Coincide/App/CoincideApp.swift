@@ -33,6 +33,7 @@ struct CoincideApp: App {
     @State private var store: WorkspaceStore
     @State private var remoteStore: RemoteWorkspaceStore
     @State private var mainWindows: MainWindowCoordinator
+    @State private var keybindings: KeybindingsStore
     @FocusedValue(\.cloneRepositoryPresentation) private var cloneRepositoryPresentation: Binding<Bool>?
     @FocusedValue(\.newProjectPresentation) private var newProjectPresentation: Binding<Bool>?
     @FocusedValue(\.settlementPresentation) private var settlementPresentation: Binding<CodingThread?>?
@@ -49,6 +50,9 @@ struct CoincideApp: App {
             let mainWindows = MainWindowCoordinator()
             let dataRoot = url?.deletingLastPathComponent() ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Coincide", isDirectory: true)
             let remoteStore = RemoteWorkspaceStore(root: dataRoot.appendingPathComponent("RemoteEnvironments", isDirectory: true))
+            let keybindings = KeybindingsStore(fileURL: dataRoot.appendingPathComponent("keybindings.json"))
+            _keybindings = State(initialValue: keybindings)
+            Task { await keybindings.start() }
             _store = State(initialValue: store)
             _remoteStore = State(initialValue: remoteStore)
             _mainWindows = State(initialValue: mainWindows)
@@ -60,31 +64,34 @@ struct CoincideApp: App {
     }
     var body: some Scene {
         WindowGroup("Coincide", id: MainWindowCoordinator.sceneID) {
-            ContentView(store: store)
+            ContentView(store: store).environment(keybindings)
                 .frame(minWidth: 900, minHeight: 600)
                 .background(MainWindowRegistration(coordinator: mainWindows))
         }
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
-            RemoteWorkspaceCommands()
-            MainWindowCommands(coordinator: mainWindows) {
+            RemoteWorkspaceCommands(shortcut: keybindings.menuShortcut(.remoteOpen))
+            NavigationCommands(keybindings: keybindings)
+            MainWindowCommands(coordinator: mainWindows, newWindowShortcut: keybindings.menuShortcut(.windowNew)) {
                 Button("New Thread") {
                     if let remotePresentation { remotePresentation.newThread.wrappedValue = true }
                     else { delegate.newThread() }
-                }.keyboardShortcut("n")
+                }.keyboardShortcut(keybindings.menuShortcut(.chatNew))
                     .disabled(remotePresentation != nil && (!remoteStore.canWrite || remoteStore.selectedProjectID == nil))
                 Button("New Project…") { newProjectPresentation?.wrappedValue = true }
-                    .keyboardShortcut("n", modifiers: [.command, .shift]).disabled(newProjectPresentation == nil)
+                    .keyboardShortcut(keybindings.menuShortcut(.projectNew)).disabled(newProjectPresentation == nil)
                 Button("Add Project…") {
                     if let remotePresentation { remotePresentation.addProject.wrappedValue = true }
                     else { store.addProject() }
-                }.keyboardShortcut("o").disabled(remotePresentation != nil && !remoteStore.canWrite)
+                }.keyboardShortcut(keybindings.menuShortcut(.projectAdd)).disabled(remotePresentation != nil && !remoteStore.canWrite)
                 Button("Clone Repository…") { cloneRepositoryPresentation?.wrappedValue = true }
-                    .keyboardShortcut("o", modifiers: [.command, .shift]).disabled(cloneRepositoryPresentation == nil)
+                    .keyboardShortcut(keybindings.menuShortcut(.projectClone)).disabled(cloneRepositoryPresentation == nil)
                 Button("Import Agent Projects…") { agentSessionImportPresentation?.wrappedValue = true }
+                    .keyboardShortcut(keybindings.menuShortcut(.projectImport))
                     .disabled(remotePresentation != nil || agentSessionImportPresentation == nil)
             }
             CommandMenu("Thread") {
+                ThreadMenuItems(keybindings: keybindings)
                 if remotePresentation != nil {
                     Button("Resume Queue") {
                         if let thread = remoteStore.selectedThread {
@@ -93,32 +100,33 @@ struct CoincideApp: App {
                     }.disabled(!remoteStore.canWrite || remoteStore.selectedThread?.queuePaused != true)
                 } else if let thread = store.selectedThread, let settlement = thread.settlement {
                     Button("Resume Conversation") { store.requestResume(thread.id, generationID: settlement.id) }
-                        .disabled(settlement.phase == .resuming)
+                        .keyboardShortcut(keybindings.menuShortcut(.threadSettle)).disabled(settlement.phase == .resuming)
                 } else {
                     Button("Settle Conversation…") {
                         if let thread = store.selectedThread { settlementPresentation?.wrappedValue = thread }
-                    }.disabled(settlementPresentation == nil || (store.selectedThread.map { !store.canSettle($0) } ?? true))
+                    }.keyboardShortcut(keybindings.menuShortcut(.threadSettle))
+                        .disabled(settlementPresentation == nil || (store.selectedThread.map { !store.canSettle($0) } ?? true))
                 }
                 Button("Stop Turn") {
                     if remotePresentation != nil {
                         if let thread = remoteStore.selectedThread { Task { await remoteStore.stop(thread) } }
                     } else if let id = store.selectedThreadID { Task { await store.interrupt(id) } }
                 }
-                    .keyboardShortcut(".")
+                    .keyboardShortcut(keybindings.menuShortcut(.threadStop))
                     .disabled(remotePresentation != nil
                         ? !remoteStore.canWrite || remoteStore.selectedThread?.activeRun == nil || remoteStore.selectedThread?.runtimeID == nil
                         : store.selectedThreadID.map { !store.isBusy($0) } ?? true)
                 Button("Toggle Inspector") {
                     if let remotePresentation { remotePresentation.inspectorVisible.wrappedValue.toggle() }
                     else { store.inspectorVisible.toggle() }
-                }.keyboardShortcut("i", modifiers: [.command, .option])
+                }.keyboardShortcut(keybindings.menuShortcut(.rightPanelToggle))
             }
         }
         Window("Remote Workspaces", id: RemoteWorkspaceStore.sceneID) {
             RemoteWorkspaceView(store: remoteStore).frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
-        Settings { SettingsView(store: store) }
+        Settings { SettingsView(store: store).environment(keybindings) }
     }
 }
 
