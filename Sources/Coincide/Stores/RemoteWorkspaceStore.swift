@@ -38,6 +38,7 @@ final class RemoteWorkspaceStore {
     let worktrees = RemoteWorktreeStore()
     let attachments: RemoteAttachmentsStore
     let pullRequests: RemotePullRequestStore
+    let checkpoints = RemoteCheckpointStore()
     private(set) var isPreparingSubmission = false
     var inspectorVisible = true
     var terminalsVisible = false
@@ -98,12 +99,52 @@ final class RemoteWorkspaceStore {
         }
     }
     func updatePullRequests() async {
-        guard !stopping else { pullRequests.disconnect(); return }
+        guard !stopping else { pullRequests.disconnect(); checkpoints.disconnect(); return }
         await pullRequests.select(target: pullRequestTarget, client: isConnected ? client : nil,
             snapshot: snapshot?.workspace ?? .init(), supported: descriptor?.capabilities.supportsRemotePullRequests == true,
             canWrite: canWrite, canMutate: pullRequestSelection.canMutate,
             perform: { [weak self] command in await self?.perform(command) ?? false },
             openConversation: { [weak self] id in self?.selectThread(id) })
+    }
+    var checkpointSelection: PullRequestSelection {
+        .init(environmentID: connection?.environmentID, threadID: selectedThreadID, sequence: snapshot?.sequence,
+            configuration: selectedThread.flatMap { try? RemoteCheckpointProtocol.payload(ProviderConfiguration(thread: $0)) } ?? Data(),
+            generation: generation, connected: isConnected, supported: descriptor?.capabilities.supportsRemoteCheckpoints == true,
+            canWrite: canWrite, canMutate: inspectorSelection.canMutate && !hasDirtyPullRequestSource)
+    }
+    func updateCheckpoints() async {
+        guard !stopping else { checkpoints.disconnect(); return }
+        await checkpoints.select(target: pullRequestTarget, thread: selectedThread, snapshot: snapshot?.workspace ?? .init(),
+            client: isConnected ? client : nil, supported: descriptor?.capabilities.supportsRemoteCheckpoints == true,
+            canWrite: canWrite, canMutate: checkpointSelection.canMutate,
+            perform: { [weak self] command in await self?.perform(command) ?? false },
+            canRestore: { [weak self] review in self?.checkpointFilesStillAllowed(paths: [review.gitReview.currentPlan.repositoryPath, review.gitReview.currentPlan.commonDirectoryPath]) ?? false })
+    }
+    private func checkpointFilesStillAllowed(paths: [String]) -> Bool {
+        guard let environment = connection?.environmentID, isConnected, !stopping else { return false }
+        guard !inspector.retainedEditors.contains(where: { editor in
+            editor.session.target.environmentID == environment && paths.contains { Self.remotePathsOverlap(editor.session.target.workspacePath, $0) }
+        }) else { return false }
+        return !terminals.workspaces.contains { workspace in
+            workspace.target.environmentID == environment && paths.contains { Self.remotePathsOverlap(workspace.target.workspacePath, $0) } &&
+                terminals.hasLiveTerminals(in: workspace.target)
+        }
+    }
+    private func checkpointCommandStillAllowed(_ command: RemoteEnvironmentCommand) -> Bool {
+        guard case .checkpoint(let target, let action) = command else { return true }
+        guard isConnected, !stopping, descriptor?.capabilities.supportsRemoteCheckpoints == true,
+              let current = pullRequestTarget, target.rootID != nil || !action.requiresBoundRoot,
+              current.environmentID == target.environmentID, current.projectID == target.projectID, current.threadID == target.threadID,
+              (try? RemoteCheckpointProtocol.payload(current.configuration)) == (try? RemoteCheckpointProtocol.payload(target.configuration)) else { return false }
+        switch action {
+        case .beginRestore(let id, let digest):
+            guard let review = checkpoints.review(id: id), review.digest == digest,
+                  (try? RemoteCheckpointProtocol.payload(review.target)) == (try? RemoteCheckpointProtocol.payload(target)) else { return false }
+            return checkpointFilesStillAllowed(paths: [review.value.gitReview.currentPlan.repositoryPath, review.value.gitReview.currentPlan.commonDirectoryPath])
+        case .retryPostRun, .continuePostRun:
+            return checkpointFilesStillAllowed(paths: [target.workspacePath])
+        case .inspectRestore, .acknowledgeRestore: return true
+        }
     }
     func showPullRequestChanges() async {
         inspectorVisible = true
@@ -321,7 +362,7 @@ final class RemoteWorkspaceStore {
         terminals.disconnect()
         worktrees.disconnect()
         attachments.disconnect()
-        pullRequests.disconnect()
+        pullRequests.disconnect(); checkpoints.disconnect()
         let old = client; client = nil
         eventTask?.cancel(); eventTask = nil
         await old?.close()
@@ -336,9 +377,10 @@ final class RemoteWorkspaceStore {
         await worktrees.shutdown()
         await attachments.shutdown()
         await pullRequests.shutdown()
+        await checkpoints.shutdown()
     }
 
-    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown() }
+    func cancelShutdown() { stopping = false; inspector.cancelShutdown(); terminals.cancelShutdown(); worktrees.cancelShutdown(); attachments.cancelShutdown(); pullRequests.cancelShutdown(); checkpoints.cancelShutdown() }
 
     func forget(_ selected: RemoteEnvironmentConnection) async {
         guard !isWorking, connection?.id != selected.id || !isConnected else { return }
@@ -358,7 +400,7 @@ final class RemoteWorkspaceStore {
     }
 
     func selectThread(_ id: UUID?) {
-        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection() }
+        if selectedThreadID != id { inspector.clearSelection(); terminals.clearSelection(); attachments.clearSelection(); pullRequests.clearSelection(); checkpoints.clearSelection() }
         selectedThreadID = id
         if let thread = selectedThread { selectedProjectID = thread.projectID }
         updateWorktrees()
@@ -412,8 +454,8 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Review the draft before sending again."; return false
         }
-        guard pullRequestCommandStillAllowed(command) else {
-            errorMessage = "The pull request review or its affected checkout changed. Save edits, close affected terminals, and review it again."; return false
+        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command) else {
+            errorMessage = "The remote review or its affected checkout changed. Save edits, close affected terminals, and review it again."; return false
         }
         let changingWorkspace: RemoteWorkspaceTarget?
         switch command {
@@ -433,8 +475,8 @@ final class RemoteWorkspaceStore {
         guard attachmentSubmissionStillAllowed(command) else {
             errorMessage = "The selected conversation or its attachments changed. Your draft was kept."; return false
         }
-        guard pullRequestCommandStillAllowed(command) else {
-            errorMessage = "The pull request review or its affected checkout changed. Your draft was kept."; return false
+        guard pullRequestCommandStillAllowed(command), checkpointCommandStillAllowed(command) else {
+            errorMessage = "The remote review or its affected checkout changed. Your draft was kept."; return false
         }
         if let changingWorkspace, !workspaceChangeStillAllowed(changingWorkspace) {
             errorMessage = "The workspace or its retained edits changed. Review them before choosing the checkout again."
@@ -446,10 +488,10 @@ final class RemoteWorkspaceStore {
             try await pendingStore.save(request)
             guard generation == owner, !stopping else { return false }
             pending = request
-            if !pullRequestCommandStillAllowed(command) {
+            if !pullRequestCommandStillAllowed(command) || !checkpointCommandStillAllowed(command) {
                 try await pendingStore.remove(connectionID: request.connectionID, commandID: request.id)
                 pending = nil
-                errorMessage = "The pull request review or its affected checkout changed. Your draft was kept."
+                errorMessage = "The remote review or its affected checkout changed. Your draft was kept."
                 return false
             }
             if !attachmentSubmissionStillAllowed(command) {
@@ -607,7 +649,7 @@ final class RemoteWorkspaceStore {
             // A subscribe reply may already be resuming finishConnecting. Fence
             // that continuation before it can publish a disconnected client.
             generation += 1
-            isConnected = false; inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); notice = message.localizedDescription
+            isConnected = false; inspector.disconnect(); terminals.disconnect(); worktrees.disconnect(); attachments.disconnect(); pullRequests.disconnect(); checkpoints.disconnect(); notice = message.localizedDescription
             if isWorking { errorMessage = message.localizedDescription }
         }
     }
@@ -625,7 +667,7 @@ final class RemoteWorkspaceStore {
         if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID || previousSelection.path != nextSelection.path {
             inspector.clearSelection(); terminals.clearSelection()
             if previousSelection.environmentID != nextSelection.environmentID || previousSelection.threadID != nextSelection.threadID { attachments.clearSelection() }
-            pullRequests.clearSelection()
+            pullRequests.clearSelection(); checkpoints.clearSelection()
         }
         updateWorktrees()
     }

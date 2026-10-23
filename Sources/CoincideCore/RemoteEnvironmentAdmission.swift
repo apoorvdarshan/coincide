@@ -9,6 +9,7 @@ enum RemoteEnvironmentPreparation: Codable, Sendable {
     case worktree(RemoteWorktreePreparation)
     case attachments(RemoteAttachmentSubmission)
     case pullRequest(RemotePullRequestPreparation)
+    case checkpoint(RemoteCheckpointPreparation)
 }
 
 enum RemoteEnvironmentAdmission {
@@ -23,10 +24,10 @@ enum RemoteEnvironmentAdmission {
                   title == nil || project.name == title,
                   !snapshot.projects.contains(where: { $0.id == id || $0.path == project.path }) else { throw stale() }
             return .addProject(project)
-        case .createThread(let id, let projectID, let provider, let title, let model, let permission):
+        case .createThread(let id, let projectID, let provider, let title, let model, let permission, let policy):
             guard case .thread(let thread) = preparation, thread.id == id, thread.projectID == projectID,
                   [.codex, .claude].contains(provider), thread.provider == provider, thread.title == title,
-                  thread.model == model, thread.permission == permission,
+                  thread.model == model, thread.permission == permission, thread.effectiveCheckpointPolicy == (policy ?? .disabled),
                   let project = snapshot.projects.first(where: { $0.id == projectID }), project.clone == nil,
                   thread.workspacePath == project.path, thread.messages.isEmpty, thread.activeRun == nil,
                   thread.runtimeID == nil, thread.providerThreadID == nil else { throw stale() }
@@ -37,7 +38,10 @@ enum RemoteEnvironmentAdmission {
             switch edit { case .draft(let value): translated = .draft(value)
             case .title(let value): translated = .title(value)
             case .model(let value): translated = .model(value)
-            case .permission(let value): translated = .permission(value) }
+            case .permission(let value): translated = .permission(value)
+            case .checkpointPolicy(let value, let expected):
+                guard try target(id, snapshot: snapshot).effectiveCheckpointPolicy == expected else { throw stale() }
+                translated = .checkpointPolicy(value) }
             return .editThread(id, translated)
         case .submit(let id, let text, let captured):
             try configuration(id, captured: captured, snapshot: snapshot)
@@ -56,12 +60,15 @@ enum RemoteEnvironmentAdmission {
             guard thread.runtimeID == runtimeID, thread.activeRun?.id == runID,
                   thread.runtimeRequests.contains(where: { $0.request == request && !$0.responding }) else { throw stale() }
             return .respond(threadID: id, requestID: request.id, response: response)
-        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest:
+        case .prepareWorktree, .retryWorktree, .cancelWorktree, .inspectWorktree, .submitWithAttachments, .pullRequest, .checkpoint:
             throw stale()
         }
     }
     static func commands(_ request: RemoteEnvironmentCommandRequest, preparation: RemoteEnvironmentPreparation,
                          snapshot: WorkspaceSnapshot) throws -> [EngineCommand] {
+        if case .checkpoint = request.command {
+            return try RemoteCheckpointAdmission.commands(request, preparation: preparation, snapshot: snapshot)
+        }
         if case .pullRequest = request.command {
             return try pullRequestCommands(request, preparation: preparation, snapshot: snapshot)
         }

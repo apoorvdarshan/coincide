@@ -56,6 +56,7 @@ struct RunCheckpointRestoreContent<Status: View>: View {
     let stage: RunCheckpointStage
     let loading: Bool
     let accepting: Bool
+    var canConfirm = true
     let error: String?
     let operation: RunCheckpointRestoreOperation?
     let confirm: () -> Void
@@ -119,7 +120,7 @@ struct RunCheckpointRestoreContent<Status: View>: View {
                     .disabled(accepting).accessibilityIdentifier("checkpoint-restore-close")
                 if operation == nil {
                     Button("Restore Files", role: .destructive, action: confirm)
-                        .disabled(review == nil || loading || accepting)
+                        .disabled(review == nil || loading || accepting || !canConfirm)
                         .accessibilityIdentifier("checkpoint-restore-confirm")
                 }
             }.padding(16)

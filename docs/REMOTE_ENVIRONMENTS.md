@@ -36,8 +36,9 @@ not automatically repeated. This version is not a persistent remote daemon.
 5. Add an existing remote folder and create a Codex or Claude conversation. Paths
    displayed in this window belong to that machine. Remote file links are not
    resolved against this Mac, and remote state never enters the local workspace
-   store. New remote conversations have automatic checkpoints disabled until
-   remote checkpoint review and restoration are available.
+   store. New conversations offer Automatic or Disabled run checkpoints. Older
+   helpers and callers that omit the policy keep checkpoints disabled; changing
+   the setting affects future accepted runs and preserves captured run policies.
 
 Connection metadata, per-environment drafts and unconfirmed requests are stored
 in private files under the local app's `RemoteEnvironments` directory. Each
@@ -53,6 +54,41 @@ writes and asks before discarding text if saving fails. Remote file buffers and
 commit drafts survive inspector hiding, conversation changes and disconnects in
 the running app; Quit asks before discarding them. Unsaved editor/commit buffers
 are not crash-persisted.
+
+## Remote run checkpoints
+
+The remote conversation header controls automatic checkpoints for future runs.
+**Remote Checkpoints…** shows saved baseline and post-run observations, including
+older post-run attempts. Refresh explicitly obtains host-derived restore
+eligibility; a remote path is never checked against this Mac's filesystem.
+A failed or interrupted post-run capture holds the queue. **Retry Current
+Workspace** records a later observation; **Continue Without Snapshot** explicitly
+releases the held run without inventing a successful checkpoint. Both decisions
+bind the exact run and attempt and can release queued provider work.
+
+A run diff binds its exact baseline and current post-run observation and returns
+a bounded patch. File restoration requires an isolated conversation worktree,
+a ready observation and the native ownership checks. First review the current
+manifest and preview, then explicitly choose **Restore Files**. The sealed full
+manifest stays on the host; the command carries only its review ID and digest.
+Restoration can replace/delete tracked and nonignored files and update staging;
+branch/HEAD, ignored files, conversation history and drafts retain the native
+restoration guarantees. Shared checkouts and conflicting work are refused.
+Remote editor changes and live PTYs are checked again before admission.
+
+Accepted restoration and its original command receipt commit together. A lost
+reply is resolved using that exact UUID; no restoration is automatically
+repeated. An unconfirmed restoration offers inspect-only recovery or explicit
+**Keep Current Files**. The latter is a metadata acknowledgement and remains
+available when the original folder is missing. Unused reviews release their
+owned scratch; accepted or uncertain recovery evidence is preserved. Reviews
+expire when the owned helper restarts. Old runs with no checkpoint receipt do
+not acquire file restoration support retroactively.
+
+This exposes existing native run-checkpoint workflows remotely. Remote provider
+history/fork/rewind, checkpoint range diffs, portable history/merge-back and
+large-history pagination remain unfinished. Offline peers and local Git fixtures
+do not establish real SSH, installed-provider or remote sign-in acceptance.
 
 ## Remote Files and Changes
 
@@ -298,13 +334,19 @@ The reference is T3 Code
    execution, interruption, disconnect and reconnect. Controlled local-process
    acceptance does not establish remote network or provider authentication.
 2. Complete remote worktree setup/removal, remaining PR controls and media files,
-   checkpoints/history and provider setup/authentication; add workspace
+   provider history, broader checkpoint diffs and provider setup/authentication; add workspace
    receipt-capacity management and crash recovery for unsaved editor buffers.
    Preserve the current separation between local and remote paths/services.
 3. Add persistent-host ownership, signed helper provisioning/update and bounded
    paginated projections with explicit incomplete-history state. Ordered journal
    catch-up needs a gap-free handoff and explicit resynchronization; coalesced
    complete snapshots must never be reinterpreted as a lossless delta stream.
+   Complete native provider-history proofs can already exceed the 16 MiB remote
+   frame limit. Broad remote history therefore needs a negotiated bounded
+   projection with paged transcript/operation summaries and host-owned complete
+   proofs; paging just the review RPC cannot fix the following full snapshot.
+   Removing mandatory evidence from a value called `WorkspaceSnapshot` is not a
+   valid projection migration.
 4. Add native HTTPS/LAN transport, pairing, scoped authorization, revocation,
    Keychain-backed client credentials and saved route/environment controls on the
    same service boundary. Proposed files: `EnvironmentHTTPServer.swift`,

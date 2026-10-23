@@ -2253,6 +2253,12 @@ public actor WorkspaceEngine {
         let digest: String
     }
     private var checkpointRestoreReviews: [UUID: PreparedCheckpointRestore] = [:]
+    private var remoteCheckpointReviews: [UUID: RemoteCheckpointReview] = [:]
+    private var remoteCheckpointsClosing = false
+    private var remoteCheckpointOperations = 0
+    private var remoteCheckpointWaiters: [CheckedContinuation<Void, Never>] = []
+    private var remoteCheckpointCloseTask: Task<Void, Never>?
+    private var remoteCheckpointAcceptances: [UUID: Int] = [:]
     private var acceptingCheckpointRestores: Set<UUID> = []
     public typealias PullRequestFactory = @Sendable (URL) throws -> any GitHubPullRequestSession
     private let pullRequestFactory: PullRequestFactory
@@ -2631,6 +2637,9 @@ public actor WorkspaceEngine {
                         try AppMCPAdmission.validate(authority: authority, snapshot: base.snapshot, commands: commands)
                         admissionCommands = commands
                     } else if case .remoteEnvironment(let request, let preparation) = envelope.command {
+                        if case .checkpoint(let captured) = preparation {
+                            try validateRemoteCheckpointPreparation(captured, snapshot: base.snapshot)
+                        }
                         if case .pullRequest(let captured) = preparation {
                             try validateRemotePullRequestPreparation(captured)
                         }
@@ -2711,6 +2720,7 @@ public actor WorkspaceEngine {
                         expectedSequence: base.sequence, effects: decision.effects, deduplicationPayload: payload, attachmentClaims: attachmentClaims)
                     let receipt = outcome.receipt
                     revision = .init(snapshot: decision.snapshot, sequence: receipt.sequence)
+                    if case .remoteEnvironment(_, .checkpoint(let captured)) = envelope.command { remoteCheckpointCommitted(captured) }
                     if case .remoteEnvironment(_, .pullRequest(let captured)) = envelope.command {
                         let reviewID: UUID?
                         switch captured.action {
@@ -4666,7 +4676,23 @@ extension WorkspaceEngine {
         _ = try await load()
         guard AppMCPTaskContext.authority == nil else { throw AppMCPError(.permissionDenied) }
         guard !stoppingEffects else { throw CancellationError() }
-        return try await enqueue(.remoteEnvironment(request, preparation: preparation), id: request.id)
+        let fenced: RunCheckpointRestoreReview?
+        if case .checkpoint(let captured) = preparation, case .restore(let review, _) = captured.action,
+           let native = checkpointRestoreReviews[review.id],
+           try RemoteCheckpointProtocol.payload(native.review) == RemoteCheckpointProtocol.payload(review) {
+            fenced = review
+            acceptingCheckpointRestores.insert(review.id)
+            remoteCheckpointAcceptances[review.id, default: 0] += 1
+            remoteCheckpointOperations += 1
+        } else { fenced = nil }
+        do {
+            let receipt = try await enqueue(.remoteEnvironment(request, preparation: preparation), id: request.id)
+            if let fenced { await finishRemoteCheckpointAcceptance(fenced) }
+            return receipt
+        } catch {
+            if let fenced { await finishRemoteCheckpointAcceptance(fenced) }
+            throw error
+        }
     }
     func awaitRemotePullRequestCancellation(_ preparation: RemoteEnvironmentPreparation) async {
         if case .pullRequest(let captured) = preparation, case .cancelCheckout(let operation) = captured.action,
@@ -4867,5 +4893,173 @@ extension WorkspaceEngine {
                   pullRequestCheckoutRuntimeScopeAvailable(operation) else { throw RemoteEnvironmentAdmission.stale() }
         default: break
         }
+    }
+}
+
+extension WorkspaceEngine {
+    private func beginRemoteCheckpointOperation() throws {
+        guard !remoteCheckpointsClosing else { throw RemoteCheckpointFailure(.unavailable) }
+        remoteCheckpointOperations += 1
+    }
+    private func finishRemoteCheckpointOperation() {
+        remoteCheckpointOperations -= 1
+        if remoteCheckpointOperations == 0 {
+            let waiters = remoteCheckpointWaiters; remoteCheckpointWaiters = []
+            for waiter in waiters { waiter.resume() }
+        }
+    }
+    private func remoteCheckpointThread(_ target: RemoteWorkspaceTarget, requireBound: Bool = true) throws -> CodingThread {
+        guard !closing, !stoppingEffects, !remoteCheckpointsClosing, fatalError == nil, !requireBound || target.rootID != nil,
+              let thread = revision.snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              !thread.isArchived, revision.snapshot.projects.contains(where: { $0.id == target.projectID }),
+              thread.workspacePath.utf8.elementsEqual(target.workspacePath.utf8),
+              try RemoteCheckpointProtocol.payload(ProviderConfiguration(thread: thread)) == RemoteCheckpointProtocol.payload(target.configuration) else {
+            throw RemoteCheckpointFailure(.invalidTarget)
+        }
+        return thread
+    }
+    func readRemoteCheckpoint(_ request: RemoteCheckpointReadRequest) async throws -> RemoteCheckpointValue {
+        try beginRemoteCheckpointOperation(); defer { finishRemoteCheckpointOperation() }
+        _ = try await load(); let thread = try remoteCheckpointThread(request.target)
+        switch request.query {
+        case .inventory:
+            let runs = (thread.runHistory ?? []).compactMap { record -> RemoteCheckpointRun? in
+                guard let checkpoints = record.checkpoints else { return nil }
+                var reasons: [UUID: String] = [:]
+                let choices = [(RunCheckpointStage.baseline, checkpoints.baseline)] +
+                    checkpoints.previousPostRunAttempts.map { (.postRun, $0) } + (checkpoints.postRun.map { [(.postRun, $0)] } ?? [])
+                for (stage, attempt) in choices {
+                    if let reason = revision.snapshot.checkpointRestoreUnavailableReason(threadID: thread.id, runID: record.id,
+                        stage: stage, expectedAttemptID: attempt.id) { reasons[attempt.id] = reason }
+                }
+                return .init(id: record.id, baseline: checkpoints.baseline, postRun: checkpoints.postRun,
+                    previousPostRunAttempts: checkpoints.previousPostRunAttempts, restoreUnavailableReasons: reasons)
+            }
+            let value = RemoteCheckpointValue.inventory(.init(policy: thread.effectiveCheckpointPolicy, runs: runs))
+            guard try RemoteCheckpointProtocol.payload(value).count <= RemoteEnvironmentProtocol.maximumFrameBytes - 65_536 else { throw RemoteCheckpointFailure(.limitExceeded) }
+            return value
+        case .runDiff(let runID, let baselineID, let postID, let maxBytes):
+            guard (1...1_048_576).contains(maxBytes), let checkpoints = thread.runHistory?.first(where: { $0.id == runID })?.checkpoints,
+                  checkpoints.baseline.id == baselineID, checkpoints.postRun?.id == postID,
+                  let baseline = checkpoints.baseline.receipt, let post = checkpoints.postRun?.receipt else { throw RemoteCheckpointFailure(.invalidRequest) }
+            let value = try await runCheckpointDiff(threadID: thread.id, runID: runID, maxBytes: maxBytes)
+            let current = try remoteCheckpointThread(request.target)
+            guard let observed = current.runHistory?.first(where: { $0.id == runID })?.checkpoints,
+                  observed.baseline.id == baselineID, observed.postRun?.id == postID,
+                  try RemoteCheckpointProtocol.payload(observed.baseline.receipt) == RemoteCheckpointProtocol.payload(baseline),
+                  try RemoteCheckpointProtocol.payload(observed.postRun?.receipt) == RemoteCheckpointProtocol.payload(post),
+                  value.patch.utf8.count <= maxBytes else { throw RemoteCheckpointFailure(.invalidTarget) }
+            return .diff(.init(runID: runID, baselineAttemptID: baselineID, postRunAttemptID: postID, patch: value.patch, truncated: value.truncated))
+        }
+    }
+    func reviewRemoteCheckpoint(_ request: RemoteCheckpointReviewRequest) async throws -> RemoteCheckpointReview {
+        try beginRemoteCheckpointOperation(); defer { finishRemoteCheckpointOperation() }
+        _ = try await load(); _ = try remoteCheckpointThread(request.target)
+        guard remoteCheckpointReviews.count < 32 else { throw RemoteCheckpointFailure(.limitExceeded) }
+        let native = try await reviewCheckpointRestore(threadID: request.target.threadID, runID: request.runID,
+            stage: request.stage, expectedAttemptID: request.attemptID)
+        do {
+            _ = try remoteCheckpointThread(request.target)
+            guard remoteCheckpointReviews.count < 32, remoteCheckpointReviews[native.id] == nil else { throw RemoteCheckpointFailure(.limitExceeded) }
+            let review = try RemoteCheckpointReview(target: request.target, value: native)
+            guard try RemoteCheckpointProtocol.payload(review).count <= RemoteEnvironmentProtocol.maximumFrameBytes - 65_536 else { throw RemoteCheckpointFailure(.limitExceeded) }
+            remoteCheckpointReviews[review.id] = review
+            return review
+        } catch { await discardCheckpointRestoreReview(reviewID: native.id); throw error }
+    }
+    func discardRemoteCheckpointReview(_ request: RemoteCheckpointDiscardRequest) async -> Bool {
+        remoteCheckpointOperations += 1; defer { finishRemoteCheckpointOperation() }
+        guard !acceptingCheckpointRestores.contains(request.reviewID),
+              let saved = remoteCheckpointReviews[request.reviewID], saved.digest == request.digest,
+              (try? RemoteCheckpointProtocol.payload(saved.target)) == (try? RemoteCheckpointProtocol.payload(request.target)) else { return false }
+        remoteCheckpointReviews.removeValue(forKey: request.reviewID)
+        await discardCheckpointRestoreReview(reviewID: request.reviewID)
+        return true
+    }
+    private func finishRemoteCheckpointAcceptance(_ review: RunCheckpointRestoreReview) async {
+        defer { finishRemoteCheckpointOperation() }
+        let count = (remoteCheckpointAcceptances[review.id] ?? 1) - 1
+        if count > 0 { remoteCheckpointAcceptances[review.id] = count; return }
+        remoteCheckpointAcceptances.removeValue(forKey: review.id)
+        acceptingCheckpointRestores.remove(review.id)
+        if revision.snapshot.checkpointRestoreOperation(review.id) == nil {
+            remoteCheckpointReviews.removeValue(forKey: review.id)
+            await discardCheckpointRestoreReview(reviewID: review.id)
+        }
+    }
+    func prepareRemoteCheckpoint(_ command: RemoteEnvironmentCommand) async throws -> RemoteEnvironmentPreparation {
+        try beginRemoteCheckpointOperation(); defer { finishRemoteCheckpointOperation() }
+        _ = try await load()
+        guard case .checkpoint(let target, let action) = command else { throw RemoteCheckpointFailure(.invalidRequest) }
+        let thread = try remoteCheckpointThread(target, requireBound: action.requiresBoundRoot)
+        guard let incarnation = threadIncarnations[thread.id] else { throw RemoteCheckpointFailure(.invalidTarget) }
+        let prepared: RemoteCheckpointPreparation.Action
+        switch action {
+        case .beginRestore(let id, let digest):
+            guard let saved = remoteCheckpointReviews[id], saved.digest == digest,
+                  try RemoteCheckpointProtocol.payload(saved.target) == RemoteCheckpointProtocol.payload(target) else { throw RemoteCheckpointFailure(.staleReview) }
+            prepared = .restore(saved.value, digest: digest)
+        case .inspectRestore(let id), .acknowledgeRestore(let id):
+            guard let operation = revision.snapshot.checkpointRestoreOperation(id), operation.review.threadID == thread.id,
+                  operation.review.projectID == thread.projectID, operation.review.workspacePath.utf8.elementsEqual(thread.workspacePath.utf8),
+                  operation.phase == .unconfirmed, operation.acknowledgedAt == nil else { throw RemoteCheckpointFailure(.invalidTarget) }
+            if case .acknowledgeRestore = action { prepared = .acknowledge(operation) }
+            else {
+                guard revision.snapshot.canReviewCheckpointRestore(threadID: thread.id, excludingOperationID: id),
+                      try revision.snapshot.checkpointRestoreSourceFingerprint(threadID: thread.id) == operation.review.sourceFingerprint,
+                      restoreRuntimeScopeIsolated(thread: thread, path: operation.review.gitReview.currentPlan.repositoryPath) else { throw RemoteCheckpointFailure(.invalidTarget) }
+                let result = try await readCheckpointRestore(thread: thread) { try await $0.inspectRestore(review: operation.review.gitReview) }
+                prepared = .inspect(operation, result)
+            }
+        case .retryPostRun(let runID, let attemptID), .continuePostRun(let runID, let attemptID):
+            guard let held = thread.heldPostRunCheckpoint, held.runID == runID, held.attempt.id == attemptID,
+                  !held.attempt.phase.isRunning else { throw RemoteCheckpointFailure(.invalidTarget) }
+            if case .retryPostRun = action { prepared = .retry(runID: runID, attempt: held.attempt) }
+            else { prepared = .proceed(runID: runID, attempt: held.attempt) }
+        }
+        let current = try remoteCheckpointThread(target, requireBound: action.requiresBoundRoot)
+        let result = RemoteCheckpointPreparation(target: target, incarnation: incarnation, policy: thread.effectiveCheckpointPolicy, action: prepared)
+        guard current.effectiveCheckpointPolicy == result.policy else { throw RemoteCheckpointFailure(.invalidTarget) }
+        try validateRemoteCheckpointPreparation(result, snapshot: revision.snapshot)
+        return .checkpoint(result)
+    }
+    func validateRemoteCheckpointPreparation(_ prepared: RemoteCheckpointPreparation, snapshot: WorkspaceSnapshot) throws {
+        guard !remoteCheckpointsClosing, threadIncarnations[prepared.target.threadID] == prepared.incarnation else { throw RemoteEnvironmentAdmission.stale() }
+        switch prepared.action {
+        case .restore(let review, let digest):
+            guard let cached = remoteCheckpointReviews[review.id], cached.digest == digest,
+                  try RemoteCheckpointProtocol.payload(cached.target) == RemoteCheckpointProtocol.payload(prepared.target),
+                  try RemoteCheckpointProtocol.payload(cached.value) == RemoteCheckpointProtocol.payload(review),
+                  checkpointRestoreReviews[review.id]?.digest == (try checkpointRestoreDigest(review)),
+                  review.sourceIncarnation == prepared.incarnation,
+                  try snapshot.checkpointRestoreSourceFingerprint(threadID: review.threadID) == review.sourceFingerprint,
+                  let thread = snapshot.threads.first(where: { $0.id == review.threadID }),
+                  restoreRuntimeScopeIsolated(thread: thread, path: review.gitReview.currentPlan.repositoryPath) else { throw RemoteEnvironmentAdmission.stale() }
+        case .inspect(let operation, _):
+            guard let thread = snapshot.threads.first(where: { $0.id == operation.review.threadID }),
+                  try snapshot.checkpointRestoreSourceFingerprint(threadID: thread.id) == operation.review.sourceFingerprint,
+                  restoreRuntimeScopeIsolated(thread: thread, path: operation.review.gitReview.currentPlan.repositoryPath) else { throw RemoteEnvironmentAdmission.stale() }
+        default: break
+        }
+    }
+    private func remoteCheckpointCommitted(_ preparation: RemoteCheckpointPreparation) {
+        guard case .restore(let review, _) = preparation.action, revision.snapshot.checkpointRestoreOperation(review.id) != nil else { return }
+        remoteCheckpointReviews.removeValue(forKey: review.id)
+        checkpointRestoreReviews.removeValue(forKey: review.id)
+    }
+    func closeRemoteCheckpoints() async {
+        if let task = remoteCheckpointCloseTask { await task.value; return }
+        remoteCheckpointsClosing = true
+        let task = Task { await self.finishRemoteCheckpointClose() }
+        remoteCheckpointCloseTask = task; await task.value
+    }
+    private func finishRemoteCheckpointClose() async {
+        let reads = Array(checkpointReads.values)
+        for read in reads { read.cancel() }
+        for read in reads { await read.task.value }
+        if remoteCheckpointOperations > 0 { await withCheckedContinuation { remoteCheckpointWaiters.append($0) } }
+        let reviews = Array(remoteCheckpointReviews.values)
+        remoteCheckpointReviews.removeAll()
+        for review in reviews { await discardCheckpointRestoreReview(reviewID: review.id) }
     }
 }

@@ -30,6 +30,7 @@ public actor RemoteEnvironmentService {
     private var terminalService: RemoteTerminalService?
     private var attachmentService: RemoteAttachmentService?
     private var pullRequestService: RemotePullRequestService?
+    private var checkpointService: RemoteCheckpointService?
     private var initializing: Task<WorkspaceEngine, any Error>?
     private var subscriptions: [UUID: Task<Void, Never>] = [:]
     private var closing = false
@@ -120,7 +121,7 @@ public actor RemoteEnvironmentService {
         _ = try RemoteEnvironmentProtocol.payload(request)
         let engine = try await workspace()
         var inspected: RemoteEnvironmentPreparation?
-        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand {
+        if request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand {
             do {
                 if let receipt = try await engine.remoteEnvironmentReceipt(request) {
                     if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request) }
@@ -154,6 +155,11 @@ public actor RemoteEnvironmentService {
                 try validate(request.command)
                 if let inspected { preparation = inspected }
                 else { preparation = try await prepare(request.command, engine: engine) }
+                if case .checkpoint(let prepared) = preparation {
+                    let workspace = try await workspaceOperations()
+                    try await workspace.validateCheckpointTarget(prepared.target, allowLocked: prepared.allowsLockedTarget, requireRoot: prepared.requiresBoundRoot)
+                    try await workspace.admitCheckpointScope(prepared.scope)
+                }
                 if case .pullRequest(let prepared) = preparation {
                     let workspace = try await workspaceOperations()
                     let requiresRoot: Bool
@@ -181,6 +187,29 @@ public actor RemoteEnvironmentService {
         if let attachmentService { return attachmentService }
         let service = try RemoteAttachmentService(environmentID: environmentID, engine: engine, dataDirectory: dataDirectory)
         attachmentService = service; return service
+    }
+    private func checkpoints() async throws -> RemoteCheckpointService {
+        let engine = try await workspace()
+        guard !closing else { throw RemoteCheckpointFailure(.unavailable) }
+        if let checkpointService { return checkpointService }
+        let service = RemoteCheckpointService(environmentID: environmentID, engine: engine, workspace: try await workspaceOperations())
+        checkpointService = service; return service
+    }
+    public func bindCheckpointWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        try require(target.environmentID)
+        return try await (try await workspaceOperations()).bindCheckpointTarget(target)
+    }
+    public func readCheckpoints(_ request: RemoteCheckpointReadRequest) async throws -> RemoteCheckpointReadResult {
+        try require(request.target.environmentID)
+        return try await (try await checkpoints()).read(request)
+    }
+    public func reviewCheckpointRestore(_ request: RemoteCheckpointReviewRequest) async throws -> RemoteCheckpointReview {
+        try require(request.target.environmentID)
+        return try await (try await checkpoints()).review(request)
+    }
+    public func discardCheckpointRestoreReview(_ request: RemoteCheckpointDiscardRequest) async throws -> RemoteCheckpointDiscardResult {
+        try require(request.target.environmentID)
+        return try await (try await checkpoints()).discard(request)
     }
     private func pullRequests() async throws -> RemotePullRequestService {
         let engine = try await workspace(), workspace = try await workspaceOperations()
@@ -327,12 +356,12 @@ public actor RemoteEnvironmentService {
             var project = WorkspaceProject(path: path); project.id = id
             if let title { project.name = title }
             return .project(project)
-        case .createThread(let id, let projectID, let provider, let title, let model, let permission):
+        case .createThread(let id, let projectID, let provider, let title, let model, let permission, let policy):
             guard let project = await engine.current().snapshot.projects.first(where: { $0.id == projectID }),
                   [.codex, .claude].contains(provider) else { throw RemoteEnvironmentError(.invalidRequest) }
             var thread = CodingThread(project: project, model: model)
             thread.id = id; thread.title = title; thread.provider = provider; thread.permission = permission
-            thread.checkpointPolicy = .disabled
+            thread.checkpointPolicy = policy ?? .disabled
             if provider == .claude {
                 thread.claudeRuntimeConfiguration = try ClaudeRuntimeConfiguration.capture(workspacePath: project.path,
                     executable: options.claudeExecutable, configurationDirectory: options.claudeConfigurationDirectory)
@@ -352,6 +381,8 @@ public actor RemoteEnvironmentService {
             return try await engine.prepareRemoteAttachmentSubmission(command)
         case .pullRequest:
             return try await (try await pullRequests()).prepare(command)
+        case .checkpoint:
+            return try await (try await checkpoints()).prepare(command)
         default: return .none
         }
     }
@@ -364,14 +395,14 @@ public actor RemoteEnvironmentService {
         switch command {
         case .addProject(_, let path, let title):
             try ProviderHistoryValidation.path(path); if let title { try text(title, maximum: 512) }
-        case .createThread(_, _, let provider, let title, let model, _):
+        case .createThread(_, _, let provider, let title, let model, _, _):
             guard [.codex, .claude].contains(provider) else { throw RemoteEnvironmentError(.unsupported) }
             try text(title, maximum: 512); try text(model, maximum: 512, allowEmpty: true)
         case .editThread(_, let edit, _):
             switch edit { case .draft(let value): try text(value, maximum: 120_000, allowEmpty: true)
             case .title(let value): try text(value, maximum: 512)
             case .model(let value): try text(value, maximum: 512, allowEmpty: true)
-            case .permission: break }
+            case .permission, .checkpointPolicy: break }
         case .submit(_, let value, _): try text(value, maximum: 120_000)
         case .submitWithAttachments(let target, let value, _, let draft, let uploaded):
             guard target.environmentID == environmentID else { throw RemoteEnvironmentError(.wrongEnvironment) }
@@ -379,6 +410,10 @@ public actor RemoteEnvironmentService {
             try AttachmentLimits.validate(draft)
             guard draft.count + uploaded.count <= AttachmentLimits.count,
                   Set(uploaded).count == uploaded.count else { throw RemoteEnvironmentError(.invalidRequest) }
+        case .checkpoint(let target, let action):
+            guard target.environmentID == environmentID, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteEnvironmentError(.invalidRequest) }
+            try ProviderHistoryValidation.path(target.workspacePath)
+            if case .beginRestore(_, let digest) = action, !CheckpointValidation.digest(digest) { throw RemoteEnvironmentError(.invalidRequest) }
         case .pullRequest(let target, let action):
             guard target.environmentID == environmentID, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteEnvironmentError(.invalidRequest) }
             try ProviderHistoryValidation.path(target.workspacePath)
@@ -416,10 +451,11 @@ public actor RemoteEnvironmentService {
         closing = true
         let waiting = workspaceAdmissionWaiters; workspaceAdmissionWaiters = []
         for waiter in waiting { waiter.1.resume(throwing: RemoteWorkspaceFailure(.unavailable)) }
-        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService
+        let subscriptions = Array(subscriptions.values), engine = engine, initializing = initializing, workspaceService = workspaceService, terminalService = terminalService, attachmentService = attachmentService, pullRequestService = pullRequestService, checkpointService = checkpointService
         for task in subscriptions { task.cancel() }
         let task = Task {
             await terminalService?.close()
+            await checkpointService?.close()
             await pullRequestService?.close()
             await workspaceService?.close()
             await attachmentService?.close()
@@ -433,6 +469,9 @@ public actor RemoteEnvironmentService {
 }
 
 extension RemoteEnvironmentCommand {
+    var isCheckpointCommand: Bool {
+        if case .checkpoint = self { return true }; return false
+    }
     var isPullRequestCommand: Bool {
         if case .pullRequest = self { return true }
         return false

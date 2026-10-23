@@ -439,3 +439,39 @@ func remoteStorePullRequestRechecksNewRetainedEditsAfterDraftDrainBeforeOpaqueBe
         await store.shutdown()
     } catch { releaseDraftLock(); _ = await sending?.value; await store.shutdown(); throw error }
 }
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+func remoteStoreCheckpointQueueReleaseRechecksRetainedEditsAfterDraftDrain(retry: Bool) async throws {
+    let f = try RemoteStoreFixture(); defer { f.remove() }
+    let store = RemoteWorkspaceStore(root: f.root, clientFactory: { try f.factory($0, $1) })
+    var lockDescriptor: Int32 = -1
+    var sending: Task<Bool, Never>?
+    func releaseDraftLock() {
+        if lockDescriptor >= 0 { _ = flock(lockDescriptor, LOCK_UN); _ = close(lockDescriptor); lockDescriptor = -1 }
+    }
+    defer { releaseDraftLock() }
+    do {
+        await store.load(); await store.connect(f.connection)
+        let thread = try #require(store.selectedThread)
+        let target = RemoteWorkspaceTarget(environmentID: f.connection.environmentID, projectID: thread.projectID,
+            threadID: thread.id, configuration: .init(thread: thread), rootID: UUID())
+        let action: RemoteCheckpointAction = retry ? .retryPostRun(runID: UUID(), attemptID: UUID()) : .continuePostRun(runID: UUID(), attemptID: UUID())
+        store.setDraft("Establish private checkpoint draft", threadID: thread.id)
+        try await remoteStoreEventually { !store.draftsSaving }
+        lockDescriptor = open(f.root.appendingPathComponent("Drafts/.remote-data.lock").path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+        guard lockDescriptor >= 0, flock(lockDescriptor, LOCK_EX | LOCK_NB) == 0 else { throw CoincideError("The private checkpoint draft boundary could not be held.") }
+        store.setDraft("Newer draft retained during checkpoint admission", threadID: thread.id)
+        sending = Task { await store.perform(.checkpoint(target: target, action: action)) }
+        try await remoteStoreEventually { store.isWorking }
+        await store.inspector.select(environmentID: f.connection.environmentID, thread: thread, client: nil, canMutate: false)
+        let editor = try #require(store.inspector.selected)
+        editor.git.commitMessage = "New retained remote Git draft"
+        releaseDraftLock()
+        #expect(await sending?.value == false)
+        #expect(store.pending == nil && store.canWrite && !store.isWorking)
+        #expect(editor.git.commitMessage == "New retained remote Git draft")
+        #expect(store.draft == "Newer draft retained during checkpoint admission")
+        #expect(try f.commands().isEmpty)
+        await store.shutdown()
+    } catch { releaseDraftLock(); _ = await sending?.value; await store.shutdown(); throw error }
+}

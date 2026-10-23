@@ -50,7 +50,7 @@ private struct RemotePRFixture: Sendable {
             for (path, contents) in [
                 (host, "#!/bin/sh\numask 077\nprintf '%s\\n' \"$$\" >> \(quote(root.appendingPathComponent("host-pids.txt").path))\nexec \(quote(helper.path)) \"$@\"\n"),
                 (github, "#!/bin/sh\nexec /usr/bin/python3 \(quote(ghPeer.path)) \(quote(root.path)) \"$@\"\n"),
-                (root.appendingPathComponent("bin/git"), "#!/bin/sh\nexec /usr/bin/python3 \(quote(gitPeer.path)) \(quote(root.path)) \"$@\"\n"),
+                (root.appendingPathComponent("bin/git"), "#!/bin/sh\nphase=other\nfor argument do\ncase \"$argument\" in rev-parse|config|status|for-each-ref|worktree|fetch|checkout|update-ref|show-ref|cat-file|symbolic-ref|show|diff|ls-files) phase=\"$argument\"; break;; esac\ndone\nprintf '{\"phase\":\"%s\",\"pid\":%s}\\n' \"$phase\" \"$$\" >> \(quote(root.appendingPathComponent("git-phases.jsonl").path))\nexec /usr/bin/python3 \(quote(gitPeer.path)) \(quote(root.path)) \"$@\"\n"),
                 (root.appendingPathComponent("provider-must-never-run"), "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \(quote(root.appendingPathComponent("unexpected-provider-pids.txt").path))\nexit 73\n")
             ] {
                 try contents.write(to: path, atomically: false, encoding: .utf8)
@@ -141,6 +141,74 @@ private struct RemotePRFixture: Sendable {
         }
         print("Private remote PR fixture retained at \(root.path)")
     }
+    /// The native RPC deliberately sanitizes effect errors. On an acceptance
+    /// failure, inspect only this fixture's read-only SQLite and method metadata;
+    /// never print stored requests, native frames, configuration, paths or stderr.
+    func checkoutDiagnostic(operationID: UUID, reason: String) async -> String {
+        let program = #"""
+import collections,json,os,sqlite3,sys
+from pathlib import Path
+root=Path(sys.argv[1]).resolve(strict=True)
+assert root.name.startswith('coincide-remote-pr-') and os.stat(root).st_mode & 0o077 == 0
+reason=sys.argv[3];assert reason in ('deadline','terminal-outcome','snapshot-error')
+result={'reason':reason,'operationPhase':'unavailable','operationError':'unavailable','effectState':'unavailable','helperExitStatusAvailable':False}
+failed='The pull request checkout did not complete. No conversation was created and no operation was replayed. Review the current checkout before trying again.'
+uncertain='The checkout may have changed. Inspect the retained attempt or explicitly keep the current files before continuing. No conversation was created and the operation was not repeated.'
+try:
+    with sqlite3.connect((root/'data/workspace.sqlite').as_uri()+'?mode=ro',uri=True,timeout=.5) as db:
+        snapshot=json.loads(db.execute('SELECT payload FROM workspace WHERE id=1').fetchone()[0])
+        operation=next((x for x in snapshot.get('pullRequestCheckouts',[]) if x['review']['id'].lower()==sys.argv[2].lower()),None)
+        if operation:
+            phase=operation.get('phase');result['operationPhase']=phase if phase in ('accepted','dispatching','completed','failed','unconfirmed') else 'invalid'
+            error=operation.get('error');result['operationError']='none' if error is None else 'fixed-failed' if error==failed else 'fixed-unconfirmed' if error==uncertain else 'other-present'
+            plan=operation['review']['plan'];mode=plan['request'].get('mode');disposition=plan.get('disposition')
+            result['reviewMode']=mode if mode in ('local','worktree') else 'invalid'
+            result['reviewDisposition']=disposition if disposition in ('local','createWorktree','reuseWorktree','reuseUnrelatedWorktree') else 'invalid'
+            row=db.execute('SELECT status,payload FROM workspace_effects WHERE lower(id)=lower(?)',(operation['effectID'],)).fetchone()
+            if row:
+                result['effectState']=row[0] if row[0] in ('pending','running','succeeded','failed','cancelled') else 'invalid'
+                effect=json.loads(row[1]);result['effectAttempts']=min(1000,max(0,int(effect.get('attemptCount',0))))
+                result['effectErrorPresent']=bool(effect.get('lastError'))
+except (OSError,ValueError,KeyError,TypeError,sqlite3.Error):result['databaseDiagnosticUnavailable']=True
+pids=[]
+try:
+    pids=[int(x) for x in (root/'host-pids.txt').read_text().splitlines()]
+except (OSError,ValueError):pass
+live=0
+for pid in pids:
+    try:os.kill(pid,0);live+=1
+    except ProcessLookupError:pass
+result['helperRecordedCount']=len(pids);result['helperAliveCount']=live
+for filename,key,allowed in (('gh-wire.jsonl','githubPhases',{'api','pr list','pr view','pr create'}),('git-wire.jsonl','gitPhases',{'fetch','held-commit'})):
+    counts=collections.Counter()
+    try:
+        for line in (root/filename).read_text().splitlines():
+            row=json.loads(line);value=row.get('method') if key=='githubPhases' else row.get('kind')
+            if key=='githubPhases' and isinstance(value,str) and value.startswith('api '):value='api'
+            counts[value if value in allowed else 'other']=counts.get(value if value in allowed else 'other',0)+1
+    except (OSError,ValueError,TypeError):pass
+    result[key]=dict(counts)
+counts=collections.Counter();last='none'
+try:
+    for line in (root/'git-phases.jsonl').read_text().splitlines():
+        value=json.loads(line).get('phase')
+        phase=value if value in {'rev-parse','config','status','for-each-ref','worktree','fetch','checkout','update-ref','show-ref','cat-file','symbolic-ref','show','diff','ls-files','other'} else 'invalid'
+        counts[phase]+=1;last=phase
+except (OSError,ValueError,TypeError):pass
+result['gitCommandPhases']=dict(counts);result['lastGitCommandPhase']=last
+data=json.dumps(result,sort_keys=True).encode()
+assert len(data)<=4096
+fd=os.open(root/'checkout-failure-diagnostic.json',os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
+try:assert os.write(fd,data)==len(data)
+finally:os.close(fd)
+print(data.decode())
+"""#
+        guard let result = try? await CommandRunner.run("/usr/bin/python3", ["-c", program, root.path, operationID.uuidString, reason],
+            timeout: .seconds(2), environment: environment), result.status == 0, result.output.count <= 4_097 else {
+            return "Private remote PR checkout failed; bounded sanitized diagnostic unavailable."
+        }
+        return "Private remote PR checkout failed: " + result.text.trimmingCharacters(in: .newlines)
+    }
 }
 private final class RemotePRConnections: @unchecked Sendable {
     let fixture: RemotePRFixture, dropped: UUID?
@@ -166,6 +234,22 @@ private func remotePRCreation(_ client: RemoteEnvironmentClient, _ id: UUID) asy
 }
 private func remotePRCheckout(_ client: RemoteEnvironmentClient, _ id: UUID) async throws -> PullRequestCheckoutOperation? {
     try await client.snapshot().workspace.pullRequestCheckout(id)
+}
+private func remotePRCompletedCheckout(_ client: RemoteEnvironmentClient, fixture: RemotePRFixture, operationID: UUID) async throws {
+    let deadline = ContinuousClock.now + .seconds(12)
+    while true {
+        let operation: PullRequestCheckoutOperation?
+        do { operation = try await remotePRCheckout(client, operationID) }
+        catch { throw CoincideError(await fixture.checkoutDiagnostic(operationID: operationID, reason: "snapshot-error")) }
+        if operation?.phase == .completed { return }
+        if operation?.phase == .failed || operation?.phase == .unconfirmed {
+            throw CoincideError(await fixture.checkoutDiagnostic(operationID: operationID, reason: "terminal-outcome"))
+        }
+        guard ContinuousClock.now < deadline else {
+            throw CoincideError(await fixture.checkoutDiagnostic(operationID: operationID, reason: "deadline"))
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
 }
 private func remotePRBegin(_ target: RemoteWorkspaceTarget, _ review: RemotePullRequestReview) -> RemoteEnvironmentCommand {
     .pullRequest(target: target, action: .begin(reviewID: review.id, digest: review.digest))
@@ -291,7 +375,7 @@ func remotePRNativeHostImportsReviewedCheckoutIntoOneBlankConversationAndPreserv
         let id = UUID(), reviewID = review.id, command = remotePRBegin(target, review)
         let accepted = try await client.command(command, id: id)
         #expect(accepted.receipt.rejection == nil)
-        try await remotePREventually { try await remotePRCheckout(client, reviewID)?.phase == .completed }
+        try await remotePRCompletedCheckout(client, fixture: f, operationID: reviewID)
         let completed = try #require(try await remotePRCheckout(client, review.id)), result = try #require(completed.result)
         let snapshot = try await client.snapshot(), imported = try #require(snapshot.workspace.threads.first { $0.id == captured.targetThreadID })
         #expect(snapshot.workspace.threads.count == 2 && imported.messages.isEmpty && imported.draft.isEmpty && imported.queuedTurns.isEmpty)

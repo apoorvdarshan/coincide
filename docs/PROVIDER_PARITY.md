@@ -16,6 +16,12 @@ verification, not provider calls repeated for this document. Consult
 [VALIDATION.md](VALIDATION.md) for their circumstances and limitations and
 [PORTING.md](PORTING.md) for the broader port scope.
 
+Remote Codex/Claude conversations also expose captured run-checkpoint policy,
+exact-observation diffs and the existing native reviewed file-restoration flow.
+These controls are provider-independent file workflows; they do not add remote
+provider-history fork/rewind or establish installed-provider/SSH acceptance.
+See [the remote checkpoint boundaries](REMOTE_ENVIRONMENTS.md#remote-run-checkpoints).
+
 The separate default Liquid Glass requirement also remains mandatory. Provider
 integration work does not satisfy the native chrome, control, accessibility,
 older-macOS fallback, or actual visual-verification requirements.

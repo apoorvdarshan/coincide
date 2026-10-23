@@ -86,6 +86,37 @@ actor RemoteWorkspaceService {
         try await validatePullRequestTarget(bound, allowLocked: true)
         return bound
     }
+    /// Checkpoint recovery can inspect its own durable restoration lock.
+    /// Files and Git retain their stricter general authorization.
+    func validateCheckpointTarget(_ target: RemoteWorkspaceTarget, allowLocked: Bool, requireRoot: Bool = true) async throws {
+        guard !closing, !journalFailed, target.environmentID == environmentID else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        let update = await engine.current(), snapshot = update.snapshot
+        guard !closing, !journalFailed, update.error == nil,
+              let thread = snapshot.threads.first(where: { $0.id == target.threadID && $0.projectID == target.projectID }),
+              !thread.isArchived, snapshot.projects.contains(where: { $0.id == target.projectID }),
+              try RemoteCheckpointProtocol.payload(ProviderConfiguration(thread: thread)) == RemoteCheckpointProtocol.payload(target.configuration),
+              samePath(thread.workspacePath, target.workspacePath), snapshot.workspaceReady(for: thread),
+              !hasRunningWorktree(at: target.workspacePath, snapshot: snapshot),
+              !snapshot.isPullRequestCreationLocked(path: target.workspacePath),
+              !snapshot.isPullRequestCheckoutLocked(path: target.workspacePath),
+              !snapshot.isConversationHistoryLocked(threadID: thread.id),
+              allowLocked || !snapshot.isCheckpointRestoreLocked(path: target.workspacePath) else { throw RemoteWorkspaceFailure(.invalidTarget) }
+        if requireRoot {
+            guard let id = target.rootID, let root = roots[id], samePath(root.path, target.workspacePath) else { throw RemoteWorkspaceFailure(.staleRoot) }
+            do { try root.anchor.validate() } catch { throw RemoteWorkspaceFailure(.staleRoot) }
+        }
+    }
+    func bindCheckpointTarget(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        try await validateCheckpointTarget(target, allowLocked: true, requireRoot: false)
+        let id = try bindPhysicalRoot(path: target.workspacePath, expectedID: target.rootID)
+        let bound = RemoteWorkspaceTarget(environmentID: target.environmentID, projectID: target.projectID,
+            threadID: target.threadID, configuration: target.configuration, rootID: id)
+        try await validateCheckpointTarget(bound, allowLocked: true)
+        return bound
+    }
+    func admitCheckpointScope(_ scope: RemoteCheckpointScope) throws {
+        try admitPullRequestScope(.init(mutatingPaths: scope.mutatingPaths, coordinationPaths: scope.coordinationPaths))
+    }
     func busyPullRequestPaths() async -> [String] {
         Set(busyRoots.keys).union(terminalRoots.values).compactMap { roots[$0]?.path }
     }

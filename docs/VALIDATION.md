@@ -1,5 +1,86 @@
 # Validation record
 
+## 2026-10-23 — Remote run checkpoint controls
+
+- The complete serial run executes 1959 declarations: 1945 pass, thirteen
+  optional installed/live checks skip, and one existing Pi permission-fixture
+  declaration fails (two issues from its mode case). Core completes 1645
+  declarations in 498.406 seconds; Store/view 284 in 72.435 seconds; terminal
+  seventeen in 10.349 seconds; Markdown thirteen in 0.134 seconds. The full
+  process exits one; it is not recorded as a clean full-suite pass.
+- A controlled Node probe proves the permission-fixture cause: the private
+  runner's inherited umask `077` turns its requested `0644` test file into `0600`,
+  which the product correctly accepts as private. The fixture now chmods its
+  exclusively created sidecar to the exact requested mode and asserts `0644`
+  before retaining the original refusal checks. Product permission rules and
+  timers are unchanged. No production source changes follow the full run.
+- After the fixture correction and bounded PR diagnostics, all eighteen
+  affected Pi input-bridge/native PR declarations pass under umask `077` in
+  100.786 seconds (eleven Pi declarations and seven native PR declarations).
+  This rechecks every caller of the changed permission fixture and all native
+  PR fixture paths. The three checkout modes pass in 43.422 seconds. This is
+  focused follow-up evidence, not a rewritten outcome for the failed full run.
+- The focused serial run passes all 26 new declarations (54 expanded cases):
+  sixteen Core/client/native declarations and ten Store/view/parent declarations.
+  No installed provider, model turn, SSH connection, external Git transport,
+  account mutation or sign-in is used.
+- Actual native-helper fixtures prove durable baseline capture before the private
+  provider starts, post-run capture, preserved real staging/HEAD and source files,
+  exact-observation bounded diffs and reconnect inventory. Reviewed restoration
+  uses an isolated checkout imported through the actual remote worktree flow;
+  a dropped accepted reply is recovered by its sole original UUID/SQLite receipt
+  without repeating restoration or provider input. Failed post-run capture holds
+  FIFO input until the exact explicit retry/continue action. Stale attempts,
+  discarded reviews, configuration changes and physical root replacement fail.
+- Five Core declarations cover nine cases: original receipt ownership and native
+  inspect-only restoration recovery, stale configuration/policy/digest/discard
+  admission, missing-folder metadata acknowledgment, unused review disposal and
+  close joining a late native review. An acceptance fence spans durable commit
+  so a disappearing review cannot dispose its sealed manifest during admission.
+- Six client declarations cover 28 cases: exact scope/path bytes, malformed
+  inventories and diffs, validly redigested but foreign native review ownership,
+  unsafe manifest paths, discard binding, old-helper zero-RPC refusal, sanitized
+  errors and unknown-result receipt recovery without replay. A separate codec
+  regression preserves the exact legacy create-command payload bytes when the
+  newly optional checkpoint policy is omitted.
+- Nine Store/view declarations verify metadata-only selection, historical paths,
+  exact receipt/attempt diffs, explicit review/apply, protected uncertain outcomes,
+  cold rootless acknowledgment, owned selection/disconnect/late-review cleanup,
+  cancelled pane publication and ID-scoped cleanup that preserves newer reviews.
+  Pure history/restore/recovery content fits light/dark 480x560 and 640x680 bounds
+  offscreen with no NSWindow, RPC or apply. Actual sheet lifecycle loading stays
+  separate. Two parent cases recheck new retained edits after real draft fsync
+  before retry/continue can reach the wire and preserve the newer local draft.
+- The initial native fixtures exposed two fixture errors: Python and Swift used
+  different lexical aliases for the same private path, and a linked worktree was
+  registered as the project root, where native restoration correctly refuses.
+  Corrected private ownership lookup and the real worktree-import flow pass
+  without relaxing product path checks or restoration isolation. Seven failed
+  fixture roots remain preserved; all sixteen recorded processes exited and no
+  open files remain. The twelve earlier PR diagnostic roots are unchanged.
+- Native app/helper packaging and strict deep signature verification pass. The
+  packaged/compiled app UUID is `42FE9D8A-5263-3218-A191-CBDC833F096F`; helper UUID
+  `D3F51321-7BD8-36F8-8111-C5C3F79B1572` matches too. The native math resource bundle
+  is present. The ABI guard inspects 1015 objects (713 Core, 292 app) and finds
+  zero weak async default contexts. All 74 Python checks pass in 2.623 seconds.
+  Native GUI runner compilation and offline CLI launch envelopes pass without
+  launching a GUI app. The installed app is untouched.
+
+The prior PR commit's hosted run `39912537789` completes all 1933 declarations in
+1206.192 seconds with three checkout-case deadline failures (local/worktree/reuse);
+packaging and native GUI shards therefore skip. The same three cases pass in
+this local full run in 42.202 seconds. That does not establish the hosted cause.
+The fixture keeps its exact 12-second bound, fails promptly on a known terminal
+outcome, and now emits bounded phase/effect/PID/allowlisted-command diagnostics
+without configurations, paths, raw frames or stderr. A new hosted run is needed
+to distinguish a running operation from a refused/uncertain checkout. No retry,
+longer deadline, coverage reduction or claimed CI fix is introduced.
+
+These checks establish the existing native run-checkpoint workflow over the
+owned remote protocol. Remote provider history, bounded/paged remote projections,
+portable history/merge-back, broad provider setup and real two-Mac/provider
+acceptance remain unfinished; full T3 parity is not claimed.
+
 ## 2026-10-23 — Remote GitHub pull request workflows
 
 - The final complete serial suite passes 1920 of 1933 declarations, with thirteen

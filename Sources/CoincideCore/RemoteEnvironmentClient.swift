@@ -156,6 +156,20 @@ public actor RemoteEnvironmentClient {
         if command.preparesAttachments, descriptor?.capabilities.supportsRemoteAttachments != true {
             throw RemoteEnvironmentClientError(.unsupported)
         }
+        let changesCheckpointPolicy: Bool
+        switch command {
+        case .editThread(_, .checkpointPolicy, _): changesCheckpointPolicy = true
+        case .createThread(_, _, _, _, _, _, let policy): changesCheckpointPolicy = policy != nil
+        default: changesCheckpointPolicy = false
+        }
+        if changesCheckpointPolicy, descriptor?.capabilities.supportsRemoteCheckpoints != true { throw RemoteEnvironmentClientError(.unsupported) }
+        if command.isCheckpointCommand, descriptor?.capabilities.supportsRemoteCheckpoints != true {
+            throw RemoteEnvironmentClientError(.unsupported)
+        }
+        if case .checkpoint(let target, let action) = command {
+            guard target.environmentID == environment, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteCheckpointFailure(.invalidTarget) }
+            if case .beginRestore(_, let digest) = action, !Self.isTerminalDigest(digest) { throw RemoteCheckpointFailure(.invalidRequest) }
+        }
         if command.isPullRequestCommand, descriptor?.capabilities.supportsRemotePullRequests != true {
             throw RemoteEnvironmentClientError(.unsupported)
         }
@@ -173,7 +187,7 @@ public actor RemoteEnvironmentClient {
         attemptedCommands.insert(id); activeRequests += 1
         defer { activeRequests -= 1 }
         do {
-            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds(command.isPullRequestCommand ? 120 : 45))
+            let raw = try await connection.request(RemoteEnvironmentProtocol.commandMethod, params: payload, timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand) ? 120 : 45))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentCommandResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             try validateReceipt(result.receipt, environmentID: result.environmentID, commandID: id)
@@ -197,7 +211,7 @@ public actor RemoteEnvironmentClient {
         activeRequests += 1; defer { activeRequests -= 1 }
         do {
             let raw = try await connection.request(RemoteEnvironmentProtocol.receiptMethod,
-                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(command.isPullRequestCommand ? 120 : 30))
+                params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds((command.isPullRequestCommand || command.isCheckpointCommand) ? 120 : 30))
             let result = try RemoteEnvironmentProtocol.decode(RemoteEnvironmentReceiptResult.self, from: raw)
             guard generation == owned, rpc != nil else { throw CancellationError() }
             guard result.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
@@ -209,6 +223,103 @@ public actor RemoteEnvironmentClient {
             let safe = error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
             if generation == owned { retire(safe) }
             throw safe
+        }
+    }
+    public func bindCheckpointWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {
+        let owned = generation
+        let result: RemoteWorkspaceTarget = try await checkpointRequest(RemoteCheckpointProtocol.bindMethod, request: target, target: target, requiresBoundRoot: false)
+        try validateWorkspaceResponse(generation: owned) {
+            let expected = RemoteWorkspaceTarget(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID,
+                configuration: target.configuration, rootID: result.rootID)
+            guard result.rootID != nil, target.rootID == nil || result.rootID == target.rootID,
+                  try Self.samePullRequestTarget(result, expected) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    public func readCheckpoints(_ request: RemoteCheckpointReadRequest) async throws -> RemoteCheckpointReadResult {
+        if case .runDiff(_, _, _, let maximum) = request.query {
+            guard (1...1_048_576).contains(maximum) else { throw RemoteCheckpointFailure(.invalidRequest) }
+        }
+        let owned = generation
+        let result: RemoteCheckpointReadResult = try await checkpointRequest(RemoteCheckpointProtocol.readMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) {
+            guard try Self.samePullRequestTarget(result.target, request.target) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            switch (request.query, result.value) {
+            case (.inventory, .inventory(let inventory)):
+                guard Set(inventory.runs.map(\.id)).count == inventory.runs.count else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                var identities = Set<UUID>()
+                for run in inventory.runs {
+                    let attempts = [run.baseline] + run.previousPostRunAttempts + (run.postRun.map { [$0] } ?? [])
+                    for attempt in attempts {
+                        try ProviderHistoryValidation.path(attempt.workspacePath)
+                        try attempt.validate(workspacePath: attempt.workspacePath)
+                        guard identities.insert(attempt.id).inserted,
+                              attempt.id != run.id else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                    }
+                    let ids = Set(attempts.map(\.id))
+                    guard run.restoreUnavailableReasons.allSatisfy({ ids.contains($0.key) && !$0.value.isEmpty && $0.value.utf8.count <= 2_048 && !$0.value.contains("\0") }) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                }
+            case (.runDiff(let id, let baseline, let post, let maximum), .diff(let diff)):
+                guard diff.runID == id, diff.baselineAttemptID == baseline, diff.postRunAttemptID == post,
+                      diff.patch.utf8.count <= maximum else { throw RemoteEnvironmentClientError(.invalidResponse) }
+            default: throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+        }
+        return result
+    }
+    public func reviewCheckpointRestore(_ request: RemoteCheckpointReviewRequest) async throws -> RemoteCheckpointReview {
+        let owned = generation
+        let result: RemoteCheckpointReview = try await checkpointRequest(RemoteCheckpointProtocol.reviewMethod, request: request, target: request.target)
+        try validateWorkspaceResponse(generation: owned) {
+            let review = result.value
+            try review.validate()
+            guard try Self.samePullRequestTarget(result.target, request.target), result.id == review.id,
+                  Self.isTerminalDigest(result.digest), result.digest == (try RemoteCheckpointProtocol.digest(target: result.target, value: review)),
+                  review.threadID == request.target.threadID, review.projectID == request.target.projectID,
+                  review.runID == request.runID, review.stage == request.stage, review.attemptID == request.attemptID,
+                  review.workspacePath.utf8.elementsEqual(request.target.workspacePath.utf8),
+                  review.gitReview.currentPlan.workspacePath.utf8.elementsEqual(request.target.workspacePath.utf8),
+                  review.gitReview.targetReceipt.plan.workspacePath.utf8.elementsEqual(request.target.workspacePath.utf8) else {
+                throw RemoteEnvironmentClientError(.invalidResponse)
+            }
+        }
+        return result
+    }
+    public func discardCheckpointRestoreReview(_ request: RemoteCheckpointDiscardRequest) async throws -> RemoteCheckpointDiscardResult {
+        guard Self.isTerminalDigest(request.digest) else { throw RemoteCheckpointFailure(.invalidRequest) }
+        let owned = generation
+        let result: RemoteCheckpointDiscardResult = try await checkpointRequest(RemoteCheckpointProtocol.discardMethod, request: request, target: request.target, requiresBoundRoot: false)
+        try validateWorkspaceResponse(generation: owned) {
+            guard try RemoteCheckpointProtocol.payload(result.request) == RemoteCheckpointProtocol.payload(request) else { throw RemoteEnvironmentClientError(.invalidResponse) }
+        }
+        return result
+    }
+    private func checkpointRequest<Request: Encodable & Sendable, Response: Decodable & Sendable>(
+        _ method: String, request: Request, target: RemoteWorkspaceTarget, requiresBoundRoot: Bool = true
+    ) async throws -> Response {
+        let (connection, owned, environment) = try context()
+        guard target.environmentID == environment else { throw RemoteEnvironmentClientError(.wrongEnvironment) }
+        guard descriptor?.capabilities.supportsRemoteCheckpoints == true else { throw RemoteEnvironmentClientError(.unsupported) }
+        guard target.rootID != nil || !requiresBoundRoot else { throw RemoteCheckpointFailure(.invalidTarget) }
+        let bytes = try RemoteCheckpointProtocol.payload(request)
+        guard bytes.count <= RemoteEnvironmentProtocol.maximumRequestBytes, activeRequests < RemoteEnvironmentProtocol.maximumPendingRequests,
+              activeWorkspaceBytes + bytes.count <= RemoteEnvironmentProtocol.maximumQueuedRequestBytes else { throw RemoteEnvironmentClientError(.limitExceeded) }
+        activeRequests += 1; activeWorkspaceBytes += bytes.count
+        defer { activeRequests -= 1; activeWorkspaceBytes -= bytes.count }
+        do {
+            let raw = try await connection.request(method, params: JSONDecoder().decode(JSONValue.self, from: bytes), timeout: .seconds(120))
+            guard generation == owned, rpc != nil else { throw CancellationError() }
+            do { return try RemoteEnvironmentProtocol.decode(Response.self, from: raw) }
+            catch { throw RemoteEnvironmentClientError(.invalidResponse) }
+        } catch {
+            if generation == owned {
+                if let failure = error as? JSONRPCRemoteError, failure.code == -32_005,
+                   let value = failure.data["kind"].string, let kind = RemoteCheckpointFailure.Kind(rawValue: value) { throw RemoteCheckpointFailure(kind) }
+                if let failure = workspaceRejection(error) { throw failure }
+                if let failure = nativeRejection(error) { throw failure }
+                retire(error as? RemoteEnvironmentClientError ?? .init(.disconnected))
+            }
+            throw error as? RemoteEnvironmentClientError ?? RemoteEnvironmentClientError(.disconnected)
         }
     }
     public func bindPullRequestWorkspace(_ target: RemoteWorkspaceTarget) async throws -> RemoteWorkspaceTarget {

@@ -38,6 +38,7 @@ struct RemoteWorkspaceView: View {
     @State private var choosingWorktree = false
     @State private var dismissingRequest = false
     @State private var showingPullRequests = false
+    @State private var showingCheckpoints = false
 
     var body: some View {
         NavigationSplitView {
@@ -132,6 +133,13 @@ struct RemoteWorkspaceView: View {
         .focusedSceneValue(\.remoteWorkspacePresentation, .init(newThread: $addingThread, addProject: $addingProject, inspectorVisible: $store.inspectorVisible))
         .toolbar {
             ToolbarItem {
+                Button("Remote Checkpoints…", systemImage: "clock.arrow.circlepath") {
+                    Task { await store.updateCheckpoints(); showingCheckpoints = true }
+                }.disabled(!store.isConnected || store.selectedThread == nil || store.descriptor?.capabilities.supportsRemoteCheckpoints != true)
+                    .accessibilityIdentifier("remote-checkpoints")
+            }
+
+            ToolbarItem {
                 Button("Remote Pull Requests…", systemImage: "arrow.triangle.pull") {
                     Task { await store.updatePullRequests(); showingPullRequests = true }
                 }.disabled(!store.isConnected || store.selectedThread == nil || store.descriptor?.capabilities.supportsRemotePullRequests != true)
@@ -157,6 +165,7 @@ struct RemoteWorkspaceView: View {
         .task { await store.load() }
         .task(id: store.inspectorSelection) { await store.updateInspector() }
         .task(id: store.attachmentSelection) { await store.updateAttachments() }
+        .task(id: store.checkpointSelection) { await store.updateCheckpoints() }
         .task(id: store.pullRequestSelection) { await store.updatePullRequests() }
         .task(id: store.terminalSelection) { await store.updateTerminals() }
         .task(id: store.worktreeSelection) { store.updateWorktrees() }
@@ -168,6 +177,7 @@ struct RemoteWorkspaceView: View {
         .sheet(isPresented: $choosingWorktree) {
             RemoteWorktreeSheet(store: store.worktrees, onPrepared: { choosingWorktree = false })
         }
+        .sheet(isPresented: $showingCheckpoints) { RemoteRunCheckpointsSheet(store: store.checkpoints) }
         .sheet(isPresented: $showingPullRequests) {
             RemotePullRequestsSheet(store: store.pullRequests, requestPush: {
                 showingPullRequests = false; Task { await store.showPullRequestChanges() }
@@ -232,6 +242,7 @@ struct RemoteWorkspaceView: View {
             }.padding(.horizontal, 14).padding(.bottom, 8)
             RemoteWorktreeBanner(store: store.worktrees)
             RemotePullRequestBanner(store: store.pullRequests)
+            RemoteRunCheckpointBanner(store: store.checkpoints)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 24) {
@@ -313,6 +324,12 @@ private struct RemoteConversationHeader: View {
                 Spacer()
                 Picker("Permissions", selection: Binding(get: { thread.permission }, set: { edit(.permission($0)) })) {
                     ForEach(PermissionMode.allCases) { Text($0.title).tag($0) }
+                }.fixedSize().disabled(!store.canWrite)
+            }
+            if store.descriptor?.capabilities.supportsRemoteCheckpoints == true {
+                Picker("Run checkpoints", selection: Binding(get: { thread.effectiveCheckpointPolicy }, set: { edit(.checkpointPolicy($0, expected: thread.effectiveCheckpointPolicy)) })) {
+                    Text("Automatic").tag(RunCheckpointPolicy.automatic)
+                    Text("Disabled").tag(RunCheckpointPolicy.disabled)
                 }.fixedSize().disabled(!store.canWrite)
             }
             Text(thread.workspacePath).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
@@ -416,12 +433,19 @@ private struct RemoteThreadSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var provider: ProviderKind = .codex
     @State private var title = "New thread"
+    @State private var checkpointPolicy: RunCheckpointPolicy = .automatic
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("New Remote Conversation").font(.title2)
             TextField("Title", text: $title)
             Picker("Provider", selection: $provider) {
                 ForEach(store.descriptor?.capabilities.providers ?? []) { Text($0.name).tag($0) }
+            }
+            if store.descriptor?.capabilities.supportsRemoteCheckpoints == true {
+                Picker("Run checkpoints", selection: $checkpointPolicy) {
+                    Text("Automatic").tag(RunCheckpointPolicy.automatic)
+                    Text("Disabled").tag(RunCheckpointPolicy.disabled)
+                }
             }
             Text("The provider uses its existing sign-in on the remote Mac. New conversations start with supervised permissions.").font(.callout).foregroundStyle(.secondary)
             HStack {
@@ -430,7 +454,7 @@ private struct RemoteThreadSheet: View {
                     guard let projectID = store.selectedProjectID else { return }
                     let id = UUID()
                     Task {
-                        if await store.perform(.createThread(id: id, projectID: projectID, provider: provider, title: title, model: "", permission: .supervised)) {
+                        if await store.perform(.createThread(id: id, projectID: projectID, provider: provider, title: title, model: "", permission: .supervised, checkpointPolicy: store.descriptor?.capabilities.supportsRemoteCheckpoints == true ? checkpointPolicy : nil)) {
                             store.selectThread(id); dismiss()
                         }
                     }

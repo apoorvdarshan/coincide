@@ -2,6 +2,22 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+@Test
+func remoteCheckpointOptionalCreatePolicyPreservesLegacyOriginalReceiptPayloadBytes() throws {
+    let request = RemoteEnvironmentCommandRequest(environmentID: UUID(), command: .createThread(id: UUID(), projectID: UUID(),
+        provider: .codex, title: "Retained legacy command", model: "", permission: .supervised))
+    let encoded = try RemoteEnvironmentProtocol.payload(request)
+    var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    var command = try #require(object["command"] as? [String: Any])
+    var creation = try #require(command["createThread"] as? [String: Any])
+    creation.removeValue(forKey: "checkpointPolicy")
+    command["createThread"] = creation; object["command"] = command
+    let legacy = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .fragmentsAllowed])
+    let decoded = try JSONDecoder().decode(RemoteEnvironmentCommandRequest.self, from: legacy)
+    #expect(decoded == request)
+    #expect(try RemoteEnvironmentProtocol.payload(decoded) == legacy)
+}
+
 private final class RemoteEnvironmentCoreProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0

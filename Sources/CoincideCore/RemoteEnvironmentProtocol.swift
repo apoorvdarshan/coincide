@@ -63,6 +63,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
     public let supportsRemoteWorktrees: Bool
     public let supportsRemoteAttachments: Bool
     public let supportsRemotePullRequests: Bool
+    public let supportsRemoteCheckpoints: Bool
     public init(providers: [ProviderKind] = [.codex, .claude], supportsRemoteTerminal: Bool = false) {
         self.providers = providers; supportsCommandReceipts = true; supportsSubscriptions = true
         supportsProjectRegistration = true; supportsConversationCreation = true
@@ -72,10 +73,11 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRemoteWorktrees = true
         supportsRemoteAttachments = true
         supportsRemotePullRequests = true
+        supportsRemoteCheckpoints = true
     }
     private enum CodingKeys: String, CodingKey {
         case providers, supportsCommandReceipts, supportsSubscriptions, supportsProjectRegistration, supportsConversationCreation
-        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests
+        case supportsExactRunStop, supportsRequestResponses, persistentDaemon, supportsWorkspaceFilesAndGit, supportsRemoteTerminal, supportsRemoteWorktrees, supportsRemoteAttachments, supportsRemotePullRequests, supportsRemoteCheckpoints
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -92,6 +94,7 @@ public struct RemoteEnvironmentCapabilities: Codable, Sendable, Equatable {
         supportsRemoteWorktrees = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteWorktrees) ?? false
         supportsRemoteAttachments = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteAttachments) ?? false
         supportsRemotePullRequests = try values.decodeIfPresent(Bool.self, forKey: .supportsRemotePullRequests) ?? false
+        supportsRemoteCheckpoints = try values.decodeIfPresent(Bool.self, forKey: .supportsRemoteCheckpoints) ?? false
     }
 }
 public struct RemoteEnvironmentDescriptor: Codable, Sendable, Equatable {
@@ -120,16 +123,18 @@ public struct RemoteEnvironmentSnapshot: Codable, Sendable, Equatable {
 }
 public enum RemoteEnvironmentThreadEdit: Codable, Sendable, Equatable {
     case draft(String), title(String), model(String), permission(PermissionMode)
+    case checkpointPolicy(RunCheckpointPolicy, expected: RunCheckpointPolicy)
 }
 /// A closed client command surface. Native launch paths, internal effects and
 /// provider events can never be supplied by a remote command.
 public indirect enum RemoteEnvironmentCommand: Codable, Sendable, Equatable {
     case addProject(id: UUID, path: String, title: String?)
-    case createThread(id: UUID, projectID: UUID, provider: ProviderKind, title: String, model: String, permission: PermissionMode)
+    case createThread(id: UUID, projectID: UUID, provider: ProviderKind, title: String, model: String, permission: PermissionMode, checkpointPolicy: RunCheckpointPolicy? = nil)
     case editThread(threadID: UUID, edit: RemoteEnvironmentThreadEdit, expectedConfiguration: ProviderConfiguration)
     case submit(threadID: UUID, text: String, expectedConfiguration: ProviderConfiguration)
     case submitWithAttachments(target: RemoteAttachmentTarget, text: String, expectedConfiguration: ProviderConfiguration, expectedDraftAttachments: [ChatAttachment], uploadedAttachmentIDs: [UUID])
     case pullRequest(target: RemoteWorkspaceTarget, action: RemotePullRequestAction)
+    case checkpoint(target: RemoteWorkspaceTarget, action: RemoteCheckpointAction)
     case stop(threadID: UUID, runID: UUID, runtimeID: UUID)
     case respond(threadID: UUID, runID: UUID?, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case resumeQueue(threadID: UUID, expectedConfiguration: ProviderConfiguration)

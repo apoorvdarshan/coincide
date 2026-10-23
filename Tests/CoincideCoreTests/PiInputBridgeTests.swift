@@ -191,6 +191,9 @@ private func runBridgeJavaScript(_ body: String, fifoReservation: Bool = false) 
     function reserve(value, mode = 0o600) {
       try { coincideInputFS.unlinkSync(sidecar); } catch (e) { if (e.code !== "ENOENT") throw e; }
       coincideInputFS.writeFileSync(sidecar, JSON.stringify(value), { mode, flag: "wx" });
+      // The peer must construct the requested permission case independently of
+      // the test runner's inherited umask (including private-log runs at 077).
+      coincideInputFS.chmodSync(sidecar, mode);
     }
     function appendUser(p, text, images = [image]) {
       const message = { role: "user", content: [{ type: "text", text }, ...images], timestamp: 1 };
@@ -338,7 +341,10 @@ func piInputBridgeGeneratedExtensionRetiresOnlyExactClaimAfterNativeQuietProof(s
     let body = #"""
     const kind = KIND, p = peer();
     if (kind === "fifo") { /* Created by the test before the peer starts. */ }
-    else if (kind === "mode") reserve(original, 0o644);
+    else if (kind === "mode") {
+      reserve(original, 0o644);
+      assert.equal(coincideInputFS.lstatSync(sidecar).mode & 0o777, 0o644);
+    }
     else if (kind === "symlink") {
       const target = coincideInputPath.join(root, "foreign.json");
       coincideInputFS.writeFileSync(target, JSON.stringify(original), { mode: 0o600 });
