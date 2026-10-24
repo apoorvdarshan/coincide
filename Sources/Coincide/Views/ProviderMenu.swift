@@ -33,7 +33,9 @@ struct ProviderMenu: View {
                 ProviderLogo(provider: thread.provider, size: 14)
                 Text(summary).lineLimit(1).truncationMode(.middle)
                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
-            }.font(.system(size: 13)).frame(maxWidth: 270, alignment: .trailing).fixedSize(horizontal: false, vertical: true)
+            }.font(.system(size: 13))
+                // Hug short labels; only long model names need the width cap.
+                .frame(maxWidth: 270, alignment: .trailing).fixedSize(horizontal: true, vertical: true)
                 .frame(height: 30).padding(.horizontal, 6)
         }
         .buttonStyle(.plain).modifier(ChatControlHover(selected: store.modelPickerPresented))

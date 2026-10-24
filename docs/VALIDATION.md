@@ -1,5 +1,25 @@
 # Validation record
 
+## 2026-10-24 — Correct oversized hover and menu targets
+
+- Fixed the model selector's flexible 270pt frame expanding even short labels.
+  It now uses its intrinsic label width, retaining the cap for long model names.
+  Native accessibility measurements changed from 282pt to 130.5pt for
+  "Codex default". The shared highlighted background fits the label with the
+  picker open, with the sidebar hidden and shown, at 1295pt and 900pt widths.
+- Audited hover styles in the composer, chat header, sidebar, model picker,
+  message actions, command palette and Settings. Kept full-width list rows;
+  bounded the workspace label, corrected the attachment menu's 30pt target,
+  and moved Add project's 32pt target outside its native menu label. Disabled
+  composer menus no longer receive enabled hover styling.
+- Checked native control bounds and rendered highlighted states. Background
+  computer use cannot generate real pointer hover in this AppKit window, so
+  this does not claim a foreground pointer sweep. No provider prompt or
+  automated test was run. The user's existing unsent draft was preserved.
+- Final incremental build passed in 11.96 seconds; development packaging and
+  strict code-signature verification passed. The app stayed on the built-in
+  display. CI remains deferred by user direction.
+
 ## 2026-10-24 — Native UI polish and composer alignment
 
 - Replaced the separately padded SwiftUI composer placeholder with a small

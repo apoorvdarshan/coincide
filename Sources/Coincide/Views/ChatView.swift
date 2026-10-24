@@ -44,6 +44,7 @@ struct ChatView: View {
         } label: {
             Label(store.snapshot.projects.first { $0.id == thread.projectID }?.name ?? "Choose project", systemImage: "folder")
                 .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                .frame(maxWidth: 180, alignment: .leading).fixedSize(horizontal: true, vertical: true)
         }
         .menuStyle(.borderlessButton).fixedSize().frame(height: 28).padding(.horizontal, 6)
         .modifier(ChatControlHover()).help(thread.workspacePath)

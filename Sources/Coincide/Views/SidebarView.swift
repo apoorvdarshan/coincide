@@ -174,12 +174,11 @@ struct SidebarView: View {
                 Label("Add project", systemImage: "folder.badge.plus")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .frame(height: 32)
-                    .modifier(SidebarControlHover())
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .padding(.horizontal, 8).frame(height: 32)
+            .modifier(SidebarControlHover())
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)

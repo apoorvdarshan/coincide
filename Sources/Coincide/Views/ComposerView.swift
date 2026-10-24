@@ -135,9 +135,9 @@ struct ComposerView: View {
             if let referenceFile { Button("Reference a workspace file…", action: referenceFile).accessibilityIdentifier("composer-reference-file") }
             if skills?.supportsSkills == true { Button("Skills…", action: openSkills).accessibilityIdentifier("composer-skills") }
             if skills?.supportsCommands == true { Button("Commands…", action: openCommands).accessibilityIdentifier("composer-commands") }
-        } label: { Image(systemName: "plus").font(.system(size: 18)).frame(width: 30, height: 30) }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(submitting)
-        .modifier(ChatControlHover())
+        } label: { Image(systemName: "plus").font(.system(size: 18)) }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(width: 30, height: 30)
+        .modifier(ChatControlHover()).disabled(submitting)
         .help("Add files, skills or commands").accessibilityLabel("Add files and tools")
     }
     private var permissionControl: some View {
@@ -149,8 +149,8 @@ struct ComposerView: View {
                 }
             }
         } label: { Label(permission.nativeTitle(for: provider), systemImage: "slider.horizontal.3").font(.system(size: 13)) }
-        .menuStyle(.borderlessButton).fixedSize().frame(height: 30).padding(.horizontal, 5).disabled(historyLocked)
-        .modifier(ChatControlHover())
+        .menuStyle(.borderlessButton).fixedSize().frame(height: 30).padding(.horizontal, 5)
+        .modifier(ChatControlHover()).disabled(historyLocked)
         .accessibilityLabel("\(provider.name) permissions")
         .help(provider == .codex ? "Codex sandbox and approval policy for future turns." : "Claude Code permission mode for future turns.")
     }
