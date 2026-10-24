@@ -2,9 +2,9 @@ name: Swift
 on:
   push:
     branches: [main]
-    paths: ['Sources/**', 'Tests/**', 'UITests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml', 'VERSION', 'docs/*-LICENSE.txt', 'docs/*-NOTICE.txt', 'docs/third-party-notices.json']
+    paths: ['Sources/**', 'Tests/**', '!Tests/Fuzz/**', 'UITests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml', 'VERSION', 'docs/*-LICENSE.txt', 'docs/*-NOTICE.txt', 'docs/third-party-notices.json']
   pull_request:
-    paths: ['Sources/**', 'Tests/**', 'UITests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml', 'VERSION', 'docs/*-LICENSE.txt', 'docs/*-NOTICE.txt', 'docs/third-party-notices.json']
+    paths: ['Sources/**', 'Tests/**', '!Tests/Fuzz/**', 'UITests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml', 'VERSION', 'docs/*-LICENSE.txt', 'docs/*-NOTICE.txt', 'docs/third-party-notices.json']
   workflow_dispatch:
 permissions:
   contents: read

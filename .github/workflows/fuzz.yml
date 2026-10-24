@@ -1,0 +1,39 @@
+name: Fuzz
+on:
+  pull_request:
+    paths: ['script/coincide', 'Tests/Fuzz/**', '.clusterfuzzlite/**', '.github/workflows/fuzz.yml']
+  schedule:
+    - cron: '47 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # Cancel only superseded pull request runs; keep every scheduled and manual run.
+  group: fuzz-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  fuzz:
+    # Pull requests fuzz the change for 2 minutes. Weekly and manual runs fuzz main
+    # for 10 minutes and save the corpus as an artifact for later runs.
+    name: ClusterFuzzLite (${{ github.event_name == 'pull_request' && 'code-change' || 'batch' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Download the corpus saved by earlier runs.
+      actions: read
+    steps:
+      - name: Build fuzz targets
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          sanitizer: address
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run fuzz targets
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          sanitizer: address
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          mode: ${{ github.event_name == 'pull_request' && 'code-change' || 'batch' }}
+          fuzz-seconds: ${{ github.event_name == 'pull_request' && 120 || 600 }}

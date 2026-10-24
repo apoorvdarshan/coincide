@@ -1,0 +1,43 @@
+name: Scorecard supply-chain security
+on:
+  # Scorecard publishes results only for the default branch.
+  push:
+    branches: [main]
+  schedule:
+    - cron: '31 3 * * 6'
+  # Re-score when branch protection or rulesets change.
+  branch_protection_rule:
+  workflow_dispatch:
+# Publishing requires read-only workflow permissions, with id-token only on the Scorecard job.
+permissions: read-all
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Upload results to code scanning.
+      security-events: write
+      # Publish results to the OpenSSF API for the badge (GitHub OIDC token).
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run analysis
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+      - name: Upload SARIF artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: results.sarif

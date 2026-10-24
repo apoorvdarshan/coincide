@@ -1,0 +1,70 @@
+name: CodeQL
+on:
+  pull_request:
+  push:
+    branches: [main]
+    # Release tags run only the Swift analysis.
+    tags: ['v*']
+  schedule:
+    - cron: '23 5 * * 2'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # Cancel only superseded pull request runs; keep every main, tag, scheduled and manual run.
+  group: codeql-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    # Pull requests, pushes to main, the weekly schedule and manual runs.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}
+  analyze-swift:
+    name: Analyze (swift)
+    # Swift analysis needs a full macOS build, so it runs weekly, on release tags and
+    # on demand, never on pull requests or pushes to main. Don't make it a required check.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-26
+    # CodeQL traces a cold build without the build cache, so allow more than the CI build.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: swift --version
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: swift
+          build-mode: manual
+      - name: Build all Swift targets
+        run: swift build
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:swift

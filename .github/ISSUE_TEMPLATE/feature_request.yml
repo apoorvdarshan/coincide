@@ -1,0 +1,51 @@
+name: Feature request
+description: Suggest a new feature or an improvement to Coincide.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Coincide supports the Codex and Claude CLIs; requests for
+        other providers are unlikely to be accepted.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe what you are trying to do and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Coincide to do?
+      description: Describe the behavior you want. Mockups or examples from other apps help.
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which provider does this concern?
+      options:
+        - Codex
+        - Claude
+        - Both
+        - Not provider-specific
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: Other approaches you have considered, or how you handle this now.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Relevant CLI features or versions, links, or screenshots.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this hasn't been requested.
+          required: true

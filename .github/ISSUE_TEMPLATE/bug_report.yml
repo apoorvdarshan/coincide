@@ -1,0 +1,88 @@
+name: Bug report
+description: Report something in Coincide that doesn't work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Report security problems privately as described in
+        [SECURITY.md](https://github.com/apoorvdarshan/coincide/blob/main/SECURITY.md), not here.
+        Remove API keys, tokens and personal data from everything you paste below.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem. Screenshots or screen recordings help.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Select the Claude runtime in Settings → Agents
+        2. Start a new chat in a project folder
+        3. Send a message with an image attached
+        4. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which provider is involved?
+      options:
+        - Codex
+        - Claude
+        - Both
+        - Not provider-specific
+    validations:
+      required: true
+  - type: input
+    id: codex-version
+    attributes:
+      label: Codex CLI version
+      description: Output of `codex --version`, if you use Codex.
+      placeholder: codex-cli 0.164.0
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude CLI version
+      description: Output of `claude --version`, if you use Claude.
+      placeholder: 2.1.0 (Claude Code)
+  - type: input
+    id: coincide-version
+    attributes:
+      label: Coincide version or commit
+      description: Settings → About shows the version. For a source build, run `git rev-parse --short HEAD`.
+      placeholder: 0.1.0 or e023399
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac, or run `sw_vers`.
+      placeholder: macOS 26.1 (25B78), Apple silicon
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output or logs
+      description: Error messages, `./script/coincide` output, or crash logs. Remove secrets first.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this hasn't been reported.
+          required: true
+        - label: I removed credentials, tokens and personal data from this report.
+          required: true

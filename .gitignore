@@ -4,3 +4,4 @@ dist/
 *.xcuserstate
 .swiftpm/
 __pycache__/
+error.log

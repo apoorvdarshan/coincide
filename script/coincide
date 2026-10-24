@@ -41,6 +41,17 @@ def local_action_error(command, result):
     return message
 
 
+def json_object(data, description):
+    """Decode app-written JSON; malformed, deeply nested or non-object data is a reported error."""
+    try:
+        value = json.loads(data)
+    except RecursionError:
+        value = None
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid {description}.")
+    return value
+
+
 def connection():
     # Tests point the CLI at a disposable UI-testing app; the same privacy checks apply.
     override = os.environ.get("COINCIDE_CONTROL_DIR")
@@ -55,14 +66,17 @@ def connection():
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1 or info.st_size > 4096:
             raise ValueError("The Coincide CLI connection file is not private.")
-        record = json.loads(os.read(fd, 4096))
+        record = json_object(os.read(fd, 4096), "local Coincide connection file")
     finally:
         os.close(fd)
-    url = urllib.parse.urlsplit(record["endpoint"])
-    if url.scheme != "http" or url.hostname != "127.0.0.1" or not url.port or url.path != "/mcp" or url.username or url.password or url.query or url.fragment:
+    endpoint = record.get("endpoint")
+    url = urllib.parse.urlsplit(endpoint) if isinstance(endpoint, str) else None
+    # Accept only the exact form the app writes: urlsplit silently drops tabs, newlines,
+    # leading control characters and empty user info that urllib would still send.
+    if url is None or not url.port or endpoint != f"http://127.0.0.1:{url.port}/mcp":
         raise ValueError("Invalid local Coincide endpoint.")
     auth = record.get("authorization", "")
-    if not auth.startswith("Bearer ") or len(auth) != 50 or any(c in auth for c in "\r\n"):
+    if not isinstance(auth, str) or not auth.startswith("Bearer ") or len(auth) != 50 or any(c in auth for c in "\r\n"):
         raise ValueError("Invalid local Coincide credential.")
     return record
 
@@ -150,7 +164,10 @@ def main():
     if "id" in arguments:
         arguments["id"] = str(uuid.UUID(arguments["id"]))
     if "path" in arguments:
-        arguments["path"] = str(Path(arguments["path"]).expanduser().absolute())
+        try:
+            arguments["path"] = str(Path(arguments["path"]).expanduser().absolute())
+        except RuntimeError:  # "~name/..." for an account without a home folder
+            raise ValueError("Could not find the home folder in that path.") from None
     record = connection()
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
@@ -168,9 +185,12 @@ def main():
             raise ValueError("Coincide response exceeded the size limit.")
         if notification:
             return None
-        reply = json.loads(data)
+        reply = json_object(data, "Coincide response")
         if "error" in reply:
-            raise ValueError(reply["error"].get("message", "Coincide rejected the request."))
+            error = reply["error"]
+            raise ValueError(error.get("message", "Coincide rejected the request.") if isinstance(error, dict) else "Coincide rejected the request.")
+        if not isinstance(reply.get("result"), dict):
+            raise ValueError("Invalid Coincide response.")
         return reply["result"]
 
     rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "coincide-cli", "version": "1"}})

@@ -99,6 +99,11 @@ These describe earlier work and internal infrastructure, not the current set of
 user-facing screens or buttons. Legacy backend and persistence code has not all
 been removed during the UI simplification.
 
+## License
+
+Coincide is released under the [MIT License](LICENSE); portions derived from
+T3 Code keep their original [MIT notice](docs/T3-CODE-LICENSE.txt).
+
 ## Attribution and third-party notices
 
 T3 Code is copyright © 2026 T3 Tools Inc.; its
