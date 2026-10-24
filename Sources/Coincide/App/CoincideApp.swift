@@ -22,7 +22,10 @@ enum CoincideMain {
                   image.cgImage(forProposedRect: nil, context: nil, hints: nil) != nil else {
                 FileHandle.standardError.write(Data("Native math resources could not be rendered.\n".utf8)); exit(EXIT_FAILURE)
             }
-            print("Native math resources rendered successfully."); return
+            guard ["Claude", "OpenAI-black", "OpenAI-white"].allSatisfy({ ProviderLogo.url($0).flatMap(NSImage.init(contentsOf:)) != nil }) else {
+                FileHandle.standardError.write(Data("Provider logo resources are missing from the app bundle.\n".utf8)); exit(EXIT_FAILURE)
+            }
+            print("Native math and provider logo resources loaded successfully."); return
         }
         CoincideApp.main()
     }
