@@ -208,25 +208,25 @@ func previewProbeConnectsOnlyToAListeningLoopbackPort() async throws {
 }
 
 @MainActor @Test(.timeLimit(.minutes(1)))
-func projectActionViewsLayOutInLightAndDarkWithoutOverflow() async throws {
+func nativeProjectViewsLayOutInLightAndDarkAndPreserveSavedActionData() async throws {
     let f = try await ProjectActionsFixture.make()
     do {
         try await f.store.projectSettings.update(f.project) {
             $0.actions = try ProjectActions.adding(.init(name: "Install dependencies with a long descriptive name", command: "npm ci && npm run build:all -- --verbose",
                                                          runOnWorktreeCreate: true, waitForSetup: true, shortcut: try .init(key: "d", option: true, control: true)), to: [])
         }
-        let presenter = ProjectActionsPresenter()
+        let savedActions = f.store.projectSettings.document(for: f.project).actions
         for dark in [false, true] {
-            let id = try #require(f.store.projectSettings.document(for: f.project).actions?.first?.id)
-            let editor = try await renderActionsView(ProjectActionEditorSheet(settings: f.store.projectSettings, project: f.project, actionID: id, close: { }),
-                                                     width: 520, height: 760, dark: dark, name: "editor")
-            #expect(editor.fittingSize.width <= 521 && editor.fittingSize.height > 200)
-            let sheet = try await renderActionsView(ProjectSettingsSheet(store: f.store, projectID: f.project.id, close: { }).environment(presenter),
-                                                    width: 600, height: 640, dark: dark, name: "settings")
-            #expect(sheet.fittingSize.width <= 601 && sheet.fittingSize.height > 0)
-            let control = try await renderActionsView(ProjectActionsToolbarControl(store: f.store, terminals: f.terminals, commands: ProjectActionCommands(), keybindings: nil,
-                requests: .init(review: { _, _ in }, addAction: { _ in }, settings: { _ in })).fixedSize(), width: 320, height: 40, dark: dark, name: "toolbar")
-            #expect(control.fittingSize.width <= 321)
+            let sheet = try await renderActionsView(NewProjectSheet(store: f.store), width: 520, height: 420, dark: dark, name: "new-project")
+            #expect(sheet.fittingSize.width <= 521 && sheet.fittingSize.height > 200)
+            for width in [CGFloat(260), 340] {
+                let sidebar = try await renderActionsView(SidebarView(store: f.store, onNewProject: { }, onImportAgentProjects: { }),
+                    width: width, height: 640, dark: dark, name: "sidebar-\(Int(width))")
+                #expect(sidebar.fittingSize.width <= width + 1 && sidebar.fittingSize.height > 0)
+            }
+            #expect(f.store.projectSettings.document(for: f.project).actions == savedActions,
+                    "Opening the native project UI must preserve saved action data without running it.")
+            #expect(f.terminals.sessions[f.thread.id]?.isEmpty != false)
             for presentation in [ProjectIconPresentation.monogram(text: "NA", color: .teal), .emoji("🚀"), .symbol(name: "hammer", color: .orange)] {
                 let icon = try await renderActionsView(ProjectIconGlyph(presentation: presentation, size: 16), width: 16, height: 16, dark: dark)
                 #expect(icon.fittingSize.width <= 17 && icon.fittingSize.height <= 17)

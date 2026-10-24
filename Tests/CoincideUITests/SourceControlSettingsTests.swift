@@ -42,21 +42,14 @@ private final class TokenVault: @unchecked Sendable {
     #expect(SourceControlSettingsStore.projectHosts([project]).isEmpty)
 }
 
-@MainActor @Test func sourceControlSettingsFitsTheSettingsWindowInBothAppearances() async throws {
+@MainActor @Test func providerConfigurationFitsEmbeddedSettingsInBothAppearances() async throws {
     _ = NSApplication.shared
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-scm-settings-" + UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = WorkspaceStore(databaseURL: root.appendingPathComponent("workspace.sqlite"))
-    let model = SourceControlSettingsStore(discovery: { _ in await MainActor.run { fixtureReport() } }, tokens: TokenVault().access, overrides: GitHubCredentialOverrides())
-    await model.rescan(hosts: [])
-    let suite = "coincide.scm.settings." + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
     for scheme in [ColorScheme.light, .dark] {
-        let controller = NSHostingController(rootView: SourceControlSettingsView(store: store, model: model, preferences: .init(defaults: defaults))
-            .environment(\.colorScheme, scheme).frame(width: 620, height: 460))
+        let controller = NSHostingController(rootView: ScrollView {
+            ProviderConfigurationEditorView(codex: .init(), claude: .init(), workspacePath: nil)
+                .padding(24)
+        }.environment(\.colorScheme, scheme).frame(width: 620, height: 460))
         let size = controller.sizeThatFits(in: CGSize(width: 620, height: 460))
         #expect(size.width <= 621 && size.height <= 461)
     }
-    await store.shutdown()
 }

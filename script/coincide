@@ -44,6 +44,28 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "projects", "providers"):
         commands.add_parser(name)
+    integrations = commands.add_parser("integrations", help="Discover local CLI integrations; returns metadata, never credentials")
+    integrations.add_argument("--kind", choices=("skills", "commands", "mcp", "plugins", "hooks"))
+    integrations.add_argument("--provider", choices=("codex", "claude"))
+    for name in ("integration-import", "integration-remove", "integration-use"):
+        command = commands.add_parser(name, help="Import/remove a Coincide library item, or add it to the selected draft without sending")
+        command.add_argument("integration_id", help="Exact ID returned by integrations")
+    sessions = commands.add_parser("sessions", help="List provider-owned sessions without starting a daemon or model turn")
+    sessions.add_argument("provider", choices=("codex", "claude"))
+    for name in ("session-details", "session-stop"):
+        command = commands.add_parser(name, help="Inspect a provider session or explicitly stop its current work")
+        command.add_argument("provider", choices=("codex", "claude"))
+        command.add_argument("session_id", help="Exact ID returned by sessions, including its provider prefix")
+        if name == "session-stop":
+            command.add_argument("--confirm", action="store_true", required=True,
+                                 help="Confirm this affects the original provider session")
+    configuration = commands.add_parser("configuration", help="Read safe structured settings and obtain a short-lived review ID")
+    configuration.add_argument("provider", choices=("codex", "claude"))
+    configuration.add_argument("--scope", choices=("user", "project", "local"), default="user")
+    config_set = commands.add_parser("configuration-set", help="Save one reviewed setting; rejects stale source files and sensitive values")
+    config_set.add_argument("review_id", type=lambda value: str(uuid.UUID(value)))
+    config_set.add_argument("field", help="Exact field ID from configuration")
+    config_set.add_argument("value", help="Validated setting value; empty string removes this scope's override")
     threads = commands.add_parser("threads")
     threads.add_argument("--project", help="Project name, path, or UUID")
     for name in ("thread", "select", "models"):
@@ -68,13 +90,17 @@ def main():
     ui = commands.add_parser("ui", help="Navigate the native chat and settings without clicking")
     destination = ui.add_mutually_exclusive_group()
     destination.add_argument("--chat", action="store_true")
-    destination.add_argument("--settings", choices=("general", "appearance", "notifications", "providers", "models", "conversations", "keyboard", "about"))
+    destination.add_argument("--settings", choices=("general", "appearance", "notifications", "providers", "models", "conversations", "keyboard", "about", "skills", "commands", "mcp", "plugins", "hooks", "configuration", "sessions"))
     ui.add_argument("--sidebar", choices=("show", "hide"))
     ui.add_argument("--display", choices=("built-in",), help="Fit the existing window to the Mac's built-in display without activating it")
     ui.add_argument("--model-picker", action="store_true", help="Open the unified model picker")
     screenshot = commands.add_parser("screenshot", help="Render the app window to a new PNG file without computer-use automation")
     screenshot.add_argument("path")
     screenshot.add_argument("--popover", action="store_true", help="Capture the one visible native popover")
+    export = commands.add_parser("export", help="Export visible conversation text to a new private file; never overwrites")
+    export.add_argument("path")
+    export.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    export.add_argument("--thread", dest="id", help="Conversation UUID; defaults to the selected conversation")
     options = vars(parser.parse_args())
     name = options.pop("command")
     arguments = {k: v for k, v in options.items() if v is not None}

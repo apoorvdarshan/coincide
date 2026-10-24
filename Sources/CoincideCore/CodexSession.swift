@@ -416,7 +416,7 @@ public actor CodexSession: ProviderSession {
             var metadata = thread.providerMetadata?.object ?? [:]
             let modesSupported = CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).hasReviewedProfile
             metadata["codexInteractionModes"] = .object([
-                "supported": .bool(modesSupported), "profile": modesSupported ? .string("codex-0.163") : .null,
+                "supported": .bool(modesSupported), "profile": CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).reviewedProfileIdentifier.map(JSONValue.string) ?? .null,
                 "modes": .array(modesSupported ? [.string("default"), .string("plan")] : [])
             ])
             emit(.configuration(.object(metadata)))

@@ -15,6 +15,23 @@ private struct ClaudeResumeConsumerFixture {
         try FileManager.default.createDirectory(at: requested, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard let pointer = requested.path.withCString({ realpath($0, nil) }) else { throw CoincideError("The private Claude consumer fixture is unavailable.") }
         root = URL(fileURLWithPath: String(cString: pointer)); free(pointer)
+        do {
+            let source = try Self.makeSource(root: root, now: now)
+            let prepared = try Self.prepareRewind(source: source)
+            snapshot = try Self.applyRewind(prepared, source: source, now: now)
+            selection = prepared.selection; threadID = source.threads[0].id
+            guard snapshot.threads[0].claudeResumeSelection == selection else { throw CoincideError("The offline rewind fixture was not applied.") }
+        } catch {
+            try? FileManager.default.removeItem(at: root)
+            throw error
+        }
+    }
+
+    // Release transcript construction and review temporaries before entering
+    // ledger validation on Swift Testing's bounded worker stack. These remain
+    // separate calls in Debug and retain the identical native history path.
+    @inline(never)
+    private static func makeSource(root: URL, now: Date) throws -> WorkspaceSnapshot {
         let runtime = ClaudeRuntimeConfiguration(executable: root.appendingPathComponent("never-executed").path,
             configurationDirectory: root.appendingPathComponent("Native").path, workspacePath: root.path)
         let project = WorkspaceProject(path: root.path), native = UUID().uuidString.lowercased()
@@ -23,10 +40,9 @@ private struct ClaudeResumeConsumerFixture {
         thread.provider = .claude; thread.providerThreadID = native; thread.claudeRuntimeConfiguration = runtime; thread.checkpointPolicy = .disabled
         thread.draft = "Latest draft 工作 😀"
         let fixtureRoot = root
-        var rows: [JSONValue] = [], parent: String?, runIDs: [UUID] = []
+        var rows: [JSONValue] = [], parent: String?
         for number in 0..<2 {
             let runID = UUID(), opening = ClaudeInputIdentity.opening(runID: runID), assistant = UUID().uuidString.lowercased()
-            runIDs.append(runID)
             func row(_ id: String, role: String, parent: String?) -> JSONValue {
                 .object(["type": .string(role), "uuid": .string(id), "sessionId": .string(native), "parentUuid": parent.map(JSONValue.string) ?? .null,
                     "cwd": .string(fixtureRoot.path), "isSidechain": .bool(false), "timestamp": .string("2026-10-23T00:00:00.000Z"),
@@ -52,23 +68,41 @@ private struct ClaudeResumeConsumerFixture {
         let file = nativeProject.appendingPathComponent(native + ".jsonl")
         try data.write(to: file); try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         var source = WorkspaceSnapshot(); source.projects = [project]; source.threads = [thread]
+        return source
+    }
+
+    private struct PreparedRewind {
+        let review: ConversationHistoryReview
+        let result: ProviderConversationSnapshot
+        let selection: ClaudeResumeSelection
+    }
+
+    @inline(never)
+    private static func prepareRewind(source: WorkspaceSnapshot) throws -> PreparedRewind {
+        let thread = source.threads[0]
+        guard let runtime = thread.claudeRuntimeConfiguration, let native = thread.providerThreadID,
+              let selectedRun = thread.runHistory?.last?.id else { throw ClaudeRuntimeConfiguration.invalid() }
         let service = try ClaudeHistoryService(configuration: runtime), nativeSource = try service.snapshot(sessionID: native)
-        let selectedRun = runIDs[1]
         let evidence = try ClaudeHistoryReviewEvidence.make(source: nativeSource, snapshot: source, thread: thread, runID: selectedRun, kind: .rewindBeforeRun)
         let prefix = try thread.transcriptPrefix(runID: selectedRun, boundary: .beforeRun), prefixIDs = Set(prefix.map(\.id))
-        let review = try ConversationHistoryReview(kind: .rewindBeforeRun, sourceThreadID: thread.id, projectID: project.id,
+        let review = try ConversationHistoryReview(kind: .rewindBeforeRun, sourceThreadID: thread.id, projectID: thread.projectID,
             runID: selectedRun, sourceIncarnation: UUID(), sourceConfiguration: .init(thread: thread), targetConfiguration: .init(thread: thread),
             sourceReference: nativeSource.reference, reviewedHeadTurnID: nil, boundary: evidence.boundary.providerBoundary, expectedResultHeadTurnID: nil,
             prefix: prefix, removedRunIDs: [selectedRun], removedMessageIDs: thread.messages.filter { !prefixIDs.contains($0.id) }.map(\.id),
             sourceFingerprint: try source.historySourceFingerprint(threadID: thread.id), targetThreadID: nil, suggestedTitle: "Saved Claude context", claude: evidence)
         let result = try service.prepareRewind(review: evidence, selectionID: review.id)
-        guard let selected = result.selection else { throw ClaudeRuntimeConfiguration.invalid() }; selection = selected
+        guard let selected = result.selection else { throw ClaudeRuntimeConfiguration.invalid() }
         let providerResult = try ProviderConversationSnapshot(reference: result.reference, workspacePath: result.workspacePath, historyMode: .nativeTranscript, claude: result)
-        let accepted = try WorkspaceDecision.make(.conversationHistoryAccepted(review: review, title: nil), id: review.id, snapshot: source, now: now)
-        let dispatch = try WorkspaceDecision.make(.conversationHistoryDispatching(threadID: thread.id, operationID: review.id, incarnation: review.sourceIncarnation), id: UUID(), snapshot: accepted.snapshot, now: now)
-        let applied = try WorkspaceDecision.make(.conversationHistoryEffectResult(.conversationHistory(threadID: thread.id, operationID: review.id), .conversationHistoryConfirmed(providerResult), incarnation: review.sourceIncarnation), id: UUID(), snapshot: dispatch.snapshot, now: now)
-        snapshot = applied.snapshot; threadID = thread.id
-        guard snapshot.threads[0].claudeResumeSelection == selection else { throw CoincideError("The offline rewind fixture was not applied.") }
+        return .init(review: review, result: providerResult, selection: selected)
+    }
+
+    @inline(never)
+    private static func applyRewind(_ prepared: PreparedRewind, source: WorkspaceSnapshot, now: Date) throws -> WorkspaceSnapshot {
+        let review = prepared.review
+        var snapshot = try WorkspaceDecision.make(.conversationHistoryAccepted(review: review, title: nil), id: review.id, snapshot: source, now: now).snapshot
+        snapshot = try WorkspaceDecision.make(.conversationHistoryDispatching(threadID: review.sourceThreadID, operationID: review.id, incarnation: review.sourceIncarnation), id: UUID(), snapshot: snapshot, now: now).snapshot
+        snapshot = try WorkspaceDecision.make(.conversationHistoryEffectResult(.conversationHistory(threadID: review.sourceThreadID, operationID: review.id), .conversationHistoryConfirmed(prepared.result), incarnation: review.sourceIncarnation), id: UUID(), snapshot: snapshot, now: now).snapshot
+        return snapshot
     }
     var thread: CodingThread { snapshot.threads[0] }
     mutating func apply(_ command: EngineCommand, id: UUID = UUID()) throws -> WorkspaceDecision {

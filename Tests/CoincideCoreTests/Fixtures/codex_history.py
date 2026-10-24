@@ -1,4 +1,4 @@
-"""Offline Codex 0.163 app-server peer for conversation-history contracts.
+"""Offline Codex 0.163 / 0.164.0 app-server peer for conversation-history contracts.
 
 The test supplies a private configuration and wire-log path. No subprocess,
 network, repository, or user Codex state is accessed by this peer.
@@ -52,7 +52,7 @@ def thread(identifier, config):
         'modelProvider': 'openai', 'model': 'fixture-model',
         'reasoningEffort': None, 'createdAt': 1, 'updatedAt': 2,
         'recencyAt': 2, 'status': status, 'path': None,
-        'cwd': config['cwd'], 'cliVersion': '0.163.0',
+        'cwd': config['cwd'], 'cliVersion': config.get('cliVersion', '0.163.0'),
         'originator': 'coincide', 'source': 'cli',
         'canAcceptDirectInput': True, 'threadSource': None,
         'agentNickname': None, 'agentRole': None, 'gitInfo': None,

@@ -113,6 +113,8 @@ final class WorkspaceStore {
     let threadActionUndo = ThreadActionUndoStore()
     let composerDraftTools: ComposerDraftToolsStore
     let agentSessionImports: AgentSessionImportStore
+    let integrations: ProviderIntegrationsStore
+    let configurationEditor = ProviderConfigurationEditorStore()
     let claudeRuntime: ClaudeRuntimeSettingsStore
     let projectSettings: ProjectSettingsStore
     @ObservationIgnored private var agentSessionImportScans: [UUID: [AgentSessionProjectCandidate]] = [:]
@@ -275,6 +277,7 @@ final class WorkspaceStore {
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
         composerDraftTools = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AgentSessionImports", isDirectory: true))
+        integrations = .init(libraryRoot: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Integrations", isDirectory: true))
         terminalArchives = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("TerminalHistory", isDirectory: true))
         claudeRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot)
         self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
@@ -322,6 +325,7 @@ final class WorkspaceStore {
          projectCreator: ProjectCreator? = nil, projectSettingsStore: ProjectSettingsStore? = nil) {
         composerDraftTools = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AgentSessionImports", isDirectory: true))
+        integrations = .init(libraryRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("Integrations", isDirectory: true))
         terminalArchives = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("TerminalHistory", isDirectory: true))
         claudeRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent())
         self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
@@ -773,6 +777,41 @@ final class WorkspaceStore {
         return value
     }
     var selectedThread: CodingThread? { selectedThreadID.flatMap { thread($0) } }
+    var integrationCodexConfiguration: CodexRuntimeConfiguration {
+        if let thread = selectedThread, thread.provider == .codex { return thread.codexRuntimeConfiguration ?? .init() }
+        return codexRuntime.configuration
+    }
+    var integrationClaudeProfile: ClaudeRuntimeProfile {
+        guard let thread = selectedThread, thread.provider == .claude, let captured = thread.claudeRuntimeConfiguration else { return claudeRuntime.profile }
+        return .init(instanceID: captured.instanceID, executable: captured.executable,
+                     configurationDirectory: captured.configurationDirectory, autoCompactWindow: captured.launchSettings?.autoCompactWindow)
+    }
+    var integrationScope: ProviderIntegrationsStore.Scope {
+        .init(workspacePath: selectedThread?.workspacePath ?? selectedProject?.path,
+              codexHome: integrationCodexConfiguration.homeDirectory,
+              claudeHome: integrationClaudeProfile.configurationDirectory)
+    }
+    func providerSessionsScope(_ provider: ProviderKind) -> ProviderSessionsScope {
+        .init(provider: provider,
+              executable: provider == .codex ? integrationCodexConfiguration.executable : integrationClaudeProfile.executable,
+              configurationDirectory: provider == .codex ? integrationScope.codexHome : integrationScope.claudeHome,
+              workspacePath: integrationScope.workspacePath)
+    }
+    func useIntegration(_ item: ProviderIntegrationItem) async throws {
+        guard let selected = selectedThread, item.available, item.importMode == .copied || item.enabled,
+              item.importMode == .copied || selected.provider == item.provider else {
+            throw CoincideError("Select a compatible chat before using this item.")
+        }
+        let scope = integrationScope
+        let text = try await integrations.invocation(for: item)
+        guard let current = thread(selected.id), selectedThreadID == selected.id,
+              current.provider == selected.provider, integrationScope == scope else {
+            throw CoincideError("The conversation changed. Choose the integration again.")
+        }
+        let draft = current.draft
+        setDraft(draft + (draft.isEmpty || draft.hasSuffix("\n") ? "" : "\n") + text + " ", id: current.id)
+        showChat()
+    }
     var selectedProject: WorkspaceProject? {
         let id = selectedThread?.projectID ?? selectedProjectID
         return snapshot.projects.first { $0.id == id }
@@ -2582,6 +2621,10 @@ final class WorkspaceStore {
 
     func submit(_ text: String, threadID id: UUID) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.hasPrefix("/app:") else {
+            errorMessage = "Use the composer to run Coincide app commands. They are never sent to an agent."
+            return Task { false }
+        }
         guard !choosingModelThreads.contains(id), let thread = thread(id), thread.provider.isSupported, (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !composerDraftTools.blocksSubmission(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
@@ -2691,6 +2734,10 @@ final class WorkspaceStore {
     }
     func steer(_ text: String, threadID id: UUID, queuedID: UUID? = nil) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.hasPrefix("/app:") else {
+            errorMessage = "Use the composer to run Coincide app commands. They are never sent to an agent."
+            return Task { false }
+        }
         guard !terminating, let engine, let thread = thread(id), !isImportingAttachments(id), queuedID != nil || !composerDraftTools.blocksSubmission(id),
               !isPreparingWorkspace(id), !actionsPreventPromptSteering(threadID: id),
               let availability = steeringAvailability(threadID: id), availability.canSteer,

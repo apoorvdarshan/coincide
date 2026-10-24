@@ -16,11 +16,22 @@ struct CodexHistoryClient: Sendable {
         let status: String
     }
 
-    var hasReviewedProfile: Bool {
-        guard let userAgent, userAgent.utf8.count <= 4_096 else { return false }
+    var hasReviewedProfile: Bool { reviewedProfileIdentifier != nil }
+    var reviewedProfileIdentifier: String? { Self.reviewedProfileIdentifier(for: userAgent) }
+
+    static func reviewedProfileIdentifier(for userAgent: String?) -> String? {
+        guard let userAgent, userAgent.utf8.count <= 4_096 else { return nil }
         // The server prefixes its version with initialize.clientInfo.name.
-        // An isolated 0.163 handshake returned coincide/0.163.0 here.
-        return userAgent.range(of: #"^(?:coincide|codex_cli_rs|codex)/0\.163\.[0-9]+(?:\s|$|[-+])"#, options: .regularExpression) != nil
+        // 0.164.0 was compared with the 0.163 protocol and local experimental
+        // schema: existing history and collaboration-mode contracts are unchanged.
+        // Future patches and prereleases still require their own review.
+        if userAgent.range(of: #"^(?:coincide|codex_cli_rs|codex)/0\.164\.0(?:\s|$)"#, options: .regularExpression) != nil {
+            return "codex-0.164.0"
+        }
+        if userAgent.range(of: #"^(?:coincide|codex_cli_rs|codex)/0\.163\.[0-9]+(?:\s|$|[-+])"#, options: .regularExpression) != nil {
+            return "codex-0.163"
+        }
+        return nil
     }
     func capabilities(threadID: String) async throws -> ProviderHistoryCapabilities {
         let reference = try ProviderConversationReference(provider: .codex, nativeThreadID: threadID)

@@ -184,7 +184,7 @@ import Testing
     #expect(!root.root.flatMap(\.items).contains { $0.title == "Archived alpha" } && root.threads.isEmpty)
     let actions = try #require(root.root.first { $0.id == "actions" }).items
     #expect(actions.contains { $0.id == "action:find-thread" && $0.shortcut == .chatFind })
-    #expect(actions.contains { $0.id == "action:copy-thread-reference" } && actions.first?.title == "New Thread in Alpha")
+    #expect(actions.contains { $0.id == "action:copy-thread-reference" } && actions.first?.title == "New Chat in Alpha")
     #expect(!actions.contains { $0.id == "action:stop" } && !actions.contains { $0.id == "action:reopen" })
     // One character does not search messages; two characters show a message snippet.
     #expect(CommandPaletteItems.sources(for: controller, query: "c").threads.allSatisfy { $0.snippet == nil })
@@ -208,23 +208,23 @@ func retainedPaletteThreadActionsCannotRetargetAfterSelectionOrCheckoutChanges()
     let source = try #require(f.threads["a-pinned"]), destination = try #require(f.threads["b-one"])
     f.store.selectedThreadID = source.id
     let controller = MainWindowController(store: f.store)
-    var toggles = 0
-    controller.presentations.toggleTerminal = { toggles += 1 }
     let original = CommandPaletteItems.actions(controller)
     let find = try #require(original.first { $0.id == "action:find-thread" })
-    let terminal = try #require(original.first { $0.id == "action:toggle-terminal" })
+    let pin = try #require(original.first { $0.id == "action:pin" })
+    let initialPin = source.isPinned
+    #expect(!original.contains { $0.id == "action:toggle-terminal" })
     func run(_ item: PaletteItem) {
         guard case .action(let action) = item.kind else { Issue.record("Expected a thread action"); return }
         action()
     }
     f.store.selectedThreadID = destination.id
-    run(find); run(terminal)
-    #expect(controller.find == nil && toggles == 0 && f.store.selectedThreadID == destination.id)
+    run(find); run(pin)
+    #expect(controller.find == nil && f.store.thread(source.id)?.isPinned == initialPin && f.store.selectedThreadID == destination.id)
     f.store.selectedThreadID = source.id
     let index = try #require(f.store.snapshot.threads.firstIndex { $0.id == source.id })
     f.store.snapshot.threads[index].workspacePath = destination.workspacePath
-    run(find); run(terminal)
-    #expect(controller.find == nil && toggles == 0)
+    run(find); run(pin)
+    #expect(controller.find == nil && f.store.thread(source.id)?.isPinned == initialPin)
     // Freshly built actions use the current checkout; a stale row is never rebound.
     let fresh = try #require(CommandPaletteItems.actions(controller).first { $0.id == "action:find-thread" })
     run(fresh)
@@ -250,7 +250,7 @@ func paletteSearchFindsMatchingOlderHistoryBeyondTheBoundedNewestResultWindow() 
 }
 
 @MainActor @Test
-func newThreadCommandChoosesBetweenProjectGroupsWithoutChangingTheSelectedDraft() throws {
+func newThreadProjectPickerChoosesBetweenGroupsWithoutChangingTheSelectedDraft() throws {
     let f = try keyboardFixtureStore(); defer { try? FileManager.default.removeItem(at: f.root) }
     let source = try #require(f.threads["a-pinned"])
     let index = try #require(f.store.snapshot.threads.firstIndex { $0.id == source.id })
@@ -261,9 +261,12 @@ func newThreadCommandChoosesBetweenProjectGroupsWithoutChangingTheSelectedDraft(
     let controller = MainWindowController(store: f.store)
     #expect(f.store.orderedProjectGroups.count == 2 && controller.canPerform(.chatNew) && controller.canPerform(.chatNewLocal))
     #expect(KeybindingCommand.chatNewLocal.availability == .available)
-    #expect(controller.perform(.chatNew))
+    controller.openPalette()
     let palette = try #require(controller.palette)
-    #expect(palette.breadcrumb == "New Thread In…")
+    let choice = try #require(palette.selectableItems.first { $0.id == "action:new-thread-in" })
+    guard case .submenu(let projects) = choice.kind else { Issue.record("Expected a project picker"); return }
+    palette.open(view: projects)
+    #expect(palette.breadcrumb == "New Chat In…")
     #expect(palette.selectableItems.map(\.id) == f.projects.map { "new-thread-in:\($0.id.uuidString)" })
     #expect(palette.selectableItems.map(\.subtitle) == f.projects.map(\.path))
     #expect(f.store.snapshot == before && f.store.selectedThreadID == source.id && f.store.selectedProjectID == source.projectID)
@@ -301,20 +304,24 @@ func newThreadCommandChoosesBetweenProjectGroupsWithoutChangingTheSelectedDraft(
 @Test func keybindingSettingsRowsDetectSourcesConflictsSearchAndRecording() {
     let custom = KeybindingResolver.merge(KeybindingResolver.compile([
         .init(key: "mod+k", command: .threadPin, when: "!terminalFocus"),
-        .init(key: "mod+l", command: .script("test")),
+        .init(key: "mod+l", command: .threadCopyReference, when: "composerFocus"),
+        .init(key: "mod+l", command: .chatFind, when: "!composerFocus"),
+        .init(key: "mod+j", command: .script("test")),
     ]))
     let rows = KeybindingsSettingsModel.rows(custom)
     let pin = rows.first { $0.command == .threadPin }!, palette = rows.first { $0.command == .commandPaletteToggle }!
     #expect(pin.source == .custom && pin.defaultKey == "mod+shift+p" && pin.canReset && pin.canRemove)
     #expect(palette.source == .default && !palette.canRemove && !palette.canReset)
-    #expect(rows.first { $0.command == .script("test") }?.source == .project)
+    #expect(rows.first { $0.command == .threadCopyReference && $0.key == "mod+l" }?.source == .custom)
+    #expect(!rows.contains { $0.command.scriptID != nil || $0.command == .terminalSplit || $0.command == .diffToggle })
     #expect(pin.conflicts == ["Command Palette"] && palette.conflicts == ["Thread: Pin"])
     // Different conditions on the same keys do not conflict; an empty condition conflicts with any.
-    let split = rows.first { $0.command == .terminalSplit }!
-    #expect(split.conflicts.isEmpty && rows.first { $0.command == .diffToggle }!.conflicts.isEmpty)
-    #expect(KeybindingsSettingsModel.conflictLabels(rows, rowID: nil, shortcut: KeybindingShortcut(parsing: "mod+d"), when: "") == ["Inspector: Show Changes", "Terminal: Split"])
+    let copy = rows.first { $0.command == .threadCopyReference && $0.key == "mod+l" }!
+    let find = rows.first { $0.command == .chatFind && $0.key == "mod+l" }!
+    #expect(copy.conflicts.isEmpty && find.conflicts.isEmpty)
+    #expect(KeybindingsSettingsModel.conflictLabels(rows, rowID: nil, shortcut: KeybindingShortcut(parsing: "mod+l"), when: "") == ["Find in Current Thread", "Thread: Copy Thread ID"])
     #expect(KeybindingsSettingsModel.filter(rows, query: "⌘K").map(\.command).sorted() == [.commandPaletteToggle, .threadPin])
-    #expect(KeybindingsSettingsModel.filter(rows, query: "project").contains { $0.command == .script("test") })
+    #expect(KeybindingsSettingsModel.filter(rows, query: "project").contains { $0.command == .projectNew })
     #expect(KeybindingsSettingsModel.groups(rows).map(\.title).first == "Navigation")
     #expect(KeybindingsSettingsModel.parseWhen("") == .empty && KeybindingsSettingsModel.parseWhen("a &&") != .empty)
     if case .valid(_, let unknown) = KeybindingsSettingsModel.parseWhen("terminalFocus || mystery") { #expect(unknown == ["mystery"]) } else { Issue.record("Expected a valid condition") }
@@ -327,6 +334,7 @@ func newThreadCommandChoosesBetweenProjectGroupsWithoutChangingTheSelectedDraft(
     #expect(KeybindingsSettingsModel.recordedKey(keyCode: 53, characters: "\u{1b}", command: true, control: false, option: false, shift: false) == "mod+esc")
     #expect(KeybindingsSettingsModel.recordedKey(keyCode: 126, characters: "\u{F700}", command: false, control: false, option: true, shift: false) == "alt+arrowup")
     #expect(KeybindingsSettingsModel.commandOptions.contains(.chatFind) && !KeybindingsSettingsModel.commandOptions.contains(.init("preview.toggle")))
+    #expect(KeybindingsSettingsModel.commandOptions.allSatisfy(MainWindowController.supports))
 }
 
 @Test func keybindingNoticesReportIssuesAndThrottleSuccess() {

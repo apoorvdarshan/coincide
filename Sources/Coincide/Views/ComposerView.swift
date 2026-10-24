@@ -35,6 +35,7 @@ struct ComposerView: View {
     var stopAvailable = true
     var permissionEditable = true
     var modelControl: AnyView? = nil
+    var appCommand: ((CoincideSlashCommand) -> Void)? = nil
     @FocusState private var editorFocused: Bool
     @State private var dropTargeted = false
     @State private var editorHeight: CGFloat = 42
@@ -60,11 +61,11 @@ struct ComposerView: View {
     private var pasteTypes: [UTType] { draftTools == nil ? [.fileURL, .image] : [.fileURL, .image, .plainText] }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let skills, commandAnchor != nil {
+            if commandAnchor != nil {
                 ProviderCommandPicker(model: skills, query: Binding(get: { commandQuery }, set: { manualCommandQuery = $0 }),
                     searchField: manualCommandAnchor != nil, selectedID: selectedCommand?.id,
                     choose: insertCommandSuggestion, move: moveCommandSelection, confirm: confirmCommand, dismiss: dismissCommands,
-                    showSkills: $showSkillsInSlashMenu)
+                    showSkills: $showSkillsInSlashMenu, appCommands: appCommand != nil)
             } else if let skills, skillAnchor != nil {
                 SkillPicker(model: skills, query: Binding(get: { skillQuery }, set: { manualSkillQuery = $0 }),
                             searchField: manualSkillAnchor != nil, selectedID: selectedSkill?.id,
@@ -134,7 +135,7 @@ struct ComposerView: View {
             Button("Attach files…", action: attach).accessibilityIdentifier(attachAccessibilityIdentifier ?? "composer-attach")
             if let referenceFile { Button("Reference a workspace file…", action: referenceFile).accessibilityIdentifier("composer-reference-file") }
             if skills?.supportsSkills == true { Button("Skills…", action: openSkills).accessibilityIdentifier("composer-skills") }
-            if skills?.supportsCommands == true { Button("Commands…", action: openCommands).accessibilityIdentifier("composer-commands") }
+            if skills?.supportsCommands == true || appCommand != nil { Button("Commands…", action: openCommands).accessibilityIdentifier("composer-commands") }
         } label: { Image(systemName: "plus").font(.system(size: 18)) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(width: 30, height: 30)
         .modifier(ChatControlHover()).disabled(submitting)
@@ -160,8 +161,8 @@ struct ComposerView: View {
     @ViewBuilder private var deliveryControls: some View {
         if busy {
             Menu {
-                Button("Queue Message", action: send).disabled(!canSend)
-                Button("Steer Current Turn") { steer?() }.disabled(!canSend || !canSteer)
+                Button("Queue Message") { activate(delivery: .queue) }.disabled(!canSend)
+                Button("Steer Current Turn") { activate(delivery: .steer) }.disabled(!canSend || !canSteer)
                 if let steeringExplanation { Text(steeringExplanation) }
             } label: { Image(systemName: "chevron.down") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -187,10 +188,20 @@ struct ComposerView: View {
         .background { geometry("send") }
     }
     func activate(alternate: Bool) {
+        activate(delivery: ComposerDelivery.resolve(running: busy, preference: followUpBehavior, alternate: alternate, canSteer: canSteer))
+    }
+    private func activate(delivery: ComposerDelivery) {
         if commandAnchor != nil { confirmCommand(); return }
         if skillAnchor != nil { confirmSkill(); return }
         guard canSend else { return }
-        if ComposerDelivery.resolve(running: busy, preference: followUpBehavior, alternate: alternate, canSteer: canSteer) == .steer {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/app:"), let appCommand {
+            guard let command = CoincideSlashCommand.parse(text), !hasAttachments else {
+                insertionError = "App commands take no arguments or attachments. Your draft has been kept."
+                return
+            }
+            text = ""; appCommand(command); return
+        }
+        if delivery == .steer {
             steer?()
         } else { send() }
     }
@@ -200,7 +211,7 @@ struct ComposerView: View {
     }
     private var typedSkillTrigger: ComposerSkillMention? {
         guard skills?.supportsSkills == true else { return nil }
-        return ComposerSkillMention.trigger(in: text, selection: effectiveSelection, showSlash: showSkillsInSlashMenu)
+        return ComposerSkillMention.trigger(in: text, selection: effectiveSelection, showSlash: showSkillsInSlashMenu && appCommand == nil)
     }
     private var skillAnchor: ComposerSkillMention? {
         guard skills?.supportsSkills == true, skills?.isClosed == false, !historyLocked, !submitting, manualCommandAnchor == nil else { return nil }
@@ -219,7 +230,8 @@ struct ComposerView: View {
         ComposerCommandMention.trigger(in: text, selection: effectiveSelection)
     }
     private var commandAnchor: ComposerCommandMention? {
-        guard skills?.supportsCommands == true, skills?.isClosed == false, !historyLocked, !submitting else { return nil }
+        guard (skills?.supportsCommands == true && skills?.isClosed == false) || appCommand != nil else { return nil }
+        guard !historyLocked, !submitting else { return nil }
         if let manualCommandAnchor { return manualCommandAnchor }
         guard manualSkillAnchor == nil, typedSkillTrigger == nil else { return nil }
         let trigger = typedCommandTrigger
@@ -228,7 +240,7 @@ struct ComposerView: View {
     private var commandQuery: String { manualCommandAnchor == nil ? commandAnchor?.query ?? "" : manualCommandQuery }
     private var matchingCommands: [ProviderComposerSuggestion] {
         ProviderCommandPicker.matching(commands: skills?.commands ?? [], skills: skills?.skills ?? [], query: commandQuery,
-                                       showSkills: showSkillsInSlashMenu)
+                                       showSkills: showSkillsInSlashMenu, appCommands: appCommand != nil)
     }
     private var selectedCommand: ProviderComposerSuggestion? {
         matchingCommands.first(where: { $0.id == highlightedCommandID }) ?? matchingCommands.first
@@ -309,6 +321,7 @@ struct ComposerView: View {
         case .command(let command): replacement = anchor.inserting(command: command.name, into: text, selection: effectiveSelection)
         case .skill(let skill):
             replacement = skill.promptToken.flatMap { anchor.anchor.inserting(token: $0, into: text, selection: effectiveSelection) }
+        case .app(let command): replacement = anchor.inserting(command: command.name, into: text, selection: effectiveSelection)
         }
         guard let replacement else {
             insertionError = String(localized: "The draft or selection changed. Choose the command or skill again."); dismissCommands(); return

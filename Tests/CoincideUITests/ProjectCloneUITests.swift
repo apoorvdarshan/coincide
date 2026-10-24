@@ -74,7 +74,9 @@ private final class NativeCloneHarness: @unchecked Sendable {
     defer { try? FileManager.default.removeItem(at: root) }
     let database = root.appendingPathComponent("workspace.sqlite"), harness = NativeCloneHarness()
     let engine = try WorkspaceEngine(url: database, providerFactory: { _ in harness.provider }, cloneFactory: { harness.peer($0.id) })
-    let store = WorkspaceStore(engine: engine)
+    let installation = CodexInstallation(rootURL: root.appendingPathComponent("Tools/Codex"), release: nil,
+        localResolver: { _ in URL(fileURLWithPath: "/usr/bin/true") })
+    let store = WorkspaceStore(engine: engine, codexInstallation: installation)
     await store.load()
     do {
         store.addProject(at: root); try await waitCloneUI { store.snapshot.projects.count == 1 && store.selectedProjectID != nil }
@@ -91,10 +93,7 @@ private final class NativeCloneHarness: @unchecked Sendable {
         #expect(store.errorMessage?.contains("cloning") == true && !store.isPreparingWorkspace(thread.id))
         store.errorMessage = nil
 
-        let agent = ACPAgentConfiguration(name: "Synthetic Provider", executable: "/usr/bin/true")
-        try await store.saveACPAgent(agent)
-        store.setACPAgent(agent, id: thread.id)
-        try await waitCloneUI { store.thread(thread.id)?.acpAgent == agent }
+        #expect(store.thread(thread.id)?.provider == .codex, "The synthetic session uses a supported provider without executing a CLI.")
         store.setDraft("Run when the checkout is ready", id: thread.id)
         #expect(await store.submit("Run when the checkout is ready", threadID: thread.id).value)
         store.setDraft("Keep this unsent composer draft", id: thread.id)
@@ -213,7 +212,7 @@ private final class NativeCloneHarness: @unchecked Sendable {
         state.cancelRequested = index == 2; value.clone = state; return value
     }
     for scheme in [ColorScheme.light, .dark] {
-        try await captureCloneView(CloneRepositorySheet(store: store), scheme: scheme, size: .init(width: 530, height: 360), name: "sheet")
+        try await captureCloneView(NewProjectSheet(store: store), scheme: scheme, size: .init(width: 530, height: 420), name: "new-project")
         let banners = VStack(alignment: .leading, spacing: 18) {
             Text("Repository preparation").font(.title2.weight(.semibold))
             ForEach(samples) { sample in ProjectCloneBanner(project: sample, cancel: { }, retry: { }) }

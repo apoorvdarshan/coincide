@@ -159,19 +159,16 @@ func nativeSettlementOnMainCheckoutSkipsScriptAndExplicitResumePreservesDraft() 
 }
 
 @MainActor @Test(.timeLimit(.minutes(1)))
-func nativeSettlementConfirmationReviewAndBannerFitSmallDisplaysInBothAppearances() async throws {
-    let fixture = try await NativeSetupFixture.make(command: "exit 0", settleCommand: "printf 'Reviewed settle command 😀\\n'; exit 7")
+func nativeSettlementReviewFitsSmallDisplaysAndCannotExecuteBeforeApproval() async throws {
+    let fixture = try await NativeSetupFixture.make(command: "exit 0", settleCommand: "printf 'Reviewed settle command 😀\\n'; printf forbidden > unapproved-settle-marker; exit 7")
     do {
         await fixture.store.prepareWorktree(for: fixture.thread.id, selection: .createBranch(name: "settle-layout", baseRef: "HEAD"))
         try await waitNativeSetup { fixture.store.thread(fixture.thread.id)?.workspacePreparation?.isReady == true }
         _ = NSApplication.shared
-        let confirmation = AnyView(SettleConversationSheet(store: fixture.store, threadID: fixture.thread.id, close: { }))
-        for scheme in [ColorScheme.light, .dark] {
-            let view = confirmation.environment(\.colorScheme, scheme)
-            let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 480, height: 620))
-            #expect(size.width <= 480 && size.height <= 620 && size.height > 200)
-            try await captureNativeScriptPreview(view, name: "settlement-confirmation", width: 480, height: size.height, scheme: scheme)
-        }
+        let checkout = URL(fileURLWithPath: try #require(fixture.store.thread(fixture.thread.id)).workspacePath)
+        let marker = checkout.appendingPathComponent("unapproved-settle-marker")
+        #expect(fixture.store.thread(fixture.thread.id)?.settlement == nil)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
         try await fixture.store.settleThread(fixture.thread.id)
         try await waitNativeSetup { fixture.store.thread(fixture.thread.id)?.settlement?.script?.canApprove == true }
         let settlement = try #require(fixture.store.thread(fixture.thread.id)?.settlement), plan = try #require(settlement.script?.plan)
@@ -181,8 +178,8 @@ func nativeSettlementConfirmationReviewAndBannerFitSmallDisplaysInBothAppearance
             let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 500, height: 620))
             #expect(size.width <= 500 && size.height <= 620 && size.height > 200)
             try await captureNativeScriptPreview(view, name: "settlement-review", width: 500, height: size.height, scheme: scheme)
-            let banner = NSHostingController(rootView: ThreadSettlementBanner(store: fixture.store, threadID: fixture.thread.id, settlement: settlement).environment(\.colorScheme, scheme))
-            #expect(banner.sizeThatFits(in: CGSize(width: 320, height: 600)).width <= 320)
+            #expect(fixture.store.thread(fixture.thread.id)?.settlement?.script?.canApprove == true)
+            #expect(!FileManager.default.fileExists(atPath: marker.path), "Reading a review cannot execute its settle command.")
         }
         #expect(await fixture.provider.calls.isEmpty)
     } catch { await fixture.cleanup(); throw error }

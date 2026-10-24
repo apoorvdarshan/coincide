@@ -347,7 +347,7 @@ func codexHistoryBoundaryScanStopsAtOneHundredPages() async throws {
 func codexHistoryUnsupportedContractsNeverDropSelectedBoundary(kind: String) async throws {
     var options: [String: JSONValue] = [:]
     switch kind {
-    case "unknownProfile": options["userAgent"] = .string("codex_cli_rs/0.164.0")
+    case "unknownProfile": options["userAgent"] = .string("codex_cli_rs/0.165.0")
     case "legacy": options["historyMode"] = .string("legacy")
     default: options["methodErrors"] = .object(["thread/fork": .object(["code": .number(kind == "unsupportedMethod" ? -32601 : -32602), "message": .string("Unsupported exact boundary")])])
     }
@@ -492,7 +492,7 @@ func codexHistorySourceRuntimeCannotForkOrBecomeRetargeted() async throws {
 @Test(.timeLimit(.minutes(1)), arguments: [true, false])
 func codexHistoryOnlyReviewedProfileCreatesNewThreadsWithPaginatedHistory(reviewed: Bool) async throws {
     var options: [String: JSONValue] = ["historyMode": .string("legacy")]
-    if !reviewed { options["userAgent"] = .string("codex_cli_rs/0.164.0") }
+    if !reviewed { options["userAgent"] = .string("codex_cli_rs/0.165.0") }
     try await withHistoryPeer(options: options) { peer in
         var thread = peer.thread; thread.providerThreadID = nil
         var iterator = peer.session.events.makeAsyncIterator()
@@ -614,6 +614,44 @@ func codexHistoryNormalizesNativePrivateVarAliasAtMetadataIngress(operation: Str
             #expect(result.reference == source && result.headTurnID == "native-3")
         }
         #expect(result.workspacePath == canonical)
+        try peer.assertNoImplicitWork()
+    }
+}
+
+@Test func codexReviewedProfileGateIncludesOnlyTheReviewedStable164Version() {
+    for prefix in ["coincide", "codex_cli_rs", "codex"] {
+        #expect(CodexHistoryClient.reviewedProfileIdentifier(for: prefix + "/0.164.0 (macos; arm64)") == "codex-0.164.0")
+        #expect(CodexHistoryClient.reviewedProfileIdentifier(for: prefix + "/0.163.0") == "codex-0.163")
+    }
+    for userAgent in ["coincide/0.164.1", "coincide/0.164.0-alpha.1", "coincide/0.164.01", "coincide/0.165.0", "unreviewed/0.164.0", "prefix coincide/0.164.0", "coincide/0.164.0" + String(repeating: "x", count: 4_096)] {
+        #expect(CodexHistoryClient.reviewedProfileIdentifier(for: userAgent) == nil)
+    }
+    #expect(CodexHistoryClient.reviewedProfileIdentifier(for: nil) == nil)
+}
+
+@Test(.timeLimit(.minutes(1)))
+func codex164HistoryFixturePreservesExactForkAndRevertContractsWithoutImplicitTurns() async throws {
+    try await withHistoryPeer(options: ["userAgent": .string("coincide/0.164.0 (macos; arm64)"), "cliVersion": .string("0.164.0")]) { peer in
+        let capabilities = try await peer.session.historyCapabilities(threadID: "native-source")
+        #expect(capabilities.canRead && capabilities.canForkFromTurn && capabilities.canRevertBeforeTurn)
+        let source = try peer.source
+        let fork = try await peer.session.forkConversation(source: source, boundary: .throughTurn("native-2"), configuration: peer.configuration)
+        #expect(fork.reference != source && fork.headTurnID == "native-2")
+        let forkRequest = try #require(peer.requests("thread/fork").first)
+        #expect(forkRequest["params"]["lastTurnId"] == .string("native-2"))
+        #expect(forkRequest["params"]["deferGoalContinuation"] == .bool(true))
+        #expect(forkRequest["params"].object?["experimentalPredictionMode"] == nil)
+        #expect(forkRequest["params"].object?["experimentalDisablePredictionMcp"] == nil)
+        // A successful fork binds this actor to its new target. It must never
+        // retarget back to the source, even while both conversations are idle.
+        try await historyError(.notIdle) {
+            _ = try await peer.session.revertConversation(thread: source, beforeTurnID: "native-3", expectedHeadTurnID: "native-3")
+        }
+        #expect(try peer.requests("thread/revert").isEmpty)
+        let reverted = try await peer.session.revertConversation(thread: fork.reference, beforeTurnID: "native-2", expectedHeadTurnID: "native-2")
+        #expect(reverted.reference == fork.reference && reverted.headTurnID == "native-1")
+        let revertRequest = try #require(peer.requests("thread/revert").first)
+        #expect(revertRequest["params"] == .object(["threadId": .string(fork.reference.nativeThreadID), "beforeTurnId": .string("native-2")]))
         try peer.assertNoImplicitWork()
     }
 }

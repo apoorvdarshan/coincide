@@ -1,5 +1,32 @@
 # Validation record
 
+## 2026-10-24 — Local provider integrations and CI restored
+
+The user re-enabled automated validation for this change. Native Settings now
+includes separate Skills, Commands, MCP, Plugins, Hooks, Configuration and Agent
+sessions pages. Local-owner CLI commands expose the same discovery, library,
+configuration and session operations; `/app:*` commands navigate the app without
+sending model prompts. Public conversation export supports Markdown and JSON.
+
+The complete Swift test target build passed. All 94 focused Swift tests passed,
+including the Claude resume-consumer cases that previously crashed in hosted CI,
+typed configuration/draft safety, integration import boundaries, provider
+sessions, Codex 0.164 history/mode contracts and export. Python CI configuration/fixture
+checks passed all 77 tests. The native desktop runner compiled with
+`script/test_macos_ui.sh --build-for-testing`; no desktop UI suite ran locally.
+The desktop suite now covers 31 current workflows across four hosted shards.
+`UITests/macOS/COVERAGE.md` maps retired UI scenarios to retained behavior suites
+and their current replacements; no test skipping or retry-to-green was added.
+
+The packaged native app and strict bundle signature verification passed before
+the final review fixes. Live read-only checks on the built-in Retina display
+verified the Skills, Configuration and Agent sessions pages, integration metadata
+discovery, and four Codex daemon sessions. No model prompt, native session stop,
+resume/history mutation, user configuration write, or real integration import
+was performed. Nine conversations and the selected conversation were retained.
+Exact-commit hosted CI outcomes are recorded separately after completion;
+this entry does not claim full CLI/TUI feature parity.
+
 ## 2026-10-24 — Sidebar sorting and maximized launch
 
 Projects and chats have independent, persisted choices for Newest, Recently

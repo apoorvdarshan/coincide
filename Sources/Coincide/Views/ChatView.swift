@@ -10,6 +10,7 @@ struct ChatView: View {
     @State private var skillsModel: ProviderSkillsStore?
     @State private var transcriptState = TranscriptViewState()
     @State private var transcriptSheet: TranscriptSheetRequest?
+    @Environment(MainWindowController.self) private var windowController: MainWindowController?
     private var thread: CodingThread? { store.thread(threadID) }
     private var actionsLocked: Bool {
         store.snapshot.isConversationHistoryLocked(threadID: threadID) ||
@@ -65,6 +66,15 @@ struct ChatView: View {
                     Text(thread.title).font(.system(size: 14, weight: .medium)).lineLimit(1).help(thread.title)
                     Spacer()
                     workspaceMenu(thread)
+                    Menu {
+                        Button("Export Markdown…") { export(thread, format: .markdown) }
+                        Button("Export JSON…") { export(thread, format: .json) }
+                    } label: {
+                        Image(systemName: "ellipsis").frame(width: 28, height: 28)
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .modifier(ChatControlHover()).help("Conversation actions")
+                    .accessibilityLabel("Conversation actions").accessibilityIdentifier("conversation-actions")
                 }.padding(.horizontal, 24).frame(height: 52)
                     .overlay(alignment: .bottom) { Rectangle().fill(ChatChrome.separator).frame(height: 1) }
                 }
@@ -131,7 +141,8 @@ struct ChatView: View {
                                      }
                                  }, stop: { Task { await store.interrupt(threadID) } },
                                  skills: skillsModel, draftTools: store.composerDraftTools, draftThreadID: threadID, discardDraft: { store.discardComposerDraft(threadID) },
-                                 modelControl: AnyView(ProviderMenu(store: store, thread: thread).disabled(actionsLocked)))
+                                 modelControl: AnyView(ProviderMenu(store: store, thread: thread).disabled(actionsLocked)),
+                                 appCommand: { store.runAppCommand($0) })
                         .disabled(store.choosingModelThreads.contains(threadID))
                     if thread.visibleMessages.isEmpty {
                         HStack(spacing: 12) {
@@ -164,6 +175,16 @@ struct ChatView: View {
                     Task { await store.insertWorkspaceReference(path: path, workspacePath: thread.workspacePath, threadID: threadID) }
                 } cancel: { referenceFileSheet = false }
             }
+        }
+    }
+
+    private func export(_ thread: CodingThread, format: ConversationExportFormat) {
+        guard let window = windowController?.window else {
+            store.errorMessage = "The conversation window is unavailable. Open the chat and try again."
+            return
+        }
+        ConversationExportSavePanel.present(thread: thread, format: format, window: window) {
+            store.errorMessage = $0
         }
     }
 }

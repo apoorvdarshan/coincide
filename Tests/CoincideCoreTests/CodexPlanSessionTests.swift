@@ -104,9 +104,9 @@ func codexPlanMalformedOwnedStreamsFailClosedWithoutCompletingOrReplayingInput(s
     }
 }
 
-@Test(.timeLimit(.minutes(1)))
-func codexPlanModeUsesCapturedModelEffortPermissionAndKeepsContextImagesAndDraftLiteral() async throws {
-    try await withCodexPlanPeer(["holdTurn": .bool(true)]) { peer, observed in
+@Test(.timeLimit(.minutes(1)), arguments: ["coincide/0.163.0", "coincide/0.164.0"])
+func codexPlanModeUsesCapturedModelEffortPermissionAndKeepsContextImagesAndDraftLiteral(userAgent: String) async throws {
+    try await withCodexPlanPeer(["holdTurn": .bool(true), "userAgent": .string(userAgent)]) { peer, observed in
         var thread = peer.thread(mode: "plan")
         thread.providerMetadata = .object(["existingSibling": .string("kept")])
         thread.draft = "Unsent composer e\u{301}  \n"
@@ -117,8 +117,7 @@ func codexPlanModeUsesCapturedModelEffortPermissionAndKeepsContextImagesAndDraft
         let frames = try peer.frames(), start = try #require(frames.first { $0["method"] == .string("turn/start") })
         let mode = start["params"]["collaborationMode"]
         #expect(mode["mode"] == .string("plan") && mode["settings"]["model"] == .string("wire-model") && mode["settings"]["reasoning_effort"] == .string("high"))
-        #expect(mode["settings"]["developer_instructions"].string?.contains("<proposed_plan>") == true)
-        #expect(mode["settings"]["developer_instructions"].string?.contains(input.text) == false)
+        #expect(mode["settings"].object?["developer_instructions"] == .null, "Codex supplies its own Plan instructions; Coincide must not inject a copied app prompt.")
         #expect(start["params"]["approvalPolicy"] == PermissionMode.supervised.approvalPolicy)
         #expect(start["params"]["sandboxPolicy"] == PermissionMode.supervised.sandbox(cwd: peer.root.path))
         var text: [String] = []
@@ -135,9 +134,9 @@ func codexPlanModeUsesCapturedModelEffortPermissionAndKeepsContextImagesAndDraft
     }
 }
 
-@Test(.timeLimit(.minutes(1)))
-func codexPlanToExplicitDefaultAndNilResetNeverMutatesTheActiveSteeringModeOrPermissions() async throws {
-    try await withCodexPlanPeer(["holdTurn": .bool(true)]) { peer, observed in
+@Test(.timeLimit(.minutes(1)), arguments: ["coincide/0.163.0", "coincide/0.164.0"])
+func codexPlanToExplicitDefaultAndNilResetNeverMutatesTheActiveSteeringModeOrPermissions(userAgent: String) async throws {
+    try await withCodexPlanPeer(["holdTurn": .bool(true), "userAgent": .string(userAgent)]) { peer, observed in
         var active = peer.thread(mode: "plan")
         try await peer.session.send(text: "Plan input", thread: active)
         active.providerThreadID = "plan-thread"; active.activeRun?.nativeTurnID = "plan-turn-1"
@@ -163,7 +162,7 @@ func codexPlanToExplicitDefaultAndNilResetNeverMutatesTheActiveSteeringModeOrPer
         #expect(starts.allSatisfy { $0["params"]["approvalPolicy"] == PermissionMode.supervised.approvalPolicy })
         let steers = frames.filter { $0["method"] == .string("turn/steer") }
         #expect(steers.count == 1 && steers[0]["params"]["collaborationMode"] == .null && steers[0]["params"]["model"] == .null)
-        #expect(starts[1]["params"]["collaborationMode"]["settings"]["developer_instructions"].string?.contains("# Collaboration Mode: Default") == true)
+        #expect(starts.allSatisfy { $0["params"]["collaborationMode"]["settings"].object?["developer_instructions"] == .null })
     }
 }
 
@@ -229,9 +228,10 @@ func codexInteractionModeRejectsUnsupportedCapturedIDsWithoutNativeRequests(mode
     _ = try projection.project("item/started", params: params("fresh-after-terminal", turn: "next-turn"), sessionID: "session")
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: [false, true])
-func codexInteractionModeModelCatalogCapabilitiesComeFromInitializedNativeProfileWithoutStartingAConversation(supported: Bool) async throws {
-    try await withCodexPlanPeer(["userAgent": .string(supported ? "coincide/0.163.0" : "coincide/0.999.0")]) { peer, _ in
+@Test(.timeLimit(.minutes(1)), arguments: ["coincide/0.163.0", "coincide/0.164.0", "coincide/0.999.0"])
+func codexInteractionModeModelCatalogCapabilitiesComeFromInitializedNativeProfileWithoutStartingAConversation(userAgent: String) async throws {
+    let supported = userAgent != "coincide/0.999.0"
+    try await withCodexPlanPeer(["userAgent": .string(userAgent)]) { peer, _ in
         let models = try await peer.session.models()
         #expect(!models.isEmpty)
         if supported { #expect(models.allSatisfy { $0.codexInteractionModes == [.default, .plan] }) }

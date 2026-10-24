@@ -81,9 +81,11 @@ Use the app's [local CLI](LOCAL_CONTROL.md) for navigation, model/catalog reads
 and screenshots where available. Keep that control private to the local owner;
 it is separate from provider-scoped app tools.
 
-Automated tests are deferred by explicit user direction for this development
-pass. Native build, signing and launch checks passed; the current UI was inspected
-through CLI screenshots. Provider execution was not retested. Record new evidence in
+Automated checks and hosted native UI CI are enabled for the local integration
+work following the user's October 24 instruction. Keep the native test contract
+aligned with the current app, including embedded Settings and the two supported
+providers. Tests for retired navigation must be mapped to retained model behavior
+and current UI coverage. Record actual build, test and execution evidence in
 [VALIDATION.md](VALIDATION.md); older porting/cloud documents remain historical
 background, not the current UI specification. Preserve all attribution and
 third-party license notices when retiring old surfaces.

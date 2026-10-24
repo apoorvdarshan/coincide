@@ -4,6 +4,7 @@ import SwiftUI
 
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general, appearance, notifications, providers, models, conversations, keyboard, about
+    case skills, commands, mcp, plugins, hooks, configuration, sessions
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -15,6 +16,13 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .conversations: "Conversations"
         case .keyboard: "Keyboard shortcuts"
         case .about: "About Coincide"
+        case .skills: "Skills"
+        case .commands: "Commands"
+        case .mcp: "MCP servers"
+        case .plugins: "Plugins"
+        case .hooks: "Hooks"
+        case .configuration: "Configuration"
+        case .sessions: "Agent sessions"
         }
     }
     var icon: String {
@@ -27,6 +35,13 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .conversations: "bubble.left.and.bubble.right"
         case .keyboard: "keyboard"
         case .about: "info.circle"
+        case .skills: "sparkles"
+        case .commands: "slash.circle"
+        case .mcp: "server.rack"
+        case .plugins: "puzzlepiece.extension"
+        case .hooks: "arrow.triangle.branch"
+        case .configuration: "slider.horizontal.3"
+        case .sessions: "rectangle.stack"
         }
     }
     var searchKeywords: [String] {
@@ -47,6 +62,12 @@ enum SettingsPage: String, CaseIterable, Identifiable {
             ["keybindings", "shortcuts", "keys", "commands", "composer", "send", "new line", "paste", "reset", "configuration"]
         case .about:
             ["version", "build", "source code", "GitHub", "open-source", "licenses"]
+        case .skills, .commands, .mcp, .plugins, .hooks:
+            ["Codex", "Claude", "import", "library", "integrations", "source", "enable", "disable"]
+        case .configuration:
+            ["Codex", "Claude", "CLI", "settings", "permissions", "sandbox", "features", "config.toml", "settings.json"]
+        case .sessions:
+            ["Codex", "Claude", "background", "agents", "running", "stop", "logs", "import", "resume"]
         }
     }
 }
@@ -58,6 +79,7 @@ struct SettingsView: View {
     @AppStorage(MarkdownPreferences.renderMathKey) private var renderMathInMarkdown = false
     @AppStorage(MarkdownPreferences.wordWrapKey) private var wordWrap = true
     @State private var provider = ProviderKind.codex
+    @State private var sessionProvider = ProviderKind.codex
     @State private var search = ""
     @State private var showingImport = false
     @State private var hoveredPage: SettingsPage?
@@ -121,7 +143,8 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     navigationGroup("Personal", pages: [.general, .notifications, .appearance, .conversations, .keyboard])
-                    navigationGroup("Integrations", pages: [.providers, .models])
+                    navigationGroup("Agents", pages: [.providers, .models, .configuration, .sessions])
+                    navigationGroup("Integrations", pages: [.skills, .commands, .mcp, .plugins, .hooks])
                     navigationGroup("Coincide", pages: [.about])
                     if !SettingsPage.allCases.contains(where: matchesSearch) {
                         Text("No matching settings")
@@ -203,6 +226,19 @@ struct SettingsView: View {
             ThreadNotificationSettings(notifications: store.notifications)
         case .providers:
             agentSettings
+        case .skills, .commands, .mcp, .plugins, .hooks:
+            if let kind = ProviderIntegrationKind(rawValue: store.settingsPage.rawValue) {
+                ProviderIntegrationsView(store: store, kind: kind)
+            }
+        case .configuration:
+            ProviderConfigurationEditorView(codex: store.integrationCodexConfiguration,
+                claude: store.integrationClaudeProfile, workspacePath: store.integrationScope.workspacePath, editor: store.configurationEditor)
+        case .sessions:
+            Picker("Agent", selection: $sessionProvider) {
+                Text("Codex").tag(ProviderKind.codex)
+                Text("Claude").tag(ProviderKind.claude)
+            }.pickerStyle(.segmented).frame(maxWidth: 280).accessibilityIdentifier("sessions-provider")
+            ProviderSessionsView(scope: store.providerSessionsScope(sessionProvider), onImport: { showingImport = true })
         case .models:
             ModelPickerSettings(store: store, openAgentSettings: { selectedProvider in
                 provider = selectedProvider

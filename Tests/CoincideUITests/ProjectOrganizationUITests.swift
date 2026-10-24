@@ -140,7 +140,9 @@ func nativeProjectCollapseRenameAndReorderPreserveAnActiveAgentQueuedTurnAndComp
     let root = try organizationUIRoot(); defer { try? FileManager.default.removeItem(at: root) }
     let database = root.appendingPathComponent("workspace.sqlite"), provider = OrganizationUIProvider()
     let engine = try WorkspaceEngine(url: database, providerFactory: { _ in provider })
-    let store = WorkspaceStore(engine: engine)
+    let installation = CodexInstallation(rootURL: root.appendingPathComponent("Tools/Codex"), release: nil,
+        localResolver: { _ in URL(fileURLWithPath: "/usr/bin/true") })
+    let store = WorkspaceStore(engine: engine, codexInstallation: installation)
     await store.load()
     do {
         store.addProject(at: root)
@@ -149,9 +151,7 @@ func nativeProjectCollapseRenameAndReorderPreserveAnActiveAgentQueuedTurnAndComp
         store.newThread(projectID: projectID)
         try await waitOrganizationUI { store.selectedThreadID != nil }
         let threadID = try #require(store.selectedThreadID)
-        let agent = ACPAgentConfiguration(name: "Synthetic Organization Agent", executable: "/usr/bin/true")
-        try await store.saveACPAgent(agent); store.setACPAgent(agent, id: threadID)
-        try await waitOrganizationUI { store.thread(threadID)?.acpAgent == agent }
+        #expect(store.thread(threadID)?.provider == .codex, "The synthetic session uses a supported provider without executing a CLI.")
         #expect(await store.submit("First running turn", threadID: threadID).value)
         try await waitOrganizationUI { await provider.prompts.count == 1 && store.thread(threadID)?.activeRun?.nativeTurnID != nil }
         #expect(await store.submit("Second queued turn", threadID: threadID).value)
@@ -195,7 +195,7 @@ func nativeProjectCollapseRenameAndReorderPreserveAnActiveAgentQueuedTurnAndComp
         let appearance = try #require(NSAppearance(named: scheme == .light ? .aqua : .darkAqua))
         NSApp.appearance = appearance
         for width in [CGFloat(280), 340] {
-            let hosting = NSHostingView(rootView: SidebarView(store: store, onClone: { }, onNewProject: { })
+            let hosting = NSHostingView(rootView: SidebarView(store: store, onNewProject: { })
                 .environment(\.colorScheme, scheme).environment(\.controlActiveState, .active).frame(width: width, height: 680)
                 .background(scheme == .light ? Color.white : Color(white: 0.12)))
             let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: width, height: 680), styleMask: .borderless, backing: .buffered, defer: false)

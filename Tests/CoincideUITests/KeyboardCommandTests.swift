@@ -1,17 +1,14 @@
 import AppKit
 import CoincideCore
-import CoincideTerminal
 import SwiftUI
 import Testing
 @testable import Coincide
 
 @MainActor private final class PresentationProbe {
     var calls: [String] = []
-    func presentations(terminalVisible: Bool = false) -> MainWindowPresentations {
-        MainWindowPresentations(newProject: { self.calls.append("newProject") }, cloneRepository: { self.calls.append("clone") },
-            importAgentProjects: { self.calls.append("import") }, settle: { self.calls.append("settle:" + $0.title) },
-            runScript: { self.calls.append("script:" + $0.title) }, toggleTerminal: { self.calls.append("terminal") },
-            terminalVisible: { terminalVisible }, newWindow: { self.calls.append("window") }, openRemote: { self.calls.append("remote") },
+    func presentations() -> MainWindowPresentations {
+        MainWindowPresentations(newProject: { self.calls.append("newProject") },
+            importAgentProjects: { self.calls.append("import") }, newWindow: { self.calls.append("window") },
             openSettings: { self.calls.append("settings") })
     }
 }
@@ -42,7 +39,7 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     return window
 }
 
-@MainActor @Test func mainWindowCommandsFollowSelectionHistoryInspectorAndAppearance() throws {
+@MainActor @Test func mainWindowCommandsFollowSelectionHistoryChatAndAppearance() throws {
     let f = try keyboardFixtureStore(); defer { try? FileManager.default.removeItem(at: f.root) }
     let store = f.store, t = f.threads, probe = PresentationProbe()
     let suite = "coincide-keyboard-" + UUID().uuidString
@@ -72,15 +69,12 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     // Copy Thread ID writes the stable ID and confirms it.
     #expect(controller.perform(.threadCopyReference) && controller.pasteboard.string(forType: .string) == t["b-one"]!.id.uuidString.lowercased())
     #expect(controller.notice == "Copied thread ID")
-    // Show Changes toggles the inspector on its Changes tab.
-    #expect(controller.perform(.diffToggle) && store.inspectorVisible && controller.inspectorRequest?.tab == .changes)
-    controller.consumeInspectorRequest(controller.inspectorRequest!.id)
-    #expect(controller.inspectorRequest == nil && controller.perform(.diffToggle) && !store.inspectorVisible)
-    // A hidden inspector view can be reopened with its thread selected again.
-    controller.inspectorWillHide()
-    store.selectThread(t["a-new"]!.id); controller.selectionChanged(to: store.selectedThreadID)
-    #expect(controller.canPerform(.viewReopenClosed) && controller.perform(.viewReopenClosed))
-    #expect(store.selectedThreadID == t["b-one"]!.id && store.inspectorVisible && controller.inspectorRequest?.tab == .changes && controller.closedViews.isEmpty)
+    // Saved legacy shortcuts cannot reopen retired inspector, Git or remote surfaces.
+    let selected = store.selectedThreadID
+    for command: KeybindingCommand in [.diffToggle, .viewReopenClosed, .terminalToggle, .projectClone, .remoteOpen, .threadSettle] {
+        #expect(!controller.canPerform(command) && !controller.perform(command), "\(command)")
+    }
+    #expect(store.selectedThreadID == selected && !store.inspectorVisible)
     // Find opens for the selected thread and closes when the selection moves on.
     #expect(controller.perform(.chatFind) && controller.find?.threadID == t["b-one"]!.id)
     let find = try #require(controller.find); controller.openFind()
@@ -94,8 +88,8 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     controller.closePalette(returnFocus: false)
     #expect(controller.perform(.appearanceCycle) && defaults.string(forKey: "appearance") == "light" && controller.notice == "Appearance: Light")
     // Presentations stay owned by the window's views.
-    for command: KeybindingCommand in [.projectNew, .projectClone, .projectImport, .windowNew, .remoteOpen] { #expect(controller.perform(command)) }
-    #expect(probe.calls == ["newProject", "clone", "import", "window", "remote"])
+    for command: KeybindingCommand in [.projectNew, .projectImport, .windowNew] { #expect(controller.perform(command)) }
+    #expect(probe.calls == ["newProject", "import", "window"])
     #expect(controller.label(for: .commandPaletteToggle) == "⌘K")
 }
 
@@ -103,10 +97,9 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     _ = NSApplication.shared
     let composer = NSTextView(), field = NSTextView(), editor = NSTextView(), readOnly = NSTextView(), other = NSTextView()
     field.isFieldEditor = true; editor.setAccessibilityLabel("File editor"); readOnly.isEditable = false
-    let terminal = LocalTerminalSession(restoring: TerminalTabArchive(id: UUID(), threadID: UUID(), workspacePath: "/tmp", directory: "/tmp", title: "zsh", text: "", isCommand: false, exitCode: 0))
     let cases: [(NSResponder?, KeyboardFocusKind)] = [
         (composer, .composer), (field, .editableText), (editor, .fileEditor), (readOnly, .passive), (other, .editableText),
-        (terminal.view, .terminal), (NSButton(), .interactive), (NSTableView(), .interactive), (NSView(), .passive), (nil, .passive),
+        (NSTextField(), .editableText), (NSButton(), .interactive), (NSTableView(), .interactive), (NSView(), .passive), (nil, .passive),
     ]
     for (responder, kind) in cases { #expect(KeyboardFocusKind.classify(responder, composer: composer) == kind, "\(String(describing: responder))") }
     #expect(KeyboardFocusKind.composer.isEditable && !KeyboardFocusKind.terminal.isEditable)
@@ -137,23 +130,23 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     controller.openPalette()
     let second = try #require(controller.palette?.selectableItems.dropFirst().first)
     #expect(second.id == "action:new-thread-in")
-    #expect(dispatcher.handle(try keyEvent(window, keyCode: 19, "2", .command)) == nil && controller.palette?.breadcrumb == "New Thread In…")
+    #expect(dispatcher.handle(try keyEvent(window, keyCode: 19, "2", .command)) == nil && controller.palette?.breadcrumb == "New Chat In…")
     controller.closePalette(returnFocus: false)
     // ⌘2 then jumps to the second visible thread; auto-repeat of a toggle is consumed without acting.
     #expect(dispatcher.handle(try keyEvent(window, keyCode: 19, "2", .command)) == nil && store.selectedThreadID == f.threads["a-new"]!.id)
     #expect(dispatcher.handle(try keyEvent(window, keyCode: 40, "k", .command, repeat: true)) == nil && controller.palette == nil)
     // ⇧⌘] arrives as "}" and still moves to the next thread, including on repeat.
     #expect(dispatcher.handle(try keyEvent(window, keyCode: 30, "}", [.command, .shift], repeat: true)) == nil && store.selectedThreadID == f.threads["a-old"]!.id)
-    // A terminal keeps ⌘K: the rule's condition is false, so the event passes through.
-    let terminal = LocalTerminalSession(restoring: TerminalTabArchive(id: UUID(), threadID: UUID(), workspacePath: "/tmp", directory: "/tmp", title: "zsh", text: "", isCommand: false, exitCode: 0))
-    terminal.view.frame = .init(x: 0, y: 0, width: 200, height: 100)
-    window.contentView?.addSubview(terminal.view)
-    #expect(window.makeFirstResponder(terminal.view) && window.firstResponder === terminal.view)
-    #expect(dispatcher.context(for: controller, focus: .terminal)["terminalFocus"])
-    let passed = try keyEvent(window, keyCode: 40, "k", .command)
-    #expect(dispatcher.handle(passed) === passed && controller.palette == nil)
+    // An editable field keeps typing, and legacy panel contexts remain false.
+    let field = NSTextView(frame: .init(x: 0, y: 0, width: 200, height: 100))
+    window.contentView?.addSubview(field)
+    #expect(window.makeFirstResponder(field) && window.firstResponder === field)
+    let context = dispatcher.context(for: controller, focus: .editableText)
+    #expect(context["editableFocus"] && !context["terminalFocus"] && !context["terminalOpen"] && !context["inspectorOpen"])
+    let passed = try keyEvent(window, keyCode: 0, "a")
+    #expect(dispatcher.handle(passed) === passed && controller.palette == nil && window.firstResponder === field)
     // Typing with no editable target moves focus to the composer and keeps the key.
-    terminal.view.removeFromSuperview(); window.makeFirstResponder(nil)
+    field.removeFromSuperview(); window.makeFirstResponder(nil)
     let composer = NSTextView(frame: .init(x: 0, y: 0, width: 200, height: 40)); window.contentView?.addSubview(composer)
     ComposerEditorRegistry.register(composer); defer { ComposerEditorRegistry.unregister(composer) }
     let typed = try keyEvent(window, keyCode: 0, "a")
@@ -227,7 +220,7 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     #expect(settings.sizeThatFits(in: CGSize(width: 700, height: 600)).width <= 700)
 }
 
-@MainActor @Test(.timeLimit(.minutes(1))) func closingOverlaysReturnFocusToTheComposerAndSidebarToggleFindsTheNativeSplit() async throws {
+@MainActor @Test(.timeLimit(.minutes(1))) func closingOverlaysReturnFocusToTheComposerAndSidebarTogglePreservesTheChat() async throws {
     let f = try keyboardFixtureStore(); defer { try? FileManager.default.removeItem(at: f.root) }
     let window = offscreenWindow(); defer { window.close() }
     let controller = MainWindowController(store: f.store); controller.window = window
@@ -243,17 +236,11 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     controller.openPalette(); window.makeFirstResponder(nil)
     controller.closePalette(); window.makeFirstResponder(search); try await settle()
     #expect(window.firstResponder === search)
-    // ⌘B toggles the window's NavigationSplitView sidebar through its split controller.
-    let sidebar = NSViewController(), detail = NSViewController(); sidebar.view = NSView(); detail.view = NSView()
-    let split = NSSplitViewController()
-    split.addSplitViewItem(NSSplitViewItem(sidebarWithViewController: sidebar)); split.addSplitViewItem(NSSplitViewItem(viewController: detail))
-    let splitWindow = offscreenWindow(); splitWindow.contentViewController = split; defer { splitWindow.close() }
-    controller.window = splitWindow
-    let before = split.splitViewItems[0].isCollapsed
+    // The native chat shell owns sidebar visibility directly; no retired split controller is required.
+    let before = f.store.sidebarVisible, snapshot = f.store.snapshot
     #expect(controller.perform(.sidebarToggle))
-    let deadline = ContinuousClock.now + .seconds(3)
-    while split.splitViewItems[0].isCollapsed == before, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(split.splitViewItems[0].isCollapsed != before)
+    #expect(f.store.sidebarVisible != before && f.store.snapshot == snapshot)
+    #expect(controller.perform(.sidebarToggle) && f.store.sidebarVisible == before)
 }
 
 @MainActor @Test(.timeLimit(.minutes(1)))
@@ -350,7 +337,7 @@ func keyboardDispatcherLeavesAnAttachedSheetInControlOfCommandsTypingAndJumpHint
 }
 
 @MainActor @Test(.timeLimit(.minutes(1)))
-func customizedTerminalShortcutsReplaceMutationDefaultsWithoutDoubleDispatchOrStealingNativeFind() async throws {
+func customizedChatShortcutsReplaceDefaultsWithoutDoubleDispatchOrRetiredPanelMutations() async throws {
     let f = try keyboardFixtureStore(); defer { try? FileManager.default.removeItem(at: f.root) }
     let thread = try #require(f.threads["a-new"])
     f.store.selectedThreadID = thread.id
@@ -359,66 +346,35 @@ func customizedTerminalShortcutsReplaceMutationDefaultsWithoutDoubleDispatchOrSt
     let window = offscreenWindow(); defer { window.close() }
     let controller = MainWindowController(store: f.store, keybindings: keys)
     keys.dispatcher.register(controller, window: window)
-    let terminals = TerminalWorkspaceStore(executable: "/bin/sh", loginShell: false)
-    terminals.integration.thread = { f.store.thread($0) }
-    terminals.integration.routeKeyEvent = { keys.dispatcher.routeTerminalEvent($0) }
-    terminals.integration.keyEquivalent = { session, command in keys.dispatcher.terminalKeyEquivalent(command, in: session.view.window) }
-    controller.presentations.terminalTarget = {
-        .init(terminals: terminals, thread: f.store.selectedThread, workspaceReady: true, canOpen: true,
-              toggle: {}, report: { Issue.record("Unexpected terminal command refusal: \($0)") })
-    }
-    func focus(_ session: LocalTerminalSession) {
-        session.view.frame = .init(x: 0, y: 0, width: 400, height: 250)
-        if session.view.superview == nil { window.contentView?.addSubview(session.view) }
-        terminals.select(session, threadID: thread.id, focus: false)
-        window.makeKey()
-        #expect(window.makeFirstResponder(session.view))
-    }
-    func drain() async {
-        for session in terminals.removeAll() { await session.waitForClose() }
-        terminals.suspend(); await terminals.waitForPersistence()
-    }
-    var explicitlyClosed: LocalTerminalSession?
-    do {
-        try terminals.add(for: thread)
-        let first = try #require(terminals.selected(in: thread.id)); focus(first)
-        #expect(first.handleFocusedKeyEvent(try keyEvent(window, keyCode: 2, "d", .command)))
-        #expect(terminals.sessions[thread.id]?.count == 2 && !f.store.inspectorVisible)
+    let composer = NSTextView(frame: .init(x: 0, y: 0, width: 400, height: 100))
+    window.contentView?.addSubview(composer)
+    ComposerEditorRegistry.register(composer); defer { ComposerEditorRegistry.unregister(composer) }
+    #expect(window.makeFirstResponder(composer))
+    let snapshot = f.store.snapshot, selected = f.store.selectedThreadID
 
-        let originalSplit = try #require(keys.fileRules.first { $0.command == .terminalSplit && $0.key == "mod+d" })
-        try await keys.save(.init(key: "mod+l", command: .terminalSplit, when: "terminalFocus"), replacing: originalSplit)
-        focus(first)
-        let contextEvent = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [],
-            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-            eventNumber: 0, clickCount: 1, pressure: 1))
-        let splitItem = try #require(first.view.menu(for: contextEvent)?.item(withTitle: "Split Right"))
-        #expect(splitItem.keyEquivalent == "l" && splitItem.keyEquivalentModifierMask == .command)
-        #expect(!first.handleFocusedKeyEvent(try keyEvent(window, keyCode: 2, "d", .command)))
-        #expect(terminals.sessions[thread.id]?.count == 2 && !f.store.inspectorVisible)
-        #expect(first.handleFocusedKeyEvent(try keyEvent(window, keyCode: 37, "l", .command)))
-        #expect(terminals.sessions[thread.id]?.count == 3)
+    // A persisted old shortcut remains parseable but cannot summon the removed terminal.
+    try await keys.save(.init(key: "mod+l", command: .terminalSplit))
+    let retired = try keyEvent(window, keyCode: 37, "l", .command)
+    #expect(keys.dispatcher.handle(retired) === retired && keys.dispatcher.handle(retired) === retired)
+    #expect(!controller.canPerform(.terminalSplit) && !f.store.inspectorVisible)
+    #expect(f.store.snapshot == snapshot && f.store.selectedThreadID == selected)
 
-        try await keys.save(.init(key: "mod+d", command: .commandPaletteToggle, when: "terminalFocus"))
-        focus(first)
-        let customized = try keyEvent(window, keyCode: 2, "d", .command)
-        #expect(first.handleFocusedKeyEvent(customized) && controller.palette != nil)
-        #expect(keys.dispatcher.handle(customized) == nil && first.handleFocusedKeyEvent(customized))
-        #expect(controller.palette != nil && terminals.sessions[thread.id]?.count == 3)
-        controller.closePalette(returnFocus: false)
+    let originalSidebar = try #require(keys.fileRules.first { $0.command == .sidebarToggle })
+    try await keys.save(.init(key: "mod+shift+b", command: .sidebarToggle), replacing: originalSidebar)
+    #expect(keys.menuShortcut(.sidebarToggle)?.modifiers == [.command, .shift])
+    let before = f.store.sidebarVisible
+    let oldShortcut = try keyEvent(window, keyCode: 11, "b", .command)
+    #expect(keys.dispatcher.handle(oldShortcut) === oldShortcut && f.store.sidebarVisible == before)
+    let customized = try keyEvent(window, keyCode: 11, "b", [.command, .shift])
+    #expect(keys.dispatcher.handle(customized) == nil && f.store.sidebarVisible != before)
+    // The monitor and a subsequent key-equivalent delivery share one decision.
+    #expect(keys.dispatcher.handle(customized) == nil && f.store.sidebarVisible != before)
+    #expect(f.store.snapshot == snapshot && window.firstResponder === composer)
 
-        focus(first)
-        let newTerminal = try keyEvent(window, keyCode: 45, "n", .command)
-        #expect(first.handleFocusedKeyEvent(newTerminal))
-        #expect(keys.dispatcher.handle(newTerminal) == nil && terminals.sessions[thread.id]?.count == 4)
-        let created = try #require(terminals.selected(in: thread.id)); explicitlyClosed = created; focus(created)
-        let closeTerminal = try keyEvent(window, keyCode: 13, "w", .command)
-        #expect(created.handleFocusedKeyEvent(closeTerminal))
-        #expect(keys.dispatcher.handle(closeTerminal) == nil && terminals.sessions[thread.id]?.count == 3)
-        await created.waitForClose()
-        focus(first)
-        let priorSubviews = Set(first.view.subviews.map(ObjectIdentifier.init))
-        #expect(first.handleFocusedKeyEvent(try keyEvent(window, keyCode: 3, "f", .command)))
-        #expect(controller.find == nil && first.view.subviews.contains { !priorSubviews.contains(ObjectIdentifier($0)) && !$0.isHidden })
-    } catch { await drain(); await explicitlyClosed?.waitForClose(); throw error }
-    await drain(); await explicitlyClosed?.waitForClose()
+    // Find stays on the selected native chat and does not run twice for one key event.
+    let find = try keyEvent(window, keyCode: 3, "f", .command)
+    #expect(keys.dispatcher.handle(find) == nil && controller.find?.threadID == thread.id)
+    let model = try #require(controller.find)
+    #expect(keys.dispatcher.handle(find) == nil && controller.find === model && model.focusGeneration == 0)
+    #expect(f.store.snapshot == snapshot)
 }

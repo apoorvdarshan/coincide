@@ -20,7 +20,7 @@ import Testing
         windowNumber: window.windowNumber, context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: code))
 }
 
-@MainActor @Test func projectActionCommandsUseWindowOwnerResolverOverridesAndEventMemoWithoutNativeShortcutFallback() async throws {
+@MainActor @Test func nativeProjectCommandsUseWindowOwnersAndPreserveStoredActionResolverContracts() async throws {
     let f = try keyboardFixtureStore(), other = try keyboardFixtureStore()
     let first = ProjectActionCommands(), second = ProjectActionCommands()
     let bindings = KeybindingsStore(fileURL: f.root.appendingPathComponent("keys.json"), watch: false)
@@ -37,7 +37,9 @@ import Testing
         first.replace(owner: owner, bindings: [.init(source: source, shortcut: action.shortcut, isAllowed: { true }, invoke: { firstCalls += 1 }, report: { _ in Issue.record("Unexpected invocation error") })])
         second.replace(owner: otherOwner, bindings: [.init(source: otherSource, shortcut: action.shortcut, isAllowed: { true }, invoke: { secondCalls += 1 }, report: { _ in Issue.record("Unexpected invocation error") })])
         let one = MainWindowController(store: f.store, keybindings: bindings), two = MainWindowController(store: other.store, keybindings: bindings)
-        one.presentations = .init(projectActions: { first }); two.presentations = .init(projectActions: { second })
+        var firstProjects = 0, secondProjects = 0
+        one.presentations = .init(newProject: { firstProjects += 1 }); two.presentations = .init(newProject: { secondProjects += 1 })
+        try await bindings.save(.init(key: "mod+r", command: .projectNew))
         let w1 = projectCommandWindow(), w2 = projectCommandWindow()
         defer { w1.close(); w2.close() }
         bindings.dispatcher.register(one, window: w1); bindings.dispatcher.register(two, window: w2)
@@ -45,9 +47,14 @@ import Testing
         let event = try projectCommandEvent(w1)
         #expect(bindings.dispatcher.handle(event) == nil)
         #expect(bindings.dispatcher.handle(event) == nil)
-        await first.drain()
-        #expect(firstCalls == 1 && secondCalls == 0)
+        #expect(firstProjects == 1 && secondProjects == 0)
         w2.makeKey(); #expect(bindings.dispatcher.handle(try projectCommandEvent(w2)) == nil)
+        #expect(firstProjects == 1 && secondProjects == 1)
+        try await bindings.remove(.init(key: "mod+r", command: .projectNew))
+        #expect(!one.canPerform(.script("dev")) && !two.canPerform(.script("dev")), "Saved script rules do not revive retired toolbar commands.")
+        #expect(first.perform(.script("dev"), expected: source))
+        await first.drain(); #expect(firstCalls == 1 && secondCalls == 0)
+        #expect(second.perform(.script("dev"), expected: otherSource))
         await second.drain(); #expect(firstCalls == 1 && secondCalls == 1)
         // A file rule replaces this command's old default, rather than adding another shortcut.
         try await bindings.save(.init(key: "mod+u", command: .script("dev")))
@@ -55,7 +62,7 @@ import Testing
         #expect(bindings.resolve(.init(keyCode: 15, characters: "r", command: true, control: false, option: false, shift: false), context: context, projectDefaults: first.defaults) == nil)
         #expect(bindings.resolve(.init(keyCode: 32, characters: "u", command: true, control: false, option: false, shift: false), context: context, projectDefaults: first.defaults) == .script("dev"))
         try await bindings.remove(.init(key: "mod+u", command: .script("dev")))
-        // Static app commands take precedence over active project defaults (pinned T3 primary/active policy).
+        // The retained resolver keeps app-command precedence over saved script defaults.
         let conflict = try ProjectActionShortcut(key: "k", command: true)
         first.replace(owner: owner, bindings: [.init(source: source, shortcut: conflict, isAllowed: { true }, invoke: { firstCalls += 1 }, report: { _ in })])
         #expect(bindings.resolve(.init(keyCode: 40, characters: "k", command: true, control: false, option: false, shift: false), context: context, projectDefaults: first.defaults) == .commandPaletteToggle)
@@ -128,7 +135,7 @@ import Testing
         let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); quit.target = NSApp
         menu.addItem(copy); menu.addItem(quit); NSApp.mainMenu = menu
         let controller = MainWindowController(store: f.store, keybindings: keys)
-        controller.presentations = .init(projectActions: { commands }); keys.dispatcher.register(controller, window: window)
+        keys.dispatcher.register(controller, window: window)
         defer { keys.dispatcher.unregister(controller, window: window) }
         var calls = 0
         for (key, code) in [("c", UInt16(8)), ("q", UInt16(12)), ("f", UInt16(3)), ("c", UInt16(8))] {
@@ -136,10 +143,13 @@ import Testing
             let entry = try #require(ProjectScriptCatalog(actions: [action], configuration: nil).scripts.first)
             let source = try #require(ProjectActionCommands.Source(store: f.store, thread: thread, entry: entry))
             commands.replace(owner: UUID(), bindings: [.init(source: source, shortcut: action.shortcut, isAllowed: { true }, invoke: { calls += 1 }, report: { _ in })])
+            try await keys.save(.init(key: "mod+" + key, command: .script("native-conflict")))
+            #expect(!controller.canPerform(.script("native-conflict")))
             let event = try projectCommandEvent(window, key: key, code: code)
             #expect(keys.dispatcher.handle(event) === event)
             #expect(keys.dispatcher.handle(event) === event, "The same event keeps its native routing decision.")
             await commands.drain()
+            try await keys.remove(.init(key: "mod+" + key, command: .script("native-conflict")))
             editor.setSelectedRange(NSRange(location: 0, length: 0))
         }
         #expect(calls == 0 && editor.string == "Native copy remains available")

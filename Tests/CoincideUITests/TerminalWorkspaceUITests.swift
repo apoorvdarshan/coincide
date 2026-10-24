@@ -326,60 +326,52 @@ func settlingAConversationClosesIdleTerminalsAndRoutesWorkspaceFileLinks() async
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
-func terminalPanelAndSettingsFitInBothAppearances() async throws {
-    let root = try terminalFixtureRoot("terminal-panel"); defer { try? FileManager.default.removeItem(at: root) }
+func terminalSplitStateSurvivesNativeSessionSettingsInBothAppearances() async throws {
+    let root = try terminalFixtureRoot("terminal-session-settings"); defer { try? FileManager.default.removeItem(at: root) }
     let thread = CodingThread(project: .init(path: root.path))
     let terminals = TerminalWorkspaceStore(executable: "/bin/sh", loginShell: false)
-    try terminals.add(for: thread)
-    try terminals.split(for: thread, axis: .horizontal)
-    let running = try #require(terminals.selected(in: thread.id))
-    try await running.send("sleep 30\n")
-    terminals.notice = "“missing.txt” was not found."
-    for scheme in [ColorScheme.light, .dark] {
-        let panel = TerminalPanel(terminals: terminals, thread: thread, canAdd: { true }, report: { Issue.record("Unexpected report: \($0)") }, hide: {})
-            .frame(width: 720, height: 300).environment(\.colorScheme, scheme)
-        let hosting = NSHostingView(rootView: panel)
-        let window = NSWindow(contentRect: .init(x: -10_000, y: -10_000, width: 720, height: 300), styleMask: .borderless, backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
-        window.isReleasedWhenClosed = false; window.contentView = hosting
-        hosting.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(100)); hosting.layoutSubtreeIfNeeded()
-        let panes = terminals.sessions[thread.id, default: []].map(\.view)
-        #expect(panes.count == 2 && panes.allSatisfy { $0.window === window && $0.frame.width > 100 && $0.frame.height > 60 })
-        #expect(panes[0].convert(panes[0].bounds, to: nil).maxX <= panes[1].convert(panes[1].bounds, to: nil).minX + 1, "Split Right places panes side by side.")
-        window.close()
-        let settings = Form { TerminalSettingsSection() }.formStyle(.grouped).environment(\.colorScheme, scheme)
-        let controller = NSHostingController(rootView: settings)
-        let size = controller.sizeThatFits(in: .init(width: 600, height: 900))
-        #expect(size.width <= 601 && size.height > 100 && size.height <= 900)
-    }
-    #expect(TerminalActivityBadge.label(1) == "1 terminal process running. Open terminal")
-    #expect(TerminalActivityBadge.label(3) == "3 terminal processes running. Open terminal")
-    for session in terminals.removeAll() { await session.waitForClose() }
+    do {
+        try terminals.add(for: thread)
+        try terminals.split(for: thread, axis: .horizontal)
+        let running = try #require(terminals.selected(in: thread.id))
+        try await running.send("sleep 30\n")
+        try await waitTerminalUI { running.hasForegroundCommand }
+        let panes = terminals.sessions[thread.id, default: []].map(\.id)
+        let layout = terminals.layout(for: thread.id)
+        #expect(panes.count == 2 && layout.groups.count == 1)
+        #expect(layout.groups.first?.sessionIDs == panes && layout.groups.first?.axis == .horizontal)
+        let providerHome = root.appendingPathComponent("not-started-provider")
+        let scope = ProviderSessionsScope(provider: .codex, executable: "/must-not-run", configurationDirectory: providerHome.path)
+        for scheme in [ColorScheme.light, .dark] {
+            let view = ScrollView { ProviderSessionsView(scope: scope, onImport: { Issue.record("Import requires an explicit action.") }).padding(20) }
+                .environment(\.colorScheme, scheme)
+            let controller = NSHostingController(rootView: view)
+            let size = controller.sizeThatFits(in: .init(width: 600, height: 500))
+            #expect(size.width <= 601 && size.height > 100 && size.height <= 501)
+            #expect(terminals.layout(for: thread.id) == layout && running.lifecycle == .running)
+            #expect(!FileManager.default.fileExists(atPath: providerHome.path))
+        }
+        #expect(TerminalActivityBadge.label(1) == "1 terminal process running. Open terminal")
+        #expect(TerminalActivityBadge.label(3) == "3 terminal processes running. Open terminal")
+    } catch { await closeTerminalFixture(terminals); throw error }
+    await closeTerminalFixture(terminals)
 }
 
-@MainActor private final class DrawerHeights { var value: [UUID: CGFloat] = [:] }
-
-@Test(.timeLimit(.minutes(1))) @MainActor
-func terminalDrawerAppliesEachConversationsSavedHeight() async throws {
+@Test @MainActor
+func retainedTerminalSizingIsBoundedFiniteAndIndependentForEachConversation() {
     let terminals = TerminalWorkspaceStore(executable: "/bin/sh", loginShell: false)
-    let tall = UUID(), standard = UUID(), measured = DrawerHeights()
+    let tall = UUID(), standard = UUID(), untouched = UUID()
     terminals.recordPanelHeight(420, threadID: tall)
-    terminals.recordPanelHeight(5_000, threadID: standard); terminals.recordPanelHeight(TerminalWorkspaceStore.defaultPanelHeight, threadID: standard)
-    #expect(terminals.panelHeight(tall) == 420 && terminals.panelHeight(standard) == TerminalWorkspaceStore.defaultPanelHeight)
-    for threadID in [tall, standard] {
-        let view = TerminalDrawerSplit(terminals: terminals, threadID: threadID, showsDrawer: true) {
-            Color.red
-        } drawer: {
-            Color.blue.background(GeometryReader { proxy in
-                Color.clear.onAppear { measured.value[threadID] = proxy.size.height }
-                    .onChange(of: proxy.size.height) { _, height in measured.value[threadID] = height }
-            })
-        }.frame(width: 600, height: 900)
-        let hosting = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: .init(x: -10_000, y: -10_000, width: 600, height: 900), styleMask: .borderless, backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = hosting
-        hosting.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(100)); hosting.layoutSubtreeIfNeeded()
-        window.close()
-    }
-    #expect(measured.value[tall] == 420 && measured.value[standard] == CGFloat(TerminalWorkspaceStore.defaultPanelHeight))
+    terminals.recordPanelHeight(5_000, threadID: standard)
+    #expect(terminals.panelHeight(standard) == TerminalWindowArchive.panelHeightRange.upperBound)
+    terminals.recordPanelHeight(-10, threadID: standard)
+    #expect(terminals.panelHeight(standard) == TerminalWindowArchive.panelHeightRange.lowerBound)
+    terminals.recordPanelHeight(TerminalWorkspaceStore.defaultPanelHeight, threadID: standard)
+    terminals.recordPanelHeight(.nan, threadID: tall)
+    terminals.recordPanelHeight(.infinity, threadID: tall)
+    terminals.recordPanelHeight(421, threadID: tall)
+    #expect(terminals.panelHeight(tall) == 420)
+    #expect(terminals.panelHeight(standard) == TerminalWorkspaceStore.defaultPanelHeight)
+    #expect(terminals.panelHeight(untouched) == TerminalWorkspaceStore.defaultPanelHeight)
+    #expect(terminals.sessions.isEmpty && terminals.visibleThreads.isEmpty)
 }

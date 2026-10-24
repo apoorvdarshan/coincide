@@ -33,29 +33,7 @@ import Testing
     model.operationError = nil
     try "a second change\n".write(to: root.appendingPathComponent("native file.txt"), atomically: true, encoding: .utf8)
     await model.refresh(); model.selected = "native file.txt"; model.staged = false; await model.loadDiff()
-    if ProcessInfo.processInfo.environment["COINCIDE_RENDER_GIT"] == "1" { try await captureGitInspector(model, root: root) }
-}
-
-@MainActor private func captureGitInspector(_ model: GitInspectorStore, root: URL) async throws {
-    _ = NSApplication.shared
-    let store = WorkspaceStore(databaseURL: root.appendingPathComponent(".git/ui.sqlite"))
-    for scheme in [ColorScheme.light, .dark] {
-        for width in [CGFloat(280), 420] {
-            let hosting = NSHostingView(rootView: GitInspectorView(workspace: store, model: model).environment(\.colorScheme, scheme)
-                .frame(width: width, height: 720).background(scheme == .light ? Color.white : Color(white: 0.12)))
-            let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: width, height: 720), styleMask: .borderless, backing: .buffered, defer: false)
-            window.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua); hosting.appearance = window.appearance
-            window.isReleasedWhenClosed = false; window.contentView = hosting; hosting.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(180))
-            hosting.layoutSubtreeIfNeeded()
-            let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            let path = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-git-\(scheme == .light ? "light" : "dark")-\(Int(width)).png")
-            try #require(bitmap.representation(using: .png, properties: [:])).write(to: path)
-            print("Native Git preview: \(path.path)"); window.close()
-        }
-    }
-    await store.shutdown()
+    #expect(model.diff.contains("+a second change"))
 }
 
 @MainActor @Test(.timeLimit(.minutes(1))) func workspaceOwnsGitOperationsAcrossInspectorLifetimesAndStopsThemAtShutdown() async throws {

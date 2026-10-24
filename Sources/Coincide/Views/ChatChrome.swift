@@ -28,6 +28,12 @@ struct WorkspaceRail: View {
                 store.showChat()
                 store.sidebarVisible = returningFromSettings ? true : !store.sidebarVisible
             }
+            item("Plugins and integrations", icon: "puzzlepiece.extension", selected: store.showingSettings && [.skills, .commands, .mcp, .plugins, .hooks].contains(store.settingsPage)) {
+                store.showSettings(.plugins)
+            }
+            item("Agent sessions", icon: "rectangle.stack", selected: store.showingSettings && store.settingsPage == .sessions) {
+                store.showSettings(.sessions)
+            }
             Spacer()
             item("Settings", icon: "gearshape", selected: store.showingSettings) { store.showSettings() }
         }

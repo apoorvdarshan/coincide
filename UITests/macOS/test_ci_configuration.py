@@ -1,6 +1,6 @@
 """Configuration checks run without launching a native app or touching user state.
 
-Four isolated macOS runners partition all twenty-eight workflows without sharing
+Four isolated macOS runners partition every discovered native workflow without sharing
 a desktop. Counts and xcresult identities must match each shard, and the final
 gate requires complete, unique coverage across every shard. Individual test and
 command deadlines remain unchanged.
@@ -25,13 +25,15 @@ spec.loader.exec_module(ci)
 class NativeUIConfigurationTests(unittest.TestCase):
     def test_shards_partition_every_source_case_once_and_reject_invalid_or_empty_selections(self):
         identifiers = ci.native_test_identifiers()
-        self.assertEqual(len(identifiers), 28)
+        self.assertGreaterEqual(len(identifiers), ci.MINIMUM_TEST_COUNT)
         shards = [ci.shard_manifest(index, ci.UI_SHARD_COUNT, identifiers) for index in range(ci.UI_SHARD_COUNT)]
         flattened = [case for shard in shards for case in shard["testIdentifiers"]]
         self.assertEqual(sorted(flattened), identifiers)
         self.assertEqual(len(set(flattened)), len(flattened))
-        self.assertEqual([len(shard["testIdentifiers"]) for shard in shards], [7, 7, 7, 7])
-        for index, count in ((-1, 4), (4, 4), (0, 0), (0, 29), (True, 4), (0, False)):
+        sizes = [len(shard["testIdentifiers"]) for shard in shards]
+        self.assertTrue(all(sizes))
+        self.assertLessEqual(max(sizes) - min(sizes), 1)
+        for index, count in ((-1, 4), (4, 4), (0, 0), (0, len(identifiers) + 1), (True, 4), (0, False)):
             with self.assertRaises(ValueError):
                 ci.shard_manifest(index, count, identifiers)
         with self.assertRaises(ValueError):
@@ -87,7 +89,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ci.verify_shards(root)
             last = self.write_shard(root, 3)
-            self.assertEqual(ci.verify_shards(root)["passedTests"], 28)
+            self.assertEqual(ci.verify_shards(root)["passedTests"], len(ci.native_test_identifiers()))
             self.assertEqual(ci.verify_shards(root)["testIdentifiers"], ci.native_test_identifiers())
             (last / "selection.json").write_text(json.dumps(ci.shard_manifest(2, 4)))
             with self.assertRaises(ValueError):
@@ -110,7 +112,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
             manifest = json.loads(path.read_text())
             self.assertEqual(manifest, ci.shard_manifest(1, 4))
             self.assertEqual(result.stdout.splitlines(), ["-only-testing:" + ci.TEST_TARGET + "/" + case for case in manifest["testIdentifiers"]])
-            result = subprocess.run(command[:command.index("--shard-index")] + ["--shard-count", "29", "--manifest", str(path)], text=True, capture_output=True)
+            result = subprocess.run(command[:command.index("--shard-index")] + ["--shard-count", str(len(ci.native_test_identifiers()) + 1), "--manifest", str(path)], text=True, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
 
     def test_workflow_uses_isolated_serial_runners_keeps_failed_shards_and_enforces_aggregate(self):
@@ -203,17 +205,17 @@ class NativeUIConfigurationTests(unittest.TestCase):
         for forbidden in ('Process(', 'fork(', 'system(', 'posix_spawn('):
             self.assertNotIn(forbidden, launcher)
 
-    def test_claude_native_history_cases_are_additive_and_use_the_isolated_signed_peer(self):
+    def test_claude_approval_flow_and_provider_settings_use_the_isolated_signed_peer(self):
         directory = Path(__file__).resolve().parent
         harness = (directory / "CoincideDesktopUITests.swift").read_text()
         project = (directory / "CoincideDesktopUITests.xcodeproj/project.pbxproj").read_text()
         launcher = (directory / "OfflineCLILauncher.swift").read_text()
         verifier = (directory / "verify_offline_launcher.py").read_text()
         peer = (directory / "claude_history_ui.py").read_text()
-        self.assertEqual(harness.count("@MainActor func test"), 28)
-        for name in ("testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart",
-                     "testNativeClaudeSelectedContextIsConsumedOnceBeforeQueuedSuccessor",
-                     "testNativeClaudeContextInspectionIsReadOnlyAndNeverReplaysConsumedOrUnwrittenInput"):
+        self.assertEqual(harness.count("@MainActor func test"), len(ci.native_test_identifiers()))
+        for name in ("testNativeClaudeQuestionSingleMultiCustomNotesAndCancellationPersistExactAnswers",
+                     "testNativeClaudeConfigurationPreservesCredentialsAndUnknownHooks",
+                     "testNativeSessionsImportExplainsCopiedOwnershipWithoutScanningAutomatically"):
             self.assertIn("func " + name + "() throws", harness)
         self.assertIn('path = claude_history_ui.py;', project)
         self.assertIn('"claude": ["claude_history_ui.py"]', launcher)
@@ -229,7 +231,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
         self.assertNotIn('import socket', peer)
         self.assertNotIn('subprocess', peer)
 
-    def test_pi_history_adds_three_offline_native_scenarios_and_keeps_strict_closed_world_launcher(self):
+    def test_retired_pi_ui_is_absent_while_offline_recovery_peer_stays_covered(self):
         directory = Path(__file__).parent
         harness = (directory / "CoincideDesktopUITests.swift").read_text()
         launcher = (directory / "OfflineCLILauncher.swift").read_text()
@@ -239,7 +241,10 @@ class NativeUIConfigurationTests(unittest.TestCase):
         for name in ("testNativePiHistoryQuestionsUseExactWorkerAndCancellationNeverSendsDraft",
                      "testNativePiUnknownHistoryKeepsOriginalAcrossRestartWithoutRepeatingNativeFork",
                      "testNativePiEmptyContextRecoveryRequiresExplicitAcknowledgementAndNeverReplaysUnknownInput"):
-            self.assertIn("func " + name + "() throws", harness)
+            self.assertNotIn("func " + name + "() throws", harness)
+        core = Path(__file__).resolve().parents[2] / "Tests/CoincideCoreTests"
+        for filename in ("PiHistoryEngineTests.swift", "PiHistoryEngineIntegrationTests.swift", "PiHistoryOriginalSourceOracleTests.swift"):
+            self.assertTrue((core / filename).is_file())
         self.assertIn('path = pi_history_ui.py;', project)
         self.assertIn('"pi": ["pi_history_ui.py"]', launcher)
         self.assertIn('validPiArguments(arguments)', launcher)
@@ -256,53 +261,19 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
-    def test_results_require_twenty_eight_real_tests_without_silent_skips(self):
-        self.assertEqual(ci.verify_results(dict(totalTestCount=28, passedTests=28, failedTests=0, skippedTests=0)), 28)
-        for summary in [dict(totalTestCount=29, passedTests=29, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=27, passedTests=27, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=26, passedTests=26, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=25, passedTests=25, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=25, passedTests=24, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=25, passedTests=24, failedTests=1, skippedTests=0),
-                        dict(totalTestCount=24, passedTests=24, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=23, passedTests=23, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=21, passedTests=21, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=21, passedTests=20, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=21, passedTests=20, failedTests=1, skippedTests=0),
-                        dict(totalTestCount=20, passedTests=20, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=18, passedTests=18, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=18, passedTests=17, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=18, passedTests=17, failedTests=1, skippedTests=0),
-                        dict(totalTestCount=17, passedTests=17, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=16, passedTests=16, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=16, passedTests=15, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=16, passedTests=15, failedTests=1, skippedTests=0),
-                        dict(totalTestCount=15, passedTests=15, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=14, passedTests=14, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=14, passedTests=13, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=14, passedTests=13, failedTests=1, skippedTests=0),
-                        dict(totalTestCount=13, passedTests=13, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=13, passedTests=12, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=13, passedTests=12, failedTests=1, skippedTests=0),
-                        dict(totalTestCount=12, passedTests=12, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=12, passedTests=11, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=12, passedTests=11, failedTests=1, skippedTests=0),
-                        dict(totalTestCount=11, passedTests=11, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=10, passedTests=10, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=0, passedTests=0, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=10, passedTests=9, failedTests=0, skippedTests=1),
-                        dict(totalTestCount=10, passedTests=9, failedTests=1, skippedTests=0),
-                        dict(totalTestCount=9, passedTests=9, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=8, passedTests=8, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=7, passedTests=7, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=6, passedTests=6, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=5, passedTests=5, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=4, passedTests=4, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=3, passedTests=3, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=2, passedTests=2, failedTests=0, skippedTests=0),
-                        dict(totalTestCount=1, passedTests=1, failedTests=0, skippedTests=0), {}]:
+    def test_results_require_every_discovered_test_without_silent_skips(self):
+        count = len(ci.native_test_identifiers())
+        self.assertEqual(ci.verify_results(dict(totalTestCount=count, passedTests=count, failedTests=0, skippedTests=0), expected=count), count)
+        for total in range(count + 2):
+            if total == count:
+                continue
             with self.assertRaises(ValueError):
-                ci.verify_results(summary)
+                ci.verify_results(dict(totalTestCount=total, passedTests=total, failedTests=0, skippedTests=0), expected=count)
+        for summary in (dict(totalTestCount=count, passedTests=count-1, failedTests=0, skippedTests=1),
+                        dict(totalTestCount=count, passedTests=count-1, failedTests=1, skippedTests=0), {},
+                        dict(totalTestCount=count, passedTests=count, failedTests=False, skippedTests=0)):
+            with self.assertRaises(ValueError):
+                ci.verify_results(summary, expected=count)
 
     def test_preparation_targets_only_disposable_app_and_preserves_runner_paths(self):
         with tempfile.TemporaryDirectory(prefix="coincide-ui-config-") as directory:

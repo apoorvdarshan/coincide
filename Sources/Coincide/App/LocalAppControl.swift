@@ -13,6 +13,8 @@ final class LocalAppControl {
     private var server: MCPHTTPServer?
     private var credential: MCPSessionCredential?
     private let instance = UUID()
+    private let configurationEditor = ProviderConfigurationEditor()
+    private var configurationReads: [UUID: (document: ProviderConfigurationDocument, expires: Date)] = [:]
 
     init(store: WorkspaceStore, windows: MainWindowCoordinator, root: URL) {
         self.store = store; self.windows = windows; self.root = root.appendingPathComponent("Control", isDirectory: true)
@@ -29,11 +31,11 @@ final class LocalAppControl {
             workspacePath: root.path, permission: .fullAccess, capabilities: [.orchestration])
         let credential = try await registry.issue(scope: scope)
         self.credential = credential
-        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "sort", "screenshot"]
+        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "sort", "screenshot", "export", "integrations", "integration-import", "integration-remove", "integration-use", "sessions", "session-details", "session-stop", "configuration", "configuration-set"]
         let definitions = names.map { name in
             MCPToolDefinition(name: name, description: "Coincide local CLI: " + name,
                 inputSchema: .object(["type": .string("object")]), capability: .orchestration,
-                readOnly: !["select", "new", "model", "ui", "sort", "screenshot"].contains(name))
+                readOnly: !["select", "new", "model", "ui", "sort", "screenshot", "export", "integration-import", "integration-remove", "integration-use", "configuration-set", "session-stop"].contains(name))
         }
         let server = try await MCPHTTPServer.start(registry: registry, tools: definitions) { [weak self] invocation in
             guard let self else { throw MCPError(.unavailable) }
@@ -127,6 +129,71 @@ final class LocalAppControl {
             guard store.selectThread(thread.id) else { throw MCPError(.unavailable) }
             store.search = ""
             result = .object(["selected": .string(thread.id.uuidString)])
+        case "integrations":
+            let kind = args["kind"].string.flatMap(ProviderIntegrationKind.init(rawValue:))
+            let provider = args["provider"].string.flatMap(ProviderKind.init(rawValue:))
+            guard args["kind"].string == nil || kind != nil,
+                  args["provider"].string == nil || provider?.isSupported == true else { throw MCPError(.invalidParams) }
+            let scope = store.integrationScope
+            await store.integrations.refresh(scope: scope)
+            guard store.integrationScope == scope, store.integrations.scope == scope else { throw CoincideError("The selected workspace changed. Refresh integrations again.") }
+            if let error = store.integrations.errorMessage { throw CoincideError(error) }
+            let rows = store.integrations.items.filter { (kind == nil || $0.kind == kind) && (provider == nil || $0.provider == provider) }
+            result = .object(["items": .array(try rows.map(encodedValue)), "total": .number(Double(rows.count)),
+                "issues": .array(try store.integrations.issues.map(encodedValue)),
+                "workspace": scope.workspacePath.map(JSONValue.string) ?? .null])
+        case "integration-import", "integration-remove", "integration-use":
+            guard let id = args["integration_id"].string, id.count == 64,
+                  id.allSatisfy({ $0.isHexDigit }) else { throw MCPError(.invalidParams) }
+            let scope = store.integrationScope
+            await store.integrations.refresh(scope: scope)
+            guard store.integrationScope == scope, store.integrations.scope == scope else { throw CoincideError("The selected workspace changed. Refresh integrations again.") }
+            guard let item = store.integrations.items.first(where: { $0.id == id }) else { throw CoincideError("Integration not found. Run integrations to refresh its ID.") }
+            switch invocation.toolName {
+            case "integration-import": _ = try await store.integrations.importItems([id])
+            case "integration-remove": try await store.integrations.removeImport(id)
+            default: try await store.useIntegration(item)
+            }
+            result = .object(["integrationId": .string(id), "action": .string(invocation.toolName), "sent": .bool(false)])
+        case "sessions":
+            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported else { throw MCPError(.invalidParams) }
+            let snapshot = try await ProviderSessionsService.list(scope: store.providerSessionsScope(provider))
+            result = .object(["sessions": .array(snapshot.sessions.map { session in
+                .object(["id": .string(session.id), "nativeId": .string(session.nativeID), "provider": .string(session.provider.rawValue),
+                    "title": .string(session.title), "directory": .string(session.directory), "kind": .string(session.kind),
+                    "state": .string(session.state.rawValue), "canStop": .bool(session.canStop)])
+            }), "hasMore": .bool(snapshot.hasMore), "note": .string("Provider-owned sessions; importing creates independent Coincide conversations.")])
+        case "configuration":
+            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported,
+                  let scope = ProviderConfigurationScope(rawValue: args["scope"].string ?? "user") else { throw MCPError(.invalidParams) }
+            let source = try ProviderConfigurationEditor.sourceURL(provider: provider, scope: scope,
+                codex: store.integrationCodexConfiguration, claude: store.integrationClaudeProfile, workspacePath: store.integrationScope.workspacePath)
+            let document = try await configurationEditor.load(provider: provider, scope: scope, sourceURL: source)
+            configurationReads = configurationReads.filter { $0.value.expires > Date() }
+            if configurationReads.count >= 16 { configurationReads.removeAll() }
+            let review = UUID()
+            configurationReads[review] = (document, Date().addingTimeInterval(300))
+            result = .object(["reviewId": .string(review.uuidString), "expiresInSeconds": .number(300),
+                "provider": .string(provider.rawValue), "scope": .string(scope.rawValue), "source": .string(source.path),
+                "fields": .array(document.fields.map { field in
+                    .object(["id": .string(field.id), "title": .string(field.title), "value": .string(field.value),
+                        "editable": .bool(field.isEditable), "description": .string(field.detail),
+                        "control": .string(String(describing: field.control))])
+                }), "notices": .array(document.notices.map(JSONValue.string))])
+        case "configuration-set":
+            guard let id = args["review_id"].string.flatMap(UUID.init(uuidString:)),
+                  let read = configurationReads.removeValue(forKey: id), read.expires > Date(),
+                  let field = args["field"].string, let value = args["value"].string else {
+                throw CoincideError("Read configuration first and use its unexpired review ID for one change.")
+            }
+            // The captured document selects the exact file; the editor rejects
+            // changes made by the CLI or another UI since this review.
+            let saved = try await configurationEditor.save(read.document, changes: [field: value])
+            result = .object(["saved": .bool(true), "provider": .string(saved.provider.rawValue),
+                "source": .string(saved.sourceURL.path), "field": .string(field)])
+        case "session-details", "session-stop":
+            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported else { throw MCPError(.invalidParams) }
+            result = try await ProviderSessionsLocalControl.invoke(action: invocation.toolName, arguments: args, scope: store.providerSessionsScope(provider))
         case "model":
             let thread = try target(args)
             guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported,
@@ -182,6 +249,18 @@ final class LocalAppControl {
             if args["model_picker"] == .bool(true) { store.showChat(); store.modelPickerPresented = true }
             else { store.modelPickerPresented = false }
             result = uiState
+        case "export":
+            let thread = try target(args)
+            guard let path = args["path"].string, path.hasPrefix("/"), path.utf8.count <= 4096,
+                  let format = ConversationExportFormat(rawValue: args["format"].string ?? "markdown") else { throw MCPError(.invalidParams) }
+            let artifact = try await Task.detached(priority: .userInitiated) {
+                let artifact = try ConversationExport.make(thread: thread, format: format)
+                try ConversationExportFile.writeNew(artifact.data, to: URL(fileURLWithPath: path))
+                return artifact
+            }.value
+            result = .object(["path": .string(path), "format": .string(format.rawValue),
+                "messageCount": .number(Double(artifact.messageCount)),
+                "truncatedToolMessages": .number(Double(artifact.truncatedToolMessages)), "sent": .bool(false)])
         case "screenshot":
             let popovers = NSApp.windows.filter { $0.isVisible && $0.className.contains("Popover") }
             let targetWindow = args["popover"] == .bool(true) ? (popovers.count == 1 ? popovers.first : nil) : windows.currentWindow
@@ -221,6 +300,10 @@ final class LocalAppControl {
         let id = arguments["id"].string.flatMap(UUID.init(uuidString:)) ?? (arguments["id"] == .null ? store.selectedThreadID : nil)
         guard let id, let thread = store.thread(id) else { throw CoincideError("Conversation not found. Use threads to list IDs.") }
         return thread
+    }
+
+    private func encodedValue<T: Encodable>(_ value: T) throws -> JSONValue {
+        try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
     }
 
     private func summary(_ thread: CodingThread) -> JSONValue {

@@ -21,6 +21,13 @@ Commands return JSON. None sends a prompt to a model.
 ./script/coincide sort --projects newest --chats priority
 ./script/coincide screenshot /tmp/coincide-window.png
 ./script/coincide screenshot /tmp/coincide-picker.png --popover
+./script/coincide sessions codex
+./script/coincide sessions claude
+./script/coincide session-details claude CLAUDE_SESSION_ID
+./script/coincide integrations --kind skills --provider claude
+./script/coincide configuration codex --scope user
+./script/coincide export /tmp/conversation.md
+./script/coincide export /tmp/conversation.json --format json --thread THREAD_UUID
 ```
 
 - `select THREAD_UUID` selects a saved chat. `new PATH` creates an empty chat.
@@ -33,7 +40,8 @@ Commands return JSON. None sends a prompt to a model.
 - `models --refresh` refreshes the selected chat's catalog. `--all --refresh`
   reads both available CLI catalogs. Catalog reads do not prove model execution.
 - `ui --settings PAGE` accepts `general`, `appearance`, `notifications`, `providers`,
-  `models`, `conversations`, `keyboard`, and `about`. It opens embedded Settings
+  `models`, `conversations`, `keyboard`, `about`, `skills`, `commands`, `mcp`,
+  `plugins`, `hooks`, `configuration`, and `sessions`. It opens embedded Settings
   in the existing main window, using the same navigation state as the app menu
   and ⌘,. `ui --chat` returns to the selected conversation without creating one.
 - `ui --display built-in` fits and centers the existing main window on the Mac's
@@ -54,6 +62,14 @@ Commands return JSON. None sends a prompt to a model.
 - `screenshot` writes a new PNG and refuses to overwrite a file. `--popover`
   captures the single visible native popover, refusing ambiguity. Native content
   rendering may omit system-composited chrome; it is not a full screen capture.
+- `export PATH --format markdown|json` exports a captured conversation to a new
+  private file (0600) and refuses existing files or symlinks. `--thread UUID`
+  selects a saved chat; otherwise it uses the currently selected chat. The chat
+  header's Conversation actions menu offers the same formats through a native
+  Save sheet. Exports include visible message text and attachment names/types/sizes,
+  excluding private reasoning, rewound messages, drafts, attachment bytes and
+  provider state. Tool output beyond 256 KiB per message is marked as truncated.
+  JSON is a portable public transcript, not a database backup/import format.
 
 The Python client uses Coincide's authenticated loopback service. The local-owner
 credential is held in a private `Control` directory under Application Support;
@@ -63,6 +79,71 @@ connection file into projects, logs, or automation output.
 
 This is control of the running native app. It is not yet a standalone headless
 agent runtime or a public network API.
+
+## Integrations and configuration
+
+`integrations` discovers local CLI integration metadata. Filter with
+`--provider codex|claude` and `--kind skills|commands|mcp|plugins|hooks`.
+Use an exact integration ID from that response with:
+
+```sh
+./script/coincide integration-import INTEGRATION_ID
+./script/coincide integration-remove INTEGRATION_ID
+./script/coincide integration-use INTEGRATION_ID
+```
+
+Skills and saved commands import as Coincide library copies. MCP servers,
+plugins and hooks import as references to their original provider configuration,
+without copying credentials or activating them in another provider. Removing
+an import removes only its Coincide copy/reference. Use adds a supported item
+to the selected conversation's draft without sending it. Discovery and import
+do not execute hooks, start MCP servers, or install provider plugins.
+
+`configuration PROVIDER --scope user|project|local` reads supported structured
+settings from the selected runtime and project. Available scopes and fields
+depend on the provider. The response includes field IDs, allowed controls,
+editability, notices, and a review ID valid for 300 seconds. To save one field:
+
+```sh
+./script/coincide configuration-set REVIEW_ID FIELD VALUE
+```
+
+Each review ID can be used once. The editor checks that the source file is
+unchanged since the read and rejects a stale review. It accepts only the
+supported nonsecret fields; credentials and arbitrary CLI configuration are
+not exposed through this interface. An empty value removes the selected
+scope's override where supported. Read configuration again after each save.
+Provider-owned settings may require a new CLI session to take effect.
+
+## Local provider sessions
+
+**Settings → Sessions** and `sessions codex|claude` inspect sessions owned by
+the selected CLI configuration. They are separate from Coincide's saved chats.
+Use the exact `id` returned by `sessions` with `session-details PROVIDER ID` to
+read bounded recent output and obtain a terminal resume command. Copying that
+command does not execute it. Running it continues the original provider session;
+**Import a copy** instead creates an independent Coincide conversation.
+
+- Codex uses its existing WebSocket control socket at
+  `<CODEX_HOME>/app-server-control/app-server-control.sock`. It never starts a
+  daemon or resumes a thread for inspection. It lists up to 200 recent sessions,
+  including subagents, and reads up to 10 recent public turn summaries. A saved
+  thread without a live daemon status is shown as **Saved · not loaded**.
+  Standalone Codex processes that do not share this daemon may not appear as
+  running. Internal reasoning and tool output are excluded from this view.
+- Claude uses `agents --json --all`. Background sessions support recent terminal
+  output through `logs`; interactive sessions remain controlled in their
+  original terminal. These commands require a Claude Code version that exposes
+  the session-management commands.
+- `session-stop PROVIDER ID --confirm` affects the original provider session.
+  It refreshes and revalidates that ID first. Codex interrupts only an exact,
+  freshly identified active turn; Claude stops the selected background session.
+  The response confirms the provider accepted the request, so refresh the list
+  to observe its resulting state. There is no automatic retry after a lost reply.
+
+The native page confirms Stop before acting. Unknown states never enable Stop.
+Provider errors do not start a fallback process. This surface does not provide
+cloud/remote control, arbitrary TUI shortcuts, or full CLI feature parity.
 
 For a new development launch, pass `--display=built-in --background` to the app
 executable. The first option places each main window on the built-in display;

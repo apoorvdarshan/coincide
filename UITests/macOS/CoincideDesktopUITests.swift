@@ -8,194 +8,373 @@ import XCTest
 final class CoincideDesktopUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
-    @MainActor func testRemoteWindowValidatesConnectionBeforeSSHAndPreservesLocalWorkspace() throws {
-        let f = try prepareApplication(appearance: "light", diagnosticPrefix: "remote-connections")
-        let app = f.app
-        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        let initial = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
-            (snapshot["projects"] as? [Any])?.isEmpty == true && (snapshot["threads"] as? [Any])?.isEmpty == true
-        }
-        let original = try claudeGUIJSON(initial)
-        app.menuBars.menuBarItems["Remote"].click()
-        let menuItem = app.menuItems["Remote Workspaces…"]
-        XCTAssertTrue(menuItem.waitForExistence(timeout: 5)); menuItem.click()
-        let window = app.windows["Remote Workspaces"]
-        XCTAssertTrue(window.waitForExistence(timeout: 10))
-        app.menuBars.menuBarItems["Thread"].click()
-        XCTAssertFalse(app.menuItems["Stop Turn"].isEnabled)
-        XCTAssertTrue(app.menuItems["Resume Queue"].exists)
-        XCTAssertTrue(app.menuItems["Toggle Inspector"].isEnabled, "The remote window owns its Files/Changes inspector control.")
-        app.typeKey(.escape, modifierFlags: [])
-        let add = window.buttons["remote-add-connection"]
-        XCTAssertTrue(add.waitForExistence(timeout: 5)); add.click()
-        let target = app.textFields["remote-connection-target"]
-        let port = app.textFields["remote-connection-port"]
-        let directory = app.textFields["remote-connection-directory"]
-        let inspect = app.buttons["remote-connection-inspect"]
-        XCTAssertTrue(target.waitForExistence(timeout: 5)); XCTAssertFalse(inspect.isEnabled)
-        target.click(); target.typeText("example.invalid")
-        directory.click(); directory.typeText("/Users/remote/Coincide")
-        port.click(); port.typeText("70000")
-        XCTAssertTrue(inspect.isEnabled); inspect.click()
-        let validation = app.staticTexts["remote-connection-error"]
-        XCTAssertTrue(validation.waitForExistence(timeout: 5))
-        let validationText = (validation.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? validation.label
-        XCTAssertEqual(validationText, "Enter a port between 1 and 65535.")
-        XCTAssertTrue(target.exists, "Invalid values must leave the form open without starting SSH.")
-        port.click(); port.typeKey("a", modifierFlags: .command); port.typeKey(.delete, modifierFlags: [])
-        target.click(); target.typeKey("a", modifierFlags: .command); target.typeText("-invalid-target")
-        inspect.click()
-        let invalidTarget = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (value CONTAINS %@ OR label CONTAINS %@)", "valid SSH alias", "valid SSH alias"), object: validation)
-        XCTAssertEqual(XCTWaiter.wait(for: [invalidTarget], timeout: 5), .completed)
-        XCTAssertTrue(target.exists)
-        capture(app, name: "remote-connection-native-validation")
-        app.buttons["remote-connection-cancel"].click()
-        XCTAssertTrue(waitForAbsence(target, timeout: 5))
-        window.typeKey("w", modifierFlags: .command)
-        XCTAssertTrue(waitForAbsence(window, timeout: 5)); XCTAssertEqual(app.windows.count, 1)
-        app.typeKey("r", modifierFlags: [.command, .option])
-        XCTAssertTrue(window.waitForExistence(timeout: 5))
-        XCTAssertEqual(try claudeGUIJSON(privateWorkspaceSnapshot(f.root)), original)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: f.root.appendingPathComponent("RemoteEnvironments/connections.json").path))
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+    @MainActor func testLightAppearanceFileMenuProjectWorkflow() throws {
+        try exerciseProjectWorkflow(appearance: "light", useKeyboard: false)
+    }
+    @MainActor func testDarkAppearanceKeyboardProjectWorkflow() throws {
+        try exerciseProjectWorkflow(appearance: "dark", useKeyboard: true)
+    }
+    @MainActor func testNativeFileReferencePickerSearchPreservesDraftAndDisk() throws {
+        let f = try currentShell(); let project = f.root.appendingPathComponent("Reference Project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        let file = project.appendingPathComponent("reference.txt"), bytes = Data("Referenced bytes stay unchanged\n".utf8)
+        try bytes.write(to: file)
+        launch(f.app); try openProject(project, in: f.app); f.app.typeKey("n", modifierFlags: .command)
+        let composer = f.app.textViews["composer-input"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10)); composer.click(); composer.typeText("Review this file: ")
+        let menu = f.app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Add files and tools")).firstMatch
+        XCTAssertTrue(menu.exists); menu.click(); f.app.menuItems["composer-reference-file"].click()
+        let search = f.app.textFields["composer-file-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.click(); search.typeText("reference")
+        let reference = f.app.buttons["composer-file-reference.txt"]
+        XCTAssertTrue(reference.waitForExistence(timeout: 10)); reference.click()
+        let inserted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH %@ AND value CONTAINS %@", "Review this file: ", "reference.txt"), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [inserted], timeout: 5), .completed)
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+        let id = try selectedThreadIdentifier(in: f.app)
+        let saved = try waitForPrivateWorkspace(f.root, timeout: 5) { self.findClaudeGUIThread($0, id: id)?["draft"] as? String == composer.value as? String }
+        XCTAssertTrue((try claudeGUIThread(saved, id: id)["messages"] as? [Any])?.isEmpty == true)
     }
 
-    @MainActor func testRemoteReviewedSettleScriptRequiresFullCommandApprovalAndStopDrainsOwnedJobs() throws {
-        let f = try prepareApplication(appearance: "light", diagnosticPrefix: "remote-settle-script")
-        let app = f.app, manager = FileManager.default
-        let source = f.root.appendingPathComponent("Remote Script Source"), workspace = f.root.appendingPathComponent("Remote Script Worktree")
-        try manager.createDirectory(at: source, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        let command = """
-        printf 'one\\n' >> remote-script-executions
-        pwd -P > remote-script-cwd
-        printf '%s\\n' "$$" > remote-script-pids
-        /bin/sh -c 'trap "" HUP TERM; /bin/sleep 60 & child=$!; printf "%s\\n" "$$" "$child" >> remote-script-pids; wait' &
-        printf 'remote-reviewed-output😀\\n'
-        wait
-        """ + "\n" + String(repeating: "# Immutable full-command Unicode audit 🌍\n", count: 250) + "# remote-command-tail-after-preview-boundary\n"
-        XCTAssertGreaterThan(command.utf8.count, 8_192, "This workflow must hydrate the referenced command, beyond its preview.")
-        let script = ["name": "Reviewed Remote Cleanup", "command": command, "runOnSettle": true, "async": false] as [String: Any]
-        let config = source.appendingPathComponent("t3.json"), readme = source.appendingPathComponent("README.md")
-        let configuration = try JSONSerialization.data(withJSONObject: ["scripts": [script]], options: [.sortedKeys, .prettyPrinted])
-        let readmeBytes = Data("Private remote settle source stays untouched.\n".utf8)
-        try configuration.write(to: config); try readmeBytes.write(to: readme)
-        for arguments in [["init", "--initial-branch", "main"], ["add", "t3.json", "README.md"], ["commit", "--message", "Private remote settle fixture"],
-                          ["worktree", "add", "-b", "ui-remote-reviewed-cleanup", workspace.path, "main"]] {
-            _ = try runGit(["-C", source.path] + arguments, gitPath: f.gitPath, configuration: f.configuration, name: "remote-settle-" + arguments[0])
+    @MainActor func testLightEmbeddedSettingsPreserveDraftWithoutOpeningAnotherWindow() throws {
+        try exerciseEmbeddedSettings(appearance: "light")
+    }
+    @MainActor func testDarkEmbeddedSettingsPreserveDraftWithoutOpeningAnotherWindow() throws {
+        try exerciseEmbeddedSettings(appearance: "dark")
+    }
+    @MainActor func testNativeSettingsSearchFiltersAndRestoresAllPages() throws {
+        let f = try currentShell(); launch(f.app)
+        f.app.typeKey(",", modifierFlags: .command)
+        let search = f.app.textFields["settings-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10)); search.click(); search.typeText("sandbox")
+        XCTAssertTrue(f.app.buttons["settings-page-configuration"].exists)
+        XCTAssertFalse(f.app.buttons["settings-page-about"].exists)
+        f.app.buttons["settings-clear-search"].click()
+        XCTAssertTrue(waitForValue(search, value: "", timeout: 5))
+        XCTAssertTrue(f.app.buttons["settings-page-about"].exists)
+        XCTAssertEqual(f.app.windows.count, 1)
+    }
+    @MainActor func testNativeSettingsNavigatesEveryIntegrationPageInsideTheChatWindow() throws {
+        let f = try currentShell(); launch(f.app)
+        f.app.typeKey(",", modifierFlags: .command)
+        for page in ["skills", "commands", "mcp", "plugins", "hooks"] {
+            try showSettingsPage(page, in: f.app)
+            XCTAssertTrue(f.app.textFields["integration-search"].waitForExistence(timeout: 5))
+            XCTAssertTrue(f.app.buttons["integration-refresh"].exists)
+            XCTAssertEqual(f.app.windows.count, 1)
+            XCTAssertEqual(f.app.sheets.count, 0)
         }
-        try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: workspace.path)
-        let head = try verifyHead(gitPath: f.gitPath, project: source, configuration: f.configuration, name: "remote-settle-source-head")
-        let headBytes = try Data(contentsOf: source.appendingPathComponent(".git/HEAD"))
-        app.launchEnvironment["COINCIDE_UI_TEST_REMOTE_SCRIPT"] = "1"
-        app.launchEnvironment["PATH"] = URL(fileURLWithPath: f.gitPath).deletingLastPathComponent().path + ":/usr/bin:/bin:/usr/sbin:/sbin"
-        let draft = "Unsent remote draft stays literal through reviewed cleanup and Stop 🌍"
-        let seeded = try seedRemoteScriptUIFixture(f.root, source: source, workspace: workspace, draft: draft, app: app)
-        let threadID = try XCTUnwrap(seeded["threadID"] as? String)
-        let remoteRoot = f.root.appendingPathComponent("coincide-ui-testing-remote-script-host")
-        let original = try claudeGUIThread(privateWorkspaceSnapshot(remoteRoot), id: threadID)
-        let originalMessages = try claudeGUIJSON(original["messages"]), originalHistory = try claudeGUIJSON(original["runHistory"])
-        let expectedWorkspace = try XCTUnwrap(seeded["workspacePath"] as? String)
-        let executions = workspace.appendingPathComponent("remote-script-executions"), pidFile = workspace.appendingPathComponent("remote-script-pids")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.root.appendingPathComponent("should-not-run").path))
+        capture(f.app, name: "native-integrations-in-window")
+    }
+    @MainActor func testNativeCodexConfigurationSavesOnlyAnExplicitValidatedEdit() throws {
+        let f = try currentShell()
+        let file = f.codex.appendingPathComponent("config.toml")
+        let original = "model = \"original-model\"\n[fixture]\nprivate_value = \"DO_NOT_RENDER_CONFIG_CANARY\"\n"
+        try Data(original.utf8).write(to: file)
+        launch(f.app); try openConfiguration(in: f.app)
+        let field = f.app.textFields["configuration-field-model"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); XCTAssertEqual(field.value as? String, "original-model")
+        replace(field, with: "replacement-model")
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), original)
+        XCTAssertFalse(f.app.debugDescription.contains("DO_NOT_RENDER_CONFIG_CANARY"))
+        try saveConfiguration(in: f.app)
+        XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("model = \"replacement-model\""))
+        XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("private_value = \"DO_NOT_RENDER_CONFIG_CANARY\""))
+    }
+    @MainActor func testNativeClaudeConfigurationPreservesCredentialsAndUnknownHooks() throws {
+        let f = try currentShell()
+        let file = f.claude.appendingPathComponent("settings.json")
+        try writeJSON(["model": "sonnet", "env": ["SYNTHETIC_PRIVATE_VALUE": "DO_NOT_RENDER_CLAUDE_CANARY"], "hooks": ["SessionStart": [["hooks": [["type": "command", "command": "do-not-execute-fixture"]]]]]], to: file)
+        launch(f.app); try openConfiguration(in: f.app, provider: "Claude")
+        let field = f.app.textFields["configuration-field-model"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); replace(field, with: "opus")
+        XCTAssertFalse(f.app.debugDescription.contains("DO_NOT_RENDER_CLAUDE_CANARY"))
+        try saveConfiguration(in: f.app)
+        let saved = try readJSON(file)
+        XCTAssertEqual(saved["model"] as? String, "opus")
+        XCTAssertEqual((saved["env"] as? [String: String])?["SYNTHETIC_PRIVATE_VALUE"], "DO_NOT_RENDER_CLAUDE_CANARY")
+        XCTAssertNotNil(saved["hooks"])
+    }
+    @MainActor func testNativeConfigurationRejectsExternalEditsWithoutOverwritingThem() throws {
+        let f = try currentShell(); let file = f.codex.appendingPathComponent("config.toml")
+        try Data("model = 'original'\n".utf8).write(to: file)
+        launch(f.app); try openConfiguration(in: f.app)
+        let field = f.app.textFields["configuration-field-model"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); replace(field, with: "draft-model")
+        let external = "model = 'external'\n"; try Data(external.utf8).write(to: file)
+        try saveConfiguration(in: f.app, expectsError: true)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), external)
+        XCTAssertTrue(f.app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.exists)
+    }
+    @MainActor func testNativeConfigurationRejectsInvalidCompactionAndKeepsTheSource() throws {
+        let f = try currentShell(); let file = f.claude.appendingPathComponent("settings.json")
+        let original = Data("{\"autoCompactWindow\":200000}".utf8); try original.write(to: file)
+        launch(f.app); try openConfiguration(in: f.app, provider: "Claude")
+        let field = f.app.textFields["configuration-field-autoCompactWindow"]
+        try revealContentControl(field, in: f.app); replace(field, with: "99")
+        try saveConfiguration(in: f.app, expectsError: true)
+        XCTAssertEqual(try Data(contentsOf: file), original)
+    }
+    @MainActor func testNativeConfigurationScopeChangeRequiresDiscardingUnsavedEdits() throws {
+        let f = try currentShell(); let file = f.codex.appendingPathComponent("config.toml")
+        let original = Data("model = 'original'\n".utf8); try original.write(to: file)
+        launch(f.app); try openConfiguration(in: f.app)
+        let field = f.app.textFields["configuration-field-model"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); replace(field, with: "unsaved-model")
+        try showSettingsPage("appearance", in: f.app)
+        try showSettingsPage("configuration", in: f.app)
+        try revealContentControl(field, in: f.app)
+        XCTAssertTrue(waitForValue(field, value: "unsaved-model", timeout: 5), "Settings navigation must retain the edit for its exact source.")
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        try chooseConfiguration("configuration-provider", value: "Claude", in: f.app)
+        let keep = f.app.buttons["Keep editing"]
+        XCTAssertTrue(keep.waitForExistence(timeout: 5)); keep.click()
+        XCTAssertTrue(waitForValue(field, value: "unsaved-model", timeout: 5))
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        try revealContentControl(f.app.buttons["configuration-discard"], in: f.app)
+        f.app.buttons["configuration-discard"].click()
+        try revealContentControl(field, in: f.app)
+        XCTAssertTrue(waitForValue(field, value: "original", timeout: 5))
+    }
+    @MainActor func testNativeSkillsLibraryImportsACopyWithoutChangingItsSource() throws {
+        let f = try currentShell(); let skill = f.codex.appendingPathComponent("skills/ui-fixture/SKILL.md")
+        try FileManager.default.createDirectory(at: skill.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data("---\nname: ui-fixture\ndescription: Native import fixture\n---\nKeep this literal skill body.\n".utf8)
+        try original.write(to: skill)
+        launch(f.app); f.app.typeKey(",", modifierFlags: .command); try showSettingsPage("skills", in: f.app)
+        let row = f.app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "integration-import-")).firstMatch
+        try revealContentControl(row, in: f.app); XCTAssertTrue(row.isEnabled); row.click()
+        XCTAssertTrue(f.app.staticTexts["In Coincide"].waitForExistence(timeout: 5))
+        let importedFiles = try FileManager.default.subpathsOfDirectory(atPath: f.root.appendingPathComponent("Integrations").path)
+            .filter { $0.hasSuffix("/content/SKILL.md") }
+        XCTAssertEqual(importedFiles.count, 1)
+        let copy = try XCTUnwrap(importedFiles.first)
+        XCTAssertEqual(try Data(contentsOf: f.root.appendingPathComponent("Integrations").appendingPathComponent(copy)), original)
+        XCTAssertEqual(try Data(contentsOf: skill), original)
+        try revealContentControl(f.app.buttons["integration-refresh"], in: f.app); f.app.buttons["integration-refresh"].click()
+        XCTAssertTrue(f.app.staticTexts["ui-fixture"].waitForExistence(timeout: 10))
+    }
+    @MainActor func testNativeCommandLibraryReadsNamesAndKeepsLiteralSourceUnexecuted() throws {
+        let f = try currentShell(); let command = f.claude.appendingPathComponent("commands/ui-review.md")
+        try FileManager.default.createDirectory(at: command.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data("---\ndescription: Offline review command\n---\nReview $ARGUMENTS without executing this fixture.\n".utf8); try original.write(to: command)
+        launch(f.app); f.app.typeKey(",", modifierFlags: .command); try showSettingsPage("commands", in: f.app)
+        try revealContentControl(f.app.staticTexts["ui-review"], in: f.app)
+        let search = f.app.textFields["integration-search"]
+        try revealContentControl(search, in: f.app); replace(search, with: "definitely-no-matching-command")
+        try revealContentControl(f.app.staticTexts["No matches"], in: f.app)
+        XCTAssertEqual(try Data(contentsOf: command), original)
+    }
+    @MainActor func testNativeMCPSettingsDisplayMetadataWithoutRenderingCredentialValues() throws {
+        let f = try currentShell(); let config = f.codex.appendingPathComponent("config.toml")
+        let original = Data("[mcp_servers.ui_fixture]\ncommand = 'must-not-run'\nenabled = false\n[mcp_servers.ui_fixture.env]\nAPI_KEY = 'DO_NOT_RENDER_MCP_CANARY'\n".utf8); try original.write(to: config)
+        launch(f.app); f.app.typeKey(",", modifierFlags: .command); try showSettingsPage("mcp", in: f.app)
+        XCTAssertTrue(f.app.staticTexts["ui_fixture"].waitForExistence(timeout: 10))
+        XCTAssertFalse(f.app.debugDescription.contains("DO_NOT_RENDER_MCP_CANARY"))
+        XCTAssertEqual(try Data(contentsOf: config), original)
+    }
+    @MainActor func testNativeHooksPageNeverExecutesDiscoveryCommands() throws {
+        let f = try currentShell(); let config = f.claude.appendingPathComponent("settings.json")
+        let sentinel = f.root.appendingPathComponent("should-not-run")
+        try writeJSON(["hooks": ["SessionStart": [["hooks": [["type": "command", "command": "touch '" + sentinel.path + "'"]]]]]], to: config)
+        let original = try Data(contentsOf: config)
+        launch(f.app); f.app.typeKey(",", modifierFlags: .command); try showSettingsPage("hooks", in: f.app)
+        try revealContentControl(f.app.staticTexts["SessionStart"], in: f.app)
+        try revealContentControl(f.app.buttons["integration-refresh"], in: f.app); f.app.buttons["integration-refresh"].click()
+        try revealContentControl(f.app.staticTexts["SessionStart"], in: f.app)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sentinel.path))
+        XCTAssertEqual(try Data(contentsOf: config), original)
+    }
+    @MainActor func testNativePluginEnableControlChangesOnlyItsNamedSetting() throws {
+        let f = try currentShell(); let file = f.claude.appendingPathComponent("settings.json")
+        try writeJSON(["enabledPlugins": ["fixture@local": true, "other@local": true]], to: file)
+        launch(f.app); try openConfiguration(in: f.app, provider: "Claude")
+        try chooseConfiguration("configuration-field-enabledPlugins/fixture@local", value: "Disabled", in: f.app)
+        try saveConfiguration(in: f.app)
+        let plugins = try XCTUnwrap(readJSON(file)["enabledPlugins"] as? [String: Bool])
+        XCTAssertEqual(plugins, ["fixture@local": false, "other@local": true])
+    }
+    @MainActor func testNativeSessionFilteringKeepsUnavailableRuntimeReadOnly() throws {
+        let f = try currentShell(); launch(f.app)
+        f.app.typeKey(",", modifierFlags: .command); try showSettingsPage("sessions", in: f.app)
+        let search = f.app.textFields["provider-session-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10)); replace(search, with: "no-session")
+        let filter = f.app.switches["provider-session-active-filter"]
+        if filter.exists { filter.click() }
+        else { f.app.checkBoxes["provider-session-active-filter"].click() }
+        XCTAssertTrue(waitForValue(search, value: "no-session", timeout: 5))
+        XCTAssertEqual(f.app.windows.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.codex.appendingPathComponent("sessions").path))
+    }
+    @MainActor func testNativeSessionsImportExplainsCopiedOwnershipWithoutScanningAutomatically() throws {
+        let f = try currentShell(); launch(f.app)
+        f.app.typeKey(",", modifierFlags: .command); try showSettingsPage("sessions", in: f.app)
+        let button = f.app.buttons["provider-session-import"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10)); button.click()
+        let sheet = f.app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        XCTAssertTrue(sheet.buttons["Scan Local Projects"].exists)
+        XCTAssertFalse(sheet.buttons["agent-session-import-selected"].isEnabled)
+        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "separate session", "separate session")).firstMatch.exists)
+        sheet.buttons["Done"].click(); XCTAssertTrue(waitForAbsence(sheet, timeout: 5))
+    }
+    @MainActor func testNativeThreadSortModesPreserveTheSelectedDraft() throws {
+        let f = try currentShell(); launch(f.app); try startScratchChat(in: f.app)
+        let composer = f.app.textViews["composer-input"], draft = "Preserved through every thread sort"
+        composer.click(); composer.typeText(draft)
+        for mode in ["Newest", "Recently active", "Priority (pinned first)", "Name", "Custom"] {
+            let sort = f.app.descendants(matching: .any).matching(identifier: "sidebar-thread-sort").firstMatch
+            XCTAssertTrue(sort.exists); sort.click(); f.app.menuItems[mode].click()
+            XCTAssertTrue(waitForValue(sort, value: mode, timeout: 5))
+            XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        }
+        f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15)); launch(f.app)
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
+    }
+    @MainActor func testNativeProjectSortModesPersistWithoutRewritingProjectFiles() throws {
+        let f = try currentShell(); let folder = f.root.appendingPathComponent("Sort Project")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let file = folder.appendingPathComponent("README.md"), bytes = Data("Preserved project bytes\n".utf8); try bytes.write(to: file)
+        launch(f.app); try openProject(folder, in: f.app)
+        for mode in ["Newest", "Recently active", "Priority (pinned first)", "Name", "Custom"] {
+            let sort = f.app.descendants(matching: .any).matching(identifier: "sidebar-project-sort").firstMatch
+            XCTAssertTrue(sort.exists); sort.click(); f.app.menuItems[mode].click()
+            XCTAssertTrue(waitForValue(sort, value: mode, timeout: 5))
+        }
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+        f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15)); launch(f.app)
+        XCTAssertTrue(waitForValue(f.app.descendants(matching: .any).matching(identifier: "sidebar-project-sort").firstMatch, value: "Custom", timeout: 10))
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+    }
+    @MainActor func testNativeMenusExposeTheCurrentLocalChatSurface() throws {
+        let f = try currentShell(); launch(f.app)
+        XCTAssertFalse(f.app.menuBars.menuBarItems["Remote"].exists)
+        f.app.menuBars.menuBarItems["Chat"].click()
+        XCTAssertTrue(f.app.menuItems["Stop Reply"].exists)
+        XCTAssertFalse(f.app.menuItems["Toggle Inspector"].exists)
+        XCTAssertFalse(f.app.menuItems["Settle Workspace"].exists)
+        f.app.typeKey(.escape, modifierFlags: [])
+        f.app.typeKey(",", modifierFlags: .command); try showSettingsPage("providers", in: f.app)
+        XCTAssertFalse(f.app.buttons["Pi"].exists)
+        XCTAssertFalse(f.app.buttons["OpenCode"].exists)
+        XCTAssertEqual(f.app.windows.count, 1)
+    }
+    @MainActor func testNativeRenameArchiveAndUnarchiveKeepConversationDraft() throws {
+        let f = try currentShell(); launch(f.app); try startScratchChat(in: f.app)
+        let composer = f.app.textViews["composer-input"], draft = "Keep my archived draft"
+        composer.click(); composer.typeText(draft)
+        let identifier = try selectedThreadIdentifier(in: f.app)
+        let row = f.app.buttons[identifier]
+        XCTAssertTrue(row.exists); row.rightClick(); f.app.menuItems["Rename…"].click()
+        let sheet = f.app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5)); replace(sheet.textFields.firstMatch, with: "Native renamed chat")
+        sheet.buttons["sidebar-rename-save"].click()
+        XCTAssertTrue(waitForAbsence(sheet, timeout: 5))
+        row.rightClick(); f.app.menuItems["Archive"].click()
+        f.app.buttons["Show archived chats"].click()
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        row.rightClick(); f.app.menuItems["Unarchive"].click()
+        f.app.buttons["Show recent chats"].click()
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+    }
+
+    private struct CurrentShellFixture { let app: XCUIApplication; let root: URL; let codex: URL; let claude: URL }
+    @MainActor private func currentShell(appearance: String = "dark") throws -> CurrentShellFixture {
+        let base = try prepareApplication(appearance: appearance, diagnosticPrefix: "native-current-shell")
+        let home = base.root.appendingPathComponent("current-home"), codex = home.appendingPathComponent(".codex"), claude = home.appendingPathComponent(".claude")
+        for folder in [codex, claude] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
+        base.app.launchEnvironment["HOME"] = home.path
+        base.app.launchEnvironment["CODEX_HOME"] = codex.path
+        base.app.launchEnvironment["CLAUDE_CONFIG_DIR"] = claude.path
+        base.app.launchEnvironment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        base.app.launchArguments += ["-loginShellEnvironmentEnabled", "NO"]
+        return .init(app: base.app, root: base.root, codex: codex, claude: claude)
+    }
+    @MainActor private func launch(_ app: XCUIApplication) {
         app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        let localLoaded = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
-            (snapshot["projects"] as? [Any])?.isEmpty == true && (snapshot["threads"] as? [Any])?.isEmpty == true
-        }
-        let localBefore = try claudeGUIJSON(localLoaded)
-        app.menuBars.menuBarItems["Remote"].click(); app.menuItems["Remote Workspaces…"].click()
-        let window = app.windows["Remote Workspaces"]
-        XCTAssertTrue(window.waitForExistence(timeout: 10)); window.buttons["remote-add-connection"].click()
-        for (identifier, value) in [("remote-connection-name", "Private Native Script Host"), ("remote-connection-target", "coincide-ui-script"),
-                                    ("remote-connection-helper", "/coincide-ui-testing/CoincideEnvironment"),
-                                    ("remote-connection-directory", "/coincide-ui-testing/RemoteScriptData")] {
-            let field = app.textFields[identifier]
-            XCTAssertTrue(field.waitForExistence(timeout: 5)); field.click(); field.typeKey("a", modifierFlags: .command); field.typeText(value)
-        }
-        app.buttons["remote-connection-inspect"].click()
-        let trust = window.buttons["Trust and Connect"]
-        XCTAssertTrue(trust.waitForExistence(timeout: 10)); trust.click()
-        let row = window.buttons["remote-thread-" + threadID]
-        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.click()
-        let composer = window.textViews["Remote message"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10)); XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
-        let settle = window.buttons["remote-lifecycle-settle"]
-        XCTAssertTrue(settle.waitForExistence(timeout: 10)); XCTAssertTrue(settle.isEnabled && settle.isHittable); settle.click()
-        let confirm = app.buttons["Settle and Review Script"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.click()
-        let reviewButton = window.buttons["remote-settle-script-review"]
-        XCTAssertTrue(reviewButton.waitForExistence(timeout: 15))
-        XCTAssertFalse(manager.fileExists(atPath: executions.path), "Normal Settle and discovery must not execute the repository command.")
-        reviewButton.click()
-        let review = app.sheets.containing(.button, identifier: "remote-settle-script-approve").element
-        XCTAssertTrue(review.waitForExistence(timeout: 10))
-        let fullCommand = review.textViews["remote-settle-script-review-command"]
-        XCTAssertTrue(fullCommand.waitForExistence(timeout: 5))
-        let commandValue = (fullCommand.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? fullCommand.label
-        XCTAssertEqual(commandValue, command, "The native review must contain the complete verified command, including its omitted preview tail.")
-        for value in ["/bin/sh", expectedWorkspace] {
-            XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", value, value)).element.exists)
-        }
-        let approve = review.buttons["remote-settle-script-approve"]
-        XCTAssertTrue(approve.isEnabled && approve.isHittable)
-        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
-        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "remote-settle-full-command-native-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
-        review.buttons["Cancel"].click(); XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        XCTAssertFalse(manager.fileExists(atPath: executions.path), "Cancelling full-command review must not authorize execution.")
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
-        reviewButton.click(); XCTAssertTrue(review.waitForExistence(timeout: 10)); approve.click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        _ = try waitForPrivateWorkspace(remoteRoot, timeout: 15) { snapshot in
-            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID),
-                  let settlement = thread["settlement"] as? [String: Any], let script = settlement["script"] as? [String: Any] else { return false }
-            return script["phase"] as? String == "running"
-        }
-        let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard let text = try? String(contentsOf: pidFile, encoding: .utf8) else { return false }
-            let pids = text.split(whereSeparator: \.isNewline).compactMap { Int32($0) }
-            return pids.count == 3 && Set(pids).count == 3 && pids.allSatisfy { $0 > 1 && Darwin.kill($0, 0) == 0 }
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 10), .completed, "The exact leader, child and grandchild must be alive before Stop.")
-        let pids = try String(contentsOf: pidFile, encoding: .utf8).split(whereSeparator: \.isNewline).compactMap { Int32($0) }
-        XCTAssertEqual(pids.count, 3)
-        XCTAssertEqual(try String(contentsOf: executions, encoding: .utf8), "one\n")
-        let disclosure = window.descendants(matching: .any).matching(NSPredicate(
-            format: "(elementType == %d OR elementType == %d) AND (identifier == %@ OR label == %@ OR title == %@)",
-            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue,
-            "remote-settle-script-output-disclosure", "Settle Script Output", "Settle Script Output")).element
-        XCTAssertTrue(disclosure.waitForExistence(timeout: 5)); expandScriptOutputDisclosure(disclosure)
-        let output = window.staticTexts["remote-settle-script-output"]
-        let actualOutput = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (value CONTAINS %@ OR label CONTAINS %@)", "remote-reviewed-output😀", "remote-reviewed-output😀"), object: output)
-        XCTAssertEqual(XCTWaiter.wait(for: [actualOutput], timeout: 10), .completed)
-        let stop = window.buttons["remote-settle-script-stop"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 5)); XCTAssertTrue(stop.isEnabled && stop.isHittable); stop.click()
-        let drained = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in pids.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH } }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [drained], timeout: 10), .completed, "Stop must drain this fixture's recorded process tree.")
-        let after = try waitForPrivateWorkspace(remoteRoot, timeout: 10) { snapshot in
-            guard let thread = self.findClaudeGUIThread(snapshot, id: threadID),
-                  let settlement = thread["settlement"] as? [String: Any], let script = settlement["script"] as? [String: Any] else { return false }
-            return settlement["phase"] as? String == "settled" && script["phase"] as? String == "cancelled"
-        }
-        let thread = try claudeGUIThread(after, id: threadID)
-        XCTAssertEqual(try claudeGUIJSON(thread["messages"]), originalMessages); XCTAssertEqual(try claudeGUIJSON(thread["runHistory"]), originalHistory)
-        XCTAssertEqual(thread["draft"] as? String, draft); XCTAssertEqual(thread["workspacePath"] as? String, expectedWorkspace)
-        XCTAssertNil(thread["activeRun"]); XCTAssertTrue((thread["queuedTurns"] as? [Any])?.isEmpty == true)
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
-        XCTAssertEqual(try String(contentsOf: executions, encoding: .utf8), "one\n", "Metadata/output refresh and Stop must not repeat execution.")
-        let scriptCWD = try String(contentsOf: workspace.appendingPathComponent("remote-script-cwd"), encoding: .utf8).trimmingCharacters(in: .newlines)
-        let observedNode = try manager.attributesOfItem(atPath: scriptCWD), expectedNode = try manager.attributesOfItem(atPath: workspace.path)
-        XCTAssertEqual(observedNode[.systemNumber] as? NSNumber, expectedNode[.systemNumber] as? NSNumber)
-        XCTAssertEqual(observedNode[.systemFileNumber] as? NSNumber, expectedNode[.systemFileNumber] as? NSNumber)
-        XCTAssertEqual(try Data(contentsOf: readme), readmeBytes); XCTAssertEqual(try Data(contentsOf: config), configuration)
-        XCTAssertEqual(try Data(contentsOf: source.appendingPathComponent(".git/HEAD")), headBytes)
-        XCTAssertEqual(try verifyHead(gitPath: f.gitPath, project: source, configuration: f.configuration, name: "remote-settle-source-final-head"), head)
-        XCTAssertEqual(try verifyHead(gitPath: f.gitPath, project: workspace, configuration: f.configuration, name: "remote-settle-worktree-final-head"), head)
-        XCTAssertFalse(manager.fileExists(atPath: source.appendingPathComponent("remote-script-executions").path))
-        XCTAssertEqual(try claudeGUIJSON(privateWorkspaceSnapshot(f.root)), localBefore)
-        let image = XCTAttachment(screenshot: window.screenshot()); image.name = "remote-settle-stopped-with-output-and-preserved-draft"; image.lifetime = .keepAlways; add(image)
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        XCTAssertTrue(pids.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
     }
+    @MainActor private func startScratchChat(in app: XCUIApplication) throws {
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(app.textViews["composer-input"].waitForExistence(timeout: 10))
+    }
+    @MainActor private func exerciseEmbeddedSettings(appearance: String) throws {
+        let f = try currentShell(appearance: appearance); launch(f.app); try startScratchChat(in: f.app)
+        let composer = f.app.textViews["composer-input"], draft = "Unsent draft while settings are embedded"
+        composer.click(); composer.typeText(draft)
+        let id = try selectedThreadIdentifier(in: f.app)
+        f.app.typeKey(",", modifierFlags: .command)
+        for page in ["general", "appearance", "notifications", "providers", "models", "conversations", "keyboard", "about"] {
+            try showSettingsPage(page, in: f.app)
+            XCTAssertEqual(f.app.windows.count, 1)
+            XCTAssertTrue(f.app.buttons["Back to chat"].exists)
+        }
+        capture(f.app, name: appearance + "-embedded-settings")
+        f.app.buttons["Back to chat"].click()
+        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
+        XCTAssertEqual(try selectedThreadIdentifier(in: f.app), id)
+        let snapshot = try waitForPrivateWorkspace(f.root, timeout: 5) { self.findClaudeGUIThread($0, id: id)?["draft"] as? String == draft }
+        XCTAssertTrue((try claudeGUIThread(snapshot, id: id)["messages"] as? [Any])?.isEmpty == true)
+    }
+    @MainActor private func showSettingsPage(_ page: String, in app: XCUIApplication) throws {
+        let button = app.buttons["settings-page-" + page]
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        let side = app.scrollViews.allElementsBoundByIndex.min(by: { $0.frame.width < $1.frame.width })
+        for _ in 0..<8 {
+            if button.isHittable { break }
+            side?.scroll(byDeltaX: 0, deltaY: button.frame.minY < (side?.frame.minY ?? 0) ? 200 : -200)
+        }
+        XCTAssertTrue(button.isHittable); button.click()
+    }
+    @MainActor private func openConfiguration(in app: XCUIApplication, provider: String = "Codex") throws {
+        app.typeKey(",", modifierFlags: .command); try showSettingsPage("configuration", in: app)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "configuration-provider").firstMatch.waitForExistence(timeout: 10))
+        if provider != "Codex" { try chooseConfiguration("configuration-provider", value: provider, in: app) }
+    }
+    @MainActor private func chooseConfiguration(_ identifier: String, value: String, in app: XCUIApplication) throws {
+        let picker = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        try revealContentControl(picker, in: app); picker.click()
+        let option = app.menuItems[value]
+        XCTAssertTrue(option.waitForExistence(timeout: 5)); option.click()
+    }
+    @MainActor private func saveConfiguration(in app: XCUIApplication, expectsError: Bool = false) throws {
+        let save = app.buttons["configuration-save"]
+        try revealContentControl(save, in: app); XCTAssertTrue(save.isEnabled); save.click()
+        if expectsError { XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.waitForExistence(timeout: 5)) }
+        else {
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "configuration-saved").firstMatch.waitForExistence(timeout: 5))
+            XCTAssertFalse(save.isEnabled)
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.exists)
+        }
+    }
+    @MainActor private func revealContentControl(_ control: XCUIElement, in app: XCUIApplication) throws {
+        let scroll = try XCTUnwrap(app.scrollViews.allElementsBoundByIndex.max(by: { $0.frame.width < $1.frame.width }))
+        // Lazy integration rows do not enter the accessibility tree until scrolled
+        // into view. Start an absent row search at the top of the content pane.
+        if !control.waitForExistence(timeout: 1) { scroll.scroll(byDeltaX: 0, deltaY: 12_000) }
+        for _ in 0..<35 {
+            if control.exists && control.isHittable && scroll.frame.insetBy(dx: -2, dy: -2).contains(control.frame) { return }
+            scroll.scroll(byDeltaX: 0, deltaY: control.exists && control.frame.minY < scroll.frame.minY ? 350 : -350)
+        }
+        XCTFail("Settings control must fit inside its scroll viewport: " + control.identifier)
+    }
+    @MainActor private func replace(_ field: XCUIElement, with text: String) {
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); field.click(); field.typeKey("a", modifierFlags: .command); field.typeText(text)
+        XCTAssertTrue(waitForValue(field, value: text, timeout: 5))
+    }
+    @MainActor private func openComposerSkills(in app: XCUIApplication) throws {
+        let menu = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Add files and tools")).firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5)); menu.click()
+        let choice = app.menuItems["composer-skills"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5)); choice.click()
+    }
+    private func writeJSON(_ value: [String: Any], to path: URL) throws {
+        try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]).write(to: path)
+    }
+    private func readJSON(_ path: URL) throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any]) }
 
     @MainActor private func seedRemoteScriptUIFixture(_ root: URL, source: URL, workspace: URL, draft: String, app: XCUIApplication) throws -> [String: Any] {
         let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
@@ -353,15 +532,14 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(ship.waitForExistence(timeout: 5)); composer.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(waitForAbsence(ship, timeout: 5)); XCTAssertTrue(waitForValue(composer, value: dismissed, timeout: 5))
         replaceDraft("Keep a second draft: ")
-        let choose = app.buttons["composer-skills"]
-        XCTAssertTrue(choose.waitForExistence(timeout: 5)); XCTAssertTrue(choose.isEnabled); choose.click()
+        try openComposerSkills(in: app)
         let search = app.textFields["composer-skills-search"]
         XCTAssertTrue(search.waitForExistence(timeout: 5)); search.click(); search.typeText("ship")
         XCTAssertTrue(ship.waitForExistence(timeout: 5)); search.typeKey(.return, modifierFlags: [])
         let manual = "Keep a second draft: $ship-check "
         XCTAssertTrue(waitForValue(composer, value: manual, timeout: 5)); XCTAssertTrue(waitForAbsence(search, timeout: 5))
 
-        choose.click(); XCTAssertTrue(search.waitForExistence(timeout: 5))
+        try openComposerSkills(in: app); XCTAssertTrue(search.waitForExistence(timeout: 5))
         let fresh = app.buttons["composer-skill-fresh-check"]
         XCTAssertFalse(fresh.exists)
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 2, "skillsUI": true]).write(to: state, options: .atomic)
@@ -448,6 +626,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let originalThreads = try JSONSerialization.data(withJSONObject: XCTUnwrap(before["threads"]), options: .sortedKeys)
 
         app.typeKey(",", modifierFlags: .command)
+        try showSettingsPage("providers", in: app)
         var settings = app.windows.containing(.any, identifier: "codex-authentication-mode").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         let picker = settings.descendants(matching: .any).matching(identifier: "codex-authentication-mode").firstMatch
@@ -467,7 +646,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(saved["selection"] as? String, "existingCLI"); XCTAssertEqual(saved["executable"] as? String, "codex")
         XCTAssertNil(saved["accountBinding"], "Choosing owned authentication must never fabricate a signed-in account.")
         try assertUnsignedOwnedAuthenticationControls(in: settings, name: prefix + "-explicit-owned-mode")
-        settings.typeKey("w", modifierFlags: .command); XCTAssertTrue(waitForAbsence(settings, timeout: 5))
+        app.buttons["Back to chat"].click(); XCTAssertTrue(waitForAbsence(app.textFields["settings-search"], timeout: 5))
         XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
         XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
         XCTAssertEqual(try JSONSerialization.data(withJSONObject: XCTUnwrap(privateWorkspaceSnapshot(root)["threads"]), options: .sortedKeys), originalThreads)
@@ -478,6 +657,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
         XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
         app.typeKey(",", modifierFlags: .command)
+        try showSettingsPage("providers", in: app)
         settings = app.windows.containing(.any, identifier: "codex-authentication-mode").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         let restoredHome = settings.textFields["codex-authentication-home"]
@@ -497,7 +677,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertNil(restored["accountBinding"])
         XCTAssertTrue(waitForAbsence(settings.buttons["codex-authentication-sign-in"], timeout: 5))
         XCTAssertFalse(settings.buttons["codex-authentication-open-browser"].exists)
-        settings.typeKey("w", modifierFlags: .command); XCTAssertTrue(waitForAbsence(settings, timeout: 5))
+        app.buttons["Back to chat"].click(); XCTAssertTrue(waitForAbsence(app.textFields["settings-search"], timeout: 5))
         XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5)); XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
         XCTAssertEqual(try JSONSerialization.data(withJSONObject: XCTUnwrap(privateWorkspaceSnapshot(root)["threads"]), options: .sortedKeys), originalThreads,
                        "Global authentication preferences must not retarget, recapture, enqueue or rewrite an existing conversation.")
@@ -517,7 +697,8 @@ final class CoincideDesktopUITests: XCTestCase {
 
     @MainActor private func revealAuthenticationControl(_ control: XCUIElement, in settings: XCUIElement) {
         XCTAssertTrue(control.waitForExistence(timeout: 5))
-        let area = settings.scrollViews.firstMatch, scroll = area.exists ? area : settings
+        let area = settings.scrollViews.allElementsBoundByIndex.max(by: { $0.frame.width < $1.frame.width }) ?? settings
+        let scroll = area
         if control.isHittable && scroll.frame.contains(control.frame) { return }
         scroll.scroll(byDeltaX: 0, deltaY: 1_200)
         for _ in 0..<8 {
@@ -594,7 +775,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let threadID = try selectedThreadIdentifier(in: app), draft = "Keep this unsent discussion while choosing model reasoning"
         composer.click(); composer.typeText(draft); XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
         openNativeProviderMenu(in: app)
-        let refresh = app.menuItems["Refresh Models"]
+        let refresh = app.buttons["Refresh models"]
         XCTAssertTrue(refresh.waitForExistence(timeout: 5)); XCTAssertTrue(refresh.isEnabled); refresh.click()
         try chooseNativeProviderModel("gpt-6-astra", in: app)
         _ = try waitForNativeModel(root, model: "gpt-6-astra", effort: "medium")
@@ -616,13 +797,14 @@ final class CoincideDesktopUITests: XCTestCase {
 
         try JSONSerialization.data(withJSONObject: ["cwd": project.path, "generation": 2]).write(to: state, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: state.path)
-        openNativeProviderMenu(in: app); app.menuItems["Refresh Models"].click()
-        let modelSummary = app.menuButtons["provider-model-menu"]
+        openNativeProviderMenu(in: app); app.buttons["Refresh models"].click()
+        let modelSummary = app.buttons["provider-model-menu"]
         let refreshedSummary = XCTNSPredicateExpectation(predicate: NSPredicate(
             format: "exists == true AND value CONTAINS %@", "Offline Future Refreshed"), object: modelSummary)
         XCTAssertEqual(XCTWaiter.wait(for: [refreshedSummary], timeout: 10), .completed,
                        "The current model menu's exposed summary must reflect the refreshed catalog before opening its new effort menu.")
         openNativeProviderMenu(in: app)
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Model options")).firstMatch.click()
         let reasoning = app.menuItems["codex-reasoning-menu"]
         XCTAssertTrue(reasoning.waitForExistence(timeout: 10)); reasoning.click()
         XCTAssertFalse(app.menuItems["codex-reasoning-experimental-effort"].exists, "Refresh must remove an effort no longer advertised for the same wire model.")
@@ -630,7 +812,8 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(currentDefault.waitForExistence(timeout: 5)); XCTAssertTrue(currentDefault.isEnabled); currentDefault.click()
         _ = try waitForNativeModel(root, model: "future-native-model", effort: "deep")
         openNativeProviderMenu(in: app)
-        let cliDefault = app.menuItems["codex-model-default"]
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Model options")).firstMatch.click()
+        let cliDefault = app.menuItems["CLI default model"]
         XCTAssertTrue(cliDefault.waitForExistence(timeout: 5)); XCTAssertTrue(cliDefault.isEnabled); cliDefault.click()
         let selected = try waitForNativeModel(root, model: "future-cwd-model", effort: "deep")
         XCTAssertEqual(selected["codexModelSelectionSource"] as? String, "cliDefault")
@@ -663,6 +846,7 @@ final class CoincideDesktopUITests: XCTestCase {
 
     @MainActor private func assertNativeReadOnlyCodexAccount(in app: XCUIApplication, wire: URL) throws {
         app.typeKey(",", modifierFlags: .command)
+        try showSettingsPage("providers", in: app)
         let settings = app.windows.containing(.any, identifier: "codex-account-reveal-email").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         let kind = settings.descendants(matching: .any).matching(NSPredicate(
@@ -681,8 +865,7 @@ final class CoincideDesktopUITests: XCTestCase {
         let refresh = settings.buttons["codex-account-refresh"]
         // Native grouped Forms can flatten their scroll container out of AX.
         // Keep the actual control visible within its owning window in that case.
-        let area = settings.scrollViews.firstMatch
-        let scroll = area.exists ? area : settings
+        let scroll = settings.scrollViews.allElementsBoundByIndex.max(by: { $0.frame.width < $1.frame.width }) ?? settings
         for _ in 0..<8 {
             if remaining.exists && refresh.exists && refresh.isHittable && scroll.frame.contains(refresh.frame) { break }
             scroll.scroll(byDeltaX: 0, deltaY: -150)
@@ -713,21 +896,23 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(settings.frame))
         let screenshot = XCTAttachment(screenshot: settings.screenshot())
         screenshot.name = "models-read-only-account-hidden-email-and-remaining-allowance"; screenshot.lifetime = .keepAlways; add(screenshot)
-        settings.typeKey("w", modifierFlags: .command)
-        XCTAssertTrue(waitForAbsence(settings, timeout: 5))
+        app.buttons["Back to chat"].click()
+        XCTAssertTrue(waitForAbsence(app.textFields["settings-search"], timeout: 5))
     }
 
     @MainActor private func openNativeProviderMenu(in app: XCUIApplication) {
         let menu = app.descendants(matching: .any).matching(identifier: "provider-model-menu").firstMatch
-        XCTAssertTrue(menu.waitForExistence(timeout: 10)); XCTAssertTrue(menu.isEnabled && menu.isHittable); menu.click()
+        XCTAssertTrue(menu.waitForExistence(timeout: 10)); XCTAssertTrue(menu.isEnabled && menu.isHittable)
+        if !app.textFields["Search models"].exists { menu.click() }
     }
     @MainActor private func chooseNativeProviderModel(_ model: String, in app: XCUIApplication) throws {
         openNativeProviderMenu(in: app)
-        let item = app.menuItems["provider-model-" + model]
+        let item = app.buttons["provider-model-codex:" + model]
         XCTAssertTrue(item.waitForExistence(timeout: 10)); XCTAssertTrue(item.isEnabled && item.isHittable); item.click()
     }
     @MainActor private func chooseNativeReasoning(_ effort: String?, in app: XCUIApplication) throws {
         openNativeProviderMenu(in: app)
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Model options")).firstMatch.click()
         let menu = app.menuItems["codex-reasoning-menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 5)); menu.click()
         let item = app.menuItems[effort.map { "codex-reasoning-" + $0 } ?? "codex-reasoning-default"]
@@ -835,10 +1020,8 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertFalse(transcript.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", queuedPrompt, queuedPrompt)).firstMatch.exists)
         let completed = try waitForPrivateWorkspace(root, timeout: 20) { snapshot in
             guard let thread = (snapshot["threads"] as? [[String: Any]])?.first,
-                  let run = (thread["runHistory"] as? [[String: Any]])?.first,
-                  let checkpoint = run["checkpoints"] as? [String: Any],
-                  let post = checkpoint["postRun"] as? [String: Any] else { return false }
-            return run["status"] as? String == "completed" && post["phase"] as? String == "ready"
+                  let run = (thread["runHistory"] as? [[String: Any]])?.first else { return false }
+            return run["status"] as? String == "completed"
                 && (snapshot["promptSteerings"] as? [[String: Any]])?.first?["phase"] as? String == "delivered"
         }
         let operationID = try assertSteeringSnapshot(completed, firstPrompt: firstPrompt, literal: literal, name: "steering-delivered-private-snapshot")
@@ -864,929 +1047,6 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "steering-reopened-head"), originalHead)
         capture(app, name: "steering-reopened-receipt-and-unsent-draft")
         app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
-    @MainActor func testLightAppearanceFileMenuProjectWorkflow() throws {
-        try exerciseProjectWorkflow(appearance: "light", useKeyboard: false)
-    }
-
-    @MainActor func testDarkAppearanceKeyboardProjectWorkflow() throws {
-        try exerciseProjectWorkflow(appearance: "dark", useKeyboard: true)
-    }
-
-    @MainActor func testFilesEditorSearchReferencesAndQuitPreserveDisk() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "files")
-        let app = fixture.app
-        let project = fixture.root.appendingPathComponent("Native Files", isDirectory: true)
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
-        let document = project.appendingPathComponent("Notes.swift")
-        let original = "// Synthetic native editor fixture\nlet nativeNeedle = 7\n"
-        let saved = "// Saved by the native editor\nlet nativeNeedle = 11\n"
-        let unsaved = "// Unsaved native editor buffer\nlet nativeNeedle = 99\n"
-        try original.write(to: document, atomically: true, encoding: .utf8)
-        for arguments in [["init", "--initial-branch", "main"], ["add", "Notes.swift"], ["commit", "--message", "Synthetic editor fixture"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration,
-                           name: "files-fixture-\(arguments[0])")
-        }
-        let initialHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "files-initial-head")
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        try openProject(project, in: app)
-        XCTAssertTrue(app.buttons["Collapse Native Files"].waitForExistence(timeout: 10))
-        app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let draft = "Keep this unsent file discussion"
-        composer.click(); composer.typeText(draft)
-        toggleInspector(in: app)
-        selectSegment("Files", in: app)
-        let file = app.buttons["workspace-entry-Notes.swift"]
-        XCTAssertTrue(file.waitForExistence(timeout: 10)); XCTAssertTrue(file.isHittable); file.click()
-        let editor = app.textViews["File editor"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        XCTAssertTrue(waitForValue(editor, value: original, timeout: 5))
-        editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText(saved)
-        XCTAssertEqual(editor.value as? String, saved)
-        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), original, "Typing in the editor must retain an unsaved buffer.")
-        toggleInspector(in: app)
-        XCTAssertTrue(waitForAbsence(editor, timeout: 5))
-        toggleInspector(in: app)
-        selectSegment("Files", in: app)
-        XCTAssertTrue(waitForValue(editor, value: saved, timeout: 10), "Hiding the inspector must preserve unsaved file edits.")
-        let save = app.buttons["workspace-file-save"]
-        XCTAssertTrue(save.exists && save.isEnabled); save.click()
-        let savedExpectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            (try? String(contentsOf: document, encoding: .utf8)) == saved
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [savedExpectation], timeout: 10), .completed)
-        XCTAssertFalse(save.isEnabled)
-        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), saved)
-        selectSegment("Contents", in: app)
-        let search = app.textFields["workspace-file-search"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.click(); search.typeText("nativeNeedle")
-        let match = app.buttons["workspace-match-Notes.swift-2"]
-        XCTAssertTrue(match.waitForExistence(timeout: 10)); XCTAssertTrue(match.isHittable); match.click()
-        XCTAssertTrue(waitForValue(editor, value: saved, timeout: 5), "A content match must open its file without changing the saved text.")
-        capture(app, name: "files-content-match-native-editor")
-        let matchTree = XCTAttachment(string: app.debugDescription); matchTree.name = "files-content-match-accessibility-tree"; matchTree.lifetime = .keepAlways; add(matchTree)
-        XCTAssertEqual(composer.value as? String, draft)
-        app.buttons["composer-reference-file"].click()
-        let picker = app.sheets.containing(.textField, identifier: "composer-file-search").element
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
-        let referenceSearch = picker.textFields["composer-file-search"]
-        referenceSearch.click(); referenceSearch.typeText("Notes.swift")
-        let reference = picker.buttons["composer-file-Notes.swift"]
-        XCTAssertTrue(reference.waitForExistence(timeout: 10)); reference.click()
-        let referencedDraft = draft + " [Notes.swift](Notes.swift) "
-        XCTAssertTrue(waitForValue(composer, value: referencedDraft, timeout: 5), "Referencing a file must preserve the existing unsent draft.")
-        editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText(unsaved)
-        XCTAssertEqual(editor.value as? String, unsaved)
-        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), saved)
-        app.typeKey("q", modifierFlags: .command)
-        let review = quitReview(in: app)
-        XCTAssertTrue(review.buttons["Cancel"].isHittable)
-        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "files-quit-unsaved-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
-        review.buttons["Cancel"].click()
-        XCTAssertTrue(waitForAbsence(review.buttons["Quit and Discard"], timeout: 5))
-        XCTAssertEqual(app.state, .runningForeground)
-        XCTAssertTrue(waitForValue(editor, value: unsaved, timeout: 5))
-        XCTAssertEqual(composer.value as? String, referencedDraft)
-        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), saved)
-        app.typeKey("q", modifierFlags: .command)
-        let confirmedReview = quitReview(in: app)
-        XCTAssertTrue(confirmedReview.buttons["Quit and Discard"].isHittable)
-        confirmedReview.buttons["Quit and Discard"].click()
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        XCTAssertEqual(try String(contentsOf: document, encoding: .utf8), saved, "Explicit Quit and Discard must not overwrite saved file bytes.")
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(waitForValue(composer, value: referencedDraft, timeout: 10))
-        toggleInspector(in: app)
-        selectSegment("Files", in: app)
-        XCTAssertTrue(file.waitForExistence(timeout: 10)); file.click()
-        XCTAssertTrue(waitForValue(editor, value: saved, timeout: 10))
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "files-final-head"), initialHead)
-        capture(app, name: "files-reopened-saved-editor-and-reference")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
-    @MainActor func testProjectScriptsRequireReviewedLaunchAndPreserveDrafts() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "scripts")
-        let app = fixture.app
-        app.launchEnvironment["SHELL"] = "/bin/sh"
-        app.launchEnvironment["T3CODE_PROJECT_ROOT"] = "/synthetic-inherited-project"
-        app.launchEnvironment["T3CODE_WORKTREE_PATH"] = "/synthetic-inherited-worktree"
-        let project = fixture.root.appendingPathComponent("Native Scripts", isDirectory: true)
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
-        let configuration = project.appendingPathComponent("t3.json")
-        let staleCommand = "printf 'stale\\n' > script-stale.txt; exit 3"
-        let inspectedCommand = "printf 'inspect\\n' >> script-invocations.txt; pwd -P > script-cwd.txt; printf '%s\\n' \"$T3CODE_PROJECT_ROOT\" > script-root.txt; printf '%s\\n' \"${T3CODE_WORKTREE_PATH-unset}\" > script-worktree.txt; printf 'native-script-find-early-marker\\n'; i=0; while [ \"$i\" -lt 80 ]; do printf 'native-script-padding-%s\\n' \"$i\"; i=$((i+1)); done; printf 'native-script-finished\\n'; exit 7"
-        let holdingCommand = "printf 'hold\\n' >> script-invocations.txt; printf 'running\\n' > script-holding.txt; exec /bin/sleep 120"
-        func writeConfiguration(_ command: String) throws {
-            let scripts: [[String: Any]] = [
-                ["name": "Inspect Workspace", "command": command, "runOnWorktreeCreate": true, "runOnSettle": true],
-                ["name": "Hold Workspace", "command": holdingCommand]
-            ]
-            try JSONSerialization.data(withJSONObject: ["scripts": scripts], options: [.sortedKeys, .prettyPrinted]).write(to: configuration, options: .atomic)
-        }
-        try writeConfiguration(staleCommand)
-        for arguments in [["init", "--initial-branch", "main"], ["add", "t3.json"], ["commit", "--message", "Synthetic script fixture"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration,
-                           name: "scripts-fixture-\(arguments[0])")
-        }
-        let initialHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "scripts-initial-head")
-        let receiptNames = ["script-stale.txt", "script-cwd.txt", "script-root.txt", "script-worktree.txt", "script-holding.txt", "script-invocations.txt"]
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        try openProject(project, in: app)
-        XCTAssertTrue(app.buttons["Collapse Native Scripts"].waitForExistence(timeout: 10))
-        app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let draft = "Keep this unsent discussion while running project scripts"
-        composer.click(); composer.typeText(draft)
-        openProjectScripts(in: app)
-        let review = app.sheets.containing(.button, identifier: "run-project-script").element
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        let cwd = review.staticTexts["project-script-cwd"]
-        XCTAssertTrue(waitForValue(cwd, value: project.path, timeout: 10))
-        let command = review.descendants(matching: .any).matching(identifier: "project-script-command").element
-        XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", staleCommand, staleCommand)).element.waitForExistence(timeout: 10))
-        for name in receiptNames { XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent(name).path), "Discovery must not run project scripts, including setup/settle roles.") }
-        XCTAssertTrue(review.buttons["run-project-script"].isHittable && CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
-        let discovery = XCTAttachment(screenshot: review.screenshot()); discovery.name = "scripts-discovery-without-execution"; discovery.lifetime = .keepAlways; add(discovery)
-        review.buttons["Cancel"].click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5)); XCTAssertEqual(composer.value as? String, draft)
-        openProjectScripts(in: app)
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", staleCommand, staleCommand)).element.waitForExistence(timeout: 10))
-        try writeConfiguration(inspectedCommand)
-        review.buttons["run-project-script"].click()
-        let changed = review.staticTexts["project-script-error"]
-        XCTAssertTrue(changed.waitForExistence(timeout: 10))
-        let changedText = [changed.label, (changed.value as? String) ?? ""].joined(separator: " ")
-        XCTAssertTrue(changedText.contains("The project scripts changed. Reload the list before running a script."))
-        for name in receiptNames { XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent(name).path), "Run must reject both the stale and unreviewed replacement script.") }
-        review.buttons["Reload"].click()
-        XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", inspectedCommand, inspectedCommand)).element.waitForExistence(timeout: 10))
-        let run = review.buttons["run-project-script"]
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: run)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed); run.click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        let inspectedTab = app.buttons["Inspect Workspace"]
-        XCTAssertTrue(inspectedTab.waitForExistence(timeout: 10))
-        let terminal = app.textViews["Workspace terminal"]
-        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value CONTAINS %@", "native-script-finished"), object: terminal)
-        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 10), .completed)
-        let exitStatus = "Command exited (7)."
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", exitStatus, exitStatus)).element.waitForExistence(timeout: 10))
-        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-cwd.txt"), encoding: .utf8), project.path + "\n")
-        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-root.txt"), encoding: .utf8), project.path + "\n")
-        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-worktree.txt"), encoding: .utf8), "unset\n")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-stale.txt").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-holding.txt").path))
-        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-invocations.txt"), encoding: .utf8), "inspect\n")
-        XCTAssertEqual(composer.value as? String, draft)
-        capture(app, name: "scripts-reviewed-command-cwd-and-exit-status")
-        openProjectScripts(in: app); XCTAssertTrue(review.waitForExistence(timeout: 5))
-        let picker = review.descendants(matching: .any).matching(identifier: "project-script-picker").element
-        XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.click()
-        let holdChoice = app.menuItems["Hold Workspace"]
-        XCTAssertTrue(holdChoice.waitForExistence(timeout: 5)); holdChoice.click()
-        XCTAssertTrue(command.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", holdingCommand, holdingCommand)).element.waitForExistence(timeout: 5))
-        run.click(); XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        let holdingTab = app.buttons["Hold Workspace"]
-        XCTAssertTrue(holdingTab.waitForExistence(timeout: 10))
-        let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            (try? String(contentsOf: project.appendingPathComponent("script-holding.txt"), encoding: .utf8)) == "running\n"
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 10), .completed)
-        let close = app.buttons["Close Hold Workspace"]
-        XCTAssertTrue(close.isHittable); close.click()
-        let confirmation = terminalCloseReview(in: app)
-        let closeImage = XCTAttachment(screenshot: confirmation.screenshot()); closeImage.name = "scripts-close-running-command-review"; closeImage.lifetime = .keepAlways; add(closeImage)
-        confirmation.buttons["Cancel"].click()
-        XCTAssertTrue(waitForAbsence(confirmation.buttons["Close Terminal"], timeout: 5))
-        XCTAssertTrue(holdingTab.exists && inspectedTab.exists)
-        XCTAssertEqual(composer.value as? String, draft)
-        close.click()
-        let confirmed = terminalCloseReview(in: app)
-        confirmed.buttons["Close Terminal"].click()
-        XCTAssertTrue(waitForAbsence(holdingTab, timeout: 10))
-        XCTAssertTrue(inspectedTab.exists)
-        XCTAssertEqual(composer.value as? String, draft)
-        XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("script-invocations.txt"), encoding: .utf8), "inspect\nhold\n")
-        let threadID = try selectedThreadIdentifier(in: app)
-        let originalConfiguration = try Data(contentsOf: configuration)
-        let originalReceipts = try Dictionary(uniqueKeysWithValues: receiptNames.filter { $0 != "script-stale.txt" }.map {
-            ($0, try Data(contentsOf: project.appendingPathComponent($0)))
-        })
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "scripts-final-head"), initialHead)
-        capture(app, name: "scripts-running-tab-closed-draft-retained")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
-        XCTAssertTrue(inspectedTab.waitForExistence(timeout: 10))
-        XCTAssertFalse(holdingTab.exists, "A terminal explicitly closed before Quit must stay closed after relaunch.")
-        let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value CONTAINS %@", "native-script-finished"), object: terminal)
-        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
-        let disconnected = "Saved output. The previous shell is no longer connected."
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", disconnected, disconnected)).element.waitForExistence(timeout: 10))
-        XCTAssertFalse((terminal.value as? String ?? "").contains("native-script-find-early-marker"), "The search target starts outside the restored viewport.")
-        let find = app.buttons["Find in terminal"]
-        XCTAssertTrue(find.isHittable); find.click()
-        let search = app.searchFields.matching(NSPredicate(format: "placeholderValue == %@", "Find")).firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: 5))
-        search.click(); search.typeKey("a", modifierFlags: .command); search.typeText("native-script-find-early-marker")
-        search.typeKey(.return, modifierFlags: [])
-        let matched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value CONTAINS %@", "native-script-find-early-marker"), object: terminal)
-        XCTAssertEqual(XCTWaiter.wait(for: [matched], timeout: 5), .completed)
-        XCTAssertEqual(search.value as? String, "native-script-find-early-marker")
-        XCTAssertEqual(composer.value as? String, draft)
-        XCTAssertFalse(holdingTab.exists)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("script-stale.txt").path))
-        for (name, contents) in originalReceipts {
-            XCTAssertEqual(try Data(contentsOf: project.appendingPathComponent(name)), contents, "Restoring saved output must not rerun a script or change its receipts: \(name)")
-        }
-        XCTAssertEqual(try Data(contentsOf: configuration), originalConfiguration)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "scripts-restored-head"), initialHead)
-        capture(app, name: "scripts-cold-output-restored-and-searched-without-replay")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
-    @MainActor func testRepositoryGroupingKeepsCheckoutDrafts() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "grouping")
-        let app = fixture.app
-        let first = fixture.root.appendingPathComponent("Checkout One", isDirectory: true)
-        let second = fixture.root.appendingPathComponent("Checkout Two", isDirectory: true)
-        for checkout in [first, second] {
-            try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: false)
-            try "Synthetic local checkout: \(checkout.lastPathComponent)\n".write(to: checkout.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
-            for arguments in [["init", "--initial-branch", "main"], ["remote", "add", "origin", "https://example.invalid/Team/Repo.git"], ["add", "README.md"], ["commit", "--message", "Synthetic UI fixture"]] {
-                _ = try runGit(["-C", checkout.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration,
-                               name: "grouping-\(checkout.lastPathComponent)-\(arguments[0])")
-            }
-        }
-        let firstHead = try verifyHead(gitPath: fixture.gitPath, project: first, configuration: fixture.configuration, name: "grouping-first-initial-head")
-        let secondHead = try verifyHead(gitPath: fixture.gitPath, project: second, configuration: fixture.configuration, name: "grouping-second-initial-head")
-        var originalFiles: [URL: Data] = [:]
-        for checkout in [first, second] {
-            for relativePath in ["README.md", ".git/HEAD"] {
-                let file = checkout.appendingPathComponent(relativePath)
-                originalFiles[file] = try Data(contentsOf: file)
-            }
-        }
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        try openProject(first, in: app)
-        XCTAssertTrue(app.buttons["Collapse Checkout One"].waitForExistence(timeout: 10))
-        app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let firstDraft = "Draft belonging only to checkout one"
-        composer.click(); composer.typeText(firstDraft)
-        XCTAssertEqual(composer.value as? String, firstDraft)
-        assertConversationWorkspace(app, path: first.path)
-        let firstThreadID = try selectedThreadIdentifier(in: app)
-
-        try openProject(second, in: app)
-        let groupedHeader = app.buttons["Collapse Team/Repo"]
-        XCTAssertTrue(groupedHeader.waitForExistence(timeout: 15), "Equivalent local Git remotes must form one repository group.")
-        XCTAssertEqual(projectHeaders(in: app).count, 1)
-        groupedHeader.rightClick()
-        let createInCheckout = app.menuItems["New Thread in Checkout"]
-        XCTAssertTrue(createInCheckout.waitForExistence(timeout: 5)); createInCheckout.click()
-        let secondCheckout = createInCheckout.menuItems.matching(NSPredicate(format: "title == %@", second.path)).element
-        XCTAssertTrue(secondCheckout.waitForExistence(timeout: 5)); secondCheckout.click()
-        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
-        assertConversationWorkspace(app, path: second.path)
-        let secondDraft = "Draft belonging only to checkout two"
-        composer.click(); composer.typeText(secondDraft)
-        XCTAssertEqual(composer.value as? String, secondDraft)
-        let secondThreadID = try selectedThreadIdentifier(in: app)
-        XCTAssertNotEqual(firstThreadID, secondThreadID)
-
-        groupedHeader.rightClick()
-        let checkouts = app.menuItems["Checkouts"]
-        XCTAssertTrue(checkouts.waitForExistence(timeout: 5)); checkouts.click()
-        XCTAssertTrue(checkouts.menuItems.matching(NSPredicate(format: "title == %@", first.path)).element.waitForExistence(timeout: 5))
-        XCTAssertTrue(checkouts.menuItems.matching(NSPredicate(format: "title == %@", second.path)).element.exists, "The native checkout menu must expose both physical paths.")
-        app.typeKey(.escape, modifierFlags: []); app.typeKey(.escape, modifierFlags: [])
-        let checkoutPreference = app.descendants(matching: .any).matching(identifier: "new-conversation-checkout").element
-        XCTAssertTrue(checkoutPreference.waitForExistence(timeout: 5)); checkoutPreference.click()
-        let firstChoice = app.menuItems.matching(NSPredicate(format: "title == %@", first.path)).element
-        XCTAssertTrue(firstChoice.waitForExistence(timeout: 5)); firstChoice.click()
-        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
-        XCTAssertEqual(composer.value as? String, secondDraft, "Choosing a future checkout must preserve the selected conversation's draft.")
-        assertConversationWorkspace(app, path: second.path)
-        app.typeKey("n", modifierFlags: .command)
-        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
-        assertConversationWorkspace(app, path: first.path)
-        let futureThreadID = try selectedThreadIdentifier(in: app)
-        XCTAssertNotEqual(futureThreadID, firstThreadID); XCTAssertNotEqual(futureThreadID, secondThreadID)
-        XCTAssertEqual(threadRows(in: app).count, 3)
-        let futureDraft = "Distinct draft in the preferred checkout one"
-        composer.click(); composer.typeText(futureDraft)
-        XCTAssertEqual(composer.value as? String, futureDraft)
-
-        selectThread(firstThreadID, in: app)
-        XCTAssertTrue(waitForValue(composer, value: firstDraft, timeout: 5))
-        assertConversationWorkspace(app, path: first.path)
-        selectThread(secondThreadID, in: app)
-        XCTAssertTrue(waitForValue(composer, value: secondDraft, timeout: 5))
-        assertConversationWorkspace(app, path: second.path)
-        assertSidebarFitsDisplay(app, projectHeader: groupedHeader, selectedConversation: threadRow(secondThreadID, in: app))
-        capture(app, name: "grouping-repository-with-checkout-drafts")
-
-        setGroupingMode("Separate Checkouts", in: app)
-        let firstHeader = app.buttons["Collapse Checkout One"], secondHeader = app.buttons["Collapse Checkout Two"]
-        XCTAssertTrue(firstHeader.waitForExistence(timeout: 5) && secondHeader.exists)
-        XCTAssertEqual(projectHeaders(in: app).count, 2)
-        XCTAssertEqual(threadRows(in: app).count, 3)
-        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
-        XCTAssertEqual(composer.value as? String, secondDraft)
-        assertConversationWorkspace(app, path: second.path)
-        assertSidebarFitsDisplay(app, projectHeader: firstHeader, selectedConversation: threadRow(secondThreadID, in: app))
-        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(secondHeader.frame))
-        capture(app, name: "grouping-separate-checkouts")
-        setGroupingMode("Repository", in: app)
-        XCTAssertTrue(groupedHeader.waitForExistence(timeout: 5))
-        XCTAssertEqual(projectHeaders(in: app).count, 1)
-        XCTAssertEqual(threadRows(in: app).count, 3)
-        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
-        XCTAssertEqual(composer.value as? String, secondDraft)
-        capture(app, name: "grouping-repository-restored")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(groupedHeader.waitForExistence(timeout: 10))
-        XCTAssertEqual(projectHeaders(in: app).count, 1)
-        XCTAssertEqual(threadRows(in: app).count, 3)
-        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
-        XCTAssertTrue(waitForValue(composer, value: secondDraft, timeout: 5))
-        assertConversationWorkspace(app, path: second.path)
-        capture(app, name: "grouping-reopened")
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: first, configuration: fixture.configuration, name: "grouping-first-final-head"), firstHead)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: second, configuration: fixture.configuration, name: "grouping-second-final-head"), secondHead)
-
-        groupedHeader.rightClick()
-        let renameGroup = app.menuItems["Rename Group…"]
-        XCTAssertTrue(renameGroup.waitForExistence(timeout: 5)); renameGroup.click()
-        let renameSheet = app.sheets.containing(.button, identifier: "sidebar-rename-save").element
-        XCTAssertTrue(renameSheet.waitForExistence(timeout: 5))
-        XCTAssertTrue(renameSheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", "Rename Group", "Rename Group")).element.exists)
-        XCTAssertEqual(renameSheet.textFields.count, 1)
-        let renameField = renameSheet.textFields.element
-        XCTAssertEqual(renameField.value as? String, "Team/Repo")
-        renameField.click(); renameField.typeKey("a", modifierFlags: .command)
-        let renamedGroup = "Native UI Group Renamed"
-        renameField.typeText(renamedGroup); renameSheet.buttons["sidebar-rename-save"].click()
-        let renamedHeader = app.buttons["Collapse \(renamedGroup)"]
-        XCTAssertTrue(renamedHeader.waitForExistence(timeout: 5))
-        setGroupingMode("Separate Checkouts", in: app)
-        let renamedPhysicalHeaders = app.buttons.matching(NSPredicate(format: "label == %@", "Collapse \(renamedGroup)"))
-        XCTAssertTrue(renamedPhysicalHeaders.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertEqual(renamedPhysicalHeaders.count, 2, "Renaming the group must rename both registered checkouts.")
-        setGroupingMode("Repository", in: app)
-        XCTAssertTrue(renamedHeader.waitForExistence(timeout: 5))
-        XCTAssertEqual(projectHeaders(in: app).count, 1)
-        renamedHeader.rightClick()
-        let removeGroup = app.menuItems["Remove Group…"]
-        XCTAssertTrue(removeGroup.waitForExistence(timeout: 5)); removeGroup.click()
-        let review = assertGroupRemovalReview(in: app, name: renamedGroup, paths: [first.path, second.path])
-        let remove = review.buttons["remove-project-group"]
-        XCTAssertTrue(remove.isHittable && app.state == .runningForeground && CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
-        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "grouping-remove-group-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
-        review.buttons["Cancel"].click()
-        XCTAssertTrue(waitForAbsence(remove, timeout: 5))
-        XCTAssertTrue(renamedHeader.exists)
-        XCTAssertEqual(threadRows(in: app).count, 3)
-        let drafts = [(firstThreadID, firstDraft, first.path), (futureThreadID, futureDraft, first.path), (secondThreadID, secondDraft, second.path)]
-        for (identifier, draft, path) in drafts {
-            let row = threadRow(identifier, in: app)
-            XCTAssertTrue(row.exists); selectThread(identifier, in: app)
-            XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5), "Cancelling group removal must preserve every conversation's draft.")
-            assertConversationWorkspace(app, path: path)
-        }
-        XCTAssertTrue(threadRow(secondThreadID, in: app).isSelected)
-        renamedHeader.rightClick()
-        XCTAssertTrue(removeGroup.waitForExistence(timeout: 5)); removeGroup.click()
-        let confirmedReview = assertGroupRemovalReview(in: app, name: renamedGroup, paths: [first.path, second.path])
-        confirmedReview.buttons["remove-project-group"].click()
-        XCTAssertTrue(waitForAbsence(renamedHeader, timeout: 10))
-        XCTAssertTrue(waitForAbsence(composer, timeout: 5))
-        XCTAssertEqual(projectHeaders(in: app).count, 0)
-        XCTAssertEqual(threadRows(in: app).count, 0)
-        for (file, bytes) in originalFiles {
-            XCTAssertEqual(try Data(contentsOf: file), bytes, "Removing a group must preserve existing checkout file bytes: \(file.lastPathComponent).")
-        }
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: first, configuration: fixture.configuration, name: "grouping-first-removed-head"), firstHead)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: second, configuration: fixture.configuration, name: "grouping-second-removed-head"), secondHead)
-        let emptyDescription = "Your projects and coding agents, in a native Mac workspace."
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", emptyDescription, emptyDescription)).element.waitForExistence(timeout: 5))
-        capture(app, name: "grouping-removed-empty-workspace")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
-    @MainActor func testReviewedBlockingSetupKeepsDraftUntilExplicitContinue() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "setup")
-        let app = fixture.app
-        app.launchEnvironment["SHELL"] = "/bin/sh"
-        let project = fixture.root.appendingPathComponent("Native Setup", isDirectory: true)
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
-        let command = "pwd -P > setup-cwd.txt; printf 'native-blocking-setup-output\\n'; exit 7"
-        let scripts: [[String: Any]] = [
-            ["name": "Reviewed Blocking Setup", "command": command, "runOnWorktreeCreate": true, "async": false],
-            ["name": "Unselected Setup", "command": "printf 'unexpected\\n' > setup-unselected.txt", "runOnWorktreeCreate": true]
-        ]
-        let configuration = project.appendingPathComponent("t3.json")
-        try JSONSerialization.data(withJSONObject: ["scripts": scripts], options: [.sortedKeys, .prettyPrinted]).write(to: configuration, options: .atomic)
-        let readme = project.appendingPathComponent("README.md"), readmeBytes = Data("Synthetic reviewed checkout setup\n".utf8)
-        try readmeBytes.write(to: readme)
-        for arguments in [["init", "--initial-branch", "main"], ["add", "t3.json", "README.md"], ["commit", "--message", "Reviewed setup fixture"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "setup-fixture-\(arguments[0])")
-        }
-        let sourceHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "setup-source-head")
-        let sourceHeadBytes = try Data(contentsOf: project.appendingPathComponent(".git/HEAD"))
-        let configurationBytes = try Data(contentsOf: configuration)
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        try openProject(project, in: app)
-        XCTAssertTrue(app.buttons["Collapse Native Setup"].waitForExistence(timeout: 10))
-        app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"], draft = "Keep this unsent discussion through reviewed setup"
-        XCTAssertTrue(composer.waitForExistence(timeout: 10)); composer.click(); composer.typeText(draft)
-        let threadID = try selectedThreadIdentifier(in: app)
-        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
-        workspace.click()
-        let choose = app.menuItems["Choose Worktree…"]
-        XCTAssertTrue(choose.waitForExistence(timeout: 5)); choose.click()
-        let checkout = app.sheets.containing(.textField, identifier: "worktree-new-branch").element
-        XCTAssertTrue(checkout.waitForExistence(timeout: 10))
-        let branch = checkout.textFields["worktree-new-branch"]
-        branch.click(); branch.typeText("ui-reviewed-setup")
-        let reviewChoice = checkout.checkBoxes["worktree-review-setup"]
-        XCTAssertTrue(reviewChoice.exists)
-        XCTAssertEqual((reviewChoice.value as? NSNumber)?.intValue ?? Int((reviewChoice.value as? String) ?? ""), 1, "Reviewing checkout setup must be the default choice.")
-        let prepare = checkout.buttons["Prepare Worktree"]
-        let prepared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: prepare)
-        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 10), .completed)
-        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(checkout.frame))
-        prepare.click()
-        XCTAssertTrue(waitForAbsence(checkout, timeout: 5))
-        let reviewSetup = app.buttons["workspace-setup-review"]
-        XCTAssertTrue(reviewSetup.waitForExistence(timeout: 20), "A declared setup command must wait for explicit review after checkout.")
-        assertWorkspaceReady(in: app) // Files and Terminal stay available while provider messages wait for setup.
-        let worktreePath = try XCTUnwrap(workspace.value as? String)
-        XCTAssertTrue(worktreePath.hasPrefix(fixture.root.appendingPathComponent("Worktrees").path + "/"))
-        let worktree = URL(fileURLWithPath: worktreePath, isDirectory: true)
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
-        XCTAssertEqual(composer.value as? String, draft)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("setup-cwd.txt").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("setup-unselected.txt").path))
-        reviewSetup.click()
-        let review = app.sheets.containing(.button, identifier: "workspace-setup-run").element
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForValue(review.staticTexts["workspace-setup-review-cwd"], value: worktreePath, timeout: 5))
-        let reviewedCommand = review.descendants(matching: .any).matching(identifier: "workspace-setup-review-command").element
-        XCTAssertTrue(reviewedCommand.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", command, command)).element.exists)
-        let blockingNotice = "Messages wait for this command to exit successfully. Background jobs may keep running afterward."
-        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", blockingNotice, blockingNotice)).element.exists)
-        XCTAssertTrue(review.buttons["workspace-setup-run"].isHittable && review.buttons["Cancel"].isHittable)
-        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
-        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "setup-explicit-blocking-command-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
-        review.buttons["Cancel"].click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        XCTAssertTrue(reviewSetup.exists)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("setup-cwd.txt").path), "Cancelling review must never start setup.")
-        XCTAssertEqual(composer.value as? String, draft)
-        reviewSetup.click(); XCTAssertTrue(review.waitForExistence(timeout: 5))
-        review.buttons["workspace-setup-run"].click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        let status = app.staticTexts["workspace-setup-status"]
-        let failed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Checkout setup needs attention", "Checkout setup needs attention"), object: status)
-        XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 15), .completed)
-        let exitDetail = "Command exited with status 7."
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", exitDetail, exitDetail)).element.exists)
-        let outputDisclosure = app.descendants(matching: .any).matching(NSPredicate(
-            format: "(elementType == %d OR elementType == %d) AND (identifier == %@ OR label == %@ OR title == %@)",
-            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue,
-            "workspace-setup-output-disclosure", "Setup Output", "Setup Output"
-        )).element
-        XCTAssertTrue(outputDisclosure.waitForExistence(timeout: 10)); expandScriptOutputDisclosure(outputDisclosure)
-        let output = app.staticTexts["workspace-setup-output"]
-        let receivedOutput = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label CONTAINS %@ OR value CONTAINS %@)", "native-blocking-setup-output", "native-blocking-setup-output"), object: output)
-        XCTAssertEqual(XCTWaiter.wait(for: [receivedOutput], timeout: 10), .completed)
-        XCTAssertEqual(try String(contentsOf: worktree.appendingPathComponent("setup-cwd.txt"), encoding: .utf8), worktreePath + "\n")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("setup-unselected.txt").path), "Only the reviewed first setup role may run.")
-        XCTAssertTrue(app.buttons["workspace-setup-retry"].exists)
-        let continueWithoutSetup = app.buttons["workspace-setup-skip"]
-        XCTAssertTrue(continueWithoutSetup.exists && continueWithoutSetup.isEnabled && continueWithoutSetup.isHittable)
-        XCTAssertEqual(composer.value as? String, draft)
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
-        capture(app, name: "setup-failed-with-exit-output-and-retained-draft")
-        continueWithoutSetup.click()
-        XCTAssertTrue(waitForAbsence(status, timeout: 10))
-        assertWorkspaceReady(in: app)
-        XCTAssertEqual(composer.value as? String, draft)
-        assertConversationWorkspace(app, path: worktreePath)
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
-        XCTAssertEqual(try Data(contentsOf: readme), readmeBytes)
-        XCTAssertEqual(try Data(contentsOf: configuration), configurationBytes)
-        XCTAssertEqual(try Data(contentsOf: project.appendingPathComponent(".git/HEAD")), sourceHeadBytes)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "setup-source-final-head"), sourceHead)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("setup-cwd.txt").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("setup-unselected.txt").path))
-        capture(app, name: "setup-explicitly-continued-without-changing-source")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
-    @MainActor func testSettleScriptReviewAndExplicitResumeKeepDraftAndCheckout() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "settle")
-        let app = fixture.app
-        app.launchEnvironment["SHELL"] = "/bin/sh"
-        let project = fixture.root.appendingPathComponent("Native Settle", isDirectory: true)
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
-        let command = "pwd -P > settle-cwd.txt; printf 'native-settle-output\\n'; exit 0"
-        let scripts: [[String: Any]] = [
-            ["name": "Reviewed Settle Script", "command": command, "runOnSettle": true, "async": false],
-            ["name": "Unselected Settle Script", "command": "printf 'unexpected\\n' > settle-unselected.txt", "runOnSettle": true]
-        ]
-        let configuration = project.appendingPathComponent("t3.json")
-        try JSONSerialization.data(withJSONObject: ["scripts": scripts], options: [.sortedKeys, .prettyPrinted]).write(to: configuration, options: .atomic)
-        let readme = project.appendingPathComponent("README.md"), readmeBytes = Data("Synthetic explicit settle fixture\n".utf8)
-        try readmeBytes.write(to: readme)
-        for arguments in [["init", "--initial-branch", "main"], ["add", "t3.json", "README.md"], ["commit", "--message", "Explicit settle fixture"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "settle-fixture-\(arguments[0])")
-        }
-        let sourceHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "settle-source-head")
-        let sourceHeadBytes = try Data(contentsOf: project.appendingPathComponent(".git/HEAD")), configurationBytes = try Data(contentsOf: configuration)
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        try openProject(project, in: app)
-        XCTAssertTrue(app.buttons["Collapse Native Settle"].waitForExistence(timeout: 10))
-        app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"], draft = "Keep this unsent discussion through settle and resume"
-        XCTAssertTrue(composer.waitForExistence(timeout: 10)); composer.click(); composer.typeText(draft)
-        let threadID = try selectedThreadIdentifier(in: app)
-        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
-        workspace.click()
-        let choose = app.menuItems["Choose Worktree…"]
-        XCTAssertTrue(choose.waitForExistence(timeout: 5)); choose.click()
-        let checkout = app.sheets.containing(.textField, identifier: "worktree-new-branch").element
-        XCTAssertTrue(checkout.waitForExistence(timeout: 10))
-        let branch = checkout.textFields["worktree-new-branch"]
-        branch.click(); branch.typeText("ui-reviewed-settle")
-        let prepare = checkout.buttons["Prepare Worktree"]
-        let prepared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: prepare)
-        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 10), .completed); prepare.click()
-        XCTAssertTrue(waitForAbsence(checkout, timeout: 5))
-        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value BEGINSWITH %@", fixture.root.appendingPathComponent("Worktrees").path + "/"), object: workspace)
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 20), .completed)
-        assertWorkspaceReady(in: app)
-        let worktreePath = try XCTUnwrap(workspace.value as? String), worktree = URL(fileURLWithPath: worktreePath, isDirectory: true)
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
-        XCTAssertEqual(composer.value as? String, draft)
-        app.menuBars.menuBarItems["Thread"].click()
-        let settle = app.menuItems["Settle Conversation…"]
-        XCTAssertTrue(settle.waitForExistence(timeout: 5)); XCTAssertTrue(settle.isEnabled); settle.click()
-        let confirmation = app.sheets.containing(.button, identifier: "settlement-confirm").element
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
-        let reviewChoice = confirmation.checkBoxes["settlement-review-script"]
-        XCTAssertTrue(reviewChoice.exists)
-        XCTAssertEqual((reviewChoice.value as? NSNumber)?.intValue ?? Int((reviewChoice.value as? String) ?? ""), 1)
-        XCTAssertTrue(confirmation.buttons["settlement-confirm"].isHittable && confirmation.buttons["Cancel"].isHittable)
-        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(confirmation.frame))
-        let confirmationImage = XCTAttachment(screenshot: confirmation.screenshot()); confirmationImage.name = "settle-native-confirmation-default-review"; confirmationImage.lifetime = .keepAlways; add(confirmationImage)
-        confirmation.buttons["Cancel"].click()
-        XCTAssertTrue(waitForAbsence(confirmation, timeout: 5))
-        XCTAssertFalse(app.staticTexts["settlement-status"].exists)
-        XCTAssertEqual(composer.value as? String, draft)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("settle-cwd.txt").path))
-        app.menuBars.menuBarItems["Thread"].click(); XCTAssertTrue(settle.waitForExistence(timeout: 5)); settle.click()
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); confirmation.buttons["settlement-confirm"].click()
-        XCTAssertTrue(waitForAbsence(confirmation, timeout: 5))
-        let settled = app.staticTexts["settlement-status"]
-        let isSettled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Conversation settled", "Conversation settled"), object: settled)
-        XCTAssertEqual(XCTWaiter.wait(for: [isSettled], timeout: 15), .completed)
-        let reviewScript = app.buttons["workspace-settle-script-review"]
-        XCTAssertTrue(reviewScript.waitForExistence(timeout: 10))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("settle-cwd.txt").path), "Settling and script discovery must not execute a command.")
-        reviewScript.click()
-        let review = app.sheets.containing(.button, identifier: "workspace-settle-script-run").element
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForValue(review.staticTexts["workspace-settle-script-review-cwd"], value: worktreePath, timeout: 5))
-        let reviewedCommand = review.descendants(matching: .any).matching(identifier: "workspace-settle-script-review-command").element
-        XCTAssertTrue(reviewedCommand.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", command, command)).element.exists)
-        let notice = "The conversation stays settled after this command finishes. Resuming stops its background jobs before messages continue."
-        XCTAssertTrue(review.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", notice, notice)).element.exists)
-        XCTAssertTrue(review.buttons["workspace-settle-script-run"].isHittable && CGDisplayBounds(CGMainDisplayID()).contains(review.frame))
-        let reviewImage = XCTAttachment(screenshot: review.screenshot()); reviewImage.name = "settle-explicit-command-and-cwd-review"; reviewImage.lifetime = .keepAlways; add(reviewImage)
-        review.buttons["Cancel"].click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        XCTAssertTrue(settled.exists && reviewScript.exists)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("settle-cwd.txt").path), "Cancelling script review must never run the command.")
-        XCTAssertEqual(composer.value as? String, draft)
-        reviewScript.click(); XCTAssertTrue(review.waitForExistence(timeout: 5)); review.buttons["workspace-settle-script-run"].click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        let scriptStatus = app.staticTexts["workspace-settle-script-status"]
-        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Settle script finished", "Settle script finished"), object: scriptStatus)
-        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 15), .completed)
-        let exitDetail = "Command exited with status 0."
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", exitDetail, exitDetail)).element.exists)
-        let outputDisclosure = app.descendants(matching: .any).matching(NSPredicate(
-            format: "(elementType == %d OR elementType == %d) AND (identifier == %@ OR label == %@ OR title == %@)",
-            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue,
-            "workspace-settle-script-output-disclosure", "Settle Script Output", "Settle Script Output"
-        )).element
-        XCTAssertTrue(outputDisclosure.waitForExistence(timeout: 10)); expandScriptOutputDisclosure(outputDisclosure)
-        let output = app.staticTexts["workspace-settle-script-output"]
-        let received = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label CONTAINS %@ OR value CONTAINS %@)", "native-settle-output", "native-settle-output"), object: output)
-        XCTAssertEqual(XCTWaiter.wait(for: [received], timeout: 10), .completed)
-        XCTAssertEqual(try String(contentsOf: worktree.appendingPathComponent("settle-cwd.txt"), encoding: .utf8), worktreePath + "\n")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("settle-unselected.txt").path))
-        XCTAssertTrue(settled.exists, "Successful script completion must not resume the conversation implicitly.")
-        XCTAssertEqual(composer.value as? String, draft)
-        capture(app, name: "settle-completed-script-still-settled-with-draft")
-        let resume = app.buttons["settlement-resume"]
-        XCTAssertTrue(resume.exists && resume.isEnabled && resume.isHittable); resume.click()
-        XCTAssertTrue(waitForAbsence(settled, timeout: 10))
-        XCTAssertTrue(waitForAbsence(scriptStatus, timeout: 5))
-        assertWorkspaceReady(in: app)
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), threadID)
-        XCTAssertEqual(composer.value as? String, draft)
-        assertConversationWorkspace(app, path: worktreePath)
-        XCTAssertEqual(try Data(contentsOf: readme), readmeBytes)
-        XCTAssertEqual(try Data(contentsOf: configuration), configurationBytes)
-        XCTAssertEqual(try Data(contentsOf: project.appendingPathComponent(".git/HEAD")), sourceHeadBytes)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "settle-source-final-head"), sourceHead)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("settle-cwd.txt").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: project.appendingPathComponent("settle-unselected.txt").path))
-        capture(app, name: "settle-explicit-resume-keeps-draft-checkout-and-source")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
-    @MainActor func testWorktreePreparationKeepsExplicitBaseDraftAndSourceFiles() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "worktree")
-        let app = fixture.app
-        let project = fixture.root.appendingPathComponent("Native Worktree", isDirectory: true)
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
-        let readme = project.appendingPathComponent("README.md")
-        let baseContents = "Committed explicit local base\n"
-        try baseContents.write(to: readme, atomically: true, encoding: .utf8)
-        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Explicit base fixture"], ["branch", "ui-base"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "worktree-base-\(arguments[0])")
-        }
-        let baseHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "worktree-base-head")
-        try "Newer committed source checkout\n".write(to: readme, atomically: true, encoding: .utf8)
-        for arguments in [["add", "README.md"], ["commit", "--message", "Newer source fixture"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "worktree-source-\(arguments[0])")
-        }
-        let sourceHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "worktree-source-head")
-        XCTAssertNotEqual(sourceHead, baseHead)
-        let dirtyContents = "Keep these uncommitted source edits\n"
-        try dirtyContents.write(to: readme, atomically: true, encoding: .utf8)
-        let sentinel = project.appendingPathComponent("untracked-sentinel.txt"), sentinelBytes = Data("Keep this untracked source file\n".utf8)
-        try sentinelBytes.write(to: sentinel)
-        let sourceHeadFile = project.appendingPathComponent(".git/HEAD"), sourceHeadBytes = try Data(contentsOf: sourceHeadFile)
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        try openProject(project, in: app)
-        let header = app.buttons["Collapse Native Worktree"]
-        XCTAssertTrue(header.waitForExistence(timeout: 10))
-        app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let draft = "Keep this unsent draft while preparing a separate checkout"
-        composer.click(); composer.typeText(draft)
-        let identifier = try selectedThreadIdentifier(in: app)
-        assertConversationWorkspace(app, path: project.path)
-        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
-        workspace.click()
-        let choose = app.menuItems["Choose Worktree…"]
-        XCTAssertTrue(choose.waitForExistence(timeout: 5)); choose.click()
-        let review = app.sheets.containing(.textField, identifier: "worktree-new-branch").element
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        let branch = review.textFields["worktree-new-branch"], base = review.textFields["worktree-base-ref"]
-        XCTAssertTrue(branch.waitForExistence(timeout: 5)); branch.click(); branch.typeText("ui-native-worktree")
-        XCTAssertEqual(base.value as? String, "HEAD")
-        base.click(); base.typeKey("a", modifierFlags: .command); base.typeText("ui-base")
-        let submodules = review.descendants(matching: .any).matching(identifier: "worktree-submodules").element
-        XCTAssertTrue(submodules.waitForExistence(timeout: 5))
-        XCTAssertEqual(submodules.value as? String, "None", "Submodule downloads must require an explicit choice.")
-        let prepare = review.buttons["Prepare Worktree"]
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: prepare)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
-        let display = CGDisplayBounds(CGMainDisplayID())
-        XCTAssertTrue(display.contains(review.frame), "The taller native worktree sheet must fit the hosted display: \(review.frame).")
-        for control in [branch, base, submodules, prepare, review.buttons["Cancel"]] {
-            XCTAssertTrue(control.isHittable && review.frame.contains(control.frame) && display.contains(control.frame), "Every worktree choice must remain visible and interactive.")
-        }
-        submodules.click()
-        for title in ["None", "Top level", "Recursive"] {
-            let option = app.menuItems[title]
-            XCTAssertTrue(option.waitForExistence(timeout: 5))
-            XCTAssertTrue(option.isHittable && display.contains(option.frame), "Submodule options must fit the display.")
-        }
-        app.menuItems["None"].click()
-        XCTAssertEqual(submodules.value as? String, "None")
-        XCTAssertEqual(branch.value as? String, "ui-native-worktree"); XCTAssertEqual(base.value as? String, "ui-base")
-        let choices = XCTAttachment(screenshot: review.screenshot()); choices.name = "worktree-explicit-base-and-safe-submodule-choice"; choices.lifetime = .keepAlways; add(choices)
-        prepare.click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        let managedRoot = fixture.root.appendingPathComponent("Worktrees", isDirectory: true)
-        let prepared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value BEGINSWITH %@", managedRoot.path + "/"), object: workspace)
-        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 20), .completed)
-        let checkoutPath = try XCTUnwrap(workspace.value as? String)
-        XCTAssertTrue(checkoutPath.hasPrefix(managedRoot.path + "/"))
-        let checkout = URL(fileURLWithPath: checkoutPath)
-        XCTAssertNotEqual(checkout.path, project.path)
-        assertWorkspaceReady(in: app)
-        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
-        XCTAssertEqual(composer.value as? String, draft)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: checkout, configuration: fixture.configuration, name: "worktree-prepared-head"), baseHead)
-        XCTAssertEqual(try runGit(["-C", checkout.path, "symbolic-ref", "--short", "HEAD"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "worktree-prepared-branch").trimmingCharacters(in: .whitespacesAndNewlines), "ui-native-worktree")
-        XCTAssertEqual(try String(contentsOf: checkout.appendingPathComponent("README.md"), encoding: .utf8), baseContents)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: checkout.appendingPathComponent("untracked-sentinel.txt").path))
-        assertSidebarFitsDisplay(app, projectHeader: header, selectedConversation: threadRow(identifier, in: app))
-        capture(app, name: "worktree-prepared-checkout-retains-draft")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
-        assertConversationWorkspace(app, path: checkout.path)
-        assertWorkspaceReady(in: app)
-        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: checkout, configuration: fixture.configuration, name: "worktree-reopened-head"), baseHead)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "worktree-preserved-source-head"), sourceHead)
-        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), dirtyContents)
-        XCTAssertEqual(try Data(contentsOf: sentinel), sentinelBytes)
-        XCTAssertEqual(try Data(contentsOf: sourceHeadFile), sourceHeadBytes)
-        let inventory = try runGit(["-C", project.path, "worktree", "list", "--porcelain"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "worktree-reopened-inventory")
-        let paths = inventory.split(separator: "\n").filter { $0.hasPrefix("worktree ") }.map { String($0.dropFirst("worktree ".count)) }
-        XCTAssertEqual(Set(paths), [project.path, checkout.path], "Restart must reuse the completed checkout without creating another worktree.")
-        assertSidebarFitsDisplay(app, projectHeader: header, selectedConversation: threadRow(identifier, in: app))
-        capture(app, name: "worktree-reopened-cwd-and-draft")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
-    @MainActor func testNativePiHistoryQuestionsUseExactWorkerAndCancellationNeverSendsDraft() throws {
-        let f = try preparePiHistoryGUI(mode: "controls", appearance: "light", name: "pi-history-controls")
-        let sourceID = try seedPiHistoryGUI(f), source = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
-        let native = URL(fileURLWithPath: try XCTUnwrap(source["providerThreadID"] as? String)), before = try Data(contentsOf: native)
-        replaceClaudeGUIDraft("Keep the latest Pi draft 工作 😀", in: f.app)
-        let sheet = try beginPiGUIRewind(f, prompt: Self.piBetaPrompt)
-        let picker = try revealPiHistoryControl("pi-extension-choice", in: sheet)
-        capture(f.app, name: "pi-history-native-select-question")
-        picker.click(); let offered = f.app.menuItems["Keep inherited context"]
-        XCTAssertTrue(offered.waitForExistence(timeout: 5)); offered.click()
-        let submit = try revealPiHistoryControl("pi-extension-submit", in: sheet)
-        XCTAssertTrue(submit.isEnabled); submit.click()
-        XCTAssertTrue(sheet.staticTexts["Pi GUI final branch confirmation"].waitForExistence(timeout: 10))
-        let held = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
-            guard let operation = self.latestPiGUIOperation(snapshot), let controls = operation["piControls"] as? [String: Any],
-                  let requests = controls["requests"] as? [[String: Any]] else { return false }
-            return operation["phase"] as? String == "dispatching" && requests.count == 1 &&
-                ((requests[0]["request"] as? [String: Any])?["params"] as? [String: Any])?["title"] as? String == "Pi GUI final branch confirmation"
-        }
-        let generation = try XCTUnwrap((latestPiGUIOperation(held)?["piControls"] as? [String: Any])?["sessionID"] as? String)
-        XCTAssertNotNil(UUID(uuidString: generation))
-        let cancel = try revealPiHistoryControl("conversation-history-pi-cancel", in: sheet)
-        XCTAssertTrue(cancel.isEnabled); cancel.click()
-        _ = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "unconfirmed" }
-        try waitForClaudeGUIEnabled(sheet.buttons["conversation-history-close"], timeout: 10)
-        capture(f.app, name: "pi-history-cancelled-without-native-copy")
-        let keep = try revealPiHistoryControl("conversation-history-pi-keep-original", in: sheet); keep.click()
-        let confirm = f.app.sheets.containing(.button, identifier: "conversation-history-pi-keep-original-confirm").firstMatch.buttons["conversation-history-pi-keep-original-confirm"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.click()
-        _ = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "failed" }
-        sheet.buttons["conversation-history-close"].click(); try nativeHistoryDone(in: f.app).click()
-        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: "Keep the latest Pi draft 工作 😀", timeout: 10))
-        let frames = try historyWire(f.wire)
-        let answers = frames.filter { $0["type"] as? String == "extension_ui_response" }
-        XCTAssertEqual(answers.count, 1); XCTAssertEqual(answers[0]["id"] as? String, "pi-gui-select")
-        XCTAssertEqual(answers[0]["value"] as? String, "Keep inherited context")
-        XCTAssertEqual(frames.filter { $0["type"] as? String == "fork" }.count, 1)
-        XCTAssertTrue(frames.filter { $0["kind"] as? String == "fork-result" }.isEmpty)
-        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt])
-        XCTAssertEqual(try Data(contentsOf: native), before)
-        try assertPiGUIWorkspaceUnchanged(f)
-    }
-
-    @MainActor func testNativePiUnknownHistoryKeepsOriginalAcrossRestartWithoutRepeatingNativeFork() throws {
-        let f = try preparePiHistoryGUI(mode: "publish-and-disconnect", appearance: "dark", name: "pi-history-unknown")
-        let sourceID = try seedPiHistoryGUI(f), original = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
-        let path = try XCTUnwrap(original["providerThreadID"] as? String), before = try Data(contentsOf: URL(fileURLWithPath: path))
-        replaceClaudeGUIDraft("Keep original Pi draft after lost reply", in: f.app)
-        let sheet = try beginPiGUIRewind(f, prompt: Self.piBetaPrompt)
-        let unknown = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "unconfirmed" }
-        XCTAssertNil(latestPiGUIOperation(unknown)?["piCandidates"], "A lost fork reply cannot invent a candidate identity.")
-        let orphan = try XCTUnwrap(historyWire(f.wire).last { $0["kind"] as? String == "fork-result" })
-        let orphanFile = URL(fileURLWithPath: try XCTUnwrap(orphan["candidateFile"] as? String))
-        XCTAssertNotEqual(orphanFile.path, path); XCTAssertTrue(FileManager.default.fileExists(atPath: orphanFile.path))
-        let orphanBytes = try Data(contentsOf: orphanFile)
-        try waitForClaudeGUIEnabled(sheet.buttons["conversation-history-close"], timeout: 10)
-        sheet.buttons["conversation-history-close"].click(); try nativeHistoryDone(in: f.app).click()
-        XCTAssertEqual(try claudeGUIJSON(latestPiGUIOperation(privateWorkspaceSnapshot(f.root))), try claudeGUIJSON(latestPiGUIOperation(unknown)))
-        f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
-        f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertEqual(try selectedThreadIdentifier(in: f.app), sourceID)
-        let keep = f.app.buttons["conversation-history-pi-keep-original"]
-        XCTAssertTrue(keep.waitForExistence(timeout: 10)); keep.click()
-        let confirm = f.app.sheets.containing(.button, identifier: "conversation-history-pi-keep-original-confirm").firstMatch.buttons["conversation-history-pi-keep-original-confirm"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.click()
-        let kept = try waitForPrivateWorkspace(f.root, timeout: 20) { self.latestPiGUIOperation($0)?["phase"] as? String == "failed" }
-        let current = try claudeGUIThread(kept, id: sourceID), operation = try XCTUnwrap(latestPiGUIOperation(kept))
-        XCTAssertTrue((operation["error"] as? String)?.contains("unrecorded result") == true)
-        XCTAssertNil(operation["recalledAt"]); XCTAssertEqual(current["providerThreadID"] as? String, path)
-        XCTAssertEqual(try claudeGUIJSON(current["messages"]), try claudeGUIJSON(original["messages"]))
-        XCTAssertEqual(try claudeGUIJSON(current["runHistory"]), try claudeGUIJSON(original["runHistory"]))
-        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: "Keep original Pi draft after lost reply", timeout: 10))
-        XCTAssertEqual(try historyWire(f.wire).filter { $0["type"] as? String == "fork" }.count, 1)
-        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt])
-        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), before)
-        XCTAssertEqual(try Data(contentsOf: orphanFile), orphanBytes, "Keep Original cannot delete or rewrite an unrecorded native copy.")
-        capture(f.app, name: "pi-history-original-kept-unrecorded-orphan-warning")
-        try assertPiGUIWorkspaceUnchanged(f)
-    }
-
-    @MainActor func testNativePiEmptyContextRecoveryRequiresExplicitAcknowledgementAndNeverReplaysUnknownInput() throws {
-        let f = try preparePiHistoryGUI(mode: "normal", appearance: "light", name: "pi-history-fresh")
-        let sourceID = try seedPiHistoryGUI(f), original = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
-        let originalFile = URL(fileURLWithPath: try XCTUnwrap(original["providerThreadID"] as? String)), before = try Data(contentsOf: originalFile)
-        replaceClaudeGUIDraft("Latest Pi reset draft", in: f.app)
-        let sheet = try beginPiGUIRewind(f, prompt: Self.piAlphaPrompt)
-        let selected = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
-            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID) else { return false }
-            return self.latestPiGUIOperation(snapshot)?["phase"] as? String == "applied" && thread["piFreshSessionIntent"] != nil
-        }
-        sheet.buttons["conversation-history-close"].click(); try nativeHistoryDone(in: f.app).click()
-        let intent = try XCTUnwrap(claudeGUIThread(selected, id: sourceID)["piFreshSessionIntent"] as? [String: Any])
-        let target = URL(fileURLWithPath: try XCTUnwrap(intent["nativeSessionFile"] as? String))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
-        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: "Latest Pi reset draft\n\n" + Self.piAlphaPrompt, timeout: 10))
-        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt])
-        f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
-        f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertEqual(try claudeGUIJSON(claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)["piFreshSessionIntent"]), try claudeGUIJSON(intent))
-        try submitClaudeGUI(Self.piUnwrittenPrompt, in: f.app)
-        let failed = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
-            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID), let run = self.findClaudeGUIRun(thread, prompt: Self.piUnwrittenPrompt) else { return false }
-            return thread["activeRun"] == nil && thread["piFreshConsumerRunID"] as? String == run["id"] as? String && run["status"] as? String != "completed"
-        }
-        let failedThread = try claudeGUIThread(failed, id: sourceID), failedRun = try claudeGUIRun(failedThread, prompt: Self.piUnwrittenPrompt)
-        let failedID = try XCTUnwrap(failedRun["id"] as? String), priorStatus = try XCTUnwrap(failedRun["status"] as? String)
-        XCTAssertTrue(["failed", "unknown", "interrupted"].contains(priorStatus)); XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
-        replaceClaudeGUIDraft("Keep typing after unknown Pi input", in: f.app)
-        let inspect = f.app.buttons["conversation-history-pi-inspect-fresh"]
-        XCTAssertTrue(inspect.waitForExistence(timeout: 10)); inspect.click()
-        let keep = f.app.buttons["conversation-history-pi-keep-empty"]
-        XCTAssertTrue(keep.waitForExistence(timeout: 10)); keep.click()
-        let alert = f.app.sheets.containing(.button, identifier: "conversation-history-pi-keep-empty-confirm").firstMatch
-        XCTAssertTrue(alert.waitForExistence(timeout: 5))
-        XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "may have been processed", "may have been processed")).firstMatch.exists)
-        let confirm = alert.buttons["conversation-history-pi-keep-empty-confirm"]
-        XCTAssertTrue(confirm.exists); confirm.click()
-        let acknowledged = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
-            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID), let audit = thread["piFreshContextResolutions"] as? [[String: Any]] else { return false }
-            return thread["piFreshConsumerRunID"] == nil && audit.last?["consumerRunID"] as? String == failedID
-        }
-        let acknowledgedThread = try claudeGUIThread(acknowledged, id: sourceID)
-        XCTAssertEqual(try claudeGUIJSON(acknowledgedThread["piFreshSessionIntent"]), try claudeGUIJSON(intent))
-        XCTAssertEqual(acknowledgedThread["queuePaused"] as? Bool, true)
-        XCTAssertEqual(try claudeGUIRun(acknowledgedThread, prompt: Self.piUnwrittenPrompt)["status"] as? String, priorStatus)
-        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: "Keep typing after unknown Pi input", timeout: 10))
-        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt, Self.piUnwrittenPrompt])
-        capture(f.app, name: "pi-fresh-unknown-explicit-empty-context-kept-no-replay")
-        try submitClaudeGUI(Self.piNewPrompt, in: f.app)
-        let completed = try completedPiGUI(f, threadID: sourceID, prompt: Self.piNewPrompt)
-        XCTAssertNil(completed["piFreshSessionIntent"]); XCTAssertNil(completed["piFreshConsumerRunID"])
-        let run = try claudeGUIRun(completed, prompt: Self.piNewPrompt), proof = try XCTUnwrap(run["pi"] as? [String: Any])
-        let records = try Data(contentsOf: target).split(separator: 10).map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any]) }
-        XCTAssertEqual(records.count, 3); XCTAssertEqual(records[0]["id"] as? String, (proof["preparation"] as? [String: Any])?["nativeSessionID"] as? String)
-        XCTAssertNotEqual(records[0]["id"] as? String, intent["originalNativeSessionID"] as? String)
-        XCTAssertEqual(((records[1]["message"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String, Self.piNewPrompt)
-        XCTAssertEqual(try piGUIPrompts(f), [Self.piAlphaPrompt, Self.piBetaPrompt, Self.piUnwrittenPrompt, Self.piNewPrompt])
-        XCTAssertEqual(try Data(contentsOf: originalFile), before)
-        try assertPiGUIWorkspaceUnchanged(f)
     }
 
     private static let piAlphaPrompt = "Pi GUI remember ALPHA 工作"
@@ -1930,241 +1190,6 @@ final class CoincideDesktopUITests: XCTestCase {
         }
     }
 
-    @MainActor func testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart() throws {
-        let f = try prepareClaudeHistoryGUI(appearance: "light", name: "claude-history")
-        let sourceID = try seedClaudeHistoryGUI(f)
-        let source = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
-        let nativeID = try XCTUnwrap(source["providerThreadID"] as? String)
-        let sourceURL = try claudeGUITranscript(f, nativeID: nativeID)
-        let originalDraft = "Keep my unsent Claude source draft"
-        replaceClaudeGUIDraft(originalDraft, in: f.app)
-        try openNativeRunHistory(in: f.app)
-        let firstRun = try revealNativeHistoryRun(prompt: Self.claudeAlphaPrompt, in: f.app)
-        var sheet = try openNativeHistoryAction(runID: firstRun, kind: "fork", in: f.app)
-        XCTAssertTrue(sheet.buttons["conversation-history-confirm"].waitForExistence(timeout: 10))
-        // A review drains its owned peer before capturing this exact baseline.
-        let sourceBytes = try Data(contentsOf: sourceURL)
-        let inputCount = try claudeGUIWire(f, method: "user").count
-        sheet.buttons["conversation-history-close"].click()
-        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
-        XCTAssertEqual(try claudeGUIWire(f, method: "user").count, inputCount)
-        sheet = try openNativeHistoryAction(runID: firstRun, kind: "fork", in: f.app)
-        let title = sheet.textFields["conversation-history-title"]
-        XCTAssertTrue(title.waitForExistence(timeout: 10)); title.click(); title.typeKey("a", modifierFlags: .command)
-        title.typeText("Claude native ALPHA fork")
-        let confirm = sheet.buttons["conversation-history-confirm"]
-        try waitForClaudeGUIEnabled(confirm, timeout: 10)
-        capture(f.app, name: "claude-history-native-fork-glass-review")
-        confirm.click()
-        XCTAssertTrue(waitForAbsence(sheet.buttons["conversation-history-close"], timeout: 20))
-        let forkID = try selectedThreadIdentifier(in: f.app)
-        XCTAssertNotEqual(forkID, sourceID)
-        let forkSnapshot = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
-            guard let target = self.findClaudeGUIThread(snapshot, id: forkID) else { return false }
-            return target["claudeInheritedHead"] as? [String: Any] != nil && target["forkedFromHistoryOperationID"] as? String != nil
-        }
-        let target = try claudeGUIThread(forkSnapshot, id: forkID)
-        let operationID = try XCTUnwrap(target["forkedFromHistoryOperationID"] as? String)
-        let operation = try XCTUnwrap((forkSnapshot["conversationHistoryOperations"] as? [[String: Any]])?.first {
-            ($0["review"] as? [String: Any])?["id"] as? String == operationID
-        })
-        XCTAssertEqual(operation["phase"] as? String, "applied")
-        let publication = try XCTUnwrap(operation["claudeForkPublication"] as? [String: Any])
-        let mapping = try XCTUnwrap(publication["sourceToForkMessageIDs"] as? [String: String])
-        let forkNativeID = try XCTUnwrap(target["providerThreadID"] as? String)
-        XCTAssertNotEqual(forkNativeID, nativeID)
-        let originalRecords = try claudeGUIRecords(sourceURL)
-        let copied = try claudeGUIRecords(claudeGUITranscript(f, nativeID: forkNativeID))
-        XCTAssertEqual(copied.count, 2, "Fork after ALPHA copies exactly its actual native root user and assistant.")
-        for (original, copy) in zip(originalRecords.prefix(2), copied) {
-            let originalID = try XCTUnwrap(original["uuid"] as? String)
-            XCTAssertEqual(copy["uuid"] as? String, mapping[originalID])
-            XCTAssertNotEqual(copy["uuid"] as? String, originalID)
-            XCTAssertEqual(copy["sessionId"] as? String, forkNativeID)
-            XCTAssertEqual(try claudeGUIJSON(copy["message"]), try claudeGUIJSON(original["message"]))
-        }
-        XCTAssertEqual((target["claudeInheritedHead"] as? [String: Any])?["cursor"] as? String, copied.last?["uuid"] as? String)
-        XCTAssertTrue(f.app.staticTexts["Claude GUI saved ALPHA"].exists)
-        XCTAssertFalse(f.app.staticTexts["Claude GUI saved BETA"].exists)
-        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
-        XCTAssertEqual(try claudeGUIWire(f, method: "user").count, 2, "Opening a fork must not send a model input.")
-        selectThread(sourceID, in: f.app)
-        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: originalDraft, timeout: 10))
-        let selection = try saveClaudeGUIResume(f, threadID: sourceID)
-        XCTAssertEqual(selection["nativeSessionID"] as? String, nativeID)
-        XCTAssertEqual(selection["kind"] as? String, "resumeAt")
-        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
-        let expectedDraft = originalDraft + "\n\n" + Self.claudeBetaPrompt
-        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: expectedDraft, timeout: 10))
-        let selectionBytes = try claudeGUIJSON(selection)
-        let launches = try claudeGUIWire(f, method: "launch").count
-        capture(f.app, name: "claude-history-deferred-native-context-no-send")
-        f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
-        f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertEqual(try selectedThreadIdentifier(in: f.app), sourceID)
-        XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: expectedDraft, timeout: 10))
-        try assertClaudeGUIPendingBanner(f.app)
-        let reopened = try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: sourceID)
-        XCTAssertEqual(try claudeGUIJSON(reopened["claudeResumeSelection"]), selectionBytes)
-        XCTAssertNil(reopened["claudeResumeConsumerRunID"])
-        XCTAssertEqual(try claudeGUIWire(f, method: "user").count, 2)
-        XCTAssertEqual(try claudeGUIWire(f, method: "launch").count, launches)
-        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
-        selectThread(forkID, in: f.app)
-        XCTAssertTrue(f.app.staticTexts["Claude GUI saved ALPHA"].waitForExistence(timeout: 5))
-        XCTAssertFalse(f.app.staticTexts["Claude GUI saved BETA"].exists)
-        XCTAssertNil(try claudeGUIThread(privateWorkspaceSnapshot(f.root), id: forkID)["claudeResumeSelection"])
-        try assertClaudeGUIWorkspaceUnchanged(f)
-    }
-
-    @MainActor func testNativeClaudeSelectedContextIsConsumedOnceBeforeQueuedSuccessor() throws {
-        let f = try prepareClaudeHistoryGUI(appearance: "dark", name: "claude-selected-fifo")
-        let sourceID = try seedClaudeHistoryGUI(f)
-        let selection = try saveClaudeGUIResume(f, threadID: sourceID)
-        let selectionID = try XCTUnwrap(selection["id"] as? String), cursor = try XCTUnwrap(selection["cursor"] as? String)
-        try submitClaudeGUI(Self.claudeProbePrompt, in: f.app)
-        let held = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
-            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID),
-                  let active = thread["activeRun"] as? [String: Any],
-                  let config = active["configuration"] as? [String: Any] else { return false }
-            return (config["claudeLaunchSelection"] as? [String: Any])?["id"] as? String == selectionID &&
-                thread["claudeResumeConsumerRunID"] as? String == active["id"] as? String
-        }
-        let heldThread = try claudeGUIThread(held, id: sourceID)
-        let firstRunID = try XCTUnwrap((heldThread["activeRun"] as? [String: Any])?["id"] as? String)
-        XCTAssertTrue(f.app.staticTexts["Claude GUI probe context ALPHA"].waitForExistence(timeout: 20))
-        XCTAssertFalse(f.app.staticTexts["Claude GUI probe context ALPHA BETA"].exists)
-        XCTAssertTrue(f.app.staticTexts["This Claude turn is using the saved context. Its selection remains recorded until the matching turn is confirmed."].exists)
-        replaceClaudeGUIDraft(Self.claudeQueuedPrompt, in: f.app)
-        let delivery = f.app.descendants(matching: .any).matching(identifier: "composer-delivery").firstMatch
-        XCTAssertTrue(delivery.waitForExistence(timeout: 5)); XCTAssertTrue(delivery.isHittable); delivery.click()
-        let queue = f.app.menuItems["Queue Message"]
-        XCTAssertTrue(queue.waitForExistence(timeout: 5)); XCTAssertTrue(queue.isEnabled && queue.isHittable); queue.click()
-        let queued = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
-            guard let thread = self.findClaudeGUIThread(snapshot, id: sourceID),
-                  let rows = thread["queuedTurns"] as? [[String: Any]], rows.count == 1 else { return false }
-            return rows[0]["text"] as? String == Self.claudeQueuedPrompt
-        }
-        let queuedThread = try claudeGUIThread(queued, id: sourceID)
-        let accepted = try XCTUnwrap((queuedThread["queuedTurns"] as? [[String: Any]])?.first)
-        let queuedConfiguration = try XCTUnwrap(accepted["configuration"] as? [String: Any])
-        XCTAssertNil(queuedConfiguration["claudeLaunchSelection"])
-        XCTAssertEqual(queuedConfiguration["provider"] as? String, "claude")
-        XCTAssertEqual(queuedConfiguration["permission"] as? String, "supervised")
-        XCTAssertEqual(queuedConfiguration["workspacePath"] as? String, f.project.path)
-        XCTAssertEqual(accepted["checkpointPolicy"] as? String, "disabled")
-        XCTAssertEqual((queuedThread["activeRun"] as? [String: Any])?["id"] as? String, firstRunID)
-        XCTAssertTrue(f.app.staticTexts["1 queued"].exists)
-        XCTAssertEqual(try claudeGUIWire(f, method: "user").filter { $0["action"] as? String == "queued" }.count, 0)
-        let probe = try XCTUnwrap(claudeGUIWire(f, method: "user").first { $0["action"] as? String == "probe" })
-        XCTAssertEqual(probe["parentID"] as? String, cursor)
-        XCTAssertEqual(probe["inputID"] as? String, firstRunID.lowercased())
-        XCTAssertEqual(probe["contextAlpha"] as? Bool, true); XCTAssertEqual(probe["contextBeta"] as? Bool, false)
-        let selectedLaunches = try claudeGUIWire(f, method: "launch").filter { $0["selection"] as? String == "resumeAt" }
-        XCTAssertEqual(selectedLaunches.count, 1); XCTAssertEqual(selectedLaunches.first?["cursor"] as? String, cursor)
-        capture(f.app, name: "claude-selected-fifo-held-exact-native-terminal")
-        let releaseTemporary = f.root.appendingPathComponent("selected-release-" + UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: releaseTemporary) }
-        try Data("release\n".utf8).write(to: releaseTemporary, options: .withoutOverwriting)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: releaseTemporary.path)
-        try FileManager.default.moveItem(at: releaseTemporary, to: f.root.appendingPathComponent("release-selected"))
-        let finished = try completedClaudeGUI(f, threadID: sourceID, prompt: Self.claudeQueuedPrompt)
-        XCTAssertNil(finished["claudeResumeSelection"]); XCTAssertNil(finished["claudeResumeConsumerRunID"])
-        XCTAssertTrue((finished["queuedTurns"] as? [[String: Any]])?.isEmpty == true)
-        let first = try claudeGUIRun(finished, prompt: Self.claudeProbePrompt)
-        XCTAssertEqual(first["status"] as? String, "completed")
-        XCTAssertEqual((first["claude"] as? [String: Any])?["terminalStatus"] as? String, "completed")
-        XCTAssertEqual(try claudeGUIJSON((first["configuration"] as? [String: Any])?["claudeLaunchSelection"]), try claudeGUIJSON(selection))
-        let second = try claudeGUIRun(finished, prompt: Self.claudeQueuedPrompt)
-        XCTAssertNil((second["configuration"] as? [String: Any])?["claudeLaunchSelection"])
-        let consumedQueueConfiguration = try XCTUnwrap(second["configuration"] as? [String: Any])
-        XCTAssertEqual(try claudeGUIJSON(consumedQueueConfiguration["claudeRuntimeConfiguration"]),
-                       try claudeGUIJSON(queuedConfiguration["claudeRuntimeConfiguration"]))
-        for key in ["model", "permission", "workspacePath"] {
-            XCTAssertEqual(try claudeGUIJSON(consumedQueueConfiguration[key]), try claudeGUIJSON(queuedConfiguration[key]))
-        }
-        let frames = try historyWire(f.wire), users = frames.filter { $0["method"] as? String == "user" }
-        XCTAssertEqual(users.count, 4)
-        XCTAssertEqual(users.map { $0["action"] as? String }, ["alpha", "beta", "probe", "queued"])
-        let terminalIndex = try XCTUnwrap(frames.firstIndex { $0["method"] as? String == "result" && $0["inputID"] as? String == firstRunID.lowercased() })
-        let queuedIndex = try XCTUnwrap(frames.firstIndex { $0["method"] as? String == "user" && $0["action"] as? String == "queued" })
-        XCTAssertLessThan(terminalIndex, queuedIndex)
-        let secondUser = try XCTUnwrap(users.last)
-        let secondLaunch = try XCTUnwrap(frames.first { $0["method"] as? String == "launch" && $0["launchID"] as? String == secondUser["launchID"] as? String })
-        XCTAssertEqual(secondLaunch["selection"] as? String, "resume"); XCTAssertNil(secondLaunch["cursor"] as? String)
-        let firstAssistant = try XCTUnwrap((first["claude"] as? [String: Any])?["rootAssistantMessageIDs"] as? [String]).last
-        XCTAssertEqual(secondUser["parentID"] as? String, firstAssistant)
-        XCTAssertEqual(try claudeGUIWire(f, method: "launch").filter { $0["selection"] as? String == "resumeAt" }.count, 1)
-        XCTAssertTrue(f.app.staticTexts["Claude GUI queued context ALPHA"].waitForExistence(timeout: 10))
-        try assertClaudeGUIWorkspaceUnchanged(f)
-    }
-
-    @MainActor func testNativeClaudeContextInspectionIsReadOnlyAndNeverReplaysConsumedOrUnwrittenInput() throws {
-        let f = try prepareClaudeHistoryGUI(appearance: "light", name: "claude-context-inspection")
-        for consumed in [true, false] {
-            let threadID = try seedClaudeHistoryGUI(f, newThread: !consumed)
-            let selection = try saveClaudeGUIResume(f, threadID: threadID)
-            let prompt = consumed ? Self.claudeConsumedPrompt : Self.claudeUnwrittenPrompt
-            try submitClaudeGUI(prompt, in: f.app)
-            let failed = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
-                guard let thread = self.findClaudeGUIThread(snapshot, id: threadID), thread["activeRun"] == nil,
-                      let run = self.findClaudeGUIRun(thread, prompt: prompt) else { return false }
-                return run["status"] as? String == "failed" && thread["claudeResumeConsumerRunID"] as? String == run["id"] as? String
-            }
-            let failedThread = try claudeGUIThread(failed, id: threadID)
-            XCTAssertEqual(try claudeGUIJSON(failedThread["claudeResumeSelection"]), try claudeGUIJSON(selection))
-            let nativeID = try XCTUnwrap(failedThread["providerThreadID"] as? String)
-            let transcript = try claudeGUITranscript(f, nativeID: nativeID), bytes = try Data(contentsOf: transcript)
-            let records = try claudeGUIRecords(transcript), run = try claudeGUIRun(failedThread, prompt: prompt)
-            let opening = try XCTUnwrap((run["claude"] as? [String: Any])?["openingInputID"] as? String)
-            XCTAssertEqual(records.contains { $0["type"] as? String == "user" && $0["uuid"] as? String == opening }, consumed)
-            if consumed {
-                // A fresh app must reconstruct the same persisted consumer hold.
-                f.app.typeKey("q", modifierFlags: .command); XCTAssertTrue(f.app.wait(for: .notRunning, timeout: 15))
-                f.app.launch(); XCTAssertTrue(f.app.wait(for: .runningForeground, timeout: 15))
-            }
-            let inspect = f.app.buttons["conversation-history-inspect-claude-context"]
-            XCTAssertTrue(inspect.waitForExistence(timeout: 10)); XCTAssertTrue(inspect.isEnabled && inspect.isHittable)
-            XCTAssertTrue(f.app.staticTexts["Claude’s use of the selected context could not be confirmed. Inspect it before starting another turn. No input will be replayed."].exists)
-            let inputs = try claudeGUIWire(f, method: "user").count, launches = try claudeGUIWire(f, method: "launch").count
-            let unsent = "Keep this nonempty draft until read-only Claude inspection"
-            replaceClaudeGUIDraft(unsent, in: f.app)
-            XCTAssertFalse(f.app.buttons["composer-send"].isEnabled, "A nonempty explicit draft remains held until the exact consumer is inspected.")
-            capture(f.app, name: consumed ? "claude-context-consumed-inspection-hold" : "claude-context-unwritten-inspection-hold")
-            inspect.click()
-            let inspected = try waitForPrivateWorkspace(f.root, timeout: 20) { snapshot in
-                guard let thread = self.findClaudeGUIThread(snapshot, id: threadID) else { return false }
-                return thread["claudeResumeConsumerRunID"] == nil &&
-                    (consumed ? thread["claudeResumeSelection"] == nil : thread["claudeResumeSelection"] as? [String: Any] != nil)
-            }
-            XCTAssertTrue(waitForAbsence(inspect, timeout: 10))
-            let current = try claudeGUIThread(inspected, id: threadID)
-            XCTAssertEqual(try Data(contentsOf: transcript), bytes)
-            XCTAssertEqual(try claudeGUIWire(f, method: "user").count, inputs)
-            XCTAssertEqual(try claudeGUIWire(f, method: "launch").count, launches, "Inspect reads native files and must not construct another provider.")
-            XCTAssertEqual((current["runHistory"] as? [[String: Any]])?.count, 3)
-            XCTAssertTrue(waitForValue(f.app.textViews["composer-input"], value: unsent, timeout: 5))
-            if consumed {
-                XCTAssertNil(current["claudeResumeSelection"])
-            } else {
-                XCTAssertEqual(try claudeGUIJSON(current["claudeResumeSelection"]), try claudeGUIJSON(selection))
-                try assertClaudeGUIPendingBanner(f.app)
-                try submitClaudeGUI(Self.claudeRetryPrompt, in: f.app)
-                let retried = try completedClaudeGUI(f, threadID: threadID, prompt: Self.claudeRetryPrompt)
-                XCTAssertNil(retried["claudeResumeSelection"]); XCTAssertNil(retried["claudeResumeConsumerRunID"])
-                let retry = try XCTUnwrap(claudeGUIWire(f, method: "user").last)
-                XCTAssertEqual(retry["action"] as? String, "retry")
-                XCTAssertNotEqual(retry["inputID"] as? String, opening)
-                XCTAssertEqual(retry["parentID"] as? String, selection["cursor"] as? String)
-                XCTAssertEqual(try claudeGUIWire(f, method: "user").count, inputs + 1)
-                XCTAssertEqual(try claudeGUIRecords(transcript).filter { $0["uuid"] as? String == opening }.count, 0)
-            }
-        }
-        XCTAssertEqual(try claudeGUIWire(f, method: "user").filter { $0["action"] as? String == "consumed" }.count, 1)
-        XCTAssertEqual(try claudeGUIWire(f, method: "user").filter { $0["action"] as? String == "unwritten" }.count, 1)
-        try assertClaudeGUIWorkspaceUnchanged(f)
-    }
-
     private static let claudeAlphaPrompt = "Remember the native marker ALPHA."
     private static let claudeBetaPrompt = "Remember the native marker BETA."
     private static let claudeProbePrompt = "Probe the selected native context."
@@ -2189,17 +1214,13 @@ final class CoincideDesktopUITests: XCTestCase {
         let app = f.app
         let provider = app.descendants(matching: .any).matching(identifier: "provider-model-menu").firstMatch
         XCTAssertTrue(provider.waitForExistence(timeout: 10)); provider.click()
-        let claude = app.menuItems["Claude"]
+        let claude = app.buttons["provider-model-claude:claude-ui-model"]
         XCTAssertTrue(claude.waitForExistence(timeout: 5) && claude.isEnabled); claude.click()
         let threadID = try selectedThreadIdentifier(in: app)
         _ = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
             guard let thread = self.findClaudeGUIThread(snapshot, id: threadID) else { return false }
             return thread["provider"] as? String == "claude" && thread["claudeRuntimeConfiguration"] != nil
         }
-        app.descendants(matching: .any).matching(identifier: "conversation-workspace").firstMatch.click()
-        let checkpoints = app.menuItems["conversation-run-checkpoints"]
-        XCTAssertTrue(checkpoints.waitForExistence(timeout: 5) && checkpoints.isEnabled); checkpoints.click()
-        _ = try waitForPrivateWorkspace(f.root, timeout: 10) { self.findClaudeGUIThread($0, id: threadID)?["checkpointPolicy"] as? String == "disabled" }
         for label in ["single", "multi", "cancel"] {
             let prompt = "Exercise native Claude question " + label
             try submitClaudeGUI(prompt, in: app)
@@ -2349,7 +1370,7 @@ final class CoincideDesktopUITests: XCTestCase {
         }
         let provider = app.descendants(matching: .any).matching(identifier: "provider-model-menu").firstMatch
         XCTAssertTrue(provider.waitForExistence(timeout: 10)); provider.click()
-        let claude = app.menuItems["Claude"]
+        let claude = app.buttons["provider-model-claude:claude-ui-model"]
         XCTAssertTrue(claude.waitForExistence(timeout: 5)); XCTAssertTrue(claude.isEnabled); claude.click()
         let threadID = try selectedThreadIdentifier(in: app)
         _ = try waitForPrivateWorkspace(f.root, timeout: 10) { snapshot in
@@ -2476,336 +1497,6 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(files, ["projects"], "Synthetic history must not create or read auth/settings files.")
     }
 
-    @MainActor func testNativeRunHistoryForkRewindAndRecallPreserveSourceDraftAndFiles() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "history")
-        let app = fixture.app, root = fixture.root
-        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
-        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
-        let project = root.appendingPathComponent("Native History", isDirectory: true)
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
-        let readme = project.appendingPathComponent("README.md"), bytes = Data("Synthetic native conversation history fixture\n".utf8)
-        try bytes.write(to: readme)
-        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Native history fixture"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "history-git-\(arguments[0])")
-        }
-        let originalHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "history-original-head")
-        let headURL = project.appendingPathComponent(".git/HEAD"), headBytes = try Data(contentsOf: headURL)
-        let state = root.appendingPathComponent("history-peer.json"), wire = root.appendingPathComponent("history-peer-wire.jsonl")
-        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "threads": [:], "nextTurn": 0]).write(to: state)
-        let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_history_ui", withExtension: "py"))
-        let peer = bundledPeer
-        let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
-        for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
-        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
-        app.launchEnvironment["CODEX_HOME"] = home.path
-        addTeardownBlock { @MainActor [weak self] in
-            if let data = try? Data(contentsOf: wire), let text = String(data: data, encoding: .utf8) {
-                let receipt = XCTAttachment(string: text); receipt.name = "history-offline-provider-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
-            }
-        }
-        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: "history")
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        try openProject(project, in: app)
-        app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let sourceIdentifier = try selectedThreadIdentifier(in: app)
-        let prompts = (1...3).map { "Offline history prompt \($0)" }
-        for (index, prompt) in prompts.enumerated() {
-            XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
-            composer.click(); composer.typeText(prompt)
-            XCTAssertTrue(waitForValue(composer, value: prompt, timeout: 5))
-            app.typeKey(.return, modifierFlags: .command)
-            XCTAssertTrue(app.staticTexts["Offline history reply \(index + 1)"].waitForExistence(timeout: 20))
-        }
-        let originalDraft = "Keep this source draft during a native fork"
-        composer.click(); composer.typeText(originalDraft)
-        try openNativeRunHistory(in: app)
-        let thirdRun = try revealNativeHistoryRun(prompt: prompts[2], in: app)
-        let secondRun = try revealNativeHistoryRun(prompt: prompts[1], in: app)
-        let firstRun = try revealNativeHistoryRun(prompt: prompts[0], in: app)
-        XCTAssertEqual(Set([firstRun, secondRun, thirdRun]).count, 3)
-        capture(app, name: "history-three-completed-owned-runs")
-        try nativeHistoryDone(in: app).click()
-        try openNativeRunHistory(in: app)
-        _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
-        var reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "fork", in: app)
-        var confirm = reviewOwner.buttons["conversation-history-confirm"], close = reviewOwner.buttons["conversation-history-close"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Workspace files and staging stay as they are."].exists)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompts[1], prompts[1])).firstMatch.exists)
-        XCTAssertTrue(close.isEnabled && close.isHittable)
-        close.click() // Cancel performs only reads.
-        XCTAssertEqual(try historyWire(wire).filter { $0["method"] as? String == "thread/fork" }.count, 0)
-        reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "fork", in: app)
-        confirm = reviewOwner.buttons["conversation-history-confirm"]; close = reviewOwner.buttons["conversation-history-close"]
-        let title = reviewOwner.textFields["conversation-history-title"]
-        XCTAssertTrue(title.waitForExistence(timeout: 10)); title.click(); title.typeKey("a", modifierFlags: .command); title.typeText("GUI reviewed fork")
-        XCTAssertTrue(confirm.isEnabled && confirm.isHittable)
-        let forkReview = XCTAttachment(screenshot: app.windows.firstMatch.screenshot()); forkReview.name = "history-native-fork-review"; forkReview.lifetime = .keepAlways; add(forkReview)
-        let sourceHistoryDone = try nativeHistoryDone(in: app)
-        confirm.click()
-        XCTAssertTrue(waitForAbsence(sourceHistoryDone, timeout: 20), "An applied fork navigates to its new target and closes the source history.")
-        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
-        let targetIdentifier = try selectedThreadIdentifier(in: app)
-        XCTAssertNotEqual(sourceIdentifier, targetIdentifier)
-        XCTAssertTrue(app.staticTexts["Offline history reply 2"].exists)
-        XCTAssertFalse(app.staticTexts["Offline history reply 3"].exists)
-        assertConversationWorkspace(app, path: project.path)
-        capture(app, name: "history-fork-target-keeps-reviewed-prefix")
-        selectThread(sourceIdentifier, in: app)
-        XCTAssertTrue(waitForValue(composer, value: originalDraft, timeout: 10))
-        XCTAssertTrue(app.staticTexts["Offline history reply 3"].waitForExistence(timeout: 5))
-        try openNativeRunHistory(in: app)
-        _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
-        reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "rewind", in: app)
-        confirm = reviewOwner.buttons["conversation-history-confirm"]; close = reviewOwner.buttons["conversation-history-close"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-        XCTAssertEqual(confirm.label, "Revert and Keep Changes")
-        XCTAssertTrue(reviewOwner.buttons["conversation-history-revert-files"].exists)
-        XCTAssertTrue(close.isEnabled); close.click()
-        XCTAssertEqual(try historyWire(wire).filter { $0["method"] as? String == "thread/revert" }.count, 0)
-        try nativeHistoryDone(in: app).click()
-        let newerDraft = "Newer source draft before explicit rewind"
-        composer.click(); composer.typeKey("a", modifierFlags: .command); composer.typeText(newerDraft)
-        try openNativeRunHistory(in: app)
-        _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
-        reviewOwner = try openNativeHistoryAction(runID: secondRun, kind: "rewind", in: app)
-        confirm = reviewOwner.buttons["conversation-history-confirm"]; close = reviewOwner.buttons["conversation-history-close"]
-        let reviewed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: confirm)
-        XCTAssertEqual(XCTWaiter.wait(for: [reviewed], timeout: 10), .completed)
-        XCTAssertTrue(confirm.isHittable)
-        capture(app, name: "history-native-rewind-review-keeps-files-and-draft")
-        confirm.click()
-        let rewound = app.staticTexts.matching(identifier: "conversation-history-operation-status")
-            .matching(NSPredicate(format: "label == %@ OR value == %@", "Conversation rewound", "Conversation rewound")).firstMatch
-        XCTAssertTrue(rewound.waitForExistence(timeout: 20))
-        XCTAssertTrue(close.isEnabled && close.isHittable); close.click()
-        for (run, prompt) in [(thirdRun, prompts[2]), (secondRun, prompts[1]), (firstRun, prompts[0])] {
-            _ = try revealNativeHistoryRun(prompt: prompt, in: app)
-            let removed = app.staticTexts["run-history-removed-\(run)"]
-            XCTAssertEqual(removed.exists, run != firstRun)
-            if run != firstRun { XCTAssertFalse(app.menuButtons["run-history-actions-\(run)"].isEnabled) }
-        }
-        capture(app, name: "history-rewind-retains-removed-run-audit")
-        try nativeHistoryDone(in: app).click()
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), sourceIdentifier)
-        let recalledDraft = newerDraft + "\n\n" + prompts[1]
-        XCTAssertTrue(waitForValue(composer, value: recalledDraft, timeout: 10), "A confirmed keep-files rewind automatically appends the original input to the latest draft.")
-        XCTAssertTrue(app.staticTexts["Offline history reply 1"].exists)
-        XCTAssertFalse(app.staticTexts["Offline history reply 2"].exists)
-        XCTAssertFalse(app.staticTexts["Offline history reply 3"].exists)
-        let recall = app.buttons["conversation-history-recall"]
-        XCTAssertTrue(waitForAbsence(recall, timeout: 5))
-        capture(app, name: "history-automatic-recall-appends-to-latest-composer")
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15)); app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(waitForValue(composer, value: recalledDraft, timeout: 10))
-        XCTAssertTrue(waitForAbsence(recall, timeout: 5), "A consumed recall cannot append again after relaunch.")
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), sourceIdentifier)
-        XCTAssertTrue(app.staticTexts["Offline history reply 1"].exists)
-        XCTAssertFalse(app.staticTexts["Offline history reply 2"].exists)
-        selectThread(targetIdentifier, in: app)
-        XCTAssertTrue(waitForValue(composer, value: "", timeout: 5))
-        XCTAssertTrue(app.staticTexts["Offline history reply 2"].exists)
-        XCTAssertFalse(app.staticTexts["Offline history reply 3"].exists)
-        selectThread(sourceIdentifier, in: app)
-        try openNativeRunHistory(in: app)
-        _ = try revealNativeHistoryRun(prompt: prompts[1], in: app)
-        XCTAssertTrue(app.staticTexts["run-history-removed-\(secondRun)"].exists)
-        try nativeHistoryDone(in: app).click()
-        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Collapse Native History"], selectedConversation: threadRow(sourceIdentifier, in: app))
-        capture(app, name: "history-reopen-preserves-fork-source-audit-and-draft")
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        let frames = try historyWire(wire)
-        XCTAssertEqual(frames.filter { $0["method"] as? String == "turn/start" }.count, 3)
-        let forks = frames.filter { $0["method"] as? String == "thread/fork" }, rewinds = frames.filter { $0["method"] as? String == "thread/revert" }
-        XCTAssertEqual(forks.count, 1); XCTAssertEqual(rewinds.count, 1)
-        XCTAssertEqual((forks.first?["params"] as? [String: Any])?["lastTurnId"] as? String, "ui-turn-2")
-        XCTAssertEqual((rewinds.first?["params"] as? [String: Any])?["beforeTurnId"] as? String, "ui-turn-2")
-        XCTAssertEqual(try Data(contentsOf: readme), bytes)
-        XCTAssertEqual(try Data(contentsOf: headURL), headBytes)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "history-preserved-final-head"), originalHead)
-    }
-
-    @MainActor func testNativeCheckpointRestoreReviewsRealGitLossAndPreservesConversationAndSource() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "restore")
-        let app = fixture.app, root = fixture.root
-        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
-        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
-        let project = root.appendingPathComponent("Native Restore", isDirectory: true)
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
-        let before = "Before synthetic provider run\n", after = "After synthetic provider run\n"
-        let sourceReadme = project.appendingPathComponent("README.md")
-        try before.write(to: sourceReadme, atomically: true, encoding: .utf8)
-        try "keep-ignored.txt\n".write(to: project.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
-        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md", ".gitignore"], ["commit", "--message", "Real checkpoint restoration fixture"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-fixture-\(arguments[0])")
-        }
-        let originalHead = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "restore-source-head")
-        let sourceHeadFile = project.appendingPathComponent(".git/HEAD"), sourceHeadBytes = try Data(contentsOf: sourceHeadFile)
-        let state = root.appendingPathComponent("history-peer.json"), wire = root.appendingPathComponent("history-peer-wire.jsonl")
-        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "threads": [:], "nextTurn": 0, "restoreFixture": true]).write(to: state)
-        let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "codex_history_ui", withExtension: "py"))
-        let peer = bundledPeer
-        let bin = root.appendingPathComponent("private-bin", isDirectory: true), home = root.appendingPathComponent("private-codex-home", isDirectory: true)
-        for directory in [bin, home] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        let executable = try installOfflineCLI(tool: "codex", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
-        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
-        app.launchEnvironment["CODEX_HOME"] = home.path
-        addTeardownBlock { @MainActor [weak self] in
-            if let data = try? Data(contentsOf: wire), let text = String(data: data, encoding: .utf8) {
-                let receipt = XCTAttachment(string: text); receipt.name = "restore-offline-provider-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
-            }
-        }
-        try preflightOfflineHistoryProvider(executable, cwd: project, environment: app.launchEnvironment, name: "restore")
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        try openProject(project, in: app)
-        app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let preparingDraft = "Keep this draft while selecting an isolated restore worktree"
-        composer.click(); composer.typeText(preparingDraft)
-        let identifier = try selectedThreadIdentifier(in: app)
-        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
-        workspace.click(); app.menuItems["Choose Worktree…"].click()
-        let preparation = app.sheets.containing(.textField, identifier: "worktree-new-branch").element
-        XCTAssertTrue(preparation.waitForExistence(timeout: 5))
-        let branch = preparation.textFields["worktree-new-branch"], base = preparation.textFields["worktree-base-ref"]
-        branch.click(); branch.typeText("ui-checkpoint-restore")
-        base.click(); base.typeKey("a", modifierFlags: .command); base.typeText("main")
-        let submodules = preparation.descendants(matching: .any).matching(identifier: "worktree-submodules").element
-        XCTAssertEqual(submodules.value as? String, "None")
-        let prepare = preparation.buttons["Prepare Worktree"]
-        let preparingReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: prepare)
-        XCTAssertEqual(XCTWaiter.wait(for: [preparingReady], timeout: 10), .completed); prepare.click()
-        XCTAssertTrue(waitForAbsence(preparation, timeout: 5))
-        let managedRoot = root.appendingPathComponent("Worktrees", isDirectory: true)
-        let prepared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value BEGINSWITH %@", managedRoot.path + "/"), object: workspace)
-        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 20), .completed)
-        let checkout = URL(fileURLWithPath: try XCTUnwrap(workspace.value as? String))
-        XCTAssertEqual(checkout.deletingLastPathComponent().path, managedRoot.path)
-        assertWorkspaceReady(in: app)
-        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
-        XCTAssertEqual(composer.value as? String, preparingDraft)
-        // Stop all metadata peers before updating their private fixture cwd.
-        // Relaunch must use the persisted actual worktree before the first turn.
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        var stateValue = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: state)) as? [String: Any])
-        XCTAssertEqual(stateValue["nextTurn"] as? Int, 0)
-        stateValue["cwd"] = checkout.path
-        try JSONSerialization.data(withJSONObject: stateValue).write(to: state, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: state.path)
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(waitForValue(composer, value: preparingDraft, timeout: 10))
-        assertConversationWorkspace(app, path: checkout.path); assertWorkspaceReady(in: app)
-        let prompt = "Make the synthetic local checkpoint change"
-        composer.click(); composer.typeKey("a", modifierFlags: .command); composer.typeText(prompt)
-        XCTAssertTrue(waitForValue(composer, value: prompt, timeout: 5))
-        app.typeKey(.return, modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["Offline history reply 1"].waitForExistence(timeout: 20))
-        let readme = checkout.appendingPathComponent("README.md")
-        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), after)
-        try openNativeRunHistory(in: app)
-        let runID = try revealNativeHistoryRun(prompt: prompt, in: app)
-        XCTAssertTrue(app.buttons["run-history-changes-\(runID)"].waitForExistence(timeout: 20), "Production Git must save both real checkpoint receipts before restoration.")
-        try nativeHistoryDone(in: app).click()
-        let staged = "User staged edits after the run\n", working = "User working edits after staging\n"
-        try staged.write(to: readme, atomically: true, encoding: .utf8)
-        _ = try runGit(["-C", checkout.path, "add", "README.md"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-user-staging")
-        try working.write(to: readme, atomically: true, encoding: .utf8)
-        let newFile = checkout.appendingPathComponent("new-untracked.txt"), newBytes = Data("User file created after checkpoint\n".utf8)
-        let ignored = checkout.appendingPathComponent("keep-ignored.txt"), ignoredBytes = Data("Keep this ignored user file\n".utf8)
-        try newBytes.write(to: newFile); try ignoredBytes.write(to: ignored)
-        let stagedBefore = try runGit(["-C", checkout.path, "diff", "--cached", "--binary", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-before-staged-diff")
-        let workingBefore = try runGit(["-C", checkout.path, "diff", "--binary", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-before-working-diff")
-        XCTAssertTrue(stagedBefore.contains(staged.trimmingCharacters(in: .newlines)))
-        XCTAssertTrue(workingBefore.contains(working.trimmingCharacters(in: .newlines)))
-        let currentDraft = "Keep this latest unsent draft while replacing files"
-        composer.click(); composer.typeText(currentDraft)
-        try openNativeRunHistory(in: app)
-        var restoreTarget = try revealBaselineRestoreTarget(in: app)
-        let targetID = restoreTarget.identifier
-        XCTAssertTrue(targetID.hasPrefix("run-history-restore-"))
-        XCTAssertNotNil(UUID(uuidString: String(targetID.dropFirst("run-history-restore-".count))))
-        restoreTarget.click()
-        var review = try nativeRestoreReview(in: app)
-        let warning = review.staticTexts["checkpoint-restore-loss-warning"]
-        let warningText = warning.value as? String ?? warning.label
-        XCTAssertTrue(warningText.contains("Working edits and staging will be lost"))
-        XCTAssertTrue(warningText.contains("New files that are not ignored may be deleted"))
-        let reviewedWorkspace = review.staticTexts["checkpoint-restore-workspace"]
-        XCTAssertEqual(reviewedWorkspace.value as? String ?? reviewedWorkspace.label, checkout.path)
-        let display = CGDisplayBounds(CGMainDisplayID())
-        XCTAssertTrue(display.contains(review.frame), "The native destructive review must fit the hosted screen.")
-        for control in [review.buttons["checkpoint-restore-confirm"], review.buttons["checkpoint-restore-close"]] {
-            XCTAssertTrue(control.isHittable && review.frame.contains(control.frame) && display.contains(control.frame))
-        }
-        capture(app, name: "restore-reviewed-real-files-and-staging-loss")
-        review.buttons["checkpoint-restore-close"].click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), working)
-        XCTAssertEqual(try Data(contentsOf: newFile), newBytes); XCTAssertEqual(try Data(contentsOf: ignored), ignoredBytes)
-        XCTAssertEqual(try runGit(["-C", checkout.path, "diff", "--cached", "--binary", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-cancel-staged-diff"), stagedBefore)
-        XCTAssertEqual(try runGit(["-C", checkout.path, "diff", "--binary", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-cancel-working-diff"), workingBefore)
-        try nativeHistoryDone(in: app).click()
-        XCTAssertTrue(waitForValue(composer, value: currentDraft, timeout: 5))
-        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
-        try openNativeRunHistory(in: app)
-        restoreTarget = try revealBaselineRestoreTarget(in: app)
-        XCTAssertEqual(restoreTarget.identifier, targetID); restoreTarget.click()
-        review = try nativeRestoreReview(in: app)
-        review.buttons["checkpoint-restore-confirm"].click()
-        let status = review.staticTexts["checkpoint-restore-status"]
-        let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Workspace files restored", "Workspace files restored"), object: status)
-        XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 30), .completed)
-        capture(app, name: "restore-real-git-applied-with-preserved-conversation")
-        review.buttons["checkpoint-restore-close"].click()
-        XCTAssertTrue(waitForAbsence(review, timeout: 5))
-        try nativeHistoryDone(in: app).click()
-        XCTAssertTrue(waitForValue(composer, value: currentDraft, timeout: 10))
-        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
-        assertRestoreConversation(prompt: prompt, in: app)
-        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), before)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: newFile.path))
-        XCTAssertEqual(try Data(contentsOf: ignored), ignoredBytes)
-        XCTAssertEqual(try runGit(["-C", checkout.path, "diff", "--cached", "--no-ext-diff"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-cleared-staging"), "")
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: checkout, configuration: fixture.configuration, name: "restore-unchanged-checkout-head"), originalHead)
-        XCTAssertEqual(try runGit(["-C", checkout.path, "symbolic-ref", "--short", "HEAD"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "restore-unchanged-branch").trimmingCharacters(in: .whitespacesAndNewlines), "ui-checkpoint-restore")
-        XCTAssertEqual(try String(contentsOf: sourceReadme, encoding: .utf8), before)
-        XCTAssertEqual(try Data(contentsOf: sourceHeadFile), sourceHeadBytes)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "restore-unchanged-source-head"), originalHead)
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(waitForValue(composer, value: currentDraft, timeout: 10))
-        assertConversationWorkspace(app, path: checkout.path); assertWorkspaceReady(in: app)
-        XCTAssertTrue(threadRow(identifier, in: app).isSelected)
-        assertRestoreConversation(prompt: prompt, in: app)
-        try openNativeRunHistory(in: app)
-        let historyOwner = try nativeHistorySheet(owning: "run-history-done", in: app)
-        let audit = historyOwner.descendants(matching: .any).matching(NSPredicate(
-            format: "(elementType == %d OR elementType == %d) AND label == %@",
-            XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.disclosureTriangle.rawValue, "File restorations")).firstMatch
-        XCTAssertTrue(audit.waitForExistence(timeout: 10)); expandScriptOutputDisclosure(audit)
-        XCTAssertTrue(historyOwner.staticTexts["Workspace files restored"].waitForExistence(timeout: 5))
-        capture(app, name: "restore-reopened-draft-conversation-and-file-audit")
-        try nativeHistoryDone(in: app).click()
-        let frames = try historyWire(wire)
-        XCTAssertEqual(frames.filter { $0["method"] as? String == "turn/start" }.count, 1)
-        XCTAssertEqual(frames.filter { ["thread/fork", "thread/revert"].contains($0["method"] as? String ?? "") }.count, 0)
-        XCTAssertEqual(try String(contentsOf: readme, encoding: .utf8), before)
-        XCTAssertEqual(try Data(contentsOf: ignored), ignoredBytes)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: newFile.path))
-        XCTAssertEqual(try Data(contentsOf: sourceHeadFile), sourceHeadBytes)
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
     @MainActor private func revealBaselineRestoreTarget(in app: XCUIApplication) throws -> XCUIElement {
         let scroll = app.scrollViews["run-history-records"]
         XCTAssertTrue(scroll.exists); scroll.scroll(byDeltaX: 0, deltaY: 10_000)
@@ -2838,289 +1529,6 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(transcript.waitForExistence(timeout: 5))
         XCTAssertTrue(transcript.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch.exists)
         XCTAssertTrue(transcript.staticTexts["Offline history reply 1"].exists)
-    }
-
-    @MainActor func testNativePullRequestReviewLostReplyAndReadOnlyInspectionPreserveDraftAndPublishedGit() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "pull-request")
-        let app = fixture.app, root = fixture.root
-        let project = root.appendingPathComponent("Native Pull Requests", isDirectory: true)
-        let bare = root.appendingPathComponent("Published fixture.git", isDirectory: true)
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
-        let readme = project.appendingPathComponent("README.md")
-        try "Main branch contents\n".write(to: readme, atomically: true, encoding: .utf8)
-        _ = try runGit(["init", "--bare", "--initial-branch", "main", bare.path], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-private-bare")
-        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Private PR base"],
-                          ["remote", "add", "origin", bare.path], ["push", "--set-upstream", "origin", "main"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-base-\(arguments[0])")
-        }
-        let base = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-base-head")
-        _ = try runGit(["-C", project.path, "checkout", "-b", "topic"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-topic-branch")
-        let contents = Data("Published private topic contents\n".utf8)
-        try contents.write(to: readme)
-        for arguments in [["add", "README.md"], ["commit", "--message", "Private PR feature"], ["push", "--set-upstream", "origin", "topic"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-topic-\(arguments[0])")
-        }
-        let head = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-published-head")
-        let headFile = project.appendingPathComponent(".git/HEAD"), headBytes = try Data(contentsOf: headFile)
-        // Publication happened to the real private bare repository above. From
-        // here onward all remote metadata comes from the closed-world fake gh;
-        // no fetch, push or public request is allowed or needed.
-        _ = try runGit(["-C", project.path, "remote", "set-url", "origin", "https://github.com/fixture/native-pr.git"],
-            gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-fixture-repository-identity")
-        let state = root.appendingPathComponent("github-peer.json"), wire = root.appendingPathComponent("github-peer-wire.jsonl")
-        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "repository": "fixture/native-pr",
-            "published": ["main": base, "topic": head], "creates": 0, "loseCreateReply": true]).write(to: state)
-        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
-        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && FileManager.default.isExecutableFile(atPath: python))
-        let bundledPeer = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: "github_pr_ui", withExtension: "py"))
-        let peer = bundledPeer
-        let bin = root.appendingPathComponent("private-github-bin", isDirectory: true)
-        let config = root.appendingPathComponent("private-gh-config", isDirectory: true)
-        for directory in [bin, config] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        _ = try installOfflineCLI(tool: "gh", python: python, peer: peer, state: state, wire: wire, root: root, bin: bin, in: app)
-        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
-        app.launchEnvironment["GH_CONFIG_DIR"] = config.path
-        app.launchEnvironment["GH_REPO"] = "github.com/unrelated/ignored"
-        addTeardownBlock { @MainActor [weak self] in
-            if let data = try? Data(contentsOf: wire), let text = String(data: data, encoding: .utf8) {
-                let receipt = XCTAttachment(string: text); receipt.name = "pull-request-offline-gh-wire"; receipt.lifetime = .keepAlways; self?.add(receipt)
-            }
-        }
-        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let draft = "Keep this unsent discussion while reviewing a pull request"
-        composer.click(); composer.typeText(draft)
-        let identifier = try selectedThreadIdentifier(in: app)
-        try openNativePullRequests(in: app)
-        let title = "Offline native PR review", body = "Keep this exact description.\n\n- Native reviewed request\n"
-        var sheet = try enterNativePullRequest(title: title, body: body, in: app)
-        XCTAssertTrue(sheet.staticTexts["pull-request-reviewed-title"].waitForExistence(timeout: 20))
-        let titleValue = sheet.staticTexts["pull-request-reviewed-title"]
-        XCTAssertEqual((titleValue.value as? String) ?? titleValue.label, title)
-        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", head, head)).firstMatch.exists)
-        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", base, base)).firstMatch.exists)
-        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(sheet.frame))
-        capture(app, name: "pull-request-exact-create-review")
-        sheet.buttons["pull-requests-close"].click()
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
-        XCTAssertEqual(try githubCreateReceipts(wire).count, 0, "Review and Cancel must never create a remote request.")
-        try openNativePullRequests(in: app)
-        sheet = try enterNativePullRequest(title: title, body: body, in: app)
-        XCTAssertTrue(sheet.staticTexts["pull-request-reviewed-title"].waitForExistence(timeout: 20))
-        let edit = sheet.buttons["pull-request-edit-review"]
-        XCTAssertTrue(edit.isEnabled && edit.isHittable); edit.click()
-        XCTAssertTrue(waitForValue(sheet.textViews["pull-request-body"], value: body, timeout: 5))
-        sheet.buttons["pull-request-create"].click()
-        XCTAssertTrue(sheet.staticTexts["pull-request-reviewed-title"].waitForExistence(timeout: 20))
-        let create = sheet.buttons["pull-request-create"]
-        XCTAssertEqual(create.label, "Create Pull Request"); XCTAssertTrue(create.isEnabled && create.isHittable); create.click()
-        let status = sheet.staticTexts["pull-request-creation-status"]
-        let unconfirmed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND (label == %@ OR value == %@)", "Pull request creation unconfirmed", "Pull request creation unconfirmed"), object: status)
-        XCTAssertEqual(XCTWaiter.wait(for: [unconfirmed], timeout: 20), .completed)
-        XCTAssertTrue(sheet.buttons["pull-request-inspect-creation"].exists)
-        XCTAssertEqual(try githubCreateReceipts(wire).count, 1)
-        capture(app, name: "pull-request-lost-reply-held-without-retry")
-        sheet.buttons["pull-requests-close"].click()
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
-        XCTAssertFalse(app.buttons["Push…"].isEnabled, "An uncertain PR holds its checkout across windows and native Git controls.")
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10))
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), identifier)
-        try openNativePullRequests(in: app)
-        sheet = try nativeHistorySheet(owning: "pull-requests-close", in: app)
-        XCTAssertTrue(sheet.staticTexts["pull-request-creation-status"].waitForExistence(timeout: 10))
-        XCTAssertEqual(try githubCreateReceipts(wire).count, 1, "Restart and refresh inspect only; they cannot replay creation.")
-        let inspect = sheet.buttons["pull-request-inspect-creation"]
-        XCTAssertTrue(inspect.isEnabled && inspect.isHittable); inspect.click()
-        let view = sheet.buttons["pull-request-view-result"]
-        XCTAssertTrue(view.waitForExistence(timeout: 20)); XCTAssertTrue(view.isEnabled && view.isHittable); view.click()
-        XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "pull-request-description").firstMatch.waitForExistence(timeout: 10))
-        for paragraph in ["Keep this exact description.", "Native reviewed request"] {
-            // Native Markdown exposes each paragraph itself with the description identifier.
-            XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "identifier == %@ AND (label == %@ OR value == %@)", "pull-request-description", paragraph, paragraph)).firstMatch.waitForExistence(timeout: 5))
-        }
-        capture(app, name: "pull-request-read-only-inspection-finds-exact-result")
-        sheet.buttons["pull-requests-back"].click()
-        let row = sheet.buttons["pull-request-select-42"]
-        XCTAssertTrue(row.waitForExistence(timeout: 10)); XCTAssertTrue(row.isHittable); row.click()
-        XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "pull-request-description").firstMatch.waitForExistence(timeout: 10))
-        sheet.buttons["pull-requests-close"].click()
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
-        XCTAssertEqual(try githubCreateReceipts(wire).count, 1)
-        let receipt = try XCTUnwrap(try githubCreateReceipts(wire).first)
-        XCTAssertEqual(receipt["body"] as? String, body)
-        let arguments = try XCTUnwrap(receipt["arguments"] as? [String])
-        for expected in ["--repo=github.com/fixture/native-pr", "--head=topic", "--base=main", "--title=" + title, "--draft", "--body-file=-"] { XCTAssertTrue(arguments.contains(expected)) }
-        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: state)) as? [String: Any])
-        XCTAssertEqual(saved["creates"] as? Int, 1)
-        let remote = try XCTUnwrap(saved["pullRequest"] as? [String: Any])
-        XCTAssertEqual(remote["url"] as? String, "https://github.com/fixture/native-pr/pull/42")
-        XCTAssertEqual(remote["headRefOid"] as? String, head); XCTAssertEqual(remote["baseRefOid"] as? String, base)
-        XCTAssertEqual(try Data(contentsOf: readme), contents); XCTAssertEqual(try Data(contentsOf: headFile), headBytes)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-preserved-head"), head)
-        let published = try runGit(["--git-dir=" + bare.path, "rev-parse", "refs/heads/topic"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-private-published-head")
-        XCTAssertEqual(published.trimmingCharacters(in: .whitespacesAndNewlines), head)
-        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Collapse Native Pull Requests"], selectedConversation: threadRow(identifier, in: app))
-        capture(app, name: "pull-request-recovered-draft-and-published-checkout")
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-    }
-
-    @MainActor func testNativePullRequestCheckoutCreatesBlankWorktreeConversationAndPreservesSourceAcrossRestart() throws {
-        let fixture = try prepareApplication(appearance: "light", diagnosticPrefix: "pr-checkout")
-        let app = fixture.app, root = fixture.root, manager = FileManager.default
-        let project = root.appendingPathComponent("Native PR Checkout", isDirectory: true)
-        let bare = root.appendingPathComponent("Private PR remote.git", isDirectory: true)
-        try manager.createDirectory(at: project, withIntermediateDirectories: false)
-        let readme = project.appendingPathComponent("README.md")
-        let sourceBytes = Data("Source checkout stays on main\n".utf8), topicBytes = Data("Reviewed private PR topic contents\n".utf8)
-        try sourceBytes.write(to: readme)
-        _ = try runGit(["init", "--bare", "--initial-branch", "main", bare.path], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-private-bare")
-        for arguments in [["init", "--initial-branch", "main"], ["add", "README.md"], ["commit", "--message", "Private checkout base"],
-                          ["remote", "add", "origin", bare.path], ["push", "--set-upstream", "origin", "main"], ["checkout", "-b", "topic"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-base-\(arguments[0])")
-        }
-        let base = try runGit(["-C", project.path, "rev-parse", "main"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-base-head")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        try topicBytes.write(to: readme)
-        for arguments in [["add", "README.md"], ["commit", "--message", "Reviewed private PR head"], ["push", "--set-upstream", "origin", "topic"]] {
-            _ = try runGit(["-C", project.path] + arguments, gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-topic-\(arguments[0])")
-        }
-        let head = try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-checkout-reviewed-head")
-        _ = try runGit(["--git-dir=" + bare.path, "update-ref", "refs/pull/42/head", head], gitPath: fixture.gitPath,
-                       configuration: fixture.configuration, name: "pr-checkout-private-pull-ref")
-        _ = try runGit(["-C", project.path, "checkout", "main"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-source-main")
-        let sourceHeadFile = project.appendingPathComponent(".git/HEAD"), sourceHeadBytes = try Data(contentsOf: sourceHeadFile)
-        _ = try runGit(["-C", project.path, "remote", "set-url", "origin", "https://github.com/fixture/native-pr.git"],
-                       gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-canonical-remote")
-        // Only this fixture's canonical URL is rewritten to the owned bare Git
-        // repository. All other transports are denied; the peer performs no I/O.
-        let bareURL = bare.absoluteString.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        let originalConfiguration = try String(contentsOf: fixture.configuration, encoding: .utf8)
-        try (originalConfiguration + "\n[url \"" + bareURL + "\"]\n insteadOf = https://github.com/fixture/native-pr.git\n[protocol]\n allow = never\n[protocol \"file\"]\n allow = always\n")
-            .write(to: fixture.configuration, atomically: true, encoding: .utf8)
-        let state = root.appendingPathComponent("github-checkout-peer.json"), wire = root.appendingPathComponent("github-checkout-wire.jsonl")
-        let pullRequest: [String: Any] = ["number": 42, "title": "Open the exact published PR in an empty conversation", "body": "Seeded read-only pull request for native checkout.",
-            "url": "https://github.com/fixture/native-pr/pull/42", "state": "OPEN", "isDraft": false,
-            "headRefName": "topic", "baseRefName": "main", "headRefOid": head, "baseRefOid": base,
-            "headRepository": ["name": "native-pr", "nameWithOwner": "fixture/native-pr"], "headRepositoryOwner": ["login": "fixture"],
-            "isCrossRepository": false, "author": ["login": "fixture"], "updatedAt": "2026-10-22T00:00:00Z", "createdAt": "2026-10-22T00:00:00Z",
-            "reviewDecision": "REVIEW_REQUIRED", "statusCheckRollup": [], "additions": 1, "deletions": 1, "changedFiles": 1, "reviewRequests": [], "labels": []]
-        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "repository": "fixture/native-pr", "published": ["main": base, "topic": head],
-            "creates": 0, "checkoutFixture": true, "pullRequest": pullRequest]).write(to: state)
-        let providerState = root.appendingPathComponent("checkout-provider.json"), providerWire = root.appendingPathComponent("checkout-provider-wire.jsonl")
-        try JSONSerialization.data(withJSONObject: ["cwd": project.path, "threads": [:], "nextTurn": 0]).write(to: providerState)
-        let python = try XCTUnwrap(ProcessInfo.processInfo.environment["COINCIDE_UI_PYTHON_PATH"])
-        XCTAssertTrue(python.hasPrefix("/") && python != "/usr/bin/python3" && manager.isExecutableFile(atPath: python))
-        let bin = root.appendingPathComponent("private-checkout-bin", isDirectory: true)
-        let codexHome = root.appendingPathComponent("private-checkout-codex-home", isDirectory: true)
-        let ghHome = root.appendingPathComponent("private-checkout-gh-home", isDirectory: true)
-        for directory in [bin, codexHome, ghHome] { try manager.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        for (name, resource, peerState, peerWire) in [("gh", "github_pr_ui", state, wire), ("codex", "codex_history_ui", providerState, providerWire)] {
-            let bundled = try XCTUnwrap(Bundle(for: CoincideDesktopUITests.self).url(forResource: resource, withExtension: "py"))
-            let peer = bundled
-            _ = try installOfflineCLI(tool: name, python: python, peer: peer, state: peerState, wire: peerWire, root: root, bin: bin, in: app)
-        }
-        app.launchEnvironment["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
-        app.launchEnvironment["CODEX_HOME"] = codexHome.path; app.launchEnvironment["GH_CONFIG_DIR"] = ghHome.path
-        app.launchEnvironment["GIT_ALLOW_PROTOCOL"] = "file"
-        addTeardownBlock { @MainActor [weak self] in
-            for (name, path) in [("pr-checkout-offline-gh-wire", wire), ("pr-checkout-offline-provider-wire", providerWire)] {
-                if let data = try? Data(contentsOf: path), let text = String(data: data, encoding: .utf8) {
-                    let attachment = XCTAttachment(string: text); attachment.name = name; attachment.lifetime = .keepAlways; self?.add(attachment)
-                }
-            }
-        }
-        try preflightOfflineHistoryProvider(bin.appendingPathComponent("codex"), cwd: project, environment: app.launchEnvironment, name: "pr-checkout")
-        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        try openProject(project, in: app); app.typeKey("n", modifierFlags: .command)
-        let composer = app.textViews["composer-input"]
-        XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let sourceIdentifier = try selectedThreadIdentifier(in: app), prompt = "Keep this source history before opening a separate pull request checkout"
-        composer.click(); composer.typeText(prompt)
-        XCTAssertTrue(waitForValue(composer, value: prompt, timeout: 5)); app.typeKey(.return, modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["Offline history reply 1"].waitForExistence(timeout: 20))
-        let draft = "Retain this source draft across PR checkout and restart"
-        composer.click(); composer.typeText(draft); XCTAssertTrue(waitForValue(composer, value: draft, timeout: 5))
-        try openNativePullRequests(in: app)
-        var sheet = try nativeHistorySheet(owning: "pull-requests-close", in: app)
-        let row = sheet.buttons["pull-request-select-42"]
-        XCTAssertTrue(row.waitForExistence(timeout: 15)); XCTAssertTrue(row.isHittable); row.click()
-        let open = sheet.buttons["pull-request-checkout"]
-        let canOpen = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: open)
-        XCTAssertEqual(XCTWaiter.wait(for: [canOpen], timeout: 15), .completed); XCTAssertTrue(open.isHittable); open.click()
-        let worktree = sheet.radioButtons["Separate worktree"]
-        XCTAssertTrue(worktree.waitForExistence(timeout: 10))
-        XCTAssertEqual((worktree.value as? NSNumber)?.intValue ?? Int((worktree.value as? String) ?? ""), 1)
-        let submodules = sheet.descendants(matching: .any).matching(identifier: "pull-request-checkout-submodules").element
-        XCTAssertTrue(submodules.exists); XCTAssertTrue((submodules.value as? String)?.contains("None") == true)
-        let reviewSetup = sheet.checkBoxes["pull-request-checkout-review-setup"]
-        revealNativePullRequestControl(reviewSetup, in: sheet)
-        XCTAssertEqual((reviewSetup.value as? NSNumber)?.intValue ?? Int((reviewSetup.value as? String) ?? ""), 1)
-        let confirm = sheet.buttons["pull-request-checkout-confirm"]
-        XCTAssertEqual(confirm.label, "Review Checkout…"); XCTAssertTrue(confirm.isEnabled && confirm.isHittable); confirm.click()
-        XCTAssertTrue(sheet.descendants(matching: .any).matching(identifier: "pull-request-checkout-captured-review").firstMatch.waitForExistence(timeout: 20))
-        XCTAssertEqual(confirm.label, "Open New Conversation")
-        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", head, head)).firstMatch.exists)
-        XCTAssertTrue(CGDisplayBounds(CGMainDisplayID()).contains(sheet.frame))
-        capture(app, name: "pr-checkout-exact-worktree-review-before-opening")
-        XCTAssertTrue(confirm.isEnabled && confirm.isHittable); confirm.click()
-        XCTAssertTrue(waitForAbsence(sheet.buttons["pull-requests-close"], timeout: 20), "Confirmed completion should open the new worktree conversation.")
-        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
-        let targetIdentifier = try selectedThreadIdentifier(in: app)
-        XCTAssertNotEqual(targetIdentifier, sourceIdentifier)
-        let workspace = app.descendants(matching: .any).matching(identifier: "conversation-workspace").element
-        let managedRoot = root.appendingPathComponent("Worktrees", isDirectory: true)
-        let destination = URL(fileURLWithPath: try XCTUnwrap(workspace.value as? String))
-        XCTAssertEqual(destination.deletingLastPathComponent().path, managedRoot.path)
-        assertWorkspaceReady(in: app)
-        XCTAssertTrue(app.staticTexts["What are we building?"].exists)
-        XCTAssertFalse(app.staticTexts["Offline history reply 1"].exists)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: destination, configuration: fixture.configuration, name: "pr-checkout-actual-target-head"), head)
-        let actualBranch = try runGit(["-C", destination.path, "branch", "--show-current"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-actual-target-branch")
-        XCTAssertEqual(actualBranch.trimmingCharacters(in: .whitespacesAndNewlines), "topic")
-        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("README.md")), topicBytes)
-        capture(app, name: "pr-checkout-new-blank-conversation-at-reviewed-head")
-        selectThread(sourceIdentifier, in: app)
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10)); assertConversationWorkspace(app, path: project.path)
-        let transcript = app.scrollViews.containing(.staticText, identifier: "Offline history reply 1").firstMatch
-        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
-        XCTAssertTrue(transcript.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch.exists)
-        try openNativePullRequests(in: app)
-        sheet = try nativeHistorySheet(owning: "pull-requests-close", in: app)
-        let status = sheet.staticTexts["pull-request-checkout-status"]
-        XCTAssertTrue(status.waitForExistence(timeout: 10))
-        XCTAssertEqual((status.value as? String) ?? status.label, "Pull request conversation ready")
-        let openTarget = sheet.buttons["pull-request-checkout-open-conversation"]
-        revealNativePullRequestControl(openTarget, in: sheet)
-        XCTAssertTrue(sheet.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", head, head)).firstMatch.exists)
-        capture(app, name: "pr-checkout-durable-result-shows-actual-head")
-        sheet.buttons["pull-requests-close"].click()
-        selectThread(targetIdentifier, in: app)
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
-        app.launch(); XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        // Foreground activation can precede the persisted workspace and sidebar selection loading.
-        XCTAssertTrue(waitForValue(composer, value: "", timeout: 10))
-        XCTAssertEqual(try selectedThreadIdentifier(in: app), targetIdentifier)
-        assertConversationWorkspace(app, path: destination.path)
-        assertWorkspaceReady(in: app); XCTAssertTrue(app.staticTexts["What are we building?"].exists)
-        selectThread(sourceIdentifier, in: app)
-        XCTAssertTrue(waitForValue(composer, value: draft, timeout: 10)); assertConversationWorkspace(app, path: project.path)
-        XCTAssertTrue(app.staticTexts["Offline history reply 1"].exists)
-        let frames = try historyWire(providerWire)
-        XCTAssertEqual(frames.filter { $0["method"] as? String == "turn/start" }.count, 1, "Opening or reopening the PR conversation must not send another prompt.")
-        XCTAssertEqual(frames.filter { $0["method"] as? String == "thread/start" }.count, 1)
-        XCTAssertEqual(try githubCreateReceipts(wire).count, 0)
-        XCTAssertEqual(try Data(contentsOf: readme), sourceBytes); XCTAssertEqual(try Data(contentsOf: sourceHeadFile), sourceHeadBytes)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: project, configuration: fixture.configuration, name: "pr-checkout-source-main-preserved"), base)
-        XCTAssertEqual(try verifyHead(gitPath: fixture.gitPath, project: destination, configuration: fixture.configuration, name: "pr-checkout-reopened-target-head"), head)
-        let inventory = try runGit(["-C", project.path, "worktree", "list", "--porcelain"], gitPath: fixture.gitPath, configuration: fixture.configuration, name: "pr-checkout-reopened-inventory")
-        let paths = inventory.split(separator: "\n").filter { $0.hasPrefix("worktree ") }.map { String($0.dropFirst("worktree ".count)) }
-        XCTAssertEqual(Set(paths), [project.path, destination.path], "Restart must retain the same two worktrees without creating another.")
-        capture(app, name: "pr-checkout-reopened-source-history-and-draft-preserved")
-        app.typeKey("q", modifierFlags: .command); XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
     }
 
     @MainActor private func githubCreateReceipts(_ wire: URL) throws -> [[String: Any]] {
@@ -3514,7 +1922,7 @@ final class CoincideDesktopUITests: XCTestCase {
             let warning = XCTAttachment(string: app.debugDescription); warning.name = "\(appearance)-initial-commit-warning"; warning.lifetime = .keepAlways; add(warning)
             done.click() // A nonfatal initial-commit warning still means project creation succeeded.
         }
-        let header = app.buttons["Collapse \(projectName)"]
+        let header = app.buttons["Chats in \(projectName)"]
         XCTAssertTrue(header.waitForExistence(timeout: 10))
         let layout = XCTAttachment(string: "Display frame: \(CGDisplayBounds(CGMainDisplayID()))\nWindow frame: \(app.windows.firstMatch.frame)\n\n\(app.debugDescription)")
         layout.name = "\(appearance)-created-layout-and-accessibility"; layout.lifetime = .keepAlways; add(layout)
@@ -3534,7 +1942,7 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertEqual(composer.value as? String, draft)
 
         header.rightClick()
-        let rename = app.menuItems["Rename Project…"]
+        let rename = app.menuItems["Rename…"]
         XCTAssertTrue(rename.waitForExistence(timeout: 5)); rename.click()
         // Native SwiftUI alert text fields preserve their placeholder/value, but
         // macOS does not bridge this field's SwiftUI accessibility identifier.
@@ -3547,31 +1955,31 @@ final class CoincideDesktopUITests: XCTestCase {
         renameField.typeKey("a", modifierFlags: .command)
         let renamed = projectName + " Renamed"
         renameField.typeText(renamed); app.buttons["sidebar-rename-save"].click()
-        let renamedHeader = app.buttons["Collapse \(renamed)"]
+        let renamedHeader = app.buttons["Chats in \(renamed)"]
         XCTAssertTrue(renamedHeader.waitForExistence(timeout: 5)); renamedHeader.click()
-        XCTAssertTrue(app.buttons["Expand \(renamed)"].waitForExistence(timeout: 5))
-        let selected = app.outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).element
-        XCTAssertTrue(selected.waitForExistence(timeout: 5) && selected.isSelected, "Collapsing must keep the selected conversation visible.")
+        XCTAssertTrue(app.buttons["Chats in \(renamed)"].waitForExistence(timeout: 5))
+        let selected = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value == %@", "thread-", "Selected")).firstMatch
+        XCTAssertTrue(selected.waitForExistence(timeout: 5) && (selected.value as? String == "Selected"), "Collapsing must keep the selected conversation visible.")
         XCTAssertEqual(composer.value as? String, draft)
-        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Expand \(renamed)"])
+        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Chats in \(renamed)"])
         capture(app, name: "\(appearance)-collapsed-selected")
 
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "Graceful quit must flush the composer draft.")
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(app.buttons["Expand \(renamed)"].waitForExistence(timeout: 10), "The renamed project and collapsed state must persist.")
+        XCTAssertTrue(app.buttons["Chats in \(renamed)"].waitForExistence(timeout: 10), "The renamed project and collapsed state must persist.")
         XCTAssertTrue(composer.waitForExistence(timeout: 10)); XCTAssertEqual(composer.value as? String, draft)
-        XCTAssertTrue(selected.exists && selected.isSelected)
-        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Expand \(renamed)"])
+        XCTAssertTrue(selected.exists && (selected.value as? String == "Selected"))
+        assertSidebarFitsDisplay(app, projectHeader: app.buttons["Chats in \(renamed)"])
         capture(app, name: "\(appearance)-reopened")
         let tree = XCTAttachment(string: app.debugDescription); tree.name = "\(appearance)-reopened-accessibility-tree"; tree.lifetime = .keepAlways; add(tree)
 
-        let collapsedHeader = app.buttons["Expand \(renamed)"]
+        let collapsedHeader = app.buttons["Chats in \(renamed)"]
         collapsedHeader.rightClick()
         let removeItem = app.menuItems["Remove Project…"]
         XCTAssertTrue(removeItem.waitForExistence(timeout: 5)); removeItem.click()
-        let confirmation = app.sheets.containing(NSPredicate(format: "label == %@", "Remove Project")).element
+        let confirmation = app.sheets.containing(.button, identifier: "Remove Project").firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         let removalTitle = "Remove “\(renamed)” from Coincide?"
         let confirmationTitle = confirmation.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", removalTitle, removalTitle)).element
@@ -3594,8 +2002,9 @@ final class CoincideDesktopUITests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: projectFolder.appendingPathComponent(path)), preservedFiles[path], "Removing a registered project must preserve its existing \(path) bytes.")
         }
         XCTAssertEqual(try verifyHead(gitPath: gitPath, project: projectFolder, configuration: configuration, name: "\(appearance)-removed-git-head"), initialHead)
-        let emptyDescription = "Your projects and coding agents, in a native Mac workspace."
+        let emptyDescription = "What should we work on?"
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", emptyDescription, emptyDescription)).element.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Start a conversation"].exists)
         capture(app, name: "\(appearance)-removed-empty-workspace")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
@@ -3759,17 +2168,12 @@ final class CoincideDesktopUITests: XCTestCase {
     }
 
     @MainActor private func selectedThreadIdentifier(in app: XCUIApplication) throws -> String {
-        // Foreground activation can precede workspace loading and the native
-        // outline's accessibility publication after a graceful relaunch.
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            self.threadRows(in: app).allElementsBoundByIndex.filter { $0.isSelected }.count == 1
-        }, object: nil)
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@", "thread-", "project-thread-"))
+        let selected = NSPredicate(format: "value == %@", "Selected")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in rows.matching(selected).count == 1 }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
-        let selected = threadRows(in: app).allElementsBoundByIndex.filter { $0.isSelected }
-        XCTAssertEqual(selected.count, 1)
-        let row = try XCTUnwrap(selected.first)
-        let identifier = try XCTUnwrap(row.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).allElementsBoundByIndex.first?.identifier)
-        return identifier
+        let row = try XCTUnwrap(rows.matching(selected).allElementsBoundByIndex.first)
+        return row.identifier.replacingOccurrences(of: "project-thread-", with: "thread-")
     }
 
     @MainActor private func assertConversationWorkspace(_ app: XCUIApplication, path: String) {
@@ -3854,14 +2258,12 @@ final class CoincideDesktopUITests: XCTestCase {
         let window = app.windows.firstMatch.frame
         XCTAssertTrue(display.contains(window), "The native window must fit the actual display \(display), without clipping: \(window).")
         let controls: [(String, XCUIElement)] = [
-            ("New conversation", app.buttons["New conversation"]),
-            ("Sort projects", app.menuButtons["project-sort-menu"]),
-            ("Search conversations", app.textFields["Search conversations"]),
+            ("New chat", app.buttons["New chat"]),
+            ("Sort projects", app.descendants(matching: .any).matching(identifier: "sidebar-project-sort").firstMatch),
+            ("Search chats", app.buttons["Search chats"]),
             ("Project header", projectHeader),
-            ("Selected conversation", selectedConversation ?? app.outlineRows.containing(NSPredicate(format: "identifier BEGINSWITH %@", "thread-")).element),
-            ("Add Project", app.menuButtons.matching(NSPredicate(format: "title == %@", "Add Project")).element),
-            ("Settings", app.buttons["gearshape"]),
-            ("Archive", app.checkBoxes["Archive"]),
+            ("Settings", app.buttons["Settings"]),
+            ("Archive", app.buttons["Show archived chats"]),
         ]
         for (name, control) in controls {
             XCTAssertTrue(control.exists, "The sidebar must expose its \(name) control.")

@@ -35,6 +35,24 @@ func cliShimScriptQuotesTheAppPathAndEncodesFolderLinksForTheApp() async throws 
     #expect(help.status == 0 && String(decoding: help.output, as: UTF8.self).contains("Usage: coincide [folder]"))
 }
 
+@Test func cliShimRoutesNewControlsWithoutOpeningFoldersOrChangingArguments() async throws {
+    let root = try cliRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let app = root.appendingPathComponent("It's Coincide.app")
+    let resource = app.appendingPathComponent("Contents/Resources")
+    try FileManager.default.createDirectory(at: resource, withIntermediateDirectories: true)
+    try "import json, sys\nprint(json.dumps(sys.argv[1:]))\n".write(to: resource.appendingPathComponent("coincide"), atomically: true, encoding: .utf8)
+    let shim = root.appendingPathComponent("coincide")
+    try CLIShim.script(appPath: app.path, bundleIdentifier: "synthetic.test").write(to: shim, atomically: true, encoding: .utf8)
+    let commands = ["sort", "export", "integrations", "integration-import", "integration-remove", "integration-use", "sessions", "session-details", "session-stop", "configuration", "configuration-set"]
+    for command in commands {
+        let arguments = [command, "literal argument $HOME ; 'quoted'", "--flag"]
+        let result = await BoundedProcess.run(executable: "/bin/sh", arguments: [shim.path] + arguments,
+            environment: ["PATH": "/usr/bin:/bin"], timeout: .seconds(10), outputLimit: 4_096)
+        #expect(result.status == 0)
+        #expect(try JSONDecoder().decode([String].self, from: result.output) == arguments)
+    }
+}
+
 @Test func cliShimInstallerPrefersPathDirectoriesRefusesForeignFilesAndRemovesOnlyItsOwn() throws {
     let root = try cliRoot(); defer {
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.appendingPathComponent("readonly").path)
