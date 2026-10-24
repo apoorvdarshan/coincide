@@ -101,7 +101,7 @@ def run(app_source):
         assert sent["sent"] is True and sent["draftUnchanged"] is True and sent["thread"]["provider"] == "codex"
 
         def replies(count):
-            messages = coincide("thread", "--thread", thread)["messages"]
+            messages = coincide("thread", thread)["messages"]
             texts = [m["text"] for m in messages if m["role"] == "assistant"]
             return texts if len(texts) >= count else None
         assert eventually(lambda: replies(1), "the first reply") == ["Offline CLI reply 1"]
