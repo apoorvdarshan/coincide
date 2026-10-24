@@ -2326,6 +2326,19 @@ final class WorkspaceStore {
         }
     }
 
+    /// Local CLI input is independent of the composer, like an app-tool message:
+    /// the unsent draft and its attachments stay exactly as they are.
+    func sendFromLocalControl(_ text: String, threadID id: UUID) async throws -> CodingThread {
+        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, !prompt.hasPrefix("/app:"), let thread = thread(id) else {
+            throw CoincideError("Enter a message. Coincide app commands are never sent to an agent.")
+        }
+        if thread.provider == .codex { _ = try codexRuntimeInstallation.resolve(configuration: thread.codexRuntimeConfiguration ?? .init()) }
+        _ = try await enqueue(.submitFromAppMCP(threadID: id, text: prompt, queueEvenWhenIdle: false)).value
+        guard let updated = self.thread(id) else { throw CoincideError("This conversation no longer exists.") }
+        return updated
+    }
+
     func submit(_ text: String, threadID id: UUID) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.hasPrefix("/app:") else {

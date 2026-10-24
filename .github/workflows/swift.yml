@@ -109,6 +109,24 @@ jobs:
           path: ${{ runner.temp }}/coincide-test-crashes/*.json
           if-no-files-found: ignore
           retention-days: 7
+  cli-e2e:
+    # Drives the packaged app only through the coincide CLI with an offline Codex:
+    # send (draft untouched), Markdown/JSON export, and manual context compaction.
+    needs: [build]
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coincide-native-app-${{ github.sha }}
+          path: ${{ runner.temp }}/coincide-native-app
+      - name: Extract the verified app
+        run: tar -xzf "$RUNNER_TEMP/coincide-native-app/coincide-native-app.tgz" -C "$RUNNER_TEMP/coincide-native-app"
+      - name: Run the CLI end-to-end check
+        run: python3 UITests/macOS/cli_e2e.py "$RUNNER_TEMP/coincide-native-app/Coincide.app"
   native-ui-shard:
     # Starts with the Swift tests: both need only the build job's verified app/cache.
     needs: [build, changes]

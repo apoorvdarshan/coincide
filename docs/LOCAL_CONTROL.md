@@ -4,8 +4,9 @@ Open Coincide, then use `script/coincide` in a source checkout. In a packaged ap
 **Settings → General → Command-line tool** installs the `coincide` command. Its
 folder-opening behavior remains available as `coincide /absolute/project/path`.
 
-Commands return JSON and never submit your unsent draft. `compact` explicitly
-asks the active provider to summarize its context, which may use model tokens.
+Commands return JSON and never submit or change your unsent draft. `send`
+delivers only the text you pass, and `compact` explicitly asks the active provider
+to summarize its context; both may use model tokens.
 
 ```sh
 ./script/coincide status
@@ -72,6 +73,11 @@ asks the active provider to summarize its context, which may use model tokens.
   excluding private reasoning, rewound messages, drafts, attachment bytes and
   provider state. Tool output beyond 256 KiB per message is marked as truncated.
   JSON is a portable public transcript, not a database backup/import format.
+- `send "TEXT" --thread UUID --confirm` sends exactly that text to the
+  conversation's provider (or queues it behind a running turn), like an app-tool
+  message. The composer draft and its attachments are kept. `/app:` commands are
+  refused. If the reply is lost, read `thread` before retrying so the text is not
+  sent twice.
 - `compaction --thread UUID` reads manual compaction availability and the latest
   saved operation. `compact --thread UUID --confirm` requests compaction for the
   exact idle provider connection owned by Coincide. Omit `--thread` to use the

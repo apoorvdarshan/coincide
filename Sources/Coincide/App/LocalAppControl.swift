@@ -31,11 +31,11 @@ final class LocalAppControl {
             workspacePath: root.path, permission: .fullAccess, capabilities: [.orchestration])
         let credential = try await registry.issue(scope: scope)
         self.credential = credential
-        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "sort", "screenshot", "export", "compact", "compaction", "compaction-cancel", "integrations", "integration-import", "integration-remove", "integration-use", "sessions", "session-details", "session-stop", "configuration", "configuration-set"]
+        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "sort", "screenshot", "export", "send", "compact", "compaction", "compaction-cancel", "integrations", "integration-import", "integration-remove", "integration-use", "sessions", "session-details", "session-stop", "configuration", "configuration-set"]
         let definitions = names.map { name in
             MCPToolDefinition(name: name, description: "Coincide local CLI: " + name,
                 inputSchema: .object(["type": .string("object")]), capability: .orchestration,
-                readOnly: !["select", "new", "model", "ui", "sort", "screenshot", "export", "compact", "compaction-cancel", "integration-import", "integration-remove", "integration-use", "configuration-set", "session-stop"].contains(name))
+                readOnly: !["select", "new", "model", "ui", "sort", "screenshot", "export", "send", "compact", "compaction-cancel", "integration-import", "integration-remove", "integration-use", "configuration-set", "session-stop"].contains(name))
         }
         let server = try await MCPHTTPServer.start(registry: registry, tools: definitions) { [weak self] invocation in
             guard let self else { throw MCPError(.unavailable) }
@@ -98,6 +98,9 @@ final class LocalAppControl {
             } else if ["integrations", "integration-import", "integration-remove", "integration-use"].contains(action) {
                 code = "integration_refresh_required"
                 message = "The integration action could not be completed. Refresh integrations and review the current workspace and item ID before retrying. Completed imports are retained."
+            } else if action == "send" {
+                code = "message_not_confirmed"
+                message = "The message was not confirmed as sent. Read the conversation before retrying so it is not sent twice. Your draft is unchanged."
             } else if action == "compact" || action == "compaction-cancel" {
                 code = "context_compaction_not_confirmed"
                 message = "Context compaction was not confirmed. Run compaction for the same conversation to inspect its current status before retrying. Your Coincide conversation and draft are unchanged."
@@ -157,6 +160,10 @@ final class LocalAppControl {
                 JSONValue.object(["role": .string(message.role.rawValue), "text": .string(String(message.text.prefix(4000)))])
             }
             result = .object(["thread": summary(thread), "messages": .array(messages), "totalMessages": .number(Double(thread.visibleMessages.count))])
+        case "send":
+            guard args["confirm"] == .bool(true), let text = args["text"].string, text.utf16.count <= 120_000 else { throw MCPError(.invalidParams) }
+            let updated = try await store.sendFromLocalControl(text, threadID: try target(args).id)
+            result = .object(["thread": summary(updated), "sent": .bool(true), "draftUnchanged": .bool(true)])
         case "compaction":
             let thread = try target(args)
             result = compactionStatus(threadID: thread.id)

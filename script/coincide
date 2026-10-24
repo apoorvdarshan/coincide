@@ -27,6 +27,7 @@ def local_action_error(command, result):
         "integration-import": {"integration_refresh_required"},
         "integration-remove": {"integration_refresh_required"},
         "integration-use": {"integration_refresh_required"},
+        "send": {"message_not_confirmed"},
         "compact": {"context_compaction_not_confirmed"},
         "compaction-cancel": {"context_compaction_not_confirmed"},
     }
@@ -41,7 +42,11 @@ def local_action_error(command, result):
 
 
 def connection():
-    root = Path.home() / "Library/Application Support/Coincide/Control"
+    # Tests point the CLI at a disposable UI-testing app; the same privacy checks apply.
+    override = os.environ.get("COINCIDE_CONTROL_DIR")
+    if override is not None and not os.path.isabs(override):
+        raise ValueError("COINCIDE_CONTROL_DIR must be an absolute path.")
+    root = Path(override) if override else Path.home() / "Library/Application Support/Coincide/Control"
     info = root.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError("The Coincide CLI directory is not private.")
@@ -63,7 +68,7 @@ def connection():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Control the running Coincide app. Responses are JSON. Commands never submit your draft; compact asks the provider to summarize its context.")
+    parser = argparse.ArgumentParser(description="Control the running Coincide app. Responses are JSON. Commands never submit or change your draft; send delivers only the text you pass, and compact asks the provider to summarize its context.")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "projects", "providers"):
         commands.add_parser(name)
@@ -91,6 +96,10 @@ def main():
     config_set.add_argument("value", help="Validated setting value; empty string removes this scope's override")
     threads = commands.add_parser("threads")
     threads.add_argument("--project", help="Project name, path, or UUID")
+    send = commands.add_parser("send", help="Send this text to the conversation's agent; may use model tokens. Your unsent draft is kept")
+    send.add_argument("text")
+    send.add_argument("--thread", dest="id", help="Conversation UUID; defaults to the selected conversation")
+    send.add_argument("--confirm", action="store_true", required=True, help="Confirm sending the text to the provider")
     compaction = commands.add_parser("compaction", help="Read current compaction eligibility and saved operation status")
     compaction.add_argument("--thread", dest="id", help="Conversation UUID; defaults to the selected conversation")
     compact = commands.add_parser("compact", help="Ask the idle app-owned provider session to compact context; may use model tokens")

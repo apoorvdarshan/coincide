@@ -135,8 +135,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for url in projects { store.addProject(at: url) }
             self.mainWindows?.presentIfNeeded()
             self.shell.didLoad()
-            if Bundle.main.bundleIdentifier == "com.apoorvdarshan.coincide", let windows = self.mainWindows {
-                let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Coincide", isDirectory: true)
+            // The disposable UI-testing build serves the CLI from its private test root.
+            let controlRoot: URL? = Bundle.main.bundleIdentifier == "com.apoorvdarshan.coincide"
+                ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Coincide", isDirectory: true)
+                : (try? AppLaunchConfiguration.databaseURL(bundleIdentifier: Bundle.main.bundleIdentifier,
+                                                           environment: ProcessInfo.processInfo.environment))??.deletingLastPathComponent()
+            if let root = controlRoot, let windows = self.mainWindows {
                 let control = LocalAppControl(store: store, windows: windows, root: root)
                 self.localControl = control
                 do { try await control.start() }
