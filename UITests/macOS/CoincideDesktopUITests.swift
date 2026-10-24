@@ -1064,7 +1064,8 @@ final class CoincideDesktopUITests: XCTestCase {
             let prompt = "Exercise native Claude question " + label
             try submitClaudeGUI(prompt, in: app)
             let submit = app.buttons["claude-question-submit"], cancel = app.buttons["claude-question-cancel"]
-            XCTAssertTrue(submit.waitForExistence(timeout: 10)); XCTAssertFalse(submit.isEnabled)
+            // The first turn launches the offline Claude process; CI has shown ~12 s for that.
+            XCTAssertTrue(submit.waitForExistence(timeout: label == "single" ? 30 : 10)); XCTAssertFalse(submit.isEnabled)
             XCTAssertTrue(cancel.isHittable)
             if label == "cancel" { cancel.click() }
             else {
