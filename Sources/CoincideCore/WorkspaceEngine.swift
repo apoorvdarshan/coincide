@@ -3081,6 +3081,7 @@ public actor WorkspaceEngine {
             case .editThread(let threadID, let edit):
                 if snapshot.threads.first(where: { $0.id == threadID })?.scratchWorkspace != nil { return }
                 switch edit { case .workspacePath(let path): paths = [path]
+                case .draftProject(let assignment): paths = [assignment.targetProject.path]
                 case .claudeWorkspace(let value): paths = [value.registeredWorkspacePath]
                 case .piWorkspace(let value): paths = [value.registeredWorkspacePath]
                 default: paths = [] }

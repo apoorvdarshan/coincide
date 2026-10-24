@@ -7,9 +7,10 @@ struct AgentSessionImportView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Import Agent Projects").font(.title2.bold())
+                Text("Import conversations").font(.system(size: 17, weight: .medium))
                 Spacer()
                 Button("Done") { store.requestPause(); dismiss() }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(SettingsActionButtonStyle())
             }
             Text("Copy saved Codex and Claude conversations into Coincide. Replies use a separate session, leaving the original CLI conversation unchanged. You can switch agents in the copied chat.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -40,8 +41,12 @@ struct AgentSessionImportView: View {
                 }.frame(minHeight: 150, idealHeight: 260, maxHeight: 350).disabled(store.isBusy || store.pending != nil)
                 if scan.truncated { Text("The scan reached its bounded discovery limit. Only the projects listed above were inspected.").font(.caption).foregroundStyle(.secondary) }
             } else if store.isLoaded && !store.isScanning {
-                ContentUnavailableView("Choose Local Projects", systemImage: "square.and.arrow.down", description: Text("Scanning is explicit. No conversations or provider sessions are started."))
-                    .frame(height: 150)
+                VStack(spacing: 10) {
+                    Image(systemName: "square.and.arrow.down").font(.system(size: 25)).foregroundStyle(.secondary)
+                    Text("Bring your chats into Coincide").font(.system(size: 15, weight: .medium))
+                    Text("Scan this Mac for saved conversations, then choose a project to import.")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity).frame(height: 150)
             }
             VStack(alignment: .leading, spacing: 7) {
                 Text(store.status).font(.callout)
@@ -69,7 +74,7 @@ struct AgentSessionImportView: View {
                         .accessibilityIdentifier("agent-session-import-selected")
                 }
             }
-        }.padding(24).frame(minWidth: 640, idealWidth: 760, maxWidth: 900)
+        }.font(.system(size: 13)).padding(24).frame(minWidth: 640, idealWidth: 760, maxWidth: 900)
         .task { await store.open() }
         .onDisappear { store.requestPause() }
     }

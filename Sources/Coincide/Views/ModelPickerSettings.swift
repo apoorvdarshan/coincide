@@ -37,6 +37,7 @@ extension PermissionMode {
 
 struct ModelPickerSettings: View {
     @Bindable var store: WorkspaceStore
+    let openAgentSettings: (ProviderKind) -> Void
     @AppStorage(ModelPickerPreferences.key) private var hiddenModels = "[]"
 
     var body: some View {
@@ -83,7 +84,7 @@ struct ModelPickerSettings: View {
             } else if models.isEmpty {
                 SettingsRow(title: store.pickerProviderAvailable(provider) ? "No models loaded" : "CLI not installed",
                             subtitle: store.pickerProviderAvailable(provider) ? "Refresh to load models from this agent." : "Install the agent CLI and sign in to use its models.") {
-                    Button("Agent settings") { store.settingsPage = .providers }
+                    Button("Agent settings") { openAgentSettings(provider) }
                         .buttonStyle(SettingsActionButtonStyle())
                 }
             } else {

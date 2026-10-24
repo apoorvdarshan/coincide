@@ -63,6 +63,7 @@ def main():
     destination.add_argument("--chat", action="store_true")
     destination.add_argument("--settings", choices=("general", "appearance", "notifications", "providers", "models", "conversations", "keyboard", "about"))
     ui.add_argument("--sidebar", choices=("show", "hide"))
+    ui.add_argument("--display", choices=("built-in",), help="Fit the existing window to the Mac's built-in display without activating it")
     ui.add_argument("--model-picker", action="store_true", help="Open the unified model picker")
     screenshot = commands.add_parser("screenshot", help="Render the app window to a new PNG file without computer-use automation")
     screenshot.add_argument("path")

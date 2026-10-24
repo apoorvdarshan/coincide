@@ -3005,6 +3005,48 @@ final class WorkspaceStore {
         acpConnections.invalidate(validAgents: snapshot.acpAgents)
         await acpConnections.refresh(agent: agent) { try await engine.acpConnectionInfo(agent: agent) }
     }
+    func canChooseProjectForDraft(_ threadID: UUID) -> Bool {
+        guard snapshot.canAssignProjectToDraft(threadID: threadID), let current = thread(threadID),
+              !choosingModelThreads.contains(threadID), !isPreparingWorkspace(threadID),
+              !isImportingAttachments(threadID), !composerDraftTools.isWorking(threadID),
+              !acceptingHistoryThreads.contains(threadID), historyRecallDraftOwners[threadID] == nil,
+              workspaceReady(for: current), canEditWorkspace(current.workspacePath) else { return false }
+        return true
+    }
+    func canChooseProject(_ project: WorkspaceProject, forDraft threadID: UUID) -> Bool {
+        canChooseProjectForDraft(threadID) && project.scratch == nil &&
+            (project.clone?.isReady ?? true) && canAccessWorkspaceFiles(project.path)
+    }
+    func chooseProject(_ projectID: UUID, forDraft threadID: UUID) {
+        guard let original = thread(threadID), let project = snapshot.projects.first(where: { $0.id == projectID }),
+              canChooseProject(project, forDraft: threadID) else { return }
+        guard original.projectID != projectID else { return }
+        cancelCodexModelDefaultsRead(threadID)
+        flushDrafts()
+        let task = enqueuePreparing { [weak self] in
+            guard let self, let current = self.thread(threadID),
+                  self.canChooseProject(project, forDraft: threadID),
+                  current.projectID == original.projectID, current.createdAt == original.createdAt,
+                  ProviderConfiguration(thread: current) == ProviderConfiguration(thread: original),
+                  self.snapshot.projects.contains(project) else {
+                throw CoincideError("The chat or project changed. Choose the project again.")
+            }
+            var directory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: project.path, isDirectory: &directory), directory.boolValue else {
+                throw CoincideError("This project folder is no longer available.")
+            }
+            let assignment = try DraftProjectAssignment(thread: current, targetProject: project,
+                physicalWorkspacePath: URL(fileURLWithPath: project.path).standardizedFileURL.resolvingSymlinksInPath().path)
+            return .editThread(threadID, .draftProject(assignment))
+        }
+        Task {
+            do {
+                let receipt = try await task.value
+                if let rejection = receipt.rejection { throw CoincideError(rejection) }
+                if selectedThreadID == threadID { selectedProjectID = projectID }
+            } catch { if !terminating { errorMessage = error.localizedDescription } }
+        }
+    }
     /// Completed worktree assignments share the UI command order with confirmations and drafts.
     func setWorkspacePath(_ path: String, threadID: UUID) -> Task<WorkspaceCommandReceipt, any Error> {
         enqueue(.editThread(threadID, .workspacePath(path)))

@@ -24,7 +24,7 @@ struct NewProjectSheet: View {
                 CreatedProjectWarning(result: created)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("New Project").font(.title2.weight(.semibold))
+                    Text("New project").font(.system(size: 17, weight: .medium))
                     Text("Start a local project with Git already set up.").foregroundStyle(.secondary)
                 }
                 Form {
@@ -62,7 +62,7 @@ struct NewProjectSheet: View {
                 }
             }
         }
-        .padding(24).frame(width: 500)
+        .font(.system(size: 13)).padding(24).frame(width: 500)
         .interactiveDismissDisabled(creating)
         .onAppear { nameFocused = true }
         .onChange(of: name) { error = nil }

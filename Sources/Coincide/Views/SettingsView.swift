@@ -29,6 +29,26 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .about: "info.circle"
         }
     }
+    var searchKeywords: [String] {
+        switch self {
+        case .general:
+            ["quit shortcut", "confirm quitting", "keep Mac awake", "sleep", "conversation banners", "command-line tool", "Terminal", "coincide command", "install"]
+        case .appearance:
+            ["theme", "system", "light", "dark", "messages", "render math", "LaTeX", "word wrap", "code", "tables", "timestamps", "collapse finished work", "tool calls", "reasoning"]
+        case .notifications:
+            ["conversation activity", "background", "sounds", "permission", "finished chats", "needs input"]
+        case .providers:
+            ["Codex", "Claude", "CLI", "sign in", "authentication", "account", "email", "plan", "usage", "limits", "runtime", "executable", "home", "installation", "profile", "configuration folder", "auto-compact", "login shell environment"]
+        case .models:
+            ["Codex", "Claude", "composer", "model picker", "available models", "hidden models", "show all", "refresh"]
+        case .conversations:
+            ["chats", "history", "follow-ups", "running turn", "queue", "guidance", "saved conversations", "archived", "import", "Codex", "Claude"]
+        case .keyboard:
+            ["keybindings", "shortcuts", "keys", "commands", "composer", "send", "new line", "paste", "reset", "configuration"]
+        case .about:
+            ["version", "build", "source code", "GitHub", "open-source", "licenses"]
+        }
+    }
 }
 
 struct SettingsView: View {
@@ -101,7 +121,12 @@ struct SettingsView: View {
     }
 
     private func matchesSearch(_ page: SettingsPage) -> Bool {
-        search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || page.title.localizedCaseInsensitiveContains(search)
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        let terms = [page.title] + page.searchKeywords
+        return query.split(whereSeparator: { $0.isWhitespace }).allSatisfy { word in
+            terms.contains { $0.localizedCaseInsensitiveContains(String(word)) }
+        }
     }
 
     @ViewBuilder private func navigationGroup(_ title: LocalizedStringKey, pages: [SettingsPage]) -> some View {
@@ -158,7 +183,10 @@ struct SettingsView: View {
         case .providers:
             agentSettings
         case .models:
-            ModelPickerSettings(store: store)
+            ModelPickerSettings(store: store, openAgentSettings: { selectedProvider in
+                provider = selectedProvider
+                store.settingsPage = .providers
+            })
         case .conversations:
             SettingsCard(title: "Follow-ups") {
                 SettingsRow(title: "Messages during a running turn", subtitle: "Queue your next message or send it as guidance to the current turn.") {

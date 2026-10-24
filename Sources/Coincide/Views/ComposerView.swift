@@ -37,6 +37,7 @@ struct ComposerView: View {
     var modelControl: AnyView? = nil
     @FocusState private var editorFocused: Bool
     @State private var dropTargeted = false
+    @State private var editorHeight: CGFloat = 42
     @AppStorage("showSkillsInSlashMenu") private var showSkillsInSlashMenu = true
     @State private var selectedRange = NSRange(location: NSNotFound, length: 0)
     @State private var observedEditorText = ""
@@ -56,7 +57,6 @@ struct ComposerView: View {
     private var delivery: ComposerDelivery {
         .resolve(running: busy, preference: followUpBehavior, alternate: false, canSteer: canSteer)
     }
-    private var height: CGFloat { min(150, max(42, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
     private var pasteTypes: [UTType] { draftTools == nil ? [.fileURL, .image] : [.fileURL, .image, .plainText] }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -77,12 +77,16 @@ struct ComposerView: View {
             if let draftTools, let draftThreadID { ComposerDraftToolsFeedback(store: draftTools, threadID: draftThreadID) }
             ZStack(alignment: .topLeading) {
                 if text.isEmpty { Text("Work with \(providerName ?? provider.name)").font(.system(size: 14)).foregroundStyle(.secondary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
-                TextEditor(text: $text).font(.system(size: 14)).frame(height: height)
+                TextEditor(text: $text).font(.system(size: 14)).frame(height: editorHeight)
                     .accessibilityIdentifier("composer-input")
                     .focused($editorFocused)
                     .onAppear { editorFocused = true }
                     .scrollContentBackground(.hidden).accessibilityLabel(Text(inputAccessibilityLabel ?? "Message to \(providerName ?? provider.name)"))
-                    .background(ComposerSelectionBridge(request: selectionRequest, selectionChanged: observeSelection, keyDown: handleSkillKey))
+                    .background(ComposerSelectionBridge(request: selectionRequest, selectionChanged: observeSelection, keyDown: handleSkillKey,
+                        heightChanged: { measured in
+                            let height = min(150, max(42, ceil(measured)))
+                            if editorHeight != height { editorHeight = height }
+                        }))
                     .onKeyPress(keys: [.return], phases: .down) { event in
                         guard !event.modifiers.contains(.shift), !event.modifiers.contains(.option) else { return .ignored }
                         guard canSend else { return .ignored }

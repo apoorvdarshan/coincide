@@ -147,8 +147,16 @@ final class LocalAppControl {
                 settings = page
             } else { settings = nil }
             let sidebar = args["sidebar"].string
+            let display = args["display"].string
             guard sidebar == nil || sidebar == "show" || sidebar == "hide",
+                  display == nil || display == "built-in",
                   !(settings != nil && args["chat"] == .bool(true)) else { throw MCPError(.invalidParams) }
+            if display != nil {
+                guard let screen = NativeWindowLaunch.builtInScreen, let window = windows.currentWindow else {
+                    throw CoincideError("A built-in display and an open Coincide window are required.")
+                }
+                NativeWindowLaunch.place(window, on: screen)
+            }
             if let settings { store.showSettings(settings) }
             if args["chat"] == .bool(true) { store.showChat() }
             if let sidebar { store.sidebarVisible = sidebar == "show" }
@@ -175,7 +183,12 @@ final class LocalAppControl {
         .object(["sidebarVisible": .bool(store.sidebarVisible),
             "page": .string(store.showingSettings ? "settings" : "chat"),
             "modelPickerVisible": .bool(store.modelPickerPresented),
-            "settingsPage": .string(store.settingsPage.rawValue), "modelPicker": .string("composer")])
+            "settingsPage": .string(store.settingsPage.rawValue), "modelPicker": .string("composer"),
+            "windowCount": .number(Double(windows.visibleWindowCount)),
+            "display": .string(windows.currentWindow?.screen?.localizedName ?? "Unavailable"),
+            "onBuiltInDisplay": .bool(windows.currentWindow.map { window in
+                NativeWindowLaunch.builtInScreen.map { $0.visibleFrame.contains(window.frame) } ?? false
+            } ?? false)])
     }
 
     private func target(_ arguments: JSONValue) throws -> CodingThread {

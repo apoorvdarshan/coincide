@@ -24,9 +24,15 @@ struct ChatView: View {
     }
     private func workspaceMenu(_ thread: CodingThread) -> some View {
         Menu {
-            if thread.visibleMessages.isEmpty {
+            if store.canChooseProjectForDraft(thread.id) {
                 ForEach(store.orderedProjects.filter { $0.scratch == nil }) { project in
-                    Button(project.name) { store.newThread(projectID: project.id) }
+                    Button {
+                        store.chooseProject(project.id, forDraft: thread.id)
+                    } label: {
+                        if project.id == thread.projectID { Label(project.name, systemImage: "checkmark") }
+                        else { Text(project.name) }
+                    }
+                    .disabled(sending || !store.canChooseProject(project, forDraft: thread.id))
                 }
                 Divider()
                 Button("Open folder…") { store.addProject() }

@@ -93,7 +93,7 @@ final class DesktopShell {
     private func route(_ url: URL) {
         guard !closed, let deepLinks else { return }
         mainWindows?.presentIfNeeded()
-        NSApp?.activate(ignoringOtherApps: true)
+        if !NativeWindowLaunch.background { NSApp?.activate(ignoringOtherApps: true) }
         let previous = linkTail, id = UUID()
         let task = Task { [weak self] in
             defer { self?.linkJobs.removeValue(forKey: id) }
@@ -190,7 +190,7 @@ final class DesktopShell {
         store.showSettings(page)
         windows.close(id: "welcome")
         mainWindows?.presentIfNeeded()
-        NSApp.activate(ignoringOtherApps: true)
+        if !NativeWindowLaunch.background { NSApp.activate(ignoringOtherApps: true) }
     }
 
     func showLicenses() {

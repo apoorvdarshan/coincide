@@ -5603,3 +5603,45 @@ Native packaging/signing/launch checks passed before the final build-only pass
 CI remain deferred by explicit user direction. This evidence establishes native
 build and inspected navigation/layout behavior, not complete provider execution
 or pixel-for-pixel parity with every ChatGPT feature.
+
+## 2026-10-24: final native UI pass on the built-in display
+
+Development launches now support explicit built-in-display placement and
+background presentation. The local CLI can move the main window to that display
+and reports its display, full-frame containment and visible main-window count.
+These options do not change normal launches or saved display preferences.
+
+The live pass inspected the chat, existing two-message transcript, unified model
+picker, all eight Settings pages, new-project and import dialogs, and the
+shortcut editor. Layouts were inspected at 1412×811 and 1000×700 points. Every
+main-window checkpoint remained on the Built-in Retina Display. The model
+picker's Settings button and the app-menu Settings action opened embedded
+Settings. Home preserved the selected conversation and its two messages; chat
+search filtered its title correctly. A conversation URL reused the existing
+main window (one before and after), confirming the prior routing correction.
+The app-menu Quit action exited cleanly; the shortcut-specific quit path was
+not exercised in this background pass.
+
+The review found and corrected wrapped composer sizing (now measured by the
+native text layout), empty/cramped shortcut editing, setting-keyword search,
+and the Claude model card's link to the wrong agent settings. Selecting a
+different saved project in an unstarted, unbound chat now reassigns that chat
+atomically, retaining its UUID, draft, attachments and model. History-bearing
+or busy chats cannot be reassigned. The saved workspace has only one project,
+so cross-project reassignment was reviewed and compiled rather than exercised
+against user data. No projects, imported chats, provider turns or saved
+shortcuts were created during this pass.
+
+The final native build completed in 39.46 seconds and bundle signature
+verification passed (`/tmp/coincide-ui-final-polish-build.log`). After relaunch,
+a temporary unsent paragraph grew the composer through native soft wrapping;
+it was cleared and the original empty draft restored. The shortcut editor
+showed its full-width field, “No shortcut,” and disabled Save with no spurious
+warning. Typed Settings searches for “math” and “Claude” showed the relevant
+pages. The app was left on the built-in display with the original empty chat,
+one project, nine saved chats and no running turns. Capture files use the local
+`/tmp/coincide-ui-final-` prefix.
+
+Automated tests, hosted CI and provider execution checks remain deferred by
+explicit user direction. Visual inspection and a successful native build do
+not establish full runtime/provider validation or exact ChatGPT feature parity.

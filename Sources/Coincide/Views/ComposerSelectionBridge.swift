@@ -14,6 +14,7 @@ struct ComposerSelectionBridge: NSViewRepresentable {
     let request: ComposerSelectionRequest?
     let selectionChanged: @MainActor (String, NSRange) -> Void
     let keyDown: @MainActor (NSEvent) -> Bool
+    var heightChanged: (@MainActor (CGFloat) -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> Anchor {
         let anchor = Anchor(); anchor.moved = { [weak coordinator = context.coordinator] in coordinator?.scheduleAttach() }
@@ -87,7 +88,23 @@ struct ComposerSelectionBridge: NSViewRepresentable {
             return view.subviews.flatMap { editors(in: $0, depth: depth + 1) }
         }
         private func publish() {
-            guard let editor else { return }; parent.selectionChanged(editor.string, editor.selectedRange())
+            guard let editor else { return }
+            parent.selectionChanged(editor.string, editor.selectedRange())
+            guard let heightChanged = parent.heightChanged, let container = editor.textContainer,
+                  container.containerSize.width > 0 else { return }
+            // Measure native wrapping at the actual editor width. Stop once the
+            // composer reaches its scroll limit, including the trailing empty line.
+            var contentHeight: CGFloat = 0
+            if let layout = editor.textLayoutManager {
+                layout.enumerateTextLayoutFragments(from: nil, options: [.ensuresLayout, .ensuresExtraLineFragment]) { fragment in
+                    contentHeight = max(contentHeight, fragment.layoutFragmentFrame.maxY)
+                    return contentHeight < 150
+                }
+            } else if let layout = editor.layoutManager {
+                layout.ensureLayout(forBoundingRect: CGRect(x: 0, y: 0, width: container.containerSize.width, height: 150), in: container)
+                contentHeight = max(layout.usedRect(for: container).maxY, layout.extraLineFragmentUsedRect.maxY)
+            }
+            heightChanged(contentHeight + editor.textContainerInset.height * 2)
         }
         private func stopObserving() {
             for token in observations { NotificationCenter.default.removeObserver(token) }; observations.removeAll()

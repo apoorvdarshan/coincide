@@ -16,6 +16,7 @@ Commands return JSON. None sends a prompt to a model.
 ./script/coincide ui --settings models
 ./script/coincide ui --chat --sidebar hide
 ./script/coincide ui --model-picker
+./script/coincide ui --display built-in
 ./script/coincide screenshot /tmp/coincide-window.png
 ./script/coincide screenshot /tmp/coincide-picker.png --popover
 ```
@@ -33,6 +34,10 @@ Commands return JSON. None sends a prompt to a model.
   `models`, `conversations`, `keyboard`, and `about`. It opens embedded Settings
   in the existing main window, using the same navigation state as the app menu
   and ⌘,. `ui --chat` returns to the selected conversation without creating one.
+- `ui --display built-in` fits and centers the existing main window on the Mac's
+  built-in display without activating it. It fails when that display or the
+  main window is unavailable. Status includes `display`, `onBuiltInDisplay`
+  (the whole window fits in the display's usable frame), and `windowCount`.
 - `screenshot` writes a new PNG and refuses to overwrite a file. `--popover`
   captures the single visible native popover, refusing ambiguity. Native content
   rendering may omit system-composited chrome; it is not a full screen capture.
@@ -45,3 +50,12 @@ connection file into projects, logs, or automation output.
 
 This is control of the running native app. It is not yet a standalone headless
 agent runtime or a public network API.
+
+For a new development launch, pass `--display=built-in --background` to the app
+executable. The first option places each main window on the built-in display;
+the second suppresses Coincide's explicit app activation for launch, Settings,
+and conversation links. Use a background-capable launcher too: the flags cannot
+prevent an external launcher from activating the app. With no flags, normal
+macOS placement and activation remain unchanged. These options are per launch,
+not saved user preferences. `--display=built-in` requires an available built-in
+screen to override placement; it does not alter external-monitor settings.

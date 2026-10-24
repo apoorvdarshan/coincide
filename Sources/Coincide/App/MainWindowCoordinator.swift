@@ -1,6 +1,25 @@
 import AppKit
 import SwiftUI
 
+/// Explicit launch options for CLI-driven work; ordinary launches retain macOS placement.
+@MainActor
+enum NativeWindowLaunch {
+    static var background: Bool { CommandLine.arguments.contains("--background") }
+    static var builtIn: Bool { CommandLine.arguments.contains("--display=built-in") }
+    static var builtInScreen: NSScreen? {
+        NSScreen.screens.first {
+            guard let id = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { return false }
+            return CGDisplayIsBuiltin(id) != 0
+        }
+    }
+    static func place(_ window: NSWindow, on screen: NSScreen) {
+        let available = screen.visibleFrame.insetBy(dx: 16, dy: 12)
+        let size = CGSize(width: min(window.frame.width, available.width), height: min(window.frame.height, available.height))
+        window.setFrame(NSRect(x: available.midX - size.width / 2, y: available.midY - size.height / 2,
+                               width: size.width, height: size.height), display: true)
+    }
+}
+
 /// Owns presentation intent, never a window or a second copy of the workspace.
 /// The Commands environment outlives individual ContentViews, so its native
 /// OpenWindowAction remains available after the last main window is closed.
@@ -18,6 +37,7 @@ final class MainWindowCoordinator {
         let live = windows.values.compactMap(\.window)
         return live.first(where: \.isKeyWindow) ?? live.first(where: \.isVisible) ?? live.first
     }
+    var visibleWindowCount: Int { windows.values.compactMap(\.window).filter(\.isVisible).count }
 
     init(restoreExisting: (@MainActor () -> Bool)? = nil) { self.restoreExisting = restoreExisting }
 
@@ -58,6 +78,9 @@ final class MainWindowCoordinator {
     func register(_ window: NSWindow) {
         let id = ObjectIdentifier(window)
         guard windows[id] == nil else { awaitingPresentation = false; return }
+        if NativeWindowLaunch.builtIn, let screen = NativeWindowLaunch.builtInScreen {
+            NativeWindowLaunch.place(window, on: screen)
+        }
         let registration = Registration(window)
         let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
             Task<Void, Never> { @MainActor [weak self] in _ = self?.windows.removeValue(forKey: id) }
@@ -71,7 +94,11 @@ final class MainWindowCoordinator {
         windows = windows.filter { $0.value.window != nil }
         guard let window = currentWindow, window.isVisible || window.isMiniaturized else { return false }
         if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil)
+        if NativeWindowLaunch.builtIn, let screen = NativeWindowLaunch.builtInScreen {
+            NativeWindowLaunch.place(window, on: screen)
+        }
+        if NativeWindowLaunch.background { window.orderFront(nil) }
+        else { window.makeKeyAndOrderFront(nil) }
         return true
     }
 

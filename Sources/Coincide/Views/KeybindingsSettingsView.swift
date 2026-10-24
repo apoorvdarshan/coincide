@@ -178,53 +178,98 @@ struct KeybindingEditorSheet: View {
     }
 
     private var existing: KeybindingRow? { if case .row(let row) = target { row } else { nil } }
-    private var shortcut: KeybindingShortcut? { KeybindingShortcut(parsing: key) }
+    private var trimmedKey: String { key.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var shortcut: KeybindingShortcut? {
+        guard !trimmedKey.isEmpty else { return nil }
+        return KeybindingShortcut(parsing: trimmedKey)
+    }
     private var whenDraft: KeybindingsSettingsModel.WhenDraft { KeybindingsSettingsModel.parseWhen(when) }
     private var conflicts: [String] {
         let whenText: String = if case .valid(let node, _) = whenDraft { node.expression } else { when }
         return KeybindingsSettingsModel.conflictLabels(rows.filter { $0.command != command || $0.id == existing?.id }, rowID: existing?.id, shortcut: shortcut, when: whenText)
     }
     private var canSave: Bool {
-        guard !saving, let shortcut, shortcut.encoded != nil, key.count <= KeybindingShortcut.maxLength else { return false }
+        guard !saving, !recorder.isRecording, let shortcut, shortcut.encoded != nil,
+              trimmedKey.utf16.count <= KeybindingShortcut.maxLength else { return false }
         if case .invalid = whenDraft { return false }
         return true
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(existing == nil ? "Add Keyboard Shortcut" : "Edit Keyboard Shortcut").font(.title2)
-            Form {
-                if existing == nil {
-                    Picker("Command", selection: $command) {
-                        ForEach(KeybindingsSettingsModel.commandOptions, id: \.self) { Text(verbatim: $0.label).tag($0) }
-                    }.accessibilityIdentifier("keybinding-editor-command")
-                } else {
-                    LabeledContent("Command") { Text(verbatim: command.label) }
-                }
-                LabeledContent("Shortcut") {
-                    HStack {
-                        Button {
-                            if recorder.isRecording { recorder.stop() }
-                            else { recorder.start { recorded in if let recorded { key = recorded } } }
-                        } label: {
-                            Text(verbatim: recorder.isRecording ? String(localized: "Type a shortcut…") : shortcut?.label ?? String(localized: "Record Shortcut"))
-                                .frame(minWidth: 140)
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(existing == nil ? "Add Keyboard Shortcut" : "Edit Keyboard Shortcut")
+                    .font(.system(size: 18, weight: .medium))
+                Text("Choose a command, then record a shortcut or enter one below.")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+            SettingsCard(title: "Command") {
+                Group {
+                    if existing == nil {
+                        Picker("Command", selection: $command) {
+                            ForEach(KeybindingsSettingsModel.commandOptions, id: \.self) { Text(verbatim: $0.label).tag($0) }
                         }
-                        .accessibilityIdentifier("keybinding-editor-record")
-                        TextField("mod+shift+k", text: $key).font(.callout.monospaced()).frame(width: 160)
-                            .accessibilityLabel("Shortcut text").accessibilityIdentifier("keybinding-editor-key")
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .accessibilityLabel("Command")
+                        .accessibilityIdentifier("keybinding-editor-command")
+                    } else {
+                        Text(verbatim: command.label)
                     }
                 }
-                DisclosureGroup("Advanced condition") {
-                    TextField("Condition (optional)", text: $when, prompt: Text(verbatim: "!editableFocus"))
-                        .font(.system(size: 13, design: .monospaced)).accessibilityIdentifier("keybinding-editor-when")
-                    Text("Conditions: \(KeybindingContext.knownIdentifiers.filter { $0 != "true" && $0 != "false" }.joined(separator: ", "))")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
+                .font(.system(size: 13))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 14)
             }
-            .formStyle(.grouped)
-            VStack(alignment: .leading, spacing: 4) {
-                if !key.isEmpty, shortcut == nil {
+            SettingsCard(title: "Shortcut") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        Button(recorder.isRecording ? "Cancel recording" : "Record shortcut") {
+                            if recorder.isRecording { recorder.stop() }
+                            else { recorder.start { recorded in if let recorded { key = recorded } } }
+                        }
+                        .buttonStyle(SettingsActionButtonStyle())
+                        .accessibilityIdentifier("keybinding-editor-record")
+                        Spacer(minLength: 8)
+                        if let shortcut {
+                            Text(verbatim: shortcut.label)
+                                .font(.system(size: 13, design: .monospaced))
+                                .accessibilityLabel(Text(shortcut.accessibilityLabel))
+                        } else {
+                            Text("No shortcut").font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                    }
+                    if recorder.isRecording {
+                        Text("Press your shortcut. Escape cancels recording.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    TextField("mod+shift+k", text: $key)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 13, design: .monospaced))
+                        .lineLimit(1)
+                        .accessibilityLabel("Shortcut text")
+                        .accessibilityIdentifier("keybinding-editor-key")
+                    Text("Use mod for Command, with + between modifiers and the key.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.padding(.vertical, 14)
+            }
+            SettingsCard {
+                DisclosureGroup("Advanced condition") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("Condition (optional)", text: $when, prompt: Text(verbatim: "!editableFocus"))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 13, design: .monospaced))
+                            .accessibilityIdentifier("keybinding-editor-when")
+                        Text("Conditions: \(KeybindingContext.knownIdentifiers.filter { $0 != "true" && $0 != "false" }.joined(separator: ", "))")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.padding(.top, 12)
+                }.font(.system(size: 13)).padding(.vertical, 14)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                if !trimmedKey.isEmpty, shortcut == nil {
                     Text("Join modifiers and one key with +, such as mod+shift+k.").foregroundStyle(.red)
                 } else if let shortcut, !shortcut.usesCommand, !shortcut.control, whenDraft == .empty, shortcut.key.count == 1 {
                     Text("Without ⌘ or ⌃ this shortcut also types text. Add a condition such as !editableFocus.").foregroundStyle(.orange)
@@ -237,26 +282,34 @@ struct KeybindingEditorSheet: View {
                 }
                 if !conflicts.isEmpty { Text("Conflicts with \(conflicts.joined(separator: ", ")). The rule saved last wins.").foregroundStyle(.orange) }
                 if let error { Text(verbatim: error).foregroundStyle(.red) }
-            }.font(.caption).fixedSize(horizontal: false, vertical: true)
-            HStack {
+            }.font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
                 if let existing, let defaultRule = existing.defaultRule, existing.source == .custom {
-                    Button("Reset to Default") { key = defaultRule.key; when = defaultRule.when ?? "" }
+                    Button("Reset to Default") { recorder.stop(); key = defaultRule.key; when = defaultRule.when ?? "" }
+                        .buttonStyle(SettingsActionButtonStyle())
                 }
                 Spacer()
-                Button("Cancel") { recorder.stop(); cancel() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { recorder.stop(); cancel() }
+                    .buttonStyle(SettingsActionButtonStyle())
+                    .keyboardShortcut(.cancelAction)
                 Button(saving ? "Saving…" : "Save") {
                     recorder.stop(); saving = true
-                    let rule = KeybindingRule(key: key.trimmingCharacters(in: .whitespaces), command: command, when: when)
+                    let rule = KeybindingRule(key: trimmedKey, command: command, when: when)
                     Task {
                         defer { saving = false }
                         do { try await save(rule, existing?.rule) } catch { self.error = error.localizedDescription }
                     }
-                }.keyboardShortcut(.defaultAction).disabled(!canSave).accessibilityIdentifier("keybinding-editor-save")
+                }
+                .buttonStyle(SettingsActionButtonStyle())
+                .keyboardShortcut(.defaultAction).disabled(!canSave)
+                .accessibilityIdentifier("keybinding-editor-save")
             }
         }
-        .padding(22).frame(width: 520)
+        .padding(24).frame(width: 540)
+        .background(ChatChrome.canvas)
         .onDisappear { recorder.stop() }
     }
+
 }
 
 /// Captures the next key press in this app for the shortcut recorder.

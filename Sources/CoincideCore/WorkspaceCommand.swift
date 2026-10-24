@@ -47,6 +47,7 @@ public struct RuntimeRequest: Codable, Sendable, Equatable, Identifiable {
 public enum ThreadEdit: Codable, Sendable, Equatable {
     case title(String), model(String), provider(ProviderKind), permission(PermissionMode)
     case draft(String), pinned(Bool), archived(Bool), workspacePath(String)
+    indirect case draftProject(DraftProjectAssignment)
     case acpAgent(ACPAgentConfiguration), agentMode(String?)
     case codexInteractionMode(CodexModeSelection)
     case agentConfig(id: String, value: String?)
@@ -1081,6 +1082,8 @@ struct WorkspaceDecision: Sendable {
             switch action {
             case .editThread(_, let edit):
                 switch edit {
+                case .draftProject(let assignment):
+                    try decision.assignDraftProject(assignment, thread: &thread)
                 case .codexRuntimeConfiguration(let configuration):
                     guard thread.provider == .codex, !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty,
                           thread.providerThreadID == nil, thread.runtimeRequests.isEmpty else {

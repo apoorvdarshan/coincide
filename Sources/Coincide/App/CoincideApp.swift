@@ -37,7 +37,8 @@ struct CoincideApp: App {
     @FocusedValue(\.agentSessionImportPresentation) private var agentSessionImportPresentation: Binding<Bool>?
     @FocusedValue(\.mainWindowController) private var keyboardController: MainWindowController?
     private var defaultWindowSize: CGSize {
-        MainWindowSizing.size(fitting: NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 820))
+        let screen = NativeWindowLaunch.builtIn ? NativeWindowLaunch.builtInScreen : NSScreen.main
+        return MainWindowSizing.size(fitting: screen?.visibleFrame.size ?? CGSize(width: 1280, height: 820))
     }
     init() {
         do {
@@ -166,7 +167,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)
+        NSApp.setActivationPolicy(.regular)
+        if !NativeWindowLaunch.background { NSApp.activate(ignoringOtherApps: true) }
         startLoading()
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
