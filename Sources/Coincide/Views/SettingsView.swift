@@ -332,6 +332,9 @@ struct SettingsView: View {
                 CodexRuntimeSettingsSection(runtime: store.codexRuntime)
                 if store.codexRuntime.configuration.authenticationMode == .cliDefault {
                     CodexAccountSection(account: store.codexAccount, runtimeConfiguration: store.codexRuntime.configuration) { await store.refreshCodexAccount() }
+                        // Read the CLI's account and allowance whenever this section
+                        // appears for a runtime; reads are read-only (no token refresh).
+                        .task { await store.refreshCodexAccount() }
                         .id(store.codexRuntime.configuration)
                 } else {
                     Text("This saved runtime uses an app-managed account. New app-managed sign-in is deferred; its existing configuration is unchanged.")
