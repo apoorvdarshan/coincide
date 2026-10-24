@@ -78,7 +78,9 @@ func nativeProjectOrganizationKeepsManualOrderAcrossSortModesAndPersistsCollapse
         #expect(store.sidebarThreads(projectID: a).map(\.id) == [selected])
         store.setProjectSortMode(.createdAt)
         try await waitOrganizationUI { store.projectSortMode == .createdAt }
-        #expect(store.orderedProjects.map(\.id) == [b, c, a, d])
+        // Newest projects uses project creation, independently of when a chat
+        // was created inside them. The cloning project was created last.
+        #expect(store.orderedProjects.map(\.id) == [d, c, b, a])
         #expect(store.snapshot.projects.map(\.id) == [a, b, c, d])
         store.setProjectSortMode(.manual)
         try await waitOrganizationUI { store.projectSortMode == .manual }

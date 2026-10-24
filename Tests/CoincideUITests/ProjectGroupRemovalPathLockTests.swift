@@ -80,7 +80,11 @@ func groupedRemovalKeepsANewQueuedWorktreePathLockedAfterItsThreadDisappears() a
     _ = try await database.commit(initial, event: "fixture.queued-path", commandID: UUID())
     let provider = QueuedPathCloseProvider(), resolverValues = identities
     let engine = try WorkspaceEngine(url: databaseURL, providerFactory: { _ in provider }, identityResolver: { resolverValues[$0.path] })
-    let store = WorkspaceStore(engine: engine, managedProjectsRoot: root.appendingPathComponent("Projects"))
+    var editorHandoffs: [ExternalEditorLaunchPlan] = []
+    let store = WorkspaceStore(engine: engine, managedProjectsRoot: root.appendingPathComponent("Projects"),
+        externalEditorDiscovery: { [] }, externalEditorHandoff: { plan in
+            editorHandoffs.append(plan); return Task { }
+        })
     await store.load()
     var assignment: Task<WorkspaceCommandReceipt, any Error>?, removal: Task<Void, any Error>?
     var writer: OpaquePointer?, writerLocked = false
@@ -125,7 +129,7 @@ func groupedRemovalKeepsANewQueuedWorktreePathLockedAfterItsThreadDisappears() a
         #expect(await provider.closeFinished == false)
         let worktreeFile = newPath.appendingPathComponent("keep.txt")
         store.fileNavigation = nil; store.openFile(worktreeFile, line: 1, workspacePath: newPath.path)
-        #expect(store.fileNavigation == nil)
+        #expect(store.fileNavigation == nil && editorHandoffs.isEmpty)
         let records = try await database.journal()
         let edit = try #require(records.first { if case .threadMetadataUpserted(let thread) = $0.event { thread.id == threadB.id && thread.workspacePath == newPath.path } else { false } })
         let removed = try #require(records.first { if case .threadRemoved(let id) = $0.event { id == threadB.id } else { false } })
@@ -134,7 +138,8 @@ func groupedRemovalKeepsANewQueuedWorktreePathLockedAfterItsThreadDisappears() a
         #expect(await provider.closeFinished && store.canEditWorkspace(newPath.path))
         #expect(store.gitInspector(path: newPath.path) === sharedInspector)
         store.openFile(worktreeFile, line: 2, workspacePath: newPath.path)
-        #expect(store.fileNavigation?.workspacePath == newPath.path && store.fileNavigation?.path == "keep.txt")
+        try await waitQueuedPath { editorHandoffs.count == 1 }
+        #expect(editorHandoffs == [.defaultApplication(worktreeFile)] && store.fileNavigation == nil)
         for path in projects.map(\.path) + [newPath.path] {
             #expect(try Data(contentsOf: URL(fileURLWithPath: path).appendingPathComponent("keep.txt")) == bytes)
         }

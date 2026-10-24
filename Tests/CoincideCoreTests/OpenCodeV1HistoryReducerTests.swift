@@ -267,41 +267,73 @@ func openCodeV1HistoryUnknownOutcomeKeepsOriginalOnlyWithFreshExactProofAndWarns
     try WorkspaceJournal.validate(fixture.snapshot)
 }
 
-@Test(arguments: [false, true])
-func openCodeV1HistoryAppliedRewindReservesAdoptedSessionUntilPromptRecallSettles(dismiss: Bool) throws {
+// Keep heavy value-construction and assertion temporaries out of the reducer's
+// ledger-validation call stack. The bounded Swift Testing worker stack otherwise
+// exhausts its guard while hashing this valid fixture in a Debug build.
+private final class OpenCodeV1RecallReservationFixture {
+    var fixture: OpenCodeV1ReducerFixture
+    let review: ConversationHistoryReview
+    let candidate: OpenCodeV1HistoryCandidate
+    var alias: CodingThread?
+
+    init(fixture: OpenCodeV1ReducerFixture, review: ConversationHistoryReview, candidate: OpenCodeV1HistoryCandidate) {
+        self.fixture = fixture; self.review = review; self.candidate = candidate
+    }
+}
+
+@inline(never)
+private func prepareV1RewindRecallReservation() throws -> OpenCodeV1RecallReservationFixture {
     var fixture = try OpenCodeV1ReducerFixture()
     let review = try fixture.review(recallPromptOnSuccess: true)
     let result = try fixture.copy(review, nativeID: "ses_recall_held_copy")
     let candidate = try fixture.candidate(review, nativeID: result.reference.nativeThreadID)
     try fixture.begin(review); try fixture.publish(review, candidate: candidate)
     try fixture.finish(review, result: .conversationHistoryConfirmed(result))
-    let held = try #require(fixture.snapshot.conversationHistoryOperation(review.id))
+    return .init(fixture: fixture, review: review, candidate: candidate)
+}
+
+@inline(never)
+private func verifyHeldV1RewindRecallReservation(_ state: OpenCodeV1RecallReservationFixture) throws {
+    let held = try #require(state.fixture.snapshot.conversationHistoryOperation(state.review.id))
     #expect(held.phase == .applied && held.needsPromptRecall && held.locksSource && held.reservesOpenCodeV1Candidate)
-    #expect(fixture.thread.providerThreadID == candidate.reference.nativeThreadID)
-    var alias = CodingThread(project: fixture.snapshot.projects[0])
-    alias.provider = .opencode; alias.openCodeConfiguration = fixture.thread.openCodeConfiguration
-    alias.providerThreadID = candidate.reference.nativeThreadID; alias.checkpointPolicy = .disabled
-    #expect(fixture.snapshot.isOpenCodeHistoryScopeLocked(configuration: .init(thread: alias), nativeThreadID: alias.providerThreadID))
-    let heldDecision = WorkspaceDecision(snapshot: fixture.snapshot)
+    #expect(state.fixture.thread.providerThreadID == state.candidate.reference.nativeThreadID)
+    var alias = CodingThread(project: state.fixture.snapshot.projects[0])
+    alias.provider = .opencode; alias.openCodeConfiguration = state.fixture.thread.openCodeConfiguration
+    alias.providerThreadID = state.candidate.reference.nativeThreadID; alias.checkpointPolicy = .disabled
+    #expect(state.fixture.snapshot.isOpenCodeHistoryScopeLocked(configuration: .init(thread: alias), nativeThreadID: alias.providerThreadID))
+    let heldDecision = WorkspaceDecision(snapshot: state.fixture.snapshot)
     #expect(throws: WorkspaceCommandError.self) { try heldDecision.validateConversationHistoryLocks(.createThread(alias)) }
     alias.providerThreadID = nil; alias.runtimeID = UUID()
     let rejectedRuntimeID = try #require(alias.runtimeID)
-    fixture.snapshot.threads.append(alias)
-    try fixture.command(.provider(threadID: alias.id, runtimeID: rejectedRuntimeID, event: .thread(candidate.reference.nativeThreadID)))
-    let rejected = try #require(fixture.snapshot.threads.first { $0.id == alias.id })
+    state.fixture.snapshot.threads.append(alias)
+    try state.fixture.command(.provider(threadID: alias.id, runtimeID: rejectedRuntimeID, event: .thread(state.candidate.reference.nativeThreadID)))
+    let rejected = try #require(state.fixture.snapshot.threads.first { $0.id == alias.id })
     #expect(rejected.providerThreadID == nil && rejected.messages.isEmpty)
-    if dismiss { try fixture.command(.client(.dismissConversationHistoryRecall(operationID: review.id))) }
-    else { try fixture.command(.client(.recallConversationHistoryPrompt(operationID: review.id))) }
-    let settled = try #require(fixture.snapshot.conversationHistoryOperation(review.id))
+    state.alias = alias
+}
+
+@inline(never)
+private func settleV1RewindRecallReservation(_ state: OpenCodeV1RecallReservationFixture, dismiss: Bool) throws {
+    let alias = try #require(state.alias)
+    if dismiss { try state.fixture.command(.client(.dismissConversationHistoryRecall(operationID: state.review.id))) }
+    else { try state.fixture.command(.client(.recallConversationHistoryPrompt(operationID: state.review.id))) }
+    let settled = try #require(state.fixture.snapshot.conversationHistoryOperation(state.review.id))
     #expect(settled.phase == .applied && !settled.needsPromptRecall && !settled.locksSource && !settled.reservesOpenCodeV1Candidate)
-    #expect(!fixture.snapshot.isOpenCodeHistoryScopeLocked(configuration: .init(thread: alias), nativeThreadID: candidate.reference.nativeThreadID))
-    var fresh = alias; fresh.id = UUID(); fresh.providerThreadID = candidate.reference.nativeThreadID; fresh.runtimeID = nil
-    try WorkspaceDecision(snapshot: fixture.snapshot).validateConversationHistoryLocks(.createThread(fresh))
-    let aliasIndex = try #require(fixture.snapshot.threads.firstIndex { $0.id == alias.id }), acceptedRuntimeID = UUID()
-    fixture.snapshot.threads[aliasIndex].runtimeID = acceptedRuntimeID
-    try fixture.command(.provider(threadID: alias.id, runtimeID: acceptedRuntimeID, event: .thread(candidate.reference.nativeThreadID)))
-    #expect(fixture.snapshot.threads.first { $0.id == alias.id }?.providerThreadID == candidate.reference.nativeThreadID)
-    try WorkspaceJournal.validate(fixture.snapshot)
+    #expect(!state.fixture.snapshot.isOpenCodeHistoryScopeLocked(configuration: .init(thread: alias), nativeThreadID: state.candidate.reference.nativeThreadID))
+    var fresh = alias; fresh.id = UUID(); fresh.providerThreadID = state.candidate.reference.nativeThreadID; fresh.runtimeID = nil
+    try WorkspaceDecision(snapshot: state.fixture.snapshot).validateConversationHistoryLocks(.createThread(fresh))
+    let aliasIndex = try #require(state.fixture.snapshot.threads.firstIndex { $0.id == alias.id }), acceptedRuntimeID = UUID()
+    state.fixture.snapshot.threads[aliasIndex].runtimeID = acceptedRuntimeID
+    try state.fixture.command(.provider(threadID: alias.id, runtimeID: acceptedRuntimeID, event: .thread(state.candidate.reference.nativeThreadID)))
+    #expect(state.fixture.snapshot.threads.first { $0.id == alias.id }?.providerThreadID == state.candidate.reference.nativeThreadID)
+    try WorkspaceJournal.validate(state.fixture.snapshot)
+}
+
+@Test(arguments: [false, true])
+func openCodeV1HistoryAppliedRewindReservesAdoptedSessionUntilPromptRecallSettles(dismiss: Bool) throws {
+    let state = try prepareV1RewindRecallReservation()
+    try verifyHeldV1RewindRecallReservation(state)
+    try settleV1RewindRecallReservation(state, dismiss: dismiss)
 }
 
 @Test func openCodeV1HistoryAppliedForkReleasesCandidateForItsLegitimateTarget() throws {

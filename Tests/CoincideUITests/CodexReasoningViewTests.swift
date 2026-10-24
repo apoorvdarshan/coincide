@@ -10,13 +10,26 @@ func nativeProviderMenuHugsShortLabelsAndBoundsLongModelsInNarrowHeaders() async
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-provider-menu-" + UUID().uuidString)
     let store = WorkspaceStore(databaseURL: root.appendingPathComponent("workspace.sqlite"))
     defer { try? FileManager.default.removeItem(at: root) }
-    for model in ["", "GPT-6 Astra", String(repeating: "An advertised long model name ", count: 12)] {
+    for model in ["", "GPT", "GPT-6 Astra", String(repeating: "An advertised long model name ", count: 12)] {
         var thread = CodingThread(project: .init(path: root.path), model: model)
-        if !model.isEmpty { thread.reasoningEffort = "medium" }
+        if !model.isEmpty && model != "GPT" { thread.reasoningEffort = "medium" }
         let host = NSHostingController(rootView: ProviderMenu(store: store, thread: thread))
         let wide = host.sizeThatFits(in: .init(width: 1_000, height: 100))
-        #expect(wide.width <= 300 && wide.height <= 100)
-        if model.isEmpty { #expect(wide.width < 120, "The header menu must keep its chevron beside a short provider label.") }
+        #expect(wide.width <= 282 && wide.height <= 100)
+        if model.isEmpty {
+            // The current caption is "Codex default", not the former "Codex".
+            // Compare its actual intrinsic content, so a widened hover area fails
+            // without imposing an obsolete fixed bound on the longer caption.
+            let caption = NSHostingController(rootView: HStack(spacing: 5) {
+                ProviderLogo(provider: .codex, size: 14)
+                Text("Codex default").lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
+            }.font(.system(size: 13)).fixedSize())
+            let intrinsic = caption.sizeThatFits(in: .init(width: 1_000, height: 100))
+            #expect(abs(wide.width - (intrinsic.width + 12)) <= 1,
+                "Only the label and its twelve points of horizontal hit padding may widen the hover target.")
+        }
+        if model == "GPT" { #expect(wide.width < 120, "Short model labels must keep an intrinsic hover target.") }
         let narrow = host.sizeThatFits(in: .init(width: 160, height: 100))
         #expect(narrow.width <= 161 && narrow.height <= 100)
     }

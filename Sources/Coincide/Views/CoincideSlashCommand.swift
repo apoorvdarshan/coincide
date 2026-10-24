@@ -3,7 +3,7 @@ import Foundation
 /// App navigation has its own namespace so a CLI command of the same name is
 /// never intercepted or submitted to the model by accident.
 enum CoincideSlashCommand: String, CaseIterable, Identifiable {
-    case new, model, settings, skills, commands, mcp, plugins, hooks, configuration, sessions, help
+    case new, model, compact, settings, skills, commands, mcp, plugins, hooks, configuration, sessions, help
     var id: String { rawValue }
     var name: String { "app:" + rawValue }
     var token: String { "/" + name }
@@ -11,6 +11,7 @@ enum CoincideSlashCommand: String, CaseIterable, Identifiable {
         switch self {
         case .new: "Start a new Coincide chat in this project"
         case .model: "Choose a model from your connected agents"
+        case .compact: "Review compacting the active provider's context"
         case .settings: "Open Coincide settings"
         case .skills: "Browse and import skills"
         case .commands: "Browse and import reusable commands"
@@ -24,7 +25,7 @@ enum CoincideSlashCommand: String, CaseIterable, Identifiable {
     }
     var settingsPage: SettingsPage? {
         switch self {
-        case .new, .model: nil
+        case .new, .model, .compact: nil
         case .settings: .general
         case .help: .keyboard
         default: SettingsPage(rawValue: rawValue)
@@ -41,6 +42,9 @@ extension WorkspaceStore {
         switch command {
         case .new: newThread(projectID: selectedProject?.id)
         case .model: showChat(); modelPickerPresented = true
+        case .compact:
+            guard let id = selectedThreadID else { errorMessage = "Select a conversation before compacting its context."; return }
+            showChat(); requestContextCompaction(threadID: id)
         default: if let page = command.settingsPage { showSettings(page) }
         }
     }

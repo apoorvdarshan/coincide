@@ -111,6 +111,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var transcriptPlanSource: TranscriptPlanSourceLink?
     public var pullRequestCheckoutOperationID: UUID?
     public var runtimeID: UUID?
+    public var contextCompactionID: UUID?
     public var steeringCapabilityRevision: UInt64?
     public var runtimeRequests: [RuntimeRequest]
     public var isPinned: Bool
@@ -125,7 +126,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     }
     enum CodingKeys: String, CodingKey {
         case id, projectID, title, workspacePath, providerThreadID, provider, draft, model, permission, state, messages, isPinned, isArchived, createdAt, updatedAt
-        case delegatedTaskLineage
+        case delegatedTaskLineage, contextCompactionID
         case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, contextTransferLineage, contextProviderBindings, forkedFromHistoryOperationID, createdByAppMCP, transcriptPlanSource, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, scratchWorkspace, settlement, workspaceLifecycle
         case draftWorkspaceIntent
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
@@ -189,6 +190,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         transcriptPlanSource = try values.decodeIfPresent(TranscriptPlanSourceLink.self, forKey: .transcriptPlanSource)
         pullRequestCheckoutOperationID = try values.decodeIfPresent(UUID.self, forKey: .pullRequestCheckoutOperationID)
         runtimeID = try values.decodeIfPresent(UUID.self, forKey: .runtimeID)
+        contextCompactionID = try values.decodeIfPresent(UUID.self, forKey: .contextCompactionID)
         steeringCapabilityRevision = try values.decodeIfPresent(UInt64.self, forKey: .steeringCapabilityRevision)
         runtimeRequests = try values.decodeIfPresent([RuntimeRequest].self, forKey: .runtimeRequests) ?? []
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
@@ -196,7 +198,7 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         createdAt = try values.decode(Date.self, forKey: .createdAt)
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
     }
-    public var isBusy: Bool { activeRun != nil || state == .running || state == .awaitingApproval }
+    public var isBusy: Bool { contextCompactionID != nil || activeRun != nil || state == .running || state == .awaitingApproval }
     public var providerName: String { provider == .acp ? acpAgent?.name ?? provider.name : provider.name }
 }
 
@@ -210,6 +212,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var pullRequestCreations: [PullRequestCreationOperation]?
     public var pullRequestActions: [PullRequestActionOperation]?
     public var pullRequestCheckouts: [PullRequestCheckoutOperation]?
+    public var contextCompactionOperations: [ContextCompactionOperation]?
     public var promptSteerings: [PromptSteeringOperation]?
     public var checkpointRestoreOperations: [RunCheckpointRestoreOperation]?
     public var delegatedTasks: [DelegatedTask]?
@@ -220,7 +223,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var scheduler: ScheduledTaskLedger?
     public var workspaceLifecyclePolicy: WorkspaceLifecyclePolicy?
     public init() {}
-    enum CodingKeys: String, CodingKey { case scheduler, schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestActions, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
+    enum CodingKeys: String, CodingKey { case contextCompactionOperations, scheduler, schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestActions, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         scheduler = try values.decodeIfPresent(ScheduledTaskLedger.self, forKey: .scheduler)
@@ -233,6 +236,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         pullRequestCreations = try values.decodeIfPresent([PullRequestCreationOperation].self, forKey: .pullRequestCreations)
         pullRequestActions = try values.decodeIfPresent([PullRequestActionOperation].self, forKey: .pullRequestActions)
         pullRequestCheckouts = try values.decodeIfPresent([PullRequestCheckoutOperation].self, forKey: .pullRequestCheckouts)
+        contextCompactionOperations = try values.decodeIfPresent([ContextCompactionOperation].self, forKey: .contextCompactionOperations)
         promptSteerings = try values.decodeIfPresent([PromptSteeringOperation].self, forKey: .promptSteerings)
         checkpointRestoreOperations = try values.decodeIfPresent([RunCheckpointRestoreOperation].self, forKey: .checkpointRestoreOperations)
         delegatedTasks = try values.decodeIfPresent([DelegatedTask].self, forKey: .delegatedTasks)
@@ -244,6 +248,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     }
     /// A local process cannot survive an application restart. Never display stale work as running.
     public mutating func recoverInterruptedWork() {
+        recoverContextCompactions()
         scheduler?.recover(threads: threads)
         recoverDelegatedTasks()
         for i in (contextTransfers ?? []).indices {

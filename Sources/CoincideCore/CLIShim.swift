@@ -17,9 +17,9 @@ public enum CLIShim {
         # Remove it from Coincide Settings > General > Command-line tool.
         COINCIDE_APP=\(shellWord(appPath))
         COINCIDE_BUNDLE_ID=\(shellWord(bundleIdentifier))
-        usage() { printf '%s\\n' 'Usage: coincide [folder]' '       coincide status|projects|threads|thread|providers|models|model|select|new|ui|sort|screenshot|export [arguments]' '       coincide integrations|integration-import|integration-remove|integration-use [arguments]' '       coincide sessions|session-details|session-stop|configuration|configuration-set [arguments]' '' 'Open a folder or control the running Coincide app. Commands return JSON; no command sends a model prompt.'; }
+        usage() { printf '%s\\n' 'Usage: coincide [folder]' '       coincide status|projects|threads|thread|providers|models|model|select|new|ui|sort|screenshot|export|compact|compaction|compaction-cancel [arguments]' '       coincide integrations|integration-import|integration-remove|integration-use [arguments]' '       coincide sessions|session-details|session-stop|configuration|configuration-set [arguments]' '' 'Open a folder or control the running Coincide app. Commands return JSON and never submit your draft; compact requests provider context summarization.'; }
         case "${1:-}" in -h|--help) usage; exit 0 ;; esac
-        case "${1:-}" in status|projects|threads|thread|providers|models|model|select|new|ui|sort|screenshot|export|integrations|integration-import|integration-remove|integration-use|sessions|session-details|session-stop|configuration|configuration-set)
+        case "${1:-}" in status|projects|threads|thread|providers|models|model|select|new|ui|sort|screenshot|export|compact|compaction|compaction-cancel|integrations|integration-import|integration-remove|integration-use|sessions|session-details|session-stop|configuration|configuration-set)
             if [ -f "$COINCIDE_APP/Contents/Resources/coincide" ]; then exec /usr/bin/python3 "$COINCIDE_APP/Contents/Resources/coincide" "$@"; fi
             printf '%s\\n' 'Update Coincide and reinstall the command from Settings.' >&2; exit 127 ;;
         esac

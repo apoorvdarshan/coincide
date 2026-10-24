@@ -5,8 +5,10 @@
 The user re-enabled automated validation for this change. Native Settings now
 includes separate Skills, Commands, MCP, Plugins, Hooks, Configuration and Agent
 sessions pages. Local-owner CLI commands expose the same discovery, library,
-configuration and session operations; `/app:*` commands navigate the app without
-sending model prompts. Public conversation export supports Markdown and JSON.
+configuration and session operations; navigation `/app:*` commands do not send
+model prompts. `/app:compact` separately confirms provider context summarization,
+which may consume model tokens. Public conversation export supports Markdown
+and JSON.
 
 The complete Swift test target build passed. All 94 focused Swift tests passed,
 including the Claude resume-consumer cases that previously crashed in hosted CI,

@@ -57,6 +57,10 @@ public actor ClaudeSession: ProviderSession {
     private var activeSubagentTasks: [String: String] = [:]
     private var steerEchoes: [String] = []
     private var attemptedSteeringInputIDs: Set<String> = []
+    private var boundCoincideThreadID: UUID?
+    private var compactionPreparing = false
+    private var compaction: NativeContextCompactionLatch?
+    private var compactionQuiescent = false
 
     public init(executable: URL, cwd: URL, resumeID: String? = nil, arguments: [String]? = nil,
                 configuration: ClaudeRuntimeConfiguration? = nil, launchSelection: ClaudeResumeSelection? = nil,
@@ -267,7 +271,7 @@ public actor ClaudeSession: ProviderSession {
         let submittedRunID = thread.activeRun?.id
         let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
         guard !shuttingDown else { throw CoincideError("The Claude connection is closed.") }
-        guard !working else { throw CoincideError("A turn is already running in this thread.") }
+        guard !working, !compactionPreparing, compaction == nil else { throw CoincideError("A turn is already running in this thread.") }
         let expectedNative = captured.claudeLaunchSelection?.nativeSessionID ?? captured.nativeThreadID ?? thread.providerThreadID
         if let expected = expectedNative, let nativeThreadID, expected != nativeThreadID {
             throw CoincideError("The Claude conversation changed. Open a connection for the selected conversation before sending.")
@@ -278,6 +282,7 @@ public actor ClaudeSession: ProviderSession {
         } else if captured.claudeRuntimeConfiguration != nil || captured.claudeLaunchSelection != nil { throw ClaudeRuntimeConfiguration.invalid() }
         if nativeThreadID == nil { nativeThreadID = expectedNative }
         eventRunID = submittedRunID
+        boundCoincideThreadID = thread.id
         working = true; requestedInterrupt = false; emittedAssistant = false
         usage.beginTurn(runID: submittedRunID)
         messageBlocks.beginTurn()
@@ -298,6 +303,7 @@ public actor ClaudeSession: ProviderSession {
             let selection = try await applyModelSelection(captured, generation: generation)
             await rpc.flushEvents()
             guard ownsPreparing(generation) else { throw CancellationError() }
+            compactionQuiescent = false
             let promptID = submittedRunID.map(ClaudeInputIdentity.opening(runID:)) ?? UUID().uuidString
             activeTurnID = promptID
             let transportInput = ClaudeModelControl.input(input, promptEffort: selection.promptEffort)
@@ -377,6 +383,54 @@ public actor ClaudeSession: ProviderSession {
             return try ProviderSteeringReceipt(turnID: expectedTurnID, delivery: .submitted)
         } catch { throw ProviderSteeringError(.outcomeUncertain) }
     }
+    public func compactContext(thread: CodingThread, operationID: UUID) async throws -> ProviderContextCompactionReceipt {
+        try Task.checkCancellation()
+        guard initialized, !shuttingDown else { throw ProviderContextCompactionError(.unsupported) }
+        guard !compactionPreparing, compaction == nil else { throw ProviderContextCompactionError(.notIdle) }
+        try validateCompactionTarget(thread, operationID: operationID)
+        compactionPreparing = true
+        defer { compactionPreparing = false }
+        await rpc.flushEvents()
+        try Task.checkCancellation()
+        try validateCompactionTarget(thread, operationID: operationID)
+        // Installed Claude 2.1.308 advertises compact as a local command with
+        // supportsNonInteractive/post-text dispatch. Never synthesize a model
+        // prompt when the running process does not advertise that command.
+        guard let advertisedCommands,
+              let inventory = try? ClaudeCommands.inventory(advertisedCommands, cwd: workspacePath),
+              inventory.commands.contains(where: { $0.name == "compact" }),
+              let nativeThreadID else { throw ProviderContextCompactionError(.unsupported) }
+        let latch = NativeContextCompactionLatch(provider: .claude, nativeThreadID: nativeThreadID, operationID: operationID)
+        compaction = latch; compactionQuiescent = true
+        do {
+            try await rpc.sendFrame(.object(["type": .string("user"), "uuid": .string(operationID.uuidString),
+                "message": .object(["role": .string("user"), "content": .string("/compact")]),
+                "parent_tool_use_id": .null]))
+            await latch.acknowledge()
+            let receipt = try await latch.wait()
+            compaction = nil
+            return receipt
+        } catch {
+            await latch.fail()
+            await close()
+            compaction = nil
+            throw (error as? ProviderContextCompactionError) ?? ProviderContextCompactionError(.unconfirmed)
+        }
+    }
+    private func validateCompactionTarget(_ thread: CodingThread, operationID: UUID) throws {
+        let configuration = ProviderConfiguration(thread: thread)
+        guard initialized, !shuttingDown, !working, activeTurnID == nil, pendingApprovals.isEmpty,
+              activeRootSubagentTools.isEmpty, activeSubagentTasks.isEmpty,
+              boundCoincideThreadID == thread.id, thread.provider == .claude,
+              thread.activeRun == nil, thread.queuedTurns.isEmpty,
+              thread.contextCompactionID == nil || thread.contextCompactionID == operationID,
+              let nativeThreadID, thread.providerThreadID == nativeThreadID,
+              let activeConfiguration, activeConfiguration.provider == .claude,
+              activeConfiguration.workspacePath == configuration.workspacePath,
+              activeConfiguration.claudeRuntimeConfiguration == configuration.claudeRuntimeConfiguration else {
+            throw ProviderContextCompactionError(.notIdle)
+        }
+    }
     public func interrupt() async throws {
         guard working else { throw CoincideError("There is no active Claude turn to stop.") }
         requestedInterrupt = true
@@ -438,8 +492,9 @@ public actor ClaudeSession: ProviderSession {
         connecting?.cancel()
         let skills = Array(skillReads.values); for task in skills { task.cancel() }
         let rpc = rpc, reading = reader, steering = steeringTask?.task, initializing = connecting,
-            redaction = appMCPRedaction, continuation = continuation
+            redaction = appMCPRedaction, continuation = continuation, compaction = compaction
         let task = Task {
+            await compaction?.fail()
             await rpc.close()
             _ = try? await redaction?.value
             _ = try? await initializing?.value
@@ -557,12 +612,22 @@ public actor ClaudeSession: ProviderSession {
         case .callback(let work): await work()
         case .barrier(let complete): complete()
         case .disconnected(let reason):
+            if let compaction {
+                await compaction.fail()
+                if !shuttingDown { continuation.yield(.connectionClosed(ProviderContextCompactionError(.unconfirmed).localizedDescription)) }
+                working = false; pendingApprovals.removeAll(); continuation.finish(); return
+            }
             if working, submittedOpening, usage.interrupted() { publishUsage() }
             usage.detachRun()
             if !shuttingDown { continuation.yield(.connectionClosed(reason)) }
             working = false; pendingApprovals.removeAll(); continuation.finish()
         case .request(let id, let method, let params):
             guard !shuttingDown else { return }
+            if let compaction {
+                await compaction.fail()
+                try? await rpc.reject(id: id, message: "Interactive requests are unavailable during context compaction.")
+                return
+            }
             if method == "can_use_tool" {
                 let request = ApprovalRequest(id: id, method: method, params: params)
                 guard let requestID = id.string, !requestID.isEmpty, requestID.utf8.count <= 1_024,
@@ -595,6 +660,11 @@ public actor ClaudeSession: ProviderSession {
             }
         case .notification(let method, let frame):
             guard !shuttingDown else { return }
+            if method == "system", frame["subtype"] == .string("commands_changed"),
+               frame["parent_tool_use_id"] == .null,
+               frame["session_id"].string == nativeThreadID { advertisedCommands = frame["commands"] }
+            if let compaction { await compaction.consume(method: method, params: frame); return }
+            if compactionQuiescent { return }
             let isRoot = frame["parent_tool_use_id"] == .null
             if isRoot, let id = frame["session_id"].string {
                 // Child IDs and stale root frames must never retarget this

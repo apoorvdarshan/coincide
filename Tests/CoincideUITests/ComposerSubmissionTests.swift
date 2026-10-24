@@ -13,15 +13,14 @@ func nativeComposerSavedSendActionSubmitsTheLatestCompleteDraftBeforeDebounce(pr
     do {
         let database = root.appendingPathComponent("workspace.sqlite")
         let project = WorkspaceProject(path: checkout.path)
-        let agent = ACPAgentConfiguration(name: "Injected composer provider", executable: "/usr/bin/true")
         var thread = CodingThread(project: project, model: "Preserved composer model")
-        thread.provider = .acp; thread.acpAgent = agent; thread.checkpointPolicy = .disabled
+        thread.provider = .codex; thread.checkpointPolicy = .disabled
         thread.draft = previousDraft
-        var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]; snapshot.acpAgents = [agent]
+        var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
         try await WorkspaceDatabase(url: database).save(snapshot, event: "composer.fixture")
         let provider = NativeSetupProvider()
         let engine = try WorkspaceEngine(url: database, providerFactory: { _ in provider }, identityResolver: { _ in nil })
-        let store = WorkspaceStore(engine: engine); activeStore = store; await store.load()
+        let store = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: root)); activeStore = store; await store.load()
         let view = ChatView(store: store, threadID: thread.id)
         let savedSendAction = view.submitCurrentDraft
         #expect(store.thread(thread.id)?.draft == previousDraft)

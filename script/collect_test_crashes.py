@@ -136,7 +136,7 @@ def _fault_classification(payload, fault):
         if match:
             label, start, end, protection = match.groups()
             if int(start, 16) <= address < int(end, 16):
-                result["faultRegion"] = ("guard" if label.strip() == "STACK GUARD" and protection == "---" else
+                result["faultRegion"] = ("guard" if label.strip().upper() == "STACK GUARD" and protection == "---" else
                                          "stack" if label.strip() == "Stack" else
                                          "readOnly" if "r" in protection and "w" not in protection else
                                          "writable" if "w" in protection else "other")

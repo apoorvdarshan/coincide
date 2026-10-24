@@ -54,9 +54,9 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     #expect(!controller.perform(.threadPin) && controller.canPerform(.threadNext) && controller.canPerform(.threadJumps[3]) && !controller.canPerform(.threadJumps[4]))
     #expect(controller.perform(.threadNext) && store.selectedThreadID == t["a-pinned"]!.id)
     controller.selectionChanged(to: store.selectedThreadID)
-    #expect(controller.perform(.threadJumps[3]) && store.selectedThreadID == t["b-one"]!.id && store.selectedProjectID == f.projects[1].id)
+    #expect(controller.perform(.threadJumps[2]) && store.selectedThreadID == t["b-one"]!.id && store.selectedProjectID == f.projects[1].id)
     controller.selectionChanged(to: store.selectedThreadID)
-    #expect(controller.perform(.threadPrevious) && store.selectedThreadID == t["a-old"]!.id)
+    #expect(controller.perform(.threadPrevious) && store.selectedThreadID == t["a-new"]!.id)
     controller.selectionChanged(to: store.selectedThreadID)
     // Back and forward replay the visited threads without recording new visits.
     #expect(controller.perform(.navigationBack) && store.selectedThreadID == t["b-one"]!.id)
@@ -136,7 +136,7 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     #expect(dispatcher.handle(try keyEvent(window, keyCode: 19, "2", .command)) == nil && store.selectedThreadID == f.threads["a-new"]!.id)
     #expect(dispatcher.handle(try keyEvent(window, keyCode: 40, "k", .command, repeat: true)) == nil && controller.palette == nil)
     // ⇧⌘] arrives as "}" and still moves to the next thread, including on repeat.
-    #expect(dispatcher.handle(try keyEvent(window, keyCode: 30, "}", [.command, .shift], repeat: true)) == nil && store.selectedThreadID == f.threads["a-old"]!.id)
+    #expect(dispatcher.handle(try keyEvent(window, keyCode: 30, "}", [.command, .shift], repeat: true)) == nil && store.selectedThreadID == f.threads["b-one"]!.id)
     // An editable field keeps typing, and legacy panel contexts remain false.
     let field = NSTextView(frame: .init(x: 0, y: 0, width: 200, height: 100))
     window.contentView?.addSubview(field)
@@ -160,7 +160,7 @@ private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String,
     _ = dispatcher.handle(try keyEvent(window, keyCode: 55, "", .command, type: .flagsChanged))
     let deadline = ContinuousClock.now + .seconds(3)
     while !controller.jumpHintsVisible, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(controller.jumpHintsVisible && controller.jumpHint(for: f.threads["a-pinned"]!.id) == "⌘1" && controller.jumpHint(for: f.threads["b-one"]!.id) == "⌘4")
+    #expect(controller.jumpHintsVisible && controller.jumpHint(for: f.threads["a-pinned"]!.id) == "⌘1" && controller.jumpHint(for: f.threads["b-one"]!.id) == "⌘3")
     _ = dispatcher.handle(try keyEvent(window, keyCode: 55, "", [], type: .flagsChanged))
     #expect(!controller.jumpHintsVisible && controller.jumpHint(for: f.threads["a-pinned"]!.id) == nil)
 }

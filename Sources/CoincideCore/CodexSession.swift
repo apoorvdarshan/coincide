@@ -41,6 +41,11 @@ public actor CodexSession: ProviderSession {
     private var nativeRunOwners: [String: UUID] = [:]
     private var nativeRunOwnerOrder: [String] = []
     private var mcpApprovals: [JSONValue: ApprovalRequest] = [:]
+    private var boundCoincideThreadID: UUID?
+    private var compactionPreparing = false
+    private var compaction: NativeContextCompactionLatch?
+    private var compactedTurnIDs: Set<String> = []
+    private var compactionQuiescent = false
 
     public init(executable: URL, cwd: URL, arguments: [String] = ["app-server", "--stdio"],
                 environment: [String: String]? = nil, installationLease: CodexInstallationLease? = nil,
@@ -368,6 +373,7 @@ public actor CodexSession: ProviderSession {
                 try CodexModelCatalogEntry.string(response["config"]["model_provider"], maximum: 4_096))
     }
     private func connectForHistory() async throws {
+        guard !compactionPreparing, compaction == nil else { throw ProviderHistoryError(.notIdle) }
         do { try await connect() }
         catch is CancellationError { throw CancellationError() }
         catch let error as ProviderHistoryError { throw error }
@@ -382,7 +388,7 @@ public actor CodexSession: ProviderSession {
         let selectedInteractionMode = try CodexInteractionMode.selected(in: captured)
         try validateRuntimeBinding(captured)
         guard !historyMutationUncertain else { throw ProviderHistoryError(.outcomeUncertain) }
-        guard !working, !historyMutationInFlight else { throw CoincideError("A turn or conversation history operation is already running in this thread.") }
+        guard !working, !historyMutationInFlight, !compactionPreparing, compaction == nil else { throw CoincideError("A turn or conversation history operation is already running in this thread.") }
         if let effort = captured.reasoningEffort {
             guard !effort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, effort.utf8.count <= 256,
                   !effort.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
@@ -390,6 +396,7 @@ public actor CodexSession: ProviderSession {
             }
         }
         working = true
+        boundCoincideThreadID = thread.id
         sendGeneration += 1
         let generation = sendGeneration, submittedRunID = thread.activeRun?.id
         eventRunID = submittedRunID
@@ -504,6 +511,11 @@ public actor CodexSession: ProviderSession {
             // the next explicit default must still clear our prior override.
             requestedServiceTier = selectedServiceTier
             if let effectiveInteractionMode { requestedInteractionMode = effectiveInteractionMode }
+            if compactionQuiescent {
+                await rpc.flushEvents()
+                try requireSend(generation)
+                compactionQuiescent = false
+            }
             promptAttempted = true
             let response = try await rpc.request("turn/start", params: .object(params))
             guard let id = response["turn"]["id"].string else { throw CoincideError("Codex did not return a turn id.") }
@@ -622,6 +634,55 @@ public actor CodexSession: ProviderSession {
         // cancellation wins the race. It never reinstalls an active turn.
         return try await task.value
     }
+    public func compactContext(thread: CodingThread, operationID: UUID) async throws -> ProviderContextCompactionReceipt {
+        try Task.checkCancellation()
+        guard initialized, !shuttingDown,
+              CodexHistoryClient(rpc: rpc, userAgent: serverUserAgent).reviewedProfileIdentifier == "codex-0.164.0" else {
+            throw ProviderContextCompactionError(.unsupported)
+        }
+        guard !compactionPreparing, compaction == nil else { throw ProviderContextCompactionError(.notIdle) }
+        try validateCompactionTarget(thread, operationID: operationID)
+        compactionPreparing = true
+        defer { compactionPreparing = false }
+        // Drain the prior public turn before accepting any maintenance events.
+        await rpc.flushEvents()
+        try Task.checkCancellation()
+        try validateCompactionTarget(thread, operationID: operationID)
+        guard let threadID else { throw ProviderContextCompactionError(.notIdle) }
+        let latch = NativeContextCompactionLatch(provider: .codex, nativeThreadID: threadID,
+            operationID: operationID, excludedTurns: Set(completedTurnIDs).union(compactedTurnIDs))
+        compaction = latch; compactionQuiescent = true
+        do {
+            _ = try await rpc.request("thread/compact/start", params: .object(["threadId": .string(threadID)]))
+            await latch.acknowledge()
+            let receipt = try await latch.wait()
+            if let turn = await latch.turnID() {
+                compactedTurnIDs.insert(turn)
+                if compactedTurnIDs.count > 128 { compactedTurnIDs = [turn] }
+            }
+            compaction = nil
+            return receipt
+        } catch {
+            await latch.fail()
+            historyMutationUncertain = true
+            await close()
+            compaction = nil
+            throw (error as? ProviderContextCompactionError) ?? ProviderContextCompactionError(.unconfirmed)
+        }
+    }
+    private func validateCompactionTarget(_ thread: CodingThread, operationID: UUID) throws {
+        let configuration = ProviderConfiguration(thread: thread)
+        guard initialized, !shuttingDown, !working, turnID == nil, !historyMutationInFlight, !historyMutationUncertain, mcpApprovals.isEmpty,
+              boundCoincideThreadID == thread.id, thread.provider == .codex,
+              thread.activeRun == nil, thread.queuedTurns.isEmpty,
+              thread.contextCompactionID == nil || thread.contextCompactionID == operationID,
+              let threadID, thread.providerThreadID == threadID,
+              let activeConfiguration, activeConfiguration.provider == .codex,
+              activeConfiguration.workspacePath == configuration.workspacePath,
+              activeConfiguration.codexRuntimeBinding == configuration.codexRuntimeBinding else {
+            throw ProviderContextCompactionError(.notIdle)
+        }
+    }
     public func interrupt() async throws {
         guard let threadID, let turnID else { throw CoincideError("There is no active turn to stop.") }
         _ = try await rpc.request("turn/interrupt", params: .object(["threadId": .string(threadID), "turnId": .string(turnID)]))
@@ -653,7 +714,19 @@ public actor CodexSession: ProviderSession {
         closeTask = task; await task.value
     }
     private func finishClose() async {
-        shuttingDown = true; let connecting = connectionTask; connecting?.cancel(); await rpc.close()
+        shuttingDown = true
+        if let compaction {
+            let target = await compaction.claimInterruptTarget()
+            await compaction.fail()
+            if let target {
+                // Closing stdio does not establish that a shared native task
+                // stopped. Request one bounded interrupt of our observed turn;
+                // the maintenance outcome remains unconfirmed either way.
+                _ = try? await rpc.request("turn/interrupt", params: .object([
+                    "threadId": .string(compaction.nativeThreadID), "turnId": .string(target)]), timeout: .seconds(2))
+            }
+        }
+        let connecting = connectionTask; connecting?.cancel(); await rpc.close()
         _ = try? await steeringTask?.task.value; steeringTask = nil
         await connecting?.value; connectionTask = nil
         let reading = eventTask; reading?.cancel(); await reading?.value; eventTask = nil; continuation.finish()
@@ -671,9 +744,19 @@ public actor CodexSession: ProviderSession {
         case .barrier(let complete): complete()
         case .disconnected(let reason):
             working = false
+            if let compaction {
+                await compaction.fail()
+                if !shuttingDown { continuation.yield(.connectionClosed(ProviderContextCompactionError(.unconfirmed).localizedDescription)) }
+                continuation.finish(); return
+            }
             if !shuttingDown { continuation.yield(.connectionClosed(reason)) }
             continuation.finish()
         case .request(let id, let method, let params):
+            if let compaction {
+                await compaction.fail()
+                try? await rpc.reject(id: id, message: "Interactive requests are unavailable during context compaction.")
+                return
+            }
             if method == CodexMCPApproval.method {
                 let request = ApprovalRequest(id: id, method: method, params: params)
                 guard !shuttingDown, working, let runID = eventRunID,
@@ -715,6 +798,10 @@ public actor CodexSession: ProviderSession {
                 return
             }
             if let id = params["threadId"].string, let threadID, id != threadID { return }
+            if let compaction { await compaction.consume(method: method, params: params); return }
+            if compactionQuiescent { return }
+            if let id = params["turnId"].string ?? params["turn"]["id"].string,
+               compactedTurnIDs.contains(id) { return }
             switch method {
             case "serverRequest/resolved":
                 mcpApprovals.removeValue(forKey: params["requestId"])

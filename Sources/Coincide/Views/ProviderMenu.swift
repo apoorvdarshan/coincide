@@ -18,7 +18,7 @@ struct ProviderMenu: View {
         }
     }
     private var controls: ProviderModelControlsPresentation { .init(thread: thread, models: store.models(for: thread)) }
-    private var summary: String {
+    var summary: String {
         guard !thread.model.isEmpty else { return "\(thread.provider.name) default" }
         var parts = [store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? thread.model]
         if thread.provider == .codex, let effort = thread.reasoningEffort { parts.append(ReasoningEffortPresentation.title(effort)) }
@@ -29,14 +29,13 @@ struct ProviderMenu: View {
     }
     var body: some View {
         Button { store.modelPickerPresented.toggle() } label: {
-            HStack(spacing: 5) {
-                ProviderLogo(provider: thread.provider, size: 14)
-                Text(summary).lineLimit(1).truncationMode(.middle)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
-            }.font(.system(size: 13))
-                // Hug short labels; only long model names need the width cap.
-                .frame(maxWidth: 270, alignment: .trailing).fixedSize(horizontal: true, vertical: true)
-                .frame(height: 30).padding(.horizontal, 6)
+            ProviderMenuLabelLayout {
+                HStack(spacing: 5) {
+                    ProviderLogo(provider: thread.provider, size: 14)
+                    Text(summary).lineLimit(1).truncationMode(.middle)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
+                }.font(.system(size: 13))
+            }.frame(height: 30).padding(.horizontal, 6)
         }
         .buttonStyle(.plain).modifier(ChatControlHover(selected: store.modelPickerPresented))
         .accessibilityLabel("Choose model").accessibilityValue(summary)
@@ -354,6 +353,24 @@ struct ProviderMenu: View {
     }
     @ViewBuilder private func choice(_ title: String, selected: Bool) -> some View {
         if selected { Label(title, systemImage: "checkmark") } else { Text(title) }
+    }
+}
+
+/// A fixedSize label ignores a narrow parent proposal, while maxWidth alone
+/// expands short labels and their hover targets. Measure the intrinsic label,
+/// cap long names, then honor the actual space offered by the composer/header.
+private struct ProviderMenuLabelLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let label = subviews.first else { return .zero }
+        let ideal = label.sizeThatFits(.unspecified)
+        let width = min(270, ideal.width, max(0, proposal.width ?? .infinity))
+        let fitting = label.sizeThatFits(.init(width: width, height: proposal.height))
+        return .init(width: width, height: fitting.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+            proposal: .init(width: bounds.width, height: bounds.height))
     }
 }
 

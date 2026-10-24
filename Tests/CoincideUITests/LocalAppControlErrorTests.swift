@@ -3,6 +3,16 @@ import Testing
 import CoincideCore
 @testable import Coincide
 
+@Test @MainActor func localCompactionFailureReturnsSafeStatusInspectionWithoutProviderErrorDetails() async throws {
+    let result = try await LocalAppControl.localActionResult("compact") {
+        throw CoincideError("SYNTHETIC_PRIVATE_ERROR_CANARY")
+    }
+    #expect(result.isError)
+    #expect(result.structuredContent?["error"]["code"] == .string("context_compaction_not_confirmed"))
+    #expect(result.content.first?.contains("Run compaction for the same conversation") == true)
+    #expect(!result.content.joined().contains("SYNTHETIC_PRIVATE_ERROR_CANARY"))
+}
+
 @Test @MainActor func localConfigurationExpiredReviewReturnsActionableToolError() async throws {
     let result = try await LocalAppControl.localActionResult("configuration-set") {
         throw CoincideError("Read configuration first and use its unexpired review ID for one change.")

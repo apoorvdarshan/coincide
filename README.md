@@ -6,12 +6,14 @@ Coincide connects to the providers' CLIs and keeps its own conversation history.
 
 ## Current development
 
-The app is being simplified around the native Codex/ChatGPT desktop experience.
-The current work covers the chat window, compact sidebar, composer, model options
-and Settings. The native build, development signing and launch passed. The chat,
-sidebar, model picker and Settings were inspected through the local CLI.
-Automated tests and provider prompt checks are deferred by user direction.
-See [dated verification details](docs/VALIDATION.md).
+The app follows a native Codex/ChatGPT-style chat layout with embedded Settings.
+Current work adds provider integrations, configuration editing, local session
+inspection and conversation export. Automated validation is enabled again:
+[GitHub Actions](https://github.com/apoorvdarshan/coincide/actions/workflows/swift.yml)
+runs Swift tests, CLI/CI fixtures, native packaging and desktop UI checks.
+See [dated verification details](docs/VALIDATION.md) for actual outcomes and
+[provider feature coverage](docs/PROVIDER_FEATURES.md) for supported workflows
+and remaining CLI differences.
 
 ## Use Coincide
 
@@ -38,6 +40,17 @@ CLI session. New replies use an independent execution binding. Long histories
 use a bounded context handoff; private reasoning and attachment bytes are not
 replayed as conversation text.
 
+Settings has separate **Skills, Commands, MCP, Plugins and Hooks** pages. Skills
+and saved commands can be copied into Coincide's library; MCP, plugin and hook
+imports retain links to their original CLI configuration. Importing a reference
+does not install or enable it for another provider. **Configuration** edits
+supported CLI settings with explicit saves and stale-file protection, while
+**Agent sessions** shows provider-owned sessions and their available actions.
+
+Use `/app:` commands for Coincide navigation. The chat menu exports its current
+public transcript to Markdown or JSON; private reasoning, runtime configuration
+and attachment bytes are excluded.
+
 ## Build and run
 
 Requires macOS 14 or later, a Swift 6.2 or later toolchain, and Xcode Command Line
@@ -58,12 +71,14 @@ chosen CLI or its configured secure storage; they do not belong in the repositor
 ## Local command-line control
 
 With Coincide running, the source checkout provides navigation, catalog reads,
-model selection and native window screenshots:
+model selection, integration/configuration/session controls and screenshots:
 
 ```sh
 ./script/coincide status
 ./script/coincide projects
 ./script/coincide models --all --refresh
+./script/coincide integrations
+./script/coincide configuration codex --scope user
 ./script/coincide ui --model-picker
 ./script/coincide screenshot /tmp/coincide-window.png
 ```

@@ -43,7 +43,7 @@ func cliShimScriptQuotesTheAppPathAndEncodesFolderLinksForTheApp() async throws 
     try "import json, sys\nprint(json.dumps(sys.argv[1:]))\n".write(to: resource.appendingPathComponent("coincide"), atomically: true, encoding: .utf8)
     let shim = root.appendingPathComponent("coincide")
     try CLIShim.script(appPath: app.path, bundleIdentifier: "synthetic.test").write(to: shim, atomically: true, encoding: .utf8)
-    let commands = ["sort", "export", "integrations", "integration-import", "integration-remove", "integration-use", "sessions", "session-details", "session-stop", "configuration", "configuration-set"]
+    let commands = ["sort", "export", "compact", "compaction", "compaction-cancel", "integrations", "integration-import", "integration-remove", "integration-use", "sessions", "session-details", "session-stop", "configuration", "configuration-set"]
     for command in commands {
         let arguments = [command, "literal argument $HOME ; 'quoted'", "--flag"]
         let result = await BoundedProcess.run(executable: "/bin/sh", arguments: [shim.path] + arguments,

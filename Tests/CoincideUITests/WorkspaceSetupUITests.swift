@@ -35,12 +35,19 @@ actor NativeSetupOutput {
     func receive(_ snapshot: ProjectScriptOutputSnapshot) { latest = snapshot }
 }
 
+/// File links hand off to an external editor; record the plan instead of
+/// launching an application from a test.
+@MainActor final class NativeEditorHandoffRecorder {
+    var plans: [ExternalEditorLaunchPlan] = []
+}
+
 @MainActor struct NativeSetupFixture {
     let root: URL, source: URL, database: URL, helper: URL
     let project: WorkspaceProject, thread: CodingThread
     let provider: NativeSetupProvider
     let engine: WorkspaceEngine, store: WorkspaceStore
     let configuration: Data
+    let editorHandoffs: NativeEditorHandoffRecorder
     static func make(command: String, settleCommand: String? = nil) async throws -> Self {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-native-setup-" + UUID().uuidString).resolvingSymlinksInPath()
         let source = root.appendingPathComponent("Source ' workspace")
@@ -70,11 +77,8 @@ actor NativeSetupOutput {
             try Data("Untracked source kept\n".utf8).write(to: source.appendingPathComponent("untracked.txt"))
             let project = WorkspaceProject(path: source.path)
             // The injected peer owns the protocol; Store still checks that its executable exists.
-            let agent = ACPAgentConfiguration(name: "Synthetic setup provider", executable: "/usr/bin/true")
             var thread = CodingThread(project: project); thread.draft = "Keep the unsent setup discussion"; thread.model = "first-model"
-            thread.provider = .acp; thread.acpAgent = agent
             var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
-            snapshot.acpAgents = [agent]
             let database = root.appendingPathComponent("workspace.sqlite")
             _ = try await WorkspaceDatabase(url: database).commit(snapshot, event: "fixture", commandID: UUID())
             let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -86,9 +90,12 @@ actor NativeSetupOutput {
             #expect(FileManager.default.isExecutableFile(atPath: helper.path))
             let provider = NativeSetupProvider()
             let engine = try makeEngine(database: database, helper: helper, home: root, provider: provider)
-            let store = WorkspaceStore(engine: engine); await store.load()
+            let editorHandoffs = NativeEditorHandoffRecorder()
+            let store = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: root),
+                externalEditorDiscovery: { [] }, externalEditorHandoff: { plan in editorHandoffs.plans.append(plan); return Task { } })
+            await store.load()
             return .init(root: root, source: source, database: database, helper: helper, project: project, thread: thread,
-                         provider: provider, engine: engine, store: store, configuration: configuration)
+                         provider: provider, engine: engine, store: store, configuration: configuration, editorHandoffs: editorHandoffs)
         } catch { try? FileManager.default.removeItem(at: root); throw error }
     }
     static func makeEngine(database: URL, helper: URL, home: URL, provider: NativeSetupProvider) throws -> WorkspaceEngine {
@@ -244,7 +251,7 @@ func nativeWorkspaceSetupChangedReviewRequiresFreshPlanAndRestartNeverRunsApprov
         await store.shutdown()
         let provider = NativeSetupProvider()
         let engine = try NativeSetupFixture.makeEngine(database: fixture.database, helper: fixture.helper, home: fixture.root, provider: provider)
-        let reopened = WorkspaceStore(engine: engine); await reopened.load()
+        let reopened = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: fixture.root)); await reopened.load()
         do {
             #expect(reopened.thread(id)?.workspacePreparation?.setup?.id == fresh.id)
             #expect(reopened.thread(id)?.workspacePreparation?.setup?.canApprove == true)

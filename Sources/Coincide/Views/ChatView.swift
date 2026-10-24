@@ -18,7 +18,9 @@ struct ChatView: View {
             store.isPullRequestCheckoutLocked(threadID: threadID)
     }
     var composerHistoryLocked: Bool {
-        actionsLocked || store.claudeResumeSelectionNeedsInspection(threadID: threadID)
+        actionsLocked || store.claudeResumeSelectionNeedsInspection(threadID: threadID) ||
+            store.acceptingContextCompaction.contains(threadID) ||
+            store.snapshot.contextCompaction(threadID: threadID)?.isWorking == true
     }
     private var draft: Binding<String> {
         Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
@@ -67,6 +69,11 @@ struct ChatView: View {
                     Spacer()
                     workspaceMenu(thread)
                     Menu {
+                        Button("Compact context…") { store.requestContextCompaction(threadID: threadID) }
+                            .disabled(store.contextCompactionUnavailableReason(threadID: threadID) != nil)
+                            .help(store.contextCompactionUnavailableReason(threadID: threadID) ?? "Summarize the active provider session while keeping this conversation")
+                            .accessibilityIdentifier("conversation-compact-context")
+                        Divider()
                         Button("Export Markdown…") { export(thread, format: .markdown) }
                         Button("Export JSON…") { export(thread, format: .json) }
                     } label: {
@@ -101,10 +108,19 @@ struct ChatView: View {
                 }
                 VStack(spacing: 10) {
                     // Keep recovery reachable for an existing interrupted history operation.
-                    if composerHistoryLocked {
+                    if actionsLocked || store.claudeResumeSelectionNeedsInspection(threadID: threadID) {
                         ConversationHistoryBanner(store: store, threadID: threadID)
                     }
                     ConversationSavedOperationRecovery(store: store, thread: thread)
+                    if let operation = store.snapshot.contextCompaction(threadID: threadID) {
+                        ContextCompactionBanner(operation: operation,
+                            isCancelling: store.cancellingContextCompaction.contains(operation.id)) {
+                            Task {
+                                do { _ = try await store.cancelContextCompaction(threadID: threadID, operationID: operation.id) }
+                                catch { store.errorMessage = "Stopping context compaction was not confirmed. Check its current status before trying again." }
+                            }
+                        }
+                    }
                     PromptSteeringBanner(store: store, threadID: threadID)
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
@@ -142,8 +158,13 @@ struct ChatView: View {
                                  }, stop: { Task { await store.interrupt(threadID) } },
                                  skills: skillsModel, draftTools: store.composerDraftTools, draftThreadID: threadID, discardDraft: { store.discardComposerDraft(threadID) },
                                  modelControl: AnyView(ProviderMenu(store: store, thread: thread).disabled(actionsLocked)),
-                                 appCommand: { store.runAppCommand($0) })
-                        .disabled(store.choosingModelThreads.contains(threadID))
+                                 appCommand: { command in
+                                     if command == .compact { store.requestContextCompaction(threadID: threadID) }
+                                     else { store.runAppCommand(command) }
+                                 })
+                        .disabled(store.choosingModelThreads.contains(threadID) ||
+                            store.acceptingContextCompaction.contains(threadID) ||
+                            store.snapshot.contextCompaction(threadID: threadID)?.isWorking == true)
                     if thread.visibleMessages.isEmpty {
                         HStack(spacing: 12) {
                             workspaceMenu(thread)
@@ -164,6 +185,15 @@ struct ChatView: View {
             .frame(minWidth: 0, maxWidth: .infinity)
             .background(ChatChrome.canvas)
             .navigationTitle("Coincide")
+            .confirmationDialog("Compact context?", isPresented: Binding(
+                get: { store.contextCompactionConfirmation?.threadID == threadID },
+                set: { if !$0, store.contextCompactionConfirmation?.threadID == threadID { store.contextCompactionConfirmation = nil } }
+            ), titleVisibility: .visible, presenting: store.contextCompactionConfirmation) { confirmation in
+                Button("Compact context") { Task { await store.confirmContextCompaction(confirmation) } }
+                Button("Cancel", role: .cancel) { store.contextCompactionConfirmation = nil }
+            } message: { confirmation in
+                Text("Ask \(confirmation.providerName) to summarize its active context. This may use model tokens. Your visible Coincide conversation and unsent draft stay unchanged.")
+            }
             .task(id: store.promptSteeringKey(threadID: threadID)) {
                 await store.refreshPromptSteeringAvailability(threadID: threadID)
             }

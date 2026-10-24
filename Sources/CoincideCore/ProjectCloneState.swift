@@ -55,6 +55,6 @@ extension WorkspaceSnapshot {
     }
     public func providerReady(for thread: CodingThread) -> Bool {
         let current = threads.first(where: { $0.id == thread.id }) ?? thread
-        return !hasUnresolvedContextDelivery(threadID: current.id) && (current.claudeResumeConsumerRunID == nil || current.activeRun?.id == current.claudeResumeConsumerRunID) && !isPullRequestCheckoutLocked(threadID: current.id) && !isPullRequestCreationLocked(threadID: current.id) && !isConversationHistoryLocked(threadID: current.id) && !isCheckpointRestoreLocked(threadID: current.id) && current.settlement == nil && current.heldPostRunCheckpoint == nil && workspaceReady(for: current) && (current.workspacePreparation?.setup?.providerReleased ?? true)
+        return current.contextCompactionID == nil && !hasUnresolvedContextDelivery(threadID: current.id) && (current.claudeResumeConsumerRunID == nil || current.activeRun?.id == current.claudeResumeConsumerRunID) && !isPullRequestCheckoutLocked(threadID: current.id) && !isPullRequestCreationLocked(threadID: current.id) && !isConversationHistoryLocked(threadID: current.id) && !isCheckpointRestoreLocked(threadID: current.id) && current.settlement == nil && current.heldPostRunCheckpoint == nil && workspaceReady(for: current) && (current.workspacePreparation?.setup?.providerReleased ?? true)
     }
 }

@@ -29,7 +29,7 @@ Coincide gap, not a claim that the provider has no API for it.
 | Saved history, fork and rewind | Conditional reviewed 0.163 profile and stable 0.164.0 paginated-history contracts | Conditional validated transcript boundaries and captured runtime identity | Native review/guards exist. Unsupported versions, uncertain outcomes, changed sources and unsafe boundaries are refused. A rewind is not an unconditional filesystem rollback. [Codex history](../Sources/CoincideCore/CodexHistoryClient.swift), [Claude history](../Sources/CoincideCore/ClaudeHistoryService.swift), [review UI](../Sources/Coincide/Views/ConversationHistoryReviewSheet.swift). |
 | Import conversations | Project-scoped local transcript import | Same | Import creates a Coincide-owned copy; future replies use an independent binding rather than continuing the original CLI session. Imported history may not include every provider-private event. [Import](../Sources/CoincideCore/AgentSessionImport.swift). |
 | Switch providers in one chat | Implemented | Implemented | Coincide owns the transcript and prepares portable historical context for the next provider. This does not transfer private reasoning, native runtime state or unlimited context verbatim. [Context handoff](../Sources/CoincideCore/ContextHandoffService.swift). |
-| Context and compaction | Provider-managed; no dedicated manual compact action | Provider-managed; supported auto-compact threshold and reported usage/compaction | Do not equate a configured threshold with observed compaction. There is no universal native Compact button or automatic mapping of Codex `/compact`. [Claude settings](../Sources/CoincideCore/ClaudeRuntimeProfile.swift), [usage UI](../Sources/Coincide/Views/ProviderUsageView.swift). |
+| Context and compaction | Conditional native manual compaction for the active owned session | Same, plus supported auto-compact threshold and reported usage | Chat action and `/app:compact` require confirmation; `compact --confirm` has matching local control. The session must be idle and owned by Coincide. Progress, provider-confirmed completion and uncertain outcomes are distinguished; visible history and drafts stay unchanged. Native capability checks may reject unsupported connections. A configured auto-compact threshold alone does not prove compaction. [Operation](../Sources/CoincideCore/ContextCompaction.swift), [controls](LOCAL_CONTROL.md). |
 | Export | Coincide-owned conversation to Markdown/JSON | Same | Native Save and local CLI export current public history; individual plan/attachment save also remains. Private reasoning, rewound messages, runtime credentials/configuration and attachment bytes are excluded. Visible chat/tool text is included as written. Tool text above 256 KiB is explicitly marked as truncated; oversized complete transcripts fail clearly. [Exporter](../Sources/CoincideCore/ConversationExport.swift). |
 | Terminal-only flags and shortcuts | Not fully exposed | Not fully exposed | No arbitrary launch-argument editor, full TUI keymap, terminal pager/editor modes, or every experimental flag. Use the provider CLI for these workflows. |
 | CLI control of Coincide | Implemented local-owner control | Same | Inspect/navigate chats, models, integrations, settings and provider sessions through `script/coincide`; session stop requires exact ID plus `--confirm`. This is not a headless model runtime. [Commands](LOCAL_CONTROL.md). |
@@ -71,9 +71,11 @@ Save flow, shared with the local CLI. It operates on a captured Coincide
 conversation without attaching to or resuming a provider. JSON version 1 is a
 portable transcript format, not an app database backup or a promise of reimport.
 
-Further local work includes an explicit provider-aware compaction action, MCP connection/auth
-management, plugin installation/update controls, hook editing, and additional
-supported CLI settings. Each needs its own protocol and behavior checks.
+Further local work includes MCP connection/auth management, plugin
+installation/update controls, hook editing, and additional supported CLI settings.
+Each needs its own protocol and behavior checks. Native compaction is implemented
+conditionally; offline protocol fixtures do not establish successful execution
+against a live model or every installed provider version.
 
 Cloud/remote control is intentionally outside this local milestone. None of the
 above constitutes full Codex/Claude TUI feature parity.

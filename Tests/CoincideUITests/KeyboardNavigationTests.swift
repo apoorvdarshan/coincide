@@ -5,7 +5,7 @@ import Testing
 @testable import Coincide
 
 /// An unloaded store with a fixed snapshot: two project groups, a pinned and an
-/// archived thread, and manual order so the sidebar order is deterministic.
+/// archived thread, manual project order and the default Priority chat order.
 @MainActor func keyboardFixtureStore() throws -> (store: WorkspaceStore, root: URL, projects: [WorkspaceProject], threads: [String: CodingThread]) {
     _ = NSApplication.shared
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-keyboard-" + UUID().uuidString)
@@ -39,9 +39,9 @@ import Testing
 @MainActor @Test func threadTraversalFollowsSidebarOrderWithoutWrapAndJumpsToVisibleRows() throws {
     let f = try keyboardFixtureStore(); defer { try? FileManager.default.removeItem(at: f.root) }
     let store = f.store, t = f.threads
-    let expected = [t["a-pinned"]!.id, t["a-new"]!.id, t["a-old"]!.id, t["b-one"]!.id]
+    let expected = [t["a-pinned"]!.id, t["a-new"]!.id, t["b-one"]!.id, t["a-old"]!.id]
     #expect(store.visibleThreadOrder == expected)
-    #expect(store.visibleThreadOrder == store.orderedProjectGroups.flatMap { store.sidebarThreads(groupKey: $0.key).map(\.id) })
+    #expect(store.visibleThreadOrder == store.recentSidebarThreads.map(\.id))
     // No selection: previous goes to the last row and next to the first.
     #expect(store.adjacentThread(.previous) == expected.last && store.adjacentThread(.next) == expected.first)
     store.selectedThreadID = expected[0]
@@ -51,16 +51,42 @@ import Testing
     #expect(store.threadForJump(1) == expected[0] && store.threadForJump(4) == expected[3] && store.threadForJump(5) == nil && store.threadForJump(10) == nil)
     // Search narrows the order exactly like the sidebar.
     store.search = "beta"
-    #expect(store.visibleThreadOrder == [expected[3]])
+    #expect(store.visibleThreadOrder == [expected[2]])
     store.search = ""
-    // A collapsed group keeps only its selected row.
+    // Collapsing a project changes that project's rows, not the separate Recents
+    // list used by navigation and number shortcuts.
     let alphaKey = store.orderedProjectGroups[0].key
     store.snapshot.sidebarPreferences?.groupExpandedByKey[alphaKey] = false
     store.selectedThreadID = expected[1]
-    #expect(store.visibleThreadOrder == [expected[1], expected[3]])
-    #expect(store.selectThread(expected[3]) && store.selectedProjectID == f.projects[1].id && store.selectedThreadID == expected[3])
+    #expect(store.sidebarThreads(groupKey: alphaKey).map(\.id) == [expected[1]])
+    #expect(store.visibleThreadOrder == expected)
+    #expect(store.selectThread(expected[2]) && store.selectedProjectID == f.projects[1].id && store.selectedThreadID == expected[2])
     #expect(!store.selectThread(UUID()))
     #expect(ThreadTraversal.adjacent(in: [Int](), current: nil, direction: .next) == nil && ThreadTraversal.adjacent(in: [1, 2], current: 9, direction: .next) == nil)
+}
+
+@MainActor @Test func threadNavigationTracksEachChosenChatSortIndependentlyOfProjectOrder() throws {
+    let f = try keyboardFixtureStore(); defer { try? FileManager.default.removeItem(at: f.root) }
+    let store = f.store, t = f.threads
+    let pinned = t["a-pinned"]!.id, newest = t["a-new"]!.id, older = t["a-old"]!.id, beta = t["b-one"]!.id
+    for index in store.snapshot.threads.indices {
+        let id = store.snapshot.threads[index].id
+        store.snapshot.threads[index].createdAt = Date(timeIntervalSince1970: id == older ? 400 : id == beta ? 300 : id == newest ? 200 : 100)
+    }
+    store.snapshot.sidebarPreferences?.threadOrder = [older, pinned, beta, newest]
+    let modes: [(ThreadSortMode, [UUID])] = [
+        (.priority, [pinned, newest, beta, older]), (.updatedAt, [newest, beta, older, pinned]),
+        (.createdAt, [older, beta, newest, pinned]), (.name, [beta, newest, older, pinned]),
+        (.manual, [older, pinned, beta, newest])
+    ]
+    for (mode, expected) in modes {
+        store.snapshot.sidebarPreferences?.threadSortMode = mode
+        #expect(store.visibleThreadOrder == expected, "\(mode)")
+        #expect(store.threadForJump(3) == expected[2])
+        #expect(store.orderedProjects.map(\.id) == f.projects.map(\.id))
+    }
+    store.showArchived = true
+    #expect(store.visibleThreadOrder == [t["a-archived"]!.id])
 }
 
 @Test func navigationHistoryMovesLikeABrowserAndSkipsStaleThreads() {

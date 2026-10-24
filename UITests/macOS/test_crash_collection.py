@@ -202,7 +202,8 @@ class CrashCollectionTests(unittest.TestCase):
 
     def test_fault_classification_derives_only_fixed_enums_from_the_exact_fault_region(self):
         now = time.time()
-        cases = [("STACK GUARD", "---", "guard"), ("Stack", "rw-", "stack"),
+        cases = [("STACK GUARD", "---", "guard"), ("Stack Guard", "---", "guard"),
+                 ("Stack Guard", "rw-", "writable"), ("Stack", "rw-", "stack"),
                  ("__TEXT", "r-x", "readOnly"), ("MALLOC_SMALL", "rw-", "writable"),
                  ("VM_ALLOCATE", "---", "other")]
         for label, protection, expected in cases:

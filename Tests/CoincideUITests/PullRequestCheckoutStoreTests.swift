@@ -134,10 +134,7 @@ private struct NativeCheckoutSession: GitHubPullRequestCheckoutSession {
             await peer.reuse(reused)
         }
         var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [source, cold]
-        if provider != nil {
-            let agent = ACPAgentConfiguration(name: "Native independent checkout provider", executable: "/usr/bin/true")
-            source.provider = .acp; source.acpAgent = agent; snapshot.acpAgents = [agent]; snapshot.threads = [source, cold]
-        }
+        if provider != nil { source.provider = .codex; snapshot.threads = [source, cold] }
         try await WorkspaceDatabase(url: database).save(snapshot, event: "checkout.native.fixture")
         let workspace = try makeWorkspace(database: database, peer: peer, reads: reads, provider: provider)
         await workspace.load(); workspace.selectedThreadID = source.id
@@ -165,7 +162,7 @@ private struct NativeCheckoutSession: GitHubPullRequestCheckoutSession {
                 throw CoincideError("Checkout must never send a prompt.")
             }, identityResolver: { _ in nil },
             pullRequestFactory: { _ in reads }, pullRequestCheckoutFactory: { NativeCheckoutSession(request: $0, peer: peer) })
-        let workspace = WorkspaceStore(engine: engine, claudeRuntimeCapture: { registeredPath in
+        let workspace = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: home), claudeRuntimeCapture: { registeredPath in
             let pointer = try #require(realpath(registeredPath, nil))
             let physicalPath = String(cString: pointer); free(pointer)
             let captured = ClaudeRuntimeConfiguration(executable: launcherPath, configurationDirectory: configurationPath,

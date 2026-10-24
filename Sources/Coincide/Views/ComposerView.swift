@@ -199,7 +199,10 @@ struct ComposerView: View {
                 insertionError = "App commands take no arguments or attachments. Your draft has been kept."
                 return
             }
-            text = ""; appCommand(command); return
+            // Compact opens a confirmation. Cancelling or rejecting it must keep
+            // the exact draft, just as the conversation action does.
+            if command != .compact { text = "" }
+            appCommand(command); return
         }
         if delivery == .steer {
             steer?()

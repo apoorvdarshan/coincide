@@ -61,6 +61,8 @@ class LocalControlErrorTests(unittest.TestCase):
             "integration-import": ["integration_refresh_required"],
             "integration-remove": ["integration_refresh_required"],
             "integration-use": ["integration_refresh_required"],
+            "compact": ["context_compaction_not_confirmed"],
+            "compaction-cancel": ["context_compaction_not_confirmed"],
         }.items():
             for code in codes:
                 with self.subTest(command=command, code=code):
@@ -81,6 +83,54 @@ class LocalControlErrorTests(unittest.TestCase):
                 self.assertEqual(module.local_action_error("configuration-set", {
                     "content": [{"type": "text", "text": canary}], "structuredContent": payload,
                 }), "Coincide could not complete the command.")
+
+    def test_compact_requires_confirmation_before_connecting(self):
+        module = client_module()
+        with patch.object(module, "connection") as connection, patch.object(module.sys, "argv", [str(CLIENT), "compact"]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as failure:
+                module.main()
+        self.assertEqual(failure.exception.code, 2)
+        connection.assert_not_called()
+
+    def test_compaction_status_and_confirmed_action_preserve_exact_thread_target(self):
+        module = client_module()
+        thread_id = "00000000-0000-0000-0000-000000000001"
+        operation_id = "00000000-0000-0000-0000-000000000002"
+        for command in ("compaction", "compact", "compaction-cancel"):
+            requests = []
+
+            class Response:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self, limit):
+                    return json.dumps({"result": {"structuredContent": {"threadID": thread_id, "operation": None}}}).encode()
+
+            class Opener:
+                def open(self, request, timeout):
+                    requests.append(json.loads(request.data))
+                    return Response()
+
+            args = [str(CLIENT), command, "--thread", thread_id]
+            if command in ("compact", "compaction-cancel"):
+                args.append("--confirm")
+            if command == "compaction-cancel":
+                args.extend(["--operation", operation_id])
+            with patch.object(module, "connection", return_value={"endpoint": "http://127.0.0.1:1234/mcp", "authorization": "Bearer synthetic-test-only"}):
+                with patch.object(module.urllib.request, "build_opener", return_value=Opener()), patch.object(module.sys, "argv", args):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        module.main()
+            self.assertEqual([request["method"] for request in requests], ["initialize", "notifications/initialized", "tools/call"])
+            self.assertEqual(requests[-1]["params"]["name"], command)
+            expected = {"id": thread_id}
+            if command in ("compact", "compaction-cancel"):
+                expected["confirm"] = True
+            if command == "compaction-cancel":
+                expected["operation"] = operation_id
+            self.assertEqual(requests[-1]["params"]["arguments"], expected)
 
 
 if __name__ == "__main__":

@@ -57,7 +57,11 @@ func removalLocksCheckoutAndSharedEditorsThroughCleanupRejectsStaleNavigationAnd
     _ = try await engine.load()
     for project in [project, survivor, stale] { try await engine.dispatch(.addProject(project)) }
     try await engine.dispatch(.createThread(active)); try await engine.dispatch(.createThread(survivingThread))
-    let store = WorkspaceStore(engine: engine, managedProjectsRoot: root.appendingPathComponent("Projects"))
+    var editorHandoffs: [ExternalEditorLaunchPlan] = []
+    let store = WorkspaceStore(engine: engine, managedProjectsRoot: root.appendingPathComponent("Projects"),
+        externalEditorDiscovery: { [] }, externalEditorHandoff: { plan in
+            editorHandoffs.append(plan); return Task { }
+        })
     await store.load()
     var removal: Task<Void, any Error>?
     do {
@@ -81,7 +85,8 @@ func removalLocksCheckoutAndSharedEditorsThroughCleanupRejectsStaleNavigationAnd
         #expect(await provider.closeFinished == false)
         store.fileNavigation = nil
         store.openFile(survivorFile, line: 1, workspacePath: surviving.path)
-        #expect(store.fileNavigation?.workspacePath == surviving.path)
+        try await waitRemovalEditLock { editorHandoffs.count == 1 }
+        #expect(editorHandoffs == [.defaultApplication(survivorFile)] && store.fileNavigation == nil)
 
         let staleRequest = try #require(store.projectRemovalRequest(stale.id))
         let appeared = CodingThread(project: stale)
@@ -100,9 +105,10 @@ func removalLocksCheckoutAndSharedEditorsThroughCleanupRejectsStaleNavigationAnd
         #expect(store.canEditWorkspace(shared.path) && store.canEditWorkspace(staleFolder.path))
         store.fileNavigation = nil
         store.openFile(checkoutFile, line: 1, workspacePath: checkout.path)
-        #expect(store.fileNavigation == nil)
+        #expect(store.fileNavigation == nil && editorHandoffs.count == 1)
         store.openFile(sharedFile, line: 2, workspacePath: shared.path)
-        #expect(store.fileNavigation?.workspacePath == shared.path && store.fileNavigation?.path == "shared.txt")
+        try await waitRemovalEditLock { editorHandoffs.count == 2 }
+        #expect(editorHandoffs == [.defaultApplication(survivorFile), .defaultApplication(sharedFile)] && store.fileNavigation == nil)
         #expect(store.errorMessage == nil)
         for file in [checkoutFile, sharedFile, survivorFile] { #expect(try Data(contentsOf: file) == bytes) }
         await store.shutdown()

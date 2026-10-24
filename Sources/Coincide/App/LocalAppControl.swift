@@ -31,11 +31,11 @@ final class LocalAppControl {
             workspacePath: root.path, permission: .fullAccess, capabilities: [.orchestration])
         let credential = try await registry.issue(scope: scope)
         self.credential = credential
-        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "sort", "screenshot", "export", "integrations", "integration-import", "integration-remove", "integration-use", "sessions", "session-details", "session-stop", "configuration", "configuration-set"]
+        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "sort", "screenshot", "export", "compact", "compaction", "compaction-cancel", "integrations", "integration-import", "integration-remove", "integration-use", "sessions", "session-details", "session-stop", "configuration", "configuration-set"]
         let definitions = names.map { name in
             MCPToolDefinition(name: name, description: "Coincide local CLI: " + name,
                 inputSchema: .object(["type": .string("object")]), capability: .orchestration,
-                readOnly: !["select", "new", "model", "ui", "sort", "screenshot", "export", "integration-import", "integration-remove", "integration-use", "configuration-set", "session-stop"].contains(name))
+                readOnly: !["select", "new", "model", "ui", "sort", "screenshot", "export", "compact", "compaction-cancel", "integration-import", "integration-remove", "integration-use", "configuration-set", "session-stop"].contains(name))
         }
         let server = try await MCPHTTPServer.start(registry: registry, tools: definitions) { [weak self] invocation in
             guard let self else { throw MCPError(.unavailable) }
@@ -98,6 +98,9 @@ final class LocalAppControl {
             } else if ["integrations", "integration-import", "integration-remove", "integration-use"].contains(action) {
                 code = "integration_refresh_required"
                 message = "The integration action could not be completed. Refresh integrations and review the current workspace and item ID before retrying. Completed imports are retained."
+            } else if action == "compact" || action == "compaction-cancel" {
+                code = "context_compaction_not_confirmed"
+                message = "Context compaction was not confirmed. Run compaction for the same conversation to inspect its current status before retrying. Your Coincide conversation and draft are unchanged."
             } else { throw error }
             return .init(content: [message], structuredContent: .object([
                 "error": .object(["code": .string(code), "message": .string(message)])
@@ -154,6 +157,21 @@ final class LocalAppControl {
                 JSONValue.object(["role": .string(message.role.rawValue), "text": .string(String(message.text.prefix(4000)))])
             }
             result = .object(["thread": summary(thread), "messages": .array(messages), "totalMessages": .number(Double(thread.visibleMessages.count))])
+        case "compaction":
+            let thread = try target(args)
+            result = compactionStatus(threadID: thread.id)
+        case "compact":
+            guard args["confirm"] == .bool(true) else { throw MCPError(.invalidParams) }
+            let thread = try target(args)
+            let confirmation = try store.prepareContextCompaction(threadID: thread.id)
+            _ = try await store.compactContext(confirmation)
+            result = compactionStatus(threadID: thread.id, requestAccepted: true)
+        case "compaction-cancel":
+            guard args["confirm"] == .bool(true), let value = args["operation"].string,
+                  let operationID = UUID(uuidString: value) else { throw MCPError(.invalidParams) }
+            let thread = try target(args)
+            _ = try await store.cancelContextCompaction(threadID: thread.id, operationID: operationID)
+            result = compactionStatus(threadID: thread.id, requestAccepted: true)
         case "providers":
             result = .array(ProviderKind.builtIn.map { provider in
                 .object(["id": .string(provider.rawValue), "name": .string(provider.name),
@@ -356,6 +374,23 @@ final class LocalAppControl {
         let id = arguments["id"].string.flatMap(UUID.init(uuidString:)) ?? (arguments["id"] == .null ? store.selectedThreadID : nil)
         guard let id, let thread = store.thread(id) else { throw CoincideError("Conversation not found. Use threads to list IDs.") }
         return thread
+    }
+
+    /// Intentionally excludes provider configuration, credentials and private context.
+    private func compactionStatus(threadID: UUID, requestAccepted: Bool? = nil) -> JSONValue {
+        let reason = store.contextCompactionUnavailableReason(threadID: threadID)
+        let operation = store.snapshot.contextCompaction(threadID: threadID)
+        return .object([
+            "threadID": .string(threadID.uuidString), "available": .bool(reason == nil),
+            "requestAccepted": requestAccepted.map(JSONValue.bool) ?? .null,
+            "unavailableReason": reason.map(JSONValue.string) ?? .null,
+            "operation": operation.map { value in .object([
+                "id": .string(value.id.uuidString), "threadID": .string(value.threadID.uuidString),
+                "provider": .string(value.provider.rawValue), "phase": .string(value.phase.rawValue),
+                "isWorking": .bool(value.isWorking), "error": value.error.map(JSONValue.string) ?? .null,
+                "createdAt": .string(value.createdAt.ISO8601Format()), "updatedAt": .string(value.updatedAt.ISO8601Format())
+            ]) } ?? .null
+        ])
     }
 
     private func encodedValue<T: Encodable>(_ value: T) throws -> JSONValue {

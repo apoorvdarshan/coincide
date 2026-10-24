@@ -3389,6 +3389,7 @@ public actor WorkspaceEngine {
                         }
                         if case .agentSessionImportAccepted(let admission) = command { try await validateAgentSessionImportAdmission(admission, snapshot: base.snapshot) }
                         if case .contextTransferAccepted(let review, _, _) = command { try validateContextTransferAcceptance(review, snapshot: base.snapshot) }
+                        try validateContextCompactionAdmission(command, snapshot: base.snapshot)
                         try validateCodexDefaultCommand(command, snapshot: base.snapshot)
                         try validateAntigravityAdmission(command, snapshot: base.snapshot)
                         try validateCodexAuthenticationAdmission(command, snapshot: base.snapshot)
@@ -3898,6 +3899,7 @@ public actor WorkspaceEngine {
         guard !stoppingEffects, fatalError == nil else { throw CancellationError() }
         if await waitForRemovalCommit(threadID: request.threadID, projectID: request.projectID) { return .cancelled }
         try Task.checkCancellation()
+        if case .contextCompaction = request { return await performContextCompaction(request) }
         if case .promptSteering = request { return await performPromptSteering(request) }
         if case .pullRequestAction = request { return try await performPullRequestAction(request) }
         if case .pullRequestCreation = request { return try await performPullRequestCreation(request) }
@@ -3930,7 +3932,7 @@ public actor WorkspaceEngine {
         }
         guard let thread = revision.snapshot.threads.first(where: { $0.id == request.threadID }), revision.snapshot.workspaceReady(for: thread) else { return .cancelled }
         switch request {
-        case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
+        case .contextCompaction, .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let capturedConfiguration, let prompt, let references):
             guard !revision.snapshot.isOriginalImportedSession(configuration: capturedConfiguration, threadID: thread.id) else {
                 return .failed("This older import must continue in an independent Coincide copy. Send a new message after this turn stops.")
@@ -4362,7 +4364,7 @@ public actor WorkspaceEngine {
             throw WorkspaceCommandError("An Antigravity account change is already running or the workspace is unavailable.")
         }
         let affected = revision.snapshot.threads.filter { $0.antigravityConfiguration?.instanceID == instanceID || $0.activeRun?.configuration.antigravityConfiguration?.instanceID == instanceID }
-        guard affected.allSatisfy({ !revision.snapshot.isConversationHistoryLocked(threadID: $0.id) && !revision.snapshot.isCheckpointRestoreLocked(path: $0.workspacePath) && !revision.snapshot.isPullRequestCreationLocked(path: $0.workspacePath) && !revision.snapshot.isPullRequestCheckoutLocked(path: $0.workspacePath) }) else {
+        guard affected.allSatisfy({ $0.contextCompactionID == nil && !revision.snapshot.isConversationHistoryLocked(threadID: $0.id) && !revision.snapshot.isCheckpointRestoreLocked(path: $0.workspacePath) && !revision.snapshot.isPullRequestCreationLocked(path: $0.workspacePath) && !revision.snapshot.isPullRequestCheckoutLocked(path: $0.workspacePath) }) else {
             throw WorkspaceCommandError("Wait for Antigravity workspace operations to finish before changing the account.")
         }
         let leaseID = UUID(); antigravityAuthenticationLeases[instanceID] = leaseID
@@ -5235,6 +5237,7 @@ extension WorkspaceEngine {
                     value.provider = .codex; value.codexRuntimeConfiguration = target; configurations.append(value)
                 }
             }
+        case .contextCompactionAccepted(let operation): configurations = [operation.configuration]
         case .promptSteeringAccepted(let operation): configurations = [operation.configuration]
         case .conversationHistoryAccepted(let review, _, _): configurations = [review.sourceConfiguration, review.targetConfiguration]
         case .provider(let id, let runtimeID, _):
@@ -7339,5 +7342,92 @@ extension WorkspaceEngine {
         // Only the exact original owned retirement task; receipt replay never
         // looks up or drains a replacement runtime.
         if let task = remoteThreadActionDrains[request.id]?.1 { await task.value }
+    }
+}
+
+
+extension WorkspaceEngine {
+    /// Compacts only a connection already owned by this engine. It never opens a
+    /// runtime, resumes a CLI import, submits a chat prompt, or retries a request.
+    public func compactContext(threadID: UUID, expectedConfiguration: ProviderConfiguration,
+                               expectedRuntimeID: UUID) async throws -> WorkspaceUpdate {
+        _ = try await load(); try Task.checkCancellation()
+        guard !closing, !stoppingEffects, fatalError == nil else { throw WorkspaceCommandError(ProviderContextCompactionError(.notStarted).localizedDescription) }
+        if let reason = revision.snapshot.contextCompactionUnavailableReason(threadID: threadID) { throw WorkspaceCommandError(reason) }
+        guard let thread = revision.snapshot.threads.first(where: { $0.id == threadID }),
+              ProviderConfiguration(thread: thread) == expectedConfiguration, thread.runtimeID == expectedRuntimeID,
+              let incarnation = threadIncarnations[threadID], compactionRuntimeMatches(thread) else {
+            throw WorkspaceCommandError(ProviderContextCompactionError(.notIdle).localizedDescription)
+        }
+        let operation = ContextCompactionOperation(thread: thread, incarnation: incarnation, runtimeID: expectedRuntimeID)
+        let receipt = try await enqueue(.contextCompactionAccepted(operation))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return current()
+    }
+
+    public func cancelContextCompaction(threadID: UUID, operationID: UUID) async throws -> WorkspaceUpdate {
+        _ = try await load(); try Task.checkCancellation()
+        let receipt = try await enqueue(.contextCompactionCancelled(threadID: threadID, operationID: operationID))
+        if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
+        return current()
+    }
+
+    private func compactionRuntimeMatches(_ thread: CodingThread) -> Bool {
+        guard let runtime = runtimes[thread.id], runtime.id == thread.runtimeID,
+              runtime.projectID == thread.projectID, runtime.provider == thread.provider,
+              runtime.path == thread.workspacePath,
+              runtime.codexBinding == ProviderConfiguration(thread: thread).codexRuntimeBinding,
+              claudeRuntimeMatches(runtime, thread: thread) else { return false }
+        return true
+    }
+
+    private func validateContextCompactionAdmission(_ command: EngineCommand, snapshot: WorkspaceSnapshot) throws {
+        switch command {
+        case .contextCompactionAccepted(let operation):
+            guard threadIncarnations[operation.threadID] == operation.sourceIncarnation,
+                  let thread = snapshot.threads.first(where: { $0.id == operation.threadID }), operation.matches(thread),
+                  compactionRuntimeMatches(thread), !isCodexAuthenticationLocked(operation.configuration) else {
+                throw WorkspaceCommandError(ProviderContextCompactionError(.notIdle).localizedDescription)
+            }
+        case .contextCompactionDispatching(let threadID, let operationID, let incarnation):
+            guard threadIncarnations[threadID] == incarnation,
+                  let operation = snapshot.contextCompaction(threadID: threadID), operation.id == operationID,
+                  operation.sourceIncarnation == incarnation, operation.phase == .pending,
+                  let thread = snapshot.threads.first(where: { $0.id == threadID }), operation.matches(thread),
+                  compactionRuntimeMatches(thread), !isCodexAuthenticationLocked(operation.configuration) else {
+                throw WorkspaceCommandError(ProviderContextCompactionError(.notStarted).localizedDescription)
+            }
+        default: break
+        }
+    }
+
+    private func performContextCompaction(_ request: WorkspaceEffectRequest) async -> EffectResult {
+        guard case .contextCompaction(let threadID, let operationID) = request,
+              let operation = revision.snapshot.contextCompaction(threadID: threadID), operation.id == operationID,
+              operation.phase == .pending, let runtime = runtimes[threadID] else { return .cancelled }
+        do {
+            try Task.checkCancellation()
+            let receipt = try await enqueue(.contextCompactionDispatching(threadID: threadID, operationID: operationID, incarnation: operation.sourceIncarnation))
+            guard receipt.rejection == nil else { return .failed(ProviderContextCompactionError(.notStarted).localizedDescription) }
+            guard !closing, !stoppingEffects, fatalError == nil,
+                  threadIncarnations[threadID] == operation.sourceIncarnation,
+                  revision.snapshot.contextCompaction(threadID: threadID)?.id == operationID,
+                  revision.snapshot.contextCompaction(threadID: threadID)?.phase == .running,
+                  let thread = revision.snapshot.threads.first(where: { $0.id == threadID }), operation.matches(thread),
+                  runtime.id == operation.runtimeID, compactionRuntimeMatches(thread),
+                  !isCodexAuthenticationLocked(operation.configuration) else { return .failed(ProviderContextCompactionError(.notStarted).localizedDescription) }
+            try Task.checkCancellation()
+            let result = try await runtime.session.compactContext(thread: thread, operationID: operationID)
+            guard result.provider == operation.provider, result.nativeThreadID == operation.configuration.nativeThreadID else {
+                return .failed(ProviderContextCompactionError(.unconfirmed).localizedDescription)
+            }
+            return .succeeded
+        } catch let error as ProviderContextCompactionError {
+            return .failed(error.localizedDescription)
+        } catch {
+            // No arbitrary provider diagnostics, summaries or credentials enter
+            // the durable operation or its public CLI status.
+            return .failed(ProviderContextCompactionError(.unconfirmed).localizedDescription)
+        }
     }
 }

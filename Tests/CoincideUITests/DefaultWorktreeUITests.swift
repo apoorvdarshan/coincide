@@ -28,7 +28,8 @@ private actor DefaultWorkspaceUINoProvider: ProviderSession {
     let suite: String
     let store: WorkspaceStore
     let engine: WorkspaceEngine
-    static func make(repositoryOverride: Bool, earlierThread: Bool, appMode: ProjectThreadEnvironmentMode? = .worktree) async throws -> Self {
+    static func make(repositoryOverride: Bool, earlierThread: Bool, appMode: ProjectThreadEnvironmentMode? = .worktree,
+                     legacyIntent: Bool = false) async throws -> Self {
         let physical = try #require(realpath(FileManager.default.temporaryDirectory.path, nil)); defer { free(physical) }
         let root = URL(fileURLWithPath: String(cString: physical)).appendingPathComponent("coincide-default-worktree-ui-" + UUID().uuidString)
         let managed = root.appendingPathComponent("Managed"), checkout = managed.appendingPathComponent("Project")
@@ -51,7 +52,19 @@ private actor DefaultWorkspaceUINoProvider: ProviderSession {
         }
         let project = WorkspaceProject(path: checkout.path), database = root.appendingPathComponent("workspace.sqlite")
         var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]
-        if earlierThread { snapshot.threads = [CodingThread(project: project)] }
+        if earlierThread || legacyIntent {
+            var thread = CodingThread(project: project)
+            if legacyIntent {
+                // Existing persisted choices remain readable and can still be
+                // changed explicitly to the local checkout. New chat admission
+                // no longer captures the retired automatic-worktree defaults.
+                let captured = try await DraftWorkspaceIntent.captureIfRepository(
+                    project: project, threadID: thread.id, threadCreatedAt: thread.createdAt,
+                    startFromOrigin: true, submodules: .none)
+                thread.draftWorkspaceIntent = try #require(captured)
+            }
+            snapshot.threads = [thread]
+        }
         _ = try await WorkspaceDatabase(url: database).commit(snapshot, event: "private fixture", commandID: UUID())
         let suite = "coincide-default-worktree-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
         let settings = ProjectSettingsStore(root: ProjectSettingsFiles.root(dataRoot: root), defaults: defaults)
@@ -67,14 +80,13 @@ private actor DefaultWorkspaceUINoProvider: ProviderSession {
     }
 }
 
-@MainActor @Test func defaultWorktreeNativeDraftCapturesOriginAtCreationAndExplicitLocalChoiceSurvivesRestartWithoutChangingDraft() async throws {
-    let f = try await DefaultWorkspaceUIFixture.make(repositoryOverride: true, earlierThread: false)
+@MainActor @Test func legacyWorktreeDraftKeepsCapturedOriginAndExplicitLocalChoiceSurvivesRestartWithoutChangingDraft() async throws {
+    let f = try await DefaultWorkspaceUIFixture.make(repositoryOverride: true, earlierThread: false, legacyIntent: true)
     do {
         #expect(f.settings.newWorktreesStartFromOrigin)
-        f.store.newThread(projectID: f.project.id)
-        try await defaultWorkspaceUIEventually { f.store.snapshot.threads.count == 1 }
         let created = try #require(f.store.snapshot.threads.first), intent = try #require(created.draftWorkspaceIntent)
         #expect(intent.startFromOrigin && intent.baseBranch == "topic-source" && intent.submodules == .none)
+        let source = try Data(contentsOf: f.checkout.appendingPathComponent("README.txt"))
         f.settings.newWorktreesStartFromOrigin = false; f.settings.appThreadEnvironmentMode = .local
         #expect(f.store.thread(created.id)?.draftWorkspaceIntent == intent)
         f.store.setDraft("preserve unsent 🧪 /tmp/source", id: created.id)
@@ -89,12 +101,13 @@ private actor DefaultWorkspaceUINoProvider: ProviderSession {
         #expect(reopened.thread(created.id)?.draftWorkspaceIntent == nil)
         #expect(reopened.thread(created.id)?.draft == "preserve unsent 🧪 /tmp/source")
         #expect(reopened.thread(created.id)?.workspacePreparation == nil && reopened.thread(created.id)?.messages.isEmpty == true)
+        #expect(try Data(contentsOf: f.checkout.appendingPathComponent("README.txt")) == source)
         await reopened.shutdown(); await f.cleanup()
     } catch { await f.cleanup(); throw error }
 }
 
 @MainActor @Test(arguments: [true, false])
-func defaultWorktreeProjectOriginOverrideWinsOverAppPreferenceAndPersists(value: Bool) async throws {
+func retainedProjectOriginSettingsPersistWithoutChangingNewChatLocalCheckout(value: Bool) async throws {
     let f = try await DefaultWorkspaceUIFixture.make(repositoryOverride: true, earlierThread: false)
     do {
         f.settings.newWorktreesStartFromOrigin = !value
@@ -103,10 +116,19 @@ func defaultWorktreeProjectOriginOverrideWinsOverAppPreferenceAndPersists(value:
         let loaded = try ProjectSettingsFiles.load(root: f.settings.root, keys: ProjectSettingsKey.candidates(for: f.project))
         let stored = try #require(loaded)
         #expect(stored.document.newWorktreesStartFromOrigin == value)
+        #expect(stored.document.worktreeSubmodules == ProjectWorktreeSubmoduleMode.none)
         f.store.newThread(projectID: f.project.id)
         try await defaultWorkspaceUIEventually { f.store.snapshot.threads.count == 1 }
-        let intent = try #require(f.store.snapshot.threads.first?.draftWorkspaceIntent)
-        #expect(intent.startFromOrigin == value)
+        let created = try #require(f.store.snapshot.threads.first)
+        // The app preference outranks repository defaults, and a managed
+        // project's first chat stays on its local checkout.
+        #expect(created.draftWorkspaceIntent == nil && created.workspacePath == f.project.path)
+        #expect(created.workspacePreparation == nil && created.messages.isEmpty && created.queuedTurns.isEmpty)
+        let reloadedSettings = ProjectSettingsStore(root: f.settings.root, defaults: f.defaults)
+        #expect(reloadedSettings.newWorktreesStartFromOrigin == !value)
+        let reloaded = try ProjectSettingsFiles.load(root: reloadedSettings.root, keys: ProjectSettingsKey.candidates(for: f.project))
+        let reread = try #require(reloaded)
+        #expect(reread.document.newWorktreesStartFromOrigin == value)
         await f.cleanup()
     } catch { await f.cleanup(); throw error }
 }
@@ -128,7 +150,7 @@ func defaultWorktreeNeverCapturesIntentForEitherScratchMarker() async throws {
 }
 
 @MainActor @Test(arguments: ["first-managed-global", "later-managed-global", "first-managed-project", "local"])
-func defaultWorktreePinnedManagedFirstDraftExceptionAndLegacyEmptyThreads(mode: String) async throws {
+func newChatsCaptureWorktreeIntentOnlyAfterTheFirstManagedChatAndKeepLegacyEmptyThreads(mode: String) async throws {
     let earlier = mode == "later-managed-global", repository = mode == "first-managed-project"
     let f = try await DefaultWorkspaceUIFixture.make(repositoryOverride: repository, earlierThread: earlier, appMode: mode == "local" ? .local : .worktree)
     do {
@@ -137,7 +159,8 @@ func defaultWorktreePinnedManagedFirstDraftExceptionAndLegacyEmptyThreads(mode: 
         f.store.newThread(projectID: f.project.id)
         try await defaultWorkspaceUIEventually { f.store.snapshot.threads.count == oldIDs.count + 1 }
         let fresh = try #require(f.store.snapshot.threads.first(where: { !oldIDs.contains($0.id) }))
-        #expect((fresh.draftWorkspaceIntent != nil) == (earlier || repository))
+        #expect((fresh.draftWorkspaceIntent != nil) == earlier)
+        #expect(fresh.workspacePath == f.project.path)
         #expect(fresh.workspacePreparation == nil && fresh.messages.isEmpty && fresh.queuedTurns.isEmpty)
         #expect(f.store.snapshot.threads.filter { oldIDs.contains($0.id) }.allSatisfy { $0.draftWorkspaceIntent == nil })
         await f.cleanup()

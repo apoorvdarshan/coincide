@@ -152,6 +152,7 @@ final class WorkspaceStore {
     var selectedThreadID: UUID? {
         didSet {
             if selectedThreadID != oldValue {
+                contextCompactionConfirmation = nil
                 historyNavigationRequests = historyNavigationRequests.filter { $0.value == selectedThreadID }
                 pullRequestCheckoutNavigation = pullRequestCheckoutNavigation.filter { $0.value == selectedThreadID }
             }
@@ -164,6 +165,9 @@ final class WorkspaceStore {
     var search = ""
     var showArchived = false
     var errorMessage: String?
+    var contextCompactionConfirmation: ContextCompactionConfirmation?
+    var acceptingContextCompaction: Set<UUID> = []
+    var cancellingContextCompaction: Set<UUID> = []
     var providerModels: [ProviderKind: [ProviderModel]] = [:]
     var modelCatalogErrors: [ProviderKind: String] = [:]
     var modelPickerLoading = false
@@ -237,6 +241,8 @@ final class WorkspaceStore {
     private var fileBrowsers: [String: FileBrowserStore] = [:]
     private var fileServiceCleanupTasks: [String: WorkspaceFileCleanup] = [:]
     private var externalEditorService: NativeExternalEditorService?
+    private let externalEditorDiscovery: NativeExternalEditorService.Discovery?
+    private let externalEditorHandoff: NativeExternalEditorService.Handoff?
     private var projectScriptService: NativeProjectScriptService?
     private(set) var availableExternalEditors: [ExternalEditorDescriptor] = []
     private var retryingProjectClones: Set<UUID> = []
@@ -275,6 +281,7 @@ final class WorkspaceStore {
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
          piRuntimeCapture: PiRuntimeCapture? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
+        externalEditorDiscovery = nil; externalEditorHandoff = nil
         composerDraftTools = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AgentSessionImports", isDirectory: true))
         integrations = .init(libraryRoot: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Integrations", isDirectory: true))
@@ -322,7 +329,10 @@ final class WorkspaceStore {
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
          piRuntimeCapture: PiRuntimeCapture? = nil,
          projectScriptReader: NativeProjectScriptService.Reader? = nil,
-         projectCreator: ProjectCreator? = nil, projectSettingsStore: ProjectSettingsStore? = nil) {
+         projectCreator: ProjectCreator? = nil, projectSettingsStore: ProjectSettingsStore? = nil,
+         externalEditorDiscovery: NativeExternalEditorService.Discovery? = nil,
+         externalEditorHandoff: NativeExternalEditorService.Handoff? = nil) {
+        self.externalEditorDiscovery = externalEditorDiscovery; self.externalEditorHandoff = externalEditorHandoff
         composerDraftTools = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("ComposerDrafts", isDirectory: true))
         agentSessionImports = .init(root: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AgentSessionImports", isDirectory: true))
         integrations = .init(libraryRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("Integrations", isDirectory: true))
@@ -1095,7 +1105,7 @@ final class WorkspaceStore {
         }, authorize: { [weak self] root, captured in
             guard let self, self.canAccessWorkspaceFiles(root.path), let current = try? self.fileService(path: root.path) else { return false }
             return current === captured
-        })
+        }, discovery: externalEditorDiscovery, handoff: externalEditorHandoff)
         externalEditorService = service; return service
     }
     func projectScripts() -> NativeProjectScriptService {
@@ -2799,14 +2809,69 @@ final class WorkspaceStore {
         catch { if !terminating { errorMessage = error.localizedDescription } }
     }
     func interrupt(_ id: UUID) async {
+        if let operation = snapshot.contextCompaction(threadID: id), operation.isWorking {
+            // Capture maintenance identity before any suspension or command queue.
+            // A later turn on this runtime must never inherit this Stop request.
+            do { _ = try await cancelContextCompaction(threadID: id, operationID: operation.id) }
+            catch { if !terminating { errorMessage = "Stopping context compaction was not confirmed. Check its current status before trying again." } }
+            return
+        }
         let task = enqueue(.interrupt(threadID: id))
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
+    }
+    /// Serializes manual context maintenance with other conversation commands.
+    /// The engine repeats the exact configuration and runtime ownership checks.
+    func compactContext(_ confirmation: ContextCompactionConfirmation) async throws -> ContextCompactionOperation {
+        guard !terminating, let engine, !acceptingContextCompaction.contains(confirmation.threadID),
+              matchesContextCompactionConfirmation(confirmation),
+              snapshot.contextCompactionUnavailableReason(threadID: confirmation.threadID) == nil else {
+            throw CoincideError("The conversation changed. Review its current context before compacting.")
+        }
+        acceptingContextCompaction.insert(confirmation.threadID)
+        defer { acceptingContextCompaction.remove(confirmation.threadID) }
+        let previous = commandTail
+        let task = Task { [weak self] in
+            await previous?.value
+            try Task.checkCancellation()
+            guard let self, !self.terminating, self.matchesContextCompactionConfirmation(confirmation),
+                  self.snapshot.contextCompactionUnavailableReason(threadID: confirmation.threadID) == nil else {
+                throw CoincideError("The conversation changed. Review its current context before compacting.")
+            }
+            _ = try await engine.compactContext(threadID: confirmation.threadID,
+                expectedConfiguration: confirmation.configuration, expectedRuntimeID: confirmation.runtimeID)
+            self.apply(await engine.current())
+            guard let operation = self.snapshot.contextCompaction(threadID: confirmation.threadID) else {
+                throw CoincideError("Context compaction was not confirmed. Check the current conversation before trying again.")
+            }
+            return operation
+        }
+        commandTail = Task { _ = await task.result }
+        return try await task.value
+    }
+    func cancelContextCompaction(threadID: UUID, operationID: UUID) async throws -> ContextCompactionOperation {
+        guard !terminating, let engine, !cancellingContextCompaction.contains(operationID),
+              let current = snapshot.contextCompaction(threadID: threadID), current.id == operationID, current.isWorking else {
+            throw CoincideError("The compaction operation changed. Inspect its current status before stopping it.")
+        }
+        cancellingContextCompaction.insert(operationID)
+        defer { cancellingContextCompaction.remove(operationID) }
+        _ = try await engine.cancelContextCompaction(threadID: threadID, operationID: operationID)
+        apply(await engine.current())
+        guard let operation = snapshot.contextCompaction(threadID: threadID), operation.id == operationID else {
+            throw CoincideError("The compaction operation changed. Inspect its current status before stopping it.")
+        }
+        return operation
     }
     /// Native command surfaces use the same atomic run/runtime guard as app MCP,
     /// so a scheduled Stop cannot affect a successor turn.
     func interrupt(_ id: UUID, expectedRunID: UUID?, expectedRuntimeID: UUID?) async {
         guard !terminating, let captured = thread(id), captured.activeRun?.id == expectedRunID,
               captured.runtimeID == expectedRuntimeID else { return }
+        if let operation = snapshot.contextCompaction(threadID: id), operation.isWorking {
+            do { _ = try await cancelContextCompaction(threadID: id, operationID: operation.id) }
+            catch { if !terminating { errorMessage = "Stopping context compaction was not confirmed. Check its current status before trying again." } }
+            return
+        }
         let configuration = ProviderConfiguration(thread: captured)
         let task = enqueue(.interruptFromAppMCP(threadID: id, expectedRunID: expectedRunID, expectedRuntimeID: expectedRuntimeID), preflight: {
             guard !self.terminating, let current = self.thread(id), current.projectID == captured.projectID,

@@ -50,6 +50,7 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     case providerInterrupt(threadID: UUID, runID: UUID)
     case providerRespond(threadID: UUID, runID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case providerSessionRespond(threadID: UUID, runtimeID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
+    case contextCompaction(threadID: UUID, operationID: UUID)
     case promptSteering(threadID: UUID, operationID: UUID)
     case projectClone(projectID: UUID, plan: GitClonePlan)
     case resolveWorktree(threadID: UUID, request: GitWorktreeRequest)
@@ -70,7 +71,7 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     public var threadID: UUID? {
         switch self {
         case .projectClone, .pullRequestCreation, .pullRequestAction, .pullRequestCheckout: nil
-        case .promptSteering(let id, _), .conversationHistory(let id, _), .checkpointRestore(let id, _), .conversationHistoryFiles(let id, _, _): id
+        case .contextCompaction(let id, _), .promptSteering(let id, _), .conversationHistory(let id, _), .checkpointRestore(let id, _), .conversationHistoryFiles(let id, _, _): id
         case .conversationHistoryMaintenance(let id, _, _): id
         case .resolveRunCheckpoint(let id, _, _, _), .captureRunCheckpoint(let id, _, _, _), .resolveThreadScript(let id, _, _), .startThreadScript(let id, _, _), .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }
@@ -107,7 +108,7 @@ public enum WorkspaceEffectRequest: Codable, Sendable, Equatable {
     public var targetID: UUID {
         switch self {
         case .projectClone(let id, _), .pullRequestCreation(let id, _, _), .pullRequestAction(let id, _, _), .pullRequestCheckout(let id, _, _): id
-        case .promptSteering(let id, _), .conversationHistory(let id, _), .checkpointRestore(let id, _), .conversationHistoryFiles(let id, _, _): id
+        case .contextCompaction(let id, _), .promptSteering(let id, _), .conversationHistory(let id, _), .checkpointRestore(let id, _), .conversationHistoryFiles(let id, _, _): id
         case .conversationHistoryMaintenance(let id, _, _): id
         case .resolveRunCheckpoint(let id, _, _, _), .captureRunCheckpoint(let id, _, _, _), .resolveThreadScript(let id, _, _), .startThreadScript(let id, _, _), .resolveProjectScript(let id, _, _), .startProjectScript(let id, _, _), .resolveWorktree(let id, _), .prepareWorktree(let id, _), .providerStart(let id, _, _, _, _), .providerInterrupt(let id, _), .providerRespond(let id, _, _, _), .providerSessionRespond(let id, _, _, _): id
         }

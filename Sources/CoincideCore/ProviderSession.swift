@@ -96,6 +96,7 @@ public protocol ProviderSession: Actor {
     func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection
     func codexAccountSnapshot() async throws -> CodexAccountSnapshot
     func acpConnectionInfo() async throws -> ACPConnectionInfo
+    func compactContext(thread: CodingThread, operationID: UUID) async throws -> ProviderContextCompactionReceipt
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
     func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition
@@ -141,6 +142,7 @@ public protocol ProviderSession: Actor {
 }
 
 extension ProviderSession {
+    public func compactContext(thread: CodingThread, operationID: UUID) async throws -> ProviderContextCompactionReceipt { throw ProviderContextCompactionError(.unsupported) }
     public func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition { .ordinary }
     public nonisolated var supportsAppMCP: Bool { false }
     public func configureAppMCP(_ connection: AppMCPConnection) async throws { throw MCPError(.unavailable) }

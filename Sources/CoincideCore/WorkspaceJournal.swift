@@ -13,6 +13,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case pullRequestCreationsReplaced([PullRequestCreationOperation]?)
     case pullRequestActionsReplaced([PullRequestActionOperation]?)
     case pullRequestCheckoutsReplaced([PullRequestCheckoutOperation]?)
+    case contextCompactionsReplaced([ContextCompactionOperation]?)
     case promptSteeringsReplaced([PromptSteeringOperation]?)
     case checkpointRestoreOperationsReplaced([RunCheckpointRestoreOperation]?)
     case contextTransfersReplaced([ContextTransfer]?)
@@ -41,6 +42,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .pullRequestCreationsReplaced(let operations): snapshot.pullRequestCreations = operations
         case .pullRequestActionsReplaced(let operations): snapshot.pullRequestActions = operations
         case .pullRequestCheckoutsReplaced(let operations): snapshot.pullRequestCheckouts = operations
+        case .contextCompactionsReplaced(let operations): snapshot.contextCompactionOperations = operations
         case .promptSteeringsReplaced(let operations): snapshot.promptSteerings = operations
         case .checkpointRestoreOperationsReplaced(let operations): snapshot.checkpointRestoreOperations = operations
         case .sidebarPreferencesChanged(let preferences): snapshot.sidebarPreferences = preferences
@@ -117,6 +119,7 @@ public enum WorkspaceJournal {
         try snapshot.validateDelegatedTasks()
         try snapshot.validateAgentSessionImports()
         try snapshot.validateWorkspaceLifecycle()
+        try snapshot.validateContextCompactions()
         try snapshot.validatePromptSteerings()
         try snapshot.validateContextTransfers()
         try snapshot.validatePullRequestCheckouts()
@@ -233,6 +236,7 @@ public enum WorkspaceJournal {
         if previous.pullRequestCreations != next.pullRequestCreations { events.append(.pullRequestCreationsReplaced(next.pullRequestCreations)) }
         if previous.pullRequestActions != next.pullRequestActions { events.append(.pullRequestActionsReplaced(next.pullRequestActions)) }
         if previous.pullRequestCheckouts != next.pullRequestCheckouts { events.append(.pullRequestCheckoutsReplaced(next.pullRequestCheckouts)) }
+        if previous.contextCompactionOperations != next.contextCompactionOperations { events.append(.contextCompactionsReplaced(next.contextCompactionOperations)) }
         if previous.promptSteerings != next.promptSteerings { events.append(.promptSteeringsReplaced(next.promptSteerings)) }
         if previous.checkpointRestoreOperations != next.checkpointRestoreOperations { events.append(.checkpointRestoreOperationsReplaced(next.checkpointRestoreOperations)) }
         if previous.sidebarPreferences != next.sidebarPreferences { events.append(.sidebarPreferencesChanged(next.sidebarPreferences)) }

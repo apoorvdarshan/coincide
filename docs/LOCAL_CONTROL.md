@@ -4,7 +4,8 @@ Open Coincide, then use `script/coincide` in a source checkout. In a packaged ap
 **Settings → General → Command-line tool** installs the `coincide` command. Its
 folder-opening behavior remains available as `coincide /absolute/project/path`.
 
-Commands return JSON. None sends a prompt to a model.
+Commands return JSON and never submit your unsent draft. `compact` explicitly
+asks the active provider to summarize its context, which may use model tokens.
 
 ```sh
 ./script/coincide status
@@ -28,6 +29,7 @@ Commands return JSON. None sends a prompt to a model.
 ./script/coincide configuration codex --scope user
 ./script/coincide export /tmp/conversation.md
 ./script/coincide export /tmp/conversation.json --format json --thread THREAD_UUID
+./script/coincide compaction --thread THREAD_UUID
 ```
 
 - `select THREAD_UUID` selects a saved chat. `new PATH` creates an empty chat.
@@ -70,6 +72,25 @@ Commands return JSON. None sends a prompt to a model.
   excluding private reasoning, rewound messages, drafts, attachment bytes and
   provider state. Tool output beyond 256 KiB per message is marked as truncated.
   JSON is a portable public transcript, not a database backup/import format.
+- `compaction --thread UUID` reads manual compaction availability and the latest
+  saved operation. `compact --thread UUID --confirm` requests compaction for the
+  exact idle provider connection owned by Coincide. Omit `--thread` to use the
+  selected chat. A copied import or saved history without an active independent
+  connection is unavailable; send a normal reply first. Busy or queued work,
+  approvals and conflicting conversation operations also block compaction.
+  The chat's Conversation actions → Compact context and `/app:compact` open a
+  native confirmation for the same operation. Cancellation preserves the draft,
+  including a typed `/app:compact` command. Completion does not clear that draft.
+  No public messages are removed or replaced by the provider's private summary.
+  An accepted request can still fail if the provider does not support the native
+  operation. Only `completed` confirms success; `pending`/`running` are progress,
+  and `unconfirmed` means the request may have run. Read `compaction` again before
+  retrying a failed or lost CLI response; requests are never retried automatically.
+  `requestAccepted: true` confirms durable acceptance, not completed compaction.
+  The progress banner offers Stop. CLI cancellation requires the exact operation:
+  `compaction-cancel --thread UUID --operation OPERATION_UUID --confirm`. It closes
+  only that owned provider runtime; a request already dispatched can remain
+  `unconfirmed`. The operation's public conversation and draft remain intact.
 
 The Python client uses Coincide's authenticated loopback service. The local-owner
 credential is held in a private `Control` directory under Application Support;

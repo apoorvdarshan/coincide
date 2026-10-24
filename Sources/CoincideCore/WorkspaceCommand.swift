@@ -237,6 +237,9 @@ indirect enum EngineCommand: Codable, Sendable {
     case pullRequestCheckoutCancel(operationID: UUID)
     case queuedInputReplaced(QueuedInputReplacement)
     case remoteThreadUndo(RemoteThreadActionsPreparation)
+    case contextCompactionAccepted(ContextCompactionOperation)
+    case contextCompactionDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
+    case contextCompactionCancelled(threadID: UUID, operationID: UUID)
     case promptSteeringAccepted(PromptSteeringOperation)
     case promptSteeringDispatching(operationID: UUID, incarnation: UUID)
     case promptSteeringEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
@@ -298,6 +301,14 @@ struct WorkspaceDecision: Sendable {
         try guardPullRequestActionPhysicalTransitions(command, snapshot: snapshot)
         let reduced: GeneralReduction
         switch command {
+        case .contextCompactionAccepted, .contextCompactionDispatching, .contextCompactionCancelled, .effectResult(.contextCompaction, _):
+            reduced = .init(decision: try reduceContextCompaction(command, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .effectResult(let request, let result) where request.checkpointOwner != nil,
+             .runCheckpointEffectResult(let request, let result, _) where request.checkpointOwner != nil,
+             .projectScriptEffectResult(let request, let result, _) where request.checkpointOwner != nil:
+            reduced = .init(decision: reduceCheckpointResult(request, result: result, snapshot: snapshot, now: now), requiresFinalization: true)
+        case .client(.retryPostRunCheckpoint), .client(.continueAfterPostRunCheckpoint):
+            reduced = .init(decision: try reducePostRunCheckpointChange(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.scheduledTask(let mutation)):
             var prepared = Self(snapshot: snapshot)
             try prepared.prepareClientCommand(.scheduledTask(mutation), commandID: id, now: now)
@@ -397,11 +408,59 @@ struct WorkspaceDecision: Sendable {
             reduced = try makeGeneral(command, id: id, snapshot: snapshot, now: now)
         }
         var decision = reduced.decision
+        if decision.snapshot.contextCompactionOperations != nil {
+            let retained = Set(decision.snapshot.threads.map(\.id))
+            decision.snapshot.contextCompactionOperations?.removeAll { !retained.contains($0.threadID) }
+        }
         if case .client(let action) = command { decision.reconcileWorkspaceLifecycle(previous: snapshot, command: action, now: now) }
         try decision.snapshot.reconcileAgentSessionImports(previous: snapshot)
         guard reduced.requiresFinalization && validatingLedger else { return decision }
         return try finalized(decision)
     }
+    @inline(never)
+    private static func reduceContextCompaction(_ command: EngineCommand, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        switch command {
+        case .contextCompactionAccepted(let operation): try decision.acceptContextCompaction(operation)
+        case .contextCompactionDispatching(let threadID, let operationID, let incarnation):
+            try decision.dispatchContextCompaction(threadID: threadID, operationID: operationID, incarnation: incarnation, now: now)
+        case .contextCompactionCancelled(let threadID, let operationID):
+            try decision.cancelContextCompaction(threadID: threadID, operationID: operationID, now: now)
+        case .effectResult(.contextCompaction(let threadID, let operationID), let result):
+            decision.finishContextCompaction(threadID: threadID, operationID: operationID, result: result, now: now)
+        default: throw WorkspaceCommandError("This context compaction was routed incorrectly.")
+        }
+        return decision
+    }
+
+    /// A post-run checkpoint can advance a queued turn and inspect retained
+    /// history proofs. Do that outside the broad mutation/effect switches: their
+    /// debug value temporaries otherwise exhaust a cooperative worker's stack.
+    @inline(never)
+    private static func reduceCheckpointResult(_ request: WorkspaceEffectRequest, result: EffectResult,
+                                               snapshot: WorkspaceSnapshot, now: Date) -> Self {
+        var decision = Self(snapshot: snapshot)
+        decision.finishCheckpoint(request, result: result, now: now)
+        return decision
+    }
+
+    /// Retry/Continue of a held post-run checkpoint also releases the queued
+    /// turn, so keep it outside the broad mutation frame for the same reason.
+    @inline(never)
+    private static func reducePostRunCheckpointChange(_ command: EngineCommand, id: UUID, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
+        var decision = Self(snapshot: snapshot)
+        guard case .client(let action) = command else { throw WorkspaceCommandError("This checkpoint action was routed incorrectly.") }
+        try decision.prepareClientCommand(action, commandID: id, now: now)
+        switch action {
+        case .retryPostRunCheckpoint(let threadID, let runID, let expected):
+            try decision.changePostRunCheckpoint(threadID: threadID, runID: runID, expectedAttemptID: expected, retry: true, now: now)
+        case .continueAfterPostRunCheckpoint(let threadID, let runID, let expected):
+            try decision.changePostRunCheckpoint(threadID: threadID, runID: runID, expectedAttemptID: expected, retry: false, now: now)
+        default: throw WorkspaceCommandError("This checkpoint action was routed incorrectly.")
+        }
+        return decision
+    }
+
     /// Inspection can complete an interrupted checkout while retaining its
     /// paused queue. Keep this small path out of the general mutation frame:
     /// provider readiness may copy large history proof values beneath it.
@@ -788,6 +847,8 @@ struct WorkspaceDecision: Sendable {
              .projectScriptStarted, .projectScriptExited, .projectScriptStopped:
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
         case .queuedInputReplaced, .remoteThreadUndo: break
+        case .contextCompactionAccepted, .contextCompactionDispatching, .contextCompactionCancelled:
+            return .init(decision: try reduceContextCompaction(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .promptSteeringAccepted(let operation): try decision.acceptPromptSteering(operation)
         case .piRunHistoryPrepared:
             return .init(decision: try reducePiRunHistoryPrepared(command, snapshot: snapshot), requiresFinalization: true)
@@ -1317,6 +1378,14 @@ struct WorkspaceDecision: Sendable {
             case .submitDefaultWorktree, .submit, .submitFromAppMCP, .submitCapturedClaude, .submitCapturedPi:
                 throw WorkspaceCommandError("This workspace command was routed incorrectly.")
             case .interrupt, .interruptFromAppMCP:
+                if let operation = decision.snapshot.contextCompaction(threadID: thread.id), operation.isWorking {
+                    if case .interruptFromAppMCP = action {
+                        throw WorkspaceCommandError("Stop context compaction using its exact operation identity.")
+                    }
+                    try decision.cancelContextCompaction(threadID: thread.id, operationID: operation.id, now: now)
+                    thread = decision.snapshot.threads[index]
+                    break
+                }
                 if case .interruptFromAppMCP(_, let runID, let runtimeID) = action {
                     guard thread.activeRun?.id == runID, thread.runtimeID == runtimeID else { throw WorkspaceCommandError("The target turn changed before Stop was accepted.") }
                 }
@@ -1585,6 +1654,7 @@ struct WorkspaceDecision: Sendable {
         return .init(decision: decision, requiresFinalization: true)
     }
     mutating func prepareClientCommand(_ action: WorkspaceCommand, commandID: UUID, now: Date, allowScratch: Bool = false) throws {
+        try validateContextCompactionCommand(action)
         if !allowScratch { try validateScratchClientCommand(action) }
         try validateContextTransferCommand(action)
         guard !snapshot.conversationHistoryMaintenanceReservedIDs.contains(commandID) else { throw WorkspaceCommandError("This identity is reserved by provider history maintenance.") }
@@ -1693,6 +1763,14 @@ struct WorkspaceDecision: Sendable {
     private mutating func receive(_ scopedEvent: ProviderEvent, threadID: UUID, runtimeID: UUID, now: Date) throws {
         guard !snapshot.isConversationHistoryLocked(threadID: threadID) else { return }
         guard let index = snapshot.threads.firstIndex(where: { $0.id == threadID }), snapshot.threads[index].runtimeID == runtimeID else { return }
+        if let operation = snapshot.contextCompaction(threadID: threadID), operation.isWorking {
+            switch scopedEvent {
+            case .failure, .connectionClosed:
+                finishContextCompaction(threadID: threadID, operationID: operation.id, result: .cancelled, now: now)
+            default: break
+            }
+            return // Maintenance summaries and events never enter the public conversation.
+        }
         // Validate every scope before taking the mutable thread copy. Unwrapping
         // metadata does not mutate the snapshot or need another reducer frame.
         var event = scopedEvent
@@ -1904,6 +1982,9 @@ struct WorkspaceDecision: Sendable {
         snapshot.threads[index] = thread
     }
     private mutating func finished(_ request: WorkspaceEffectRequest, result: EffectResult, now: Date) {
+        if case .contextCompaction(let threadID, let operationID) = request {
+            finishContextCompaction(threadID: threadID, operationID: operationID, result: result, now: now); return
+        }
         if request.promptSteeringOperationID != nil || request.conversationHistoryOperationID != nil || request.conversationHistoryMaintenanceOperationID != nil || request.checkpointRestoreOperationID != nil || request.conversationHistoryFilesOperationID != nil || request.pullRequestCreationOperationID != nil || request.pullRequestActionOperationID != nil || request.pullRequestCheckoutOperationID != nil { return }
         if request.checkpointOwner != nil { finishCheckpoint(request, result: result, now: now); return }
         if case .projectClone(let projectID, let plan) = request {
@@ -1976,7 +2057,7 @@ struct WorkspaceDecision: Sendable {
             snapshot.threads[index] = thread; return
         }
         switch request {
-        case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
+        case .contextCompaction, .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
             if case .succeeded = result {

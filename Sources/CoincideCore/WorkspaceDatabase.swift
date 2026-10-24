@@ -97,6 +97,9 @@ public actor WorkspaceDatabase {
         else { fingerprint = Data(SHA256.hash(data: try encoder.encode(EffectFingerprintInput(snapshot: snapshot, event: event, effects: effects)))) }
         guard Set(effects.map(\.id)).count == effects.count,
               effects.allSatisfy({ effect in
+                  if case .contextCompaction(let threadID, let operationID) = effect.request {
+                      return snapshot.contextCompaction(threadID: threadID).map { $0.phase == .pending && $0.id == operationID && effect.id == operationID } ?? false
+                  }
                   if case .promptSteering(let threadID, let operationID) = effect.request {
                       return snapshot.promptSteering(operationID).map { $0.phase == .accepted && $0.threadID == threadID && effect.id == $0.effectID } ?? false
                   }
@@ -437,11 +440,14 @@ extension WorkspaceDatabase {
                 return nil
             }
         })
-        guard !threads.isEmpty || !projects.isEmpty || !scripts.isEmpty else { return [] }
+        let compacted = Set((previous.contextCompactionOperations ?? []).filter { old in
+            old.isWorking && next.contextCompaction(threadID: old.threadID)?.isWorking != true
+        }.map(\.id))
+        guard !threads.isEmpty || !projects.isEmpty || !scripts.isEmpty || !compacted.isEmpty else { return [] }
         let statement = try prepare("SELECT payload,id,command_id,thread_id,status FROM workspace_effects WHERE status IN ('pending','running') ORDER BY sequence")
         defer { sqlite3_finalize(statement) }
         let removed = try readEffects(statement).filter { effect in
-            effect.request.threadID.map { threads.contains($0) } == true || effect.request.projectID.map { projects.contains($0) } == true || effect.request.projectScriptRunID.map { scripts.contains($0) } == true
+            effect.request.threadID.map { threads.contains($0) } == true || effect.request.projectID.map { projects.contains($0) } == true || effect.request.projectScriptRunID.map { scripts.contains($0) } == true || compacted.contains(effect.id)
         }
         for var effect in removed where effect.status == .pending {
             effect.status = .cancelled; effect.leaseOwner = nil; effect.leaseExpiresAt = nil

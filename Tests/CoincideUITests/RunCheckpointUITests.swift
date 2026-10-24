@@ -82,15 +82,14 @@ private struct NativeCheckpointSession: RunCheckpointSession {
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         do {
             let project = WorkspaceProject(path: source.path)
-            let agent = ACPAgentConfiguration(name: "Synthetic checkpoint provider", executable: "/usr/bin/true")
-            var thread = CodingThread(project: project); thread.provider = .acp; thread.acpAgent = agent
-            var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]; snapshot.acpAgents = [agent]
+            let thread = CodingThread(project: project)
+            var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
             let database = root.appendingPathComponent("workspace.sqlite")
             _ = try await WorkspaceDatabase(url: database).commit(snapshot, event: "fixture", commandID: UUID())
             let capturePeer = NativeCheckpointCapture(), provider = NativeCheckpointProvider()
             let engine = try WorkspaceEngine(url: database, providerFactory: { _ in provider }, identityResolver: { _ in nil },
                 checkpointFactory: { NativeCheckpointSession(root: $0, capturePeer: capturePeer) })
-            let store = WorkspaceStore(engine: engine); await store.load()
+            let store = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: root)); await store.load()
             return .init(root: root, database: database, threadID: thread.id, store: store, capturePeer: capturePeer, provider: provider)
         } catch { try? FileManager.default.removeItem(at: root); throw error }
     }
@@ -160,7 +159,7 @@ func nativeCheckpointPolicyCaptureRetryAndBoundedDiffPreserveQueuedInputAndUnsen
         let provider = NativeCheckpointProvider()
         let engine = try WorkspaceEngine(url: f.database, providerFactory: { _ in provider }, identityResolver: { _ in nil },
             checkpointFactory: { NativeCheckpointSession(root: $0, capturePeer: f.capturePeer) })
-        let reopened = WorkspaceStore(engine: engine); await reopened.load()
+        let reopened = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: f.root)); await reopened.load()
         #expect(reopened.thread(id)?.effectiveCheckpointPolicy == .disabled)
         #expect(reopened.thread(id)?.draft == "Unsent changes while the snapshot is held")
         #expect(reopened.selectedThreadID == id)

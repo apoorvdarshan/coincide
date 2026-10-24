@@ -101,14 +101,14 @@ private func worktreeUIGit(_ arguments: [String], root: URL) async throws {
         try await worktreeUIGit(["commit", "-m", "Fixture base"], root: source)
         try Data("Dirty source kept\n".utf8).write(to: source.appendingPathComponent("notes.txt"))
         try Data("Untracked sentinel\n".utf8).write(to: source.appendingPathComponent("untracked.txt"))
-        let project = WorkspaceProject(path: source.path), agent = ACPAgentConfiguration(name: "Native Worktree Fixture", executable: "/usr/bin/true")
-        var thread = CodingThread(project: project); thread.provider = .acp; thread.acpAgent = agent; thread.draft = "Keep this unsent draft"
-        var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]; snapshot.acpAgents = [agent]
+        let project = WorkspaceProject(path: source.path)
+        var thread = CodingThread(project: project); thread.draft = "Keep this unsent draft"
+        var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
         let database = root.appendingPathComponent("workspace.sqlite"), persistence = try WorkspaceDatabase(url: database)
         _ = try await persistence.commit(snapshot, event: "fixture", commandID: UUID())
         let harness = NativeWorktreeHarness()
         let engine = try WorkspaceEngine(url: database, providerFactory: { _ in harness.provider }, identityResolver: { _ in nil }, worktreeFactory: { harness.peer($0) })
-        let store = WorkspaceStore(engine: engine); await store.load()
+        let store = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: root)); await store.load()
         return .init(root: root, source: source, database: database, project: project, thread: thread, harness: harness, engine: engine, store: store)
     }
     func cleanup() async { await store.shutdown(); try? FileManager.default.removeItem(at: root) }

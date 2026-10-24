@@ -5,6 +5,7 @@ import Testing
 
 @MainActor @Test func appSlashCommandsNeverConsumeProviderCommandsOrArguments() {
     #expect(CoincideSlashCommand.parse(" /app:model \n") == .model)
+    #expect(CoincideSlashCommand.parse("/app:compact") == .compact)
     for value in ["/model", "/compact", "/mcp", "/app:model gpt", "/app:settings\nkeep this draft", "/app:unknown"] {
         #expect(CoincideSlashCommand.parse(value) == nil)
     }
@@ -42,7 +43,7 @@ import Testing
     var thread = CodingThread(project: project)
     thread.draft = "Keep this unsent draft"
     store.snapshot.projects = [project]; store.snapshot.threads = [thread]; store.selectedThreadID = thread.id
-    for command in CoincideSlashCommand.allCases where command != .new && command != .model {
+    for command in CoincideSlashCommand.allCases where command.settingsPage != nil {
         store.runAppCommand(command)
         #expect(store.showingSettings)
         #expect(store.settingsPage == command.settingsPage)

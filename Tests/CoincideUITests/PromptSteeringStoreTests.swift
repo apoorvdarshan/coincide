@@ -108,15 +108,14 @@ func nativeSteeringCacheRefreshesOnSemanticCapabilityChangesWithoutRefreshingFor
         let checkout = root.appendingPathComponent("Checkout")
         try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
         let database = root.appendingPathComponent("workspace.sqlite"), project = WorkspaceProject(path: checkout.path)
-        let agent = ACPAgentConfiguration(name: "Injected native steering provider", executable: "/usr/bin/true")
         var thread = CodingThread(project: project, model: "Captured running model")
-        thread.provider = .acp; thread.acpAgent = agent; thread.checkpointPolicy = .disabled
+        thread.provider = .codex; thread.checkpointPolicy = .disabled
         var snapshot = WorkspaceSnapshot()
-        snapshot.projects = [project]; snapshot.threads = [thread]; snapshot.acpAgents = [agent]
+        snapshot.projects = [project]; snapshot.threads = [thread]
         try await WorkspaceDatabase(url: database).save(snapshot, event: "native.steering.fixture")
         let provider = NativeSteeringProvider()
         let engine = try WorkspaceEngine(url: database, providerFactory: { _ in provider }, identityResolver: { _ in nil })
-        let store = WorkspaceStore(engine: engine); await store.load()
+        let store = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: root)); await store.load()
         return .init(root: root, database: database, threadID: thread.id, provider: provider, engine: engine, store: store)
     }
     func start() async throws {

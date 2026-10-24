@@ -311,7 +311,9 @@ func settlingAConversationClosesIdleTerminalsAndRoutesWorkspaceFileLinks() async
         try await waitTerminalUI { busy.hasForegroundCommand }
         try await Task.sleep(for: .milliseconds(300))
         #expect(store.openTerminalFile(fixture.source.appendingPathComponent("notes.txt").path, line: 1, column: nil, thread: thread) == nil)
-        #expect(store.fileNavigation?.path == "notes.txt" && store.fileNavigation?.line == 1 && store.inspectorVisible)
+        try await waitTerminalUI { fixture.editorHandoffs.plans.count == 1 }
+        #expect(fixture.editorHandoffs.plans == [.defaultApplication(fixture.source.appendingPathComponent("notes.txt").resolvingSymlinksInPath())])
+        #expect(store.fileNavigation == nil)
         #expect(store.openTerminalFile(fixture.source.appendingPathComponent("gone.txt").path, line: nil, column: nil, thread: thread) != nil)
         try await store.settleThread(id)
         #expect(idle.detachment == .idle && busy.lifecycle == .running)
