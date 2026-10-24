@@ -707,98 +707,110 @@ extension WorkspaceSnapshot {
         reserved.formUnion((pullRequestCreations ?? []).flatMap { [$0.id, $0.effectID] })
         reserved.formUnion((checkpointRestoreOperations ?? []).map(\.id))
         for project in projects { if let clone = project.clone { reserved.formUnion((clone.previousPlans + [clone.plan]).map(\.id)) } }
-        for thread in threads {
-            reserved.formUnion(thread.queuedTurns.map(\.id)); if let run = thread.activeRun { reserved.insert(run.id) }
-            if let preparation = thread.workspacePreparation {
-                reserved.formUnion([preparation.id] + preparation.previousAttempts.map { $0.request.id })
-                for script in preparation.previousAttempts.compactMap(\.setup) + (preparation.setup.map { [$0] } ?? []) {
-                    reserved.formUnion([script.id] + script.previousPlans.map(\.id))
-                }
-            }
-            if let settlement = thread.settlement { reserved.insert(settlement.id) }
-            for (_, script) in thread.projectScripts { reserved.formUnion([script.id] + script.previousPlans.map(\.id)) }
-            for record in thread.runHistory ?? [] {
-                reserved.insert(record.id)
-                if let checkpoints = record.checkpoints {
-                    reserved.formUnion(([checkpoints.baseline] + checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? [])).map(\.id))
-                }
-            }
-        }
+        // Each loop body runs in its own frame: unoptimized builds otherwise keep
+        // every iteration's dynamic stack allocations until this function returns.
+        for thread in threads { Self.reserveHistoryIdentities(of: thread, in: &reserved) }
         guard Set(maintenanceIDs).count == maintenanceIDs.count, reserved.isDisjoint(with: maintenanceIDs) else {
             throw CoincideError("Provider maintenance identities must be uniquely reserved.")
         }
-        for operation in operations {
-            try operation.validate()
-            if operation.locksSource {
-                guard threads.contains(where: { $0.id == operation.review.sourceThreadID && $0.projectID == operation.review.projectID }) else { throw CoincideError("A pending history action lost its source conversation.") }
-            }
-            if let targetID = operation.review.targetThreadID, let target = threads.first(where: { $0.id == targetID }) {
-                guard operation.phase == .applied, target.forkedFromHistoryOperationID == operation.id else { throw CoincideError("A fork target is already owned by another conversation.") }
-                if let grant = operation.scratchFork {
-                    guard target.scratchWorkspace == grant.allocation.receipt,
-                          target.createdAt == grant.allocation.receipt.createdAt else { throw ScratchWorkspaceError() }
-                }
-            }
-        }
+        for operation in operations { try validateHistoryOwnership(of: operation) }
         try OpenCodeV1HistoryReviewEvidence.validateAdoptionLedger(in: self)
         try validatePiFreshContexts()
         let byID = Dictionary(uniqueKeysWithValues: operations.map { ($0.id, $0) })
-        for thread in threads {
-            if let selection = thread.claudeResumeSelection {
-                guard thread.provider == .claude, let operation = byID[selection.id], operation.phase == .applied,
-                      operation.review.sourceThreadID == thread.id, operation.review.kind == .rewindBeforeRun,
-                      operation.result?.claude?.selection == selection,
-                      operation.review.claude?.source.matchesBinding(.init(thread: thread)) == true,
-                      thread.providerThreadID == selection.nativeSessionID else { throw CoincideError("The pending Claude context selection lost its applied history owner.") }
-                if let consumer = thread.claudeResumeConsumerRunID {
-                    guard let run = thread.runHistory?.first(where: { $0.id == consumer }),
-                          run.configuration.claudeLaunchSelection == selection,
-                          run.configuration.claudeRuntimeConfiguration == thread.claudeRuntimeConfiguration else {
-                        throw CoincideError("The pending Claude context consumer lost its exact captured selection.")
-                    }
-                }
-            } else if thread.claudeResumeConsumerRunID != nil { throw CoincideError("A Claude context consumer has no pending selection.") }
-            if let inherited = thread.claudeInheritedHead {
-                let nativeHistoryOwner = thread.forkedFromHistoryOperationID.flatMap { byID[$0] }.map {
-                    $0.phase == .applied && $0.result?.claude?.inheritedHead == inherited
-                } ?? false
-                let contextOwner = try hasVerifiedContextClaudeFork(thread: thread, inherited: inherited)
-                guard nativeHistoryOwner || contextOwner,
-                      thread.claudeRuntimeConfiguration?.runtimeIdentity == inherited.runtimeIdentity,
-                      thread.providerThreadID == inherited.nativeSessionID else { throw CoincideError("The inherited Claude head lost its verified native fork lineage.") }
-            }
-            if let fork = thread.forkedFromHistoryOperationID {
-                guard let operation = byID[fork], operation.phase == .applied, operation.review.kind == .forkAfterRun,
-                      operation.review.targetThreadID == thread.id, operation.review.projectID == thread.projectID,
-                      operation.review.prefix.allSatisfy({ original in thread.messages.contains(where: { $0.id == original.id && $0.runReference == original.runReference }) }) else { throw CoincideError("The forked conversation has no matching applied lineage.") }
-                if let inherited = operation.result?.claude?.inheritedHead {
-                    guard thread.claudeInheritedHead == inherited else { throw CoincideError("The forked Claude conversation lost its verified inherited context.") }
-                }
-            }
-            for run in thread.runHistory ?? [] {
-                guard let marker = run.removedByHistoryOperationID else { continue }
-                guard let operation = byID[marker], operation.phase == .applied, operation.review.kind == .rewindBeforeRun,
-                      operation.review.sourceThreadID == thread.id, operation.review.removedRunIDs.contains(run.id) else { throw CoincideError("A removed run has no matching applied rewind.") }
-            }
-            for message in thread.messages {
-                if let marker = message.removedByHistoryOperationID {
-                    guard let operation = byID[marker], operation.phase == .applied, operation.review.kind == .rewindBeforeRun,
-                          operation.review.sourceThreadID == thread.id, operation.review.removedMessageIDs.contains(message.id) else { throw CoincideError("A removed message has no matching applied rewind.") }
-                }
-                if let reference = message.runReference, reference.threadID != thread.id {
-                    guard let fork = thread.forkedFromHistoryOperationID, let operation = byID[fork], operation.phase == .applied,
-                          operation.review.kind == .forkAfterRun, operation.review.targetThreadID == thread.id,
-                          operation.review.prefix.contains(where: { $0.id == message.id && $0.runReference == reference }) else { throw CoincideError("An inherited message has no matching applied fork provenance.") }
-                }
-            }
-        }
+        for thread in threads { try validateHistoryLineage(of: thread, byID: byID) }
         // Resolved audit survives removal. Existing sources must retain every marked
         // row; subsequent rewinds never physically delete or reassign old markers.
         for operation in operations where operation.phase == .applied && operation.review.kind == .rewindBeforeRun {
-            guard let source = threads.first(where: { $0.id == operation.review.sourceThreadID }) else { continue }
-            guard operation.review.removedRunIDs.allSatisfy({ id in source.runHistory?.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) == true }),
-                  operation.review.removedMessageIDs.allSatisfy({ id in source.messages.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) }) else { throw CoincideError("The rewind audit lost retained transcript or run evidence.") }
+            try validateRewindAudit(of: operation)
         }
+    }
+
+    private static func reserveHistoryIdentities(of thread: CodingThread, in reserved: inout Set<UUID>) {
+        reserved.formUnion(thread.queuedTurns.map(\.id)); if let run = thread.activeRun { reserved.insert(run.id) }
+        if let preparation = thread.workspacePreparation {
+            reserved.formUnion([preparation.id] + preparation.previousAttempts.map { $0.request.id })
+            for script in preparation.previousAttempts.compactMap(\.setup) + (preparation.setup.map { [$0] } ?? []) {
+                reserved.formUnion([script.id] + script.previousPlans.map(\.id))
+            }
+        }
+        if let settlement = thread.settlement { reserved.insert(settlement.id) }
+        for (_, script) in thread.projectScripts { reserved.formUnion([script.id] + script.previousPlans.map(\.id)) }
+        for record in thread.runHistory ?? [] {
+            reserved.insert(record.id)
+            if let checkpoints = record.checkpoints {
+                reserved.formUnion(([checkpoints.baseline] + checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? [])).map(\.id))
+            }
+        }
+    }
+
+    private func validateHistoryOwnership(of operation: ConversationHistoryOperation) throws {
+        try operation.validate()
+        if operation.locksSource {
+            guard threads.contains(where: { $0.id == operation.review.sourceThreadID && $0.projectID == operation.review.projectID }) else { throw CoincideError("A pending history action lost its source conversation.") }
+        }
+        if let targetID = operation.review.targetThreadID, let target = threads.first(where: { $0.id == targetID }) {
+            guard operation.phase == .applied, target.forkedFromHistoryOperationID == operation.id else { throw CoincideError("A fork target is already owned by another conversation.") }
+            if let grant = operation.scratchFork {
+                guard target.scratchWorkspace == grant.allocation.receipt,
+                      target.createdAt == grant.allocation.receipt.createdAt else { throw ScratchWorkspaceError() }
+            }
+        }
+    }
+
+    private func validateHistoryLineage(of thread: CodingThread, byID: [UUID: ConversationHistoryOperation]) throws {
+        if let selection = thread.claudeResumeSelection {
+            guard thread.provider == .claude, let operation = byID[selection.id], operation.phase == .applied,
+                  operation.review.sourceThreadID == thread.id, operation.review.kind == .rewindBeforeRun,
+                  operation.result?.claude?.selection == selection,
+                  operation.review.claude?.source.matchesBinding(.init(thread: thread)) == true,
+                  thread.providerThreadID == selection.nativeSessionID else { throw CoincideError("The pending Claude context selection lost its applied history owner.") }
+            if let consumer = thread.claudeResumeConsumerRunID {
+                guard let run = thread.runHistory?.first(where: { $0.id == consumer }),
+                      run.configuration.claudeLaunchSelection == selection,
+                      run.configuration.claudeRuntimeConfiguration == thread.claudeRuntimeConfiguration else {
+                    throw CoincideError("The pending Claude context consumer lost its exact captured selection.")
+                }
+            }
+        } else if thread.claudeResumeConsumerRunID != nil { throw CoincideError("A Claude context consumer has no pending selection.") }
+        if let inherited = thread.claudeInheritedHead {
+            let nativeHistoryOwner = thread.forkedFromHistoryOperationID.flatMap { byID[$0] }.map {
+                $0.phase == .applied && $0.result?.claude?.inheritedHead == inherited
+            } ?? false
+            let contextOwner = try hasVerifiedContextClaudeFork(thread: thread, inherited: inherited)
+            guard nativeHistoryOwner || contextOwner,
+                  thread.claudeRuntimeConfiguration?.runtimeIdentity == inherited.runtimeIdentity,
+                  thread.providerThreadID == inherited.nativeSessionID else { throw CoincideError("The inherited Claude head lost its verified native fork lineage.") }
+        }
+        if let fork = thread.forkedFromHistoryOperationID {
+            guard let operation = byID[fork], operation.phase == .applied, operation.review.kind == .forkAfterRun,
+                  operation.review.targetThreadID == thread.id, operation.review.projectID == thread.projectID,
+                  operation.review.prefix.allSatisfy({ original in thread.messages.contains(where: { $0.id == original.id && $0.runReference == original.runReference }) }) else { throw CoincideError("The forked conversation has no matching applied lineage.") }
+            if let inherited = operation.result?.claude?.inheritedHead {
+                guard thread.claudeInheritedHead == inherited else { throw CoincideError("The forked Claude conversation lost its verified inherited context.") }
+            }
+        }
+        for run in thread.runHistory ?? [] {
+            guard let marker = run.removedByHistoryOperationID else { continue }
+            guard let operation = byID[marker], operation.phase == .applied, operation.review.kind == .rewindBeforeRun,
+                  operation.review.sourceThreadID == thread.id, operation.review.removedRunIDs.contains(run.id) else { throw CoincideError("A removed run has no matching applied rewind.") }
+        }
+        for message in thread.messages {
+            if let marker = message.removedByHistoryOperationID {
+                guard let operation = byID[marker], operation.phase == .applied, operation.review.kind == .rewindBeforeRun,
+                      operation.review.sourceThreadID == thread.id, operation.review.removedMessageIDs.contains(message.id) else { throw CoincideError("A removed message has no matching applied rewind.") }
+            }
+            if let reference = message.runReference, reference.threadID != thread.id {
+                guard let fork = thread.forkedFromHistoryOperationID, let operation = byID[fork], operation.phase == .applied,
+                      operation.review.kind == .forkAfterRun, operation.review.targetThreadID == thread.id,
+                      operation.review.prefix.contains(where: { $0.id == message.id && $0.runReference == reference }) else { throw CoincideError("An inherited message has no matching applied fork provenance.") }
+            }
+        }
+    }
+
+    private func validateRewindAudit(of operation: ConversationHistoryOperation) throws {
+        guard let source = threads.first(where: { $0.id == operation.review.sourceThreadID }) else { return }
+        guard operation.review.removedRunIDs.allSatisfy({ id in source.runHistory?.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) == true }),
+              operation.review.removedMessageIDs.allSatisfy({ id in source.messages.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) }) else { throw CoincideError("The rewind audit lost retained transcript or run evidence.") }
     }
 }
 
