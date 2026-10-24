@@ -1,5 +1,8 @@
 # Coincide
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15854/badge)](https://www.bestpractices.dev/projects/15854)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/apoorvdarshan/coincide/badge)](https://scorecard.dev/viewer/?uri=github.com/apoorvdarshan/coincide)
+
 A native macOS chat app for **Codex and Claude**, built with SwiftUI and AppKit.
 Projects, saved conversations and a single model picker keep the focus on chat.
 Coincide connects to the providers' CLIs and keeps its own conversation history.
