@@ -61,7 +61,8 @@ func groupedCheckoutControlsPreserveRunningOwnershipAndRouteOnlyNewConversations
     let storage = try WorkspaceDatabase(url: database)
     _ = try await storage.commit(initial, event: "fixture.checkout-grouping", commandID: UUID())
     let engine = try WorkspaceEngine(url: database, providerFactory: { _ in provider }, identityResolver: { fixture.identities[$0.path] })
-    let store = WorkspaceStore(engine: engine, managedProjectsRoot: fixture.root.appendingPathComponent("Projects"))
+    let store = WorkspaceStore(engine: engine, managedProjectsRoot: fixture.root.appendingPathComponent("Projects"),
+        codexInstallation: fixtureCodexInstallation(root: fixture.root))
     await store.load()
     do {
         let a = fixture.projects[0], b = fixture.projects[1], other = fixture.projects[2], threadA = initial.threads[0].id
@@ -136,7 +137,8 @@ func groupedCheckoutControlsPreserveRunningOwnershipAndRouteOnlyNewConversations
         await store.shutdown()
 
         let reopenedEngine = try WorkspaceEngine(url: database, identityResolver: { fixture.identities[$0.path] })
-        let reopened = WorkspaceStore(engine: reopenedEngine, managedProjectsRoot: fixture.root.appendingPathComponent("Projects"))
+        let reopened = WorkspaceStore(engine: reopenedEngine, managedProjectsRoot: fixture.root.appendingPathComponent("Projects"),
+        codexInstallation: fixtureCodexInstallation(root: fixture.root))
         await reopened.load()
         #expect(reopened.projectSortMode == .manual && reopened.orderedProjectGroups.count == 2)
         let remaining = try #require(reopened.projectGroup(containing: b.id))
@@ -161,7 +163,8 @@ func groupedCheckoutCollapseRejectsStaleMembersWithoutTouchingConversations() as
         if url.lastPathComponent == "Other" { return nil }
         return try RepositoryIdentity(remote: remote, remoteName: "origin", rootPath: url.path, projectRelativePath: "")
     })
-    let store = WorkspaceStore(engine: engine, managedProjectsRoot: fixture.root.appendingPathComponent("Projects"))
+    let store = WorkspaceStore(engine: engine, managedProjectsRoot: fixture.root.appendingPathComponent("Projects"),
+        codexInstallation: fixtureCodexInstallation(root: fixture.root))
     await store.load()
     do {
         let a = fixture.projects[0]
