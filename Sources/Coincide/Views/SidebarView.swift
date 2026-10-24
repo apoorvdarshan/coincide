@@ -320,7 +320,9 @@ struct SidebarView: View {
 
     private func threadRow(_ thread: CodingThread, nested: Bool = false) -> some View {
         let nestedChats = store.visibleThreads.filter { $0.projectID == thread.projectID }
-        let shownInProject = store.isProjectExpanded(thread.projectID) &&
+        // Scratch projects are not listed under Projects, so their chats appear only in Recents.
+        let listedProject = store.snapshot.projects.contains { $0.id == thread.projectID && $0.scratch == nil }
+        let shownInProject = listedProject && store.isProjectExpanded(thread.projectID) &&
             (expandedChatLists.contains(thread.projectID) || nestedChats.prefix(3).contains { $0.id == thread.id })
         let selected = store.selectedThreadID == thread.id && (nested || !shownInProject)
         return Button { store.selectThread(thread.id) } label: {

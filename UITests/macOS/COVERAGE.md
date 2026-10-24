@@ -41,6 +41,10 @@ They retain their assertions about immutable offline CLI peers, exact approval
 answers, literal steering, draft and file preservation, provider RPC boundaries,
 model defaults, account privacy, project removal and native window restoration.
 Steering completion no longer requires an optional checkpoint to be enabled.
+App-managed ChatGPT sign-in is deferred, so the Codex authentication tests check
+that Settings does not offer it and that a previously saved app-managed mode is
+shown as deferred without CLI probes, sign-in or preference rewrites. The Claude
+question test compares run history only after automatic run checkpoints settle.
 
 ## Replaced desktop surfaces
 
