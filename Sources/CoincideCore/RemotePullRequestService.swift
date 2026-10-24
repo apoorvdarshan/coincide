@@ -116,7 +116,7 @@ actor RemotePullRequestService {
             let busy = await workspace.busyPullRequestPaths()
             let value = try await engine.reviewRemotePullRequest(request, busyWorktreePaths: busy)
             do { try await validate(request.target) }
-            catch { await engine.discardRemotePullRequestReview(.init(target: value.target, reviewID: value.id, digest: value.digest)); throw error }
+            catch { _ = await engine.discardRemotePullRequestReview(.init(target: value.target, reviewID: value.id, digest: value.digest)); throw error }
             return value
         } catch { throw Self.safe(error) }
     }

@@ -107,7 +107,7 @@ final class RemoteSteeringStore {
     func edit(_ row: RemoteQueuedInputSummary, attachments: RemoteAttachmentsStore) async {
         guard editor == nil, row.canEdit, let state, let client, current?(state.target) == true else { return }
         let owner = generation
-        await readJob {
+        await readJob { [self] in
             let textBytes = try await client.steeringDocument(row.text, binding: state.page.capture.binding, target: state.target)
             let referenceBytes = try await client.steeringDocument(row.attachments, binding: state.page.capture.binding, target: state.target)
             let refs = try JSONDecoder().decode([ChatAttachment].self, from: referenceBytes)

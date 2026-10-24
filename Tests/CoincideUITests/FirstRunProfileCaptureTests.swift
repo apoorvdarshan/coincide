@@ -88,7 +88,7 @@ private actor FirstRunOfflineTransport: CodexOAuthTransport {
                 callback.queryItems = [.init(name: "state", value: state), .init(name: "code", value: "offline-fixture-code"), .init(name: "client_id", value: credential.clientID)]
                 stage = .vaultExchange
                 let overview = try await vault.exchange(preparation: preparation, authorization: authorization, callbackURL: try #require(callback.url?.absoluteString))
-                binding = try #require(overview.binding)
+                binding = overview.binding
             }
             stage = .workspace
             let configuration = CodexRuntimeConfiguration(selection: .custom, executable: codex.path, homeDirectory: home.path,
@@ -219,6 +219,9 @@ func firstRunPublishedReadinessRevisionPreventsRetainedRowsFromCopyingAnOldProfi
     await f.close()
 }
 
+/// Currency that a readiness row's closure reads after the test retires it.
+@MainActor private final class FirstRunRowCurrency { var value = true }
+
 @MainActor @Test
 func firstRunReadinessRepairsOnlyDefaultCLISelectionsAndGuardsSettingsForConfiguredRuntimes() {
     let scopes: [(ProviderReadiness.Capture.Scope, Bool)] = [
@@ -230,14 +233,15 @@ func firstRunReadinessRepairsOnlyDefaultCLISelectionsAndGuardsSettingsForConfigu
     ]
     for (scope, offersInstaller) in scopes {
         let capture = ProviderReadiness.Capture(scope: scope, executable: nil, environment: [:], directory: "/private/tmp")
-        var current = true, writes = 0, settings = 0
+        let current = FirstRunRowCurrency()
+        var writes = 0, settings = 0
         let row = AgentReadinessRow(agent: capture.agent, readiness: .install, executable: nil,
             capturedLoginCommand: capture.loginCommand, capturedInstallCommand: capture.capturedInstallCommand,
-            usesCapturedProfile: true, isCurrent: { current })
+            usesCapturedProfile: true, isCurrent: { current.value })
         #expect((capture.capturedInstallCommand != nil) == offersInstaller)
         #expect(row.copyCommand(capture.agent.installCommand, write: { _ in writes += 1 }) == offersInstaller)
         #expect(row.reviewSettings(using: { settings += 1 }) == !offersInstaller)
-        current = false
+        current.value = false
         #expect(!row.copyCommand(capture.agent.installCommand, write: { _ in writes += 1 }))
         #expect(!row.reviewSettings(using: { settings += 1 }))
         #expect(writes == (offersInstaller ? 1 : 0) && settings == (offersInstaller ? 0 : 1))

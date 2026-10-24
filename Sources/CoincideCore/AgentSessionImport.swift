@@ -22,7 +22,6 @@ public struct AgentSessionProfile: Codable, Sendable, Equatable, Identifiable {
             source = .claudeAgent
             guard let runtime = configuration.claudeRuntimeConfiguration else { throw AgentSessionImportError.invalidProfile }
             try runtime.validate()
-        default: throw AgentSessionImportError.invalidProfile
         }
         guard transcriptsRoot.hasPrefix("/"), transcriptsRoot != "/", !transcriptsRoot.contains("\0"), transcriptsRoot.utf8.count <= 4_096 else { throw AgentSessionImportError.invalidProfile }
         storage = [.init(source: source, configuration: configuration, transcriptsRoot: transcriptsRoot,

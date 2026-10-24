@@ -192,20 +192,18 @@ func remoteAttachmentsUncertainFinalizeChecksExactIdentityAndAcknowledgementKeep
 @Test(.timeLimit(.minutes(1))) @MainActor
 func remoteAttachmentsCapturedSubmissionCannotFollowSelectionAndPreservesLaterImports() async throws {
     let f = try RemoteAttachmentFixture(), boundary = RemoteAttachmentBoundary()
-    do {
-        await f.connect(); await f.store.importData(Data("Captured".utf8), name: "first.txt")
-        await f.peer.setBoundary(boundary)
-        let preparation = Task { await f.store.prepareSubmission() }; await boundary.entered()
-        await f.store.importData(Data("Later import".utf8), name: "second.txt")
-        let next = RemoteAttachmentTarget(environmentID: f.target.environmentID, projectID: f.target.projectID, threadID: UUID())
-        await f.store.select(target: next, transport: f.peer.transport, hostDraftAttachments: [], supported: true)
-        await boundary.release(); #expect(await preparation.value == nil)
-        #expect(f.store.entries.isEmpty)
-        await f.connect()
-        #expect(f.store.entries.map { $0.local.name } == ["first.txt", "second.txt"])
-        #expect(f.store.entries.first?.isReady == true)
-        await f.remove()
-    } catch { await boundary.release(); await f.remove(); throw error }
+    await f.connect(); await f.store.importData(Data("Captured".utf8), name: "first.txt")
+    await f.peer.setBoundary(boundary)
+    let preparation = Task { await f.store.prepareSubmission() }; await boundary.entered()
+    await f.store.importData(Data("Later import".utf8), name: "second.txt")
+    let next = RemoteAttachmentTarget(environmentID: f.target.environmentID, projectID: f.target.projectID, threadID: UUID())
+    await f.store.select(target: next, transport: f.peer.transport, hostDraftAttachments: [], supported: true)
+    await boundary.release(); #expect(await preparation.value == nil)
+    #expect(f.store.entries.isEmpty)
+    await f.connect()
+    #expect(f.store.entries.map { $0.local.name } == ["first.txt", "second.txt"])
+    #expect(f.store.entries.first?.isReady == true)
+    await f.remove()
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor

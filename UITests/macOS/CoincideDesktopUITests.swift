@@ -129,8 +129,8 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(waitForValue(field, value: "unsaved-model", timeout: 5), "Settings navigation must retain the edit for its exact source.")
         XCTAssertEqual(try Data(contentsOf: file), original)
         try chooseConfiguration("configuration-provider", value: "Claude", in: f.app)
-        // The confirmation dialog also exposes its cancel action to the sheet; use one.
-        let keep = f.app.buttons["Keep editing"].firstMatch
+        // The dialog's cancel action is also mirrored on the Touch Bar; click the window's.
+        let keep = f.app.windows.buttons.matching(NSPredicate(format: "label == %@ OR title == %@", "Keep editing", "Keep editing")).firstMatch
         XCTAssertTrue(keep.waitForExistence(timeout: 5)); keep.click()
         XCTAssertTrue(waitForValue(field, value: "unsaved-model", timeout: 5))
         XCTAssertEqual(try Data(contentsOf: file), original)
@@ -345,7 +345,10 @@ final class CoincideDesktopUITests: XCTestCase {
         try revealContentControl(save, in: app); XCTAssertTrue(save.isEnabled); save.click()
         if expectsError { XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.waitForExistence(timeout: 5)) }
         else {
-            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "configuration-saved").firstMatch.waitForExistence(timeout: 5))
+            // Saving replaces the document and re-renders the form; bring the result into view.
+            let saved = app.descendants(matching: .any).matching(identifier: "configuration-saved").firstMatch
+            if !saved.waitForExistence(timeout: 5) { try revealContentControl(saved, in: app) }
+            XCTAssertTrue(saved.exists)
             XCTAssertFalse(save.isEnabled)
             XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.exists)
         }

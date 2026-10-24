@@ -177,7 +177,7 @@ func remoteHistoryClientRejectsInvalidOrChangingPages(mode: String) async throws
         if ["page-gap", "page-overlap", "page-total", "page-loop", "page-replay"].contains(mode) {
             let first = try await client.readHistory(request)
             guard case .messages(let page) = first.value else { throw CoincideError("Missing first page") }
-            let next = RemoteHistoryReadRequest(target: peer.target, query: .prefix(binding: review.binding, newestFirst: false, cursor: try #require(page.nextCursor)))
+            let next = RemoteHistoryReadRequest(target: peer.target, query: .prefix(binding: review.binding, newestFirst: false, cursor: page.nextCursor))
             if mode == "page-replay" { _ = try await client.readHistory(next) }
             await #expect(throws: RemoteEnvironmentClientError(.invalidResponse)) { _ = try await client.readHistory(next) }
         } else { await #expect(throws: RemoteEnvironmentClientError(.invalidResponse)) { _ = try await client.readHistory(request) } }

@@ -55,7 +55,7 @@ private actor RemoteUndoUIPeer {
     }
     func start() async {
         await keys.start(); window.makeKey(); keys.dispatcher.registerRemoteUndo(store, window: window)
-        let binding = await peer.binding, target = await peer.target
+        let binding = peer.binding, target = peer.target
         await store.update(environmentID: binding.environmentID, connectionKey: Data([1]), target: target,
             transport: .init(read: { [peer] in await peer.read($0) }, release: { [peer] in await peer.release($0) }), supported: true,
             current: { [weak self] in self?.current == true }, perform: { [weak self, peer] command in

@@ -83,7 +83,7 @@ final class RemoteComposerStore {
             } else if let saved {
                 selected = saved.draft.attachments
                 if publish(scope, saved.draft.text, initial) { text = saved.draft.text }
-                else { text = currentText(); enqueue(record: .init(scope: scope, draft: snapshot(scope)), expected: saved.draft, persistence: persistence) }
+                else { text = currentText(); _ = enqueue(record: .init(scope: scope, draft: snapshot(scope)), expected: saved.draft, persistence: persistence) }
             }
             else {
                 text = initial; selected = host + locals
@@ -127,7 +127,7 @@ final class RemoteComposerStore {
         if publishing, publish?(scope, value, before.text) != true {
             text = currentText?() ?? before.text; selected = before.attachments; return
         }
-        enqueue(record: .init(scope: scope, draft: after), expected: before, persistence: persistence)
+        _ = enqueue(record: .init(scope: scope, draft: after), expected: before, persistence: persistence)
     }
     private func enqueue(record: RemoteComposerRecord, expected: ComposerDraftSnapshot, persistence: RemoteComposerPersistence,
                          commandID: UUID? = nil, replacement: ComposerDraftReplacement? = nil) -> Task<Bool, Never> {

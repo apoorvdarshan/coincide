@@ -172,7 +172,7 @@ func remoteContextClientRejectsInvalidOrChangingPages(mode: String) async throws
         if ["page-gap", "page-overlap", "page-total", "page-loop", "page-replay"].contains(mode) {
             let first = try await client.readContext(request)
             guard case .messages(let page) = first.value else { throw CoincideError("Missing first page") }
-            let next = RemoteContextReadRequest(target: peer.target, query: .messages(binding: review.binding, cursor: try #require(page.nextCursor)))
+            let next = RemoteContextReadRequest(target: peer.target, query: .messages(binding: review.binding, cursor: page.nextCursor))
             if mode == "page-replay" { _ = try await client.readContext(next) }
             await #expect(throws: RemoteEnvironmentClientError(.invalidResponse)) { _ = try await client.readContext(next) }
         } else { await #expect(throws: RemoteEnvironmentClientError(.invalidResponse)) { _ = try await client.readContext(request) } }

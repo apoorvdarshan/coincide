@@ -47,22 +47,25 @@ private func terminalLaunchCount(_ file: URL) -> Int {
     terminals.suspend(); await terminals.waitForPersistence()
 }
 
+/// Readiness that the terminal integration closure reads after it changes.
+@MainActor private final class TerminalReadinessFlag { var value = false }
+
 @Test(.timeLimit(.minutes(1))) @MainActor
 func restoredTerminalReadinessChangeStartsExactlyOneFreshShellWithTheSamePaneIDs() async throws {
     let root = try terminalFixtureRoot("terminal-readiness"); defer { try? FileManager.default.removeItem(at: root) }
     let thread = CodingThread(project: .init(path: root.path))
     let (terminals, restored, launches) = try await restoredTerminalFixture(root: root, thread: thread)
-    var ready = false
+    let ready = TerminalReadinessFlag()
     terminals.integration.thread = { $0 == thread.id ? thread : nil }
-    terminals.integration.canOpen = { _ in ready }
+    terminals.integration.canOpen = { _ in ready.value }
     do {
         let ids = [restored.id]
-        let blocked = terminals.resumeReadiness(for: thread, sessionIDs: ids, canOpen: ready, enabled: true)
+        let blocked = terminals.resumeReadiness(for: thread, sessionIDs: ids, canOpen: ready.value, enabled: true)
         terminals.resumeRestoredPanes(blocked, for: thread)
         #expect(restored.processID == 0 && terminalLaunchCount(launches) == 0)
         #expect(!terminals.canResume(restored, thread: thread))
-        ready = true
-        let available = terminals.resumeReadiness(for: thread, sessionIDs: ids, canOpen: ready, enabled: true)
+        ready.value = true
+        let available = terminals.resumeReadiness(for: thread, sessionIDs: ids, canOpen: ready.value, enabled: true)
         #expect(available != blocked && available.sessionIDs == blocked.sessionIDs)
         terminals.resumeRestoredPanes(available, for: thread)
         try await waitTerminalUI { restored.processID > 0 && terminalLaunchCount(launches) == 1 }
@@ -273,7 +276,7 @@ func terminalLinksRouteFilesAndWebLinksAndRefuseOtherSchemes() async throws {
     shell.view.requestOpenLink(source: shell.view, link: "src/app.swift:12:4:", params: [:])
     shell.view.requestOpenLink(source: shell.view, link: "https://example.com/docs).", params: [:])
     #expect(files.count == 1 && files.first?.0.hasSuffix("/src/app.swift") == true && files.first?.1 == 12 && files.first?.2 == 4)
-    #expect(files.first.map { URL(fileURLWithPath: $0.0).deletingLastPathComponent().deletingLastPathComponent().resolvingSymlinksInPath().path } == root.path)
+    #expect(files.first.map { URL(fileURLWithPath: $0.0).deletingLastPathComponent().deletingLastPathComponent().resolvingSymlinksInPath().path } == root.resolvingSymlinksInPath().path)
     #expect(urls == [URL(string: "https://example.com/docs")!] && terminals.notice == nil)
     shell.view.requestOpenLink(source: shell.view, link: "missing.txt:1", params: [:])
     #expect(terminals.notice == "missing")

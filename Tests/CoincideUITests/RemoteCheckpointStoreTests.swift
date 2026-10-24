@@ -230,7 +230,7 @@ func remoteCheckpointLateReviewAfterConfigurationChangeIsDisposedEvenAfterDiscon
     let preparing = Task { await model.prepareRestore(runID: f.run.id, stage: .baseline, attemptID: attempt.id) }; await gate.entered()
     f.thread.model += "-changed"; await f.update(); f.store.disconnect()
     let closing = Task { await f.store.shutdown() }
-    await gate.release(); await preparing.value; await closing.value
+    await gate.release(); _ = await preparing.value; await closing.value
     let value = try #require(await f.peer.lastReview()), discarded = await f.peer.discards()
     #expect(discarded == [.init(target: value.target, reviewID: value.id, digest: value.digest)] && model.restoreReview == nil && f.commands.isEmpty)
 }

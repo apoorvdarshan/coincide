@@ -4,6 +4,9 @@ import Testing
 @testable import Coincide
 @testable import CoincideCore
 
+/// Validity that the queued-editor access and composer closures read after it changes.
+@MainActor private final class RemoteSteeringValidity { var value = true }
+
 @MainActor @Test func remoteQueuedEditorStashesItsOwnFullVerifiedInputWithoutReplacingTheUnsentComposer() async throws {
     let candidate = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-remote-queued-editor-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: candidate, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -26,11 +29,11 @@ import Testing
     let activeUploads = RemoteAttachmentsStore(root: root.appendingPathComponent("ActiveUploads"))
     let uploadTarget = RemoteAttachmentTarget(environmentID: environment, projectID: project.id, threadID: thread.id)
     var activeText = "Separate unsent composer a\u{327}\u{301}", reads = 0
-    var valid = true
+    let valid = RemoteSteeringValidity()
     let scope = RemoteComposerScope(environmentID: environment, hostID: host, threadID: thread.id, projectID: project.id,
         threadCreatedAt: thread.createdAt, projectCreatedAt: project.createdAt, workspacePath: project.path, configuration: RemoteComposerScope.fingerprint(target.configuration))
     let access = AttachmentAccess(id: "private-queue-owned-source", data: { value in
-        guard valid, value.id == reference.id else { throw CancellationError() }; reads += 1; return bytes
+        guard valid.value, value.id == reference.id else { throw CancellationError() }; reads += 1; return bytes
     }, open: { _ in Issue.record("No system open is authorized") }, copyImage: { _ in Issue.record("No clipboard is authorized") }, save: { _ in Issue.record("No save panel is authorized") })
     do {
         await editor.uploads.select(target: uploadTarget, transport: nil, hostDraftAttachments: [], supported: true)
@@ -45,11 +48,11 @@ import Testing
         #expect(reopenedActive.entries.isEmpty)
         await reopenedActive.shutdown()
         await active.select(scope: scope, text: activeText, host: [], locals: [], remoteAccess: nil, localAccess: nil,
-            isCurrent: { _ in valid }, publish: { _, text, expected in guard activeText.utf8.elementsEqual(expected.utf8) else { return false }; activeText = text; return true }, currentText: { activeText })
+            isCurrent: { _ in valid.value }, publish: { _, text, expected in guard activeText.utf8.elementsEqual(expected.utf8) else { return false }; activeText = text; return true }, currentText: { activeText })
         let editScope = RemoteComposerScope(environmentID: environment, hostID: host, threadID: thread.id, projectID: project.id,
             threadCreatedAt: thread.createdAt, projectCreatedAt: project.createdAt, workspacePath: project.path, configuration: RemoteComposerScope.fingerprint(row.digest))
         await editor.composer.select(scope: editScope, text: editor.text, host: [reference], locals: [], remoteAccess: access, localAccess: nil,
-            isCurrent: { _ in valid }, publish: { _, text, expected in guard editor.text.utf8.elementsEqual(expected.utf8) else { return false }; editor.text = text; return true }, currentText: { editor.text })
+            isCurrent: { _ in valid.value }, publish: { _, text, expected in guard editor.text.utf8.elementsEqual(expected.utf8) else { return false }; editor.text = text; return true }, currentText: { editor.text })
         let tools = try #require(editor.composer.tools), stash = try #require(tools.stash(threadID: thread.id))
         await stash.value
         #expect(editor.text.isEmpty && editor.composer.selected.isEmpty && reads == 1)
@@ -60,7 +63,7 @@ import Testing
         let restored = try #require(editor.composer.selected.first)
         #expect(try await editor.composer.data(restored) == bytes)
         #expect(reads == 1 && active.selected.isEmpty)
-        valid = false
+        valid.value = false
         #expect(!editor.composer.canOperate && !active.canOperate)
     } catch { await editor.composer.shutdown(); await editor.uploads.shutdown(); await active.shutdown(); await activeUploads.shutdown(); throw error }
     await editor.composer.shutdown(); await editor.uploads.shutdown(); await active.shutdown(); await activeUploads.shutdown()

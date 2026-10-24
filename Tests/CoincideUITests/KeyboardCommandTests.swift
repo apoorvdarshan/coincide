@@ -13,8 +13,8 @@ import Testing
     }
 }
 
-private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String, _ flags: NSEvent.ModifierFlags = [], repeat isRepeat: Bool = false,
-                      type: NSEvent.EventType = .keyDown) throws -> NSEvent {
+@MainActor private func keyEvent(_ window: NSWindow, keyCode: UInt16, _ characters: String, _ flags: NSEvent.ModifierFlags = [], repeat isRepeat: Bool = false,
+                                 type: NSEvent.EventType = .keyDown) throws -> NSEvent {
     try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                   windowNumber: window.windowNumber, context: nil, characters: characters,
                                   charactersIgnoringModifiers: characters, isARepeat: isRepeat, keyCode: keyCode))

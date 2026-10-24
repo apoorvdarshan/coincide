@@ -93,7 +93,7 @@ func pullRequestActionEngineUnknownOrInterruptedWriteSurvivesRestartAndNeverRepl
         var nativePID: pid_t?
         if held {
             try await waitForActionEngine { FileManager.default.fileExists(atPath: f.entered.path) }
-            nativePID = try #require(Int32(String(contentsOf: f.entered, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+            nativePID = try Int32(String(contentsOf: f.entered, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))
             #expect((await engine.current()).snapshot.pullRequestAction(review.id)?.phase == .dispatching)
             let head = try Data(contentsOf: URL(fileURLWithPath: f.project.path).appendingPathComponent(".git/HEAD"))
             let tracked = try Data(contentsOf: URL(fileURLWithPath: f.project.path).appendingPathComponent("tracked.txt"))

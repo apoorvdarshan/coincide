@@ -25,7 +25,6 @@ public enum ContextTransferNativeDelivery {
             let plan = try service.prepareFork(review: evidence, targetSessionID: UUID().uuidString.lowercased())
             let fork = try await service.publishFork(plan, reservation: reserveClaude)
             result = try .init(reference: fork.reference, workspacePath: fork.workspacePath, historyMode: .nativeTranscript, claude: fork)
-        default: throw ProviderHistoryError(.unsupported)
         }
         try Task.checkCancellation()
         try review.validateResult(result)

@@ -125,7 +125,7 @@ func workspaceLifecycleQueuedSweepSurvivesPriorLookupOwnershipCancellationWithou
     let world = try WorkspaceLifecyclePendingSweepWorld(now: now)
     let service = WorkspaceLifecycleService(read: { await world.read() }, lookup: { _ in try await gate.lookup(); return [] },
         apply: { await world.apply($0) }, wake: { _ in }, now: { now })
-    let a = await world.first.id, b = await world.second.id
+    let a = world.first.id, b = world.second.id
     await service.requestSweep(threadID: a)
     await gate.waitUntilEntered()
     await service.requestSweep(threadID: b)
@@ -142,7 +142,7 @@ func workspaceLifecycleStopPublishesDrainWithoutWaitingOnAnInboxBoundCallback() 
     let world = try WorkspaceLifecyclePendingSweepWorld(now: now)
     let service = WorkspaceLifecycleService(read: {
         _ = await world.read()
-        let second = await world.second
+        let second = world.second
         return .init(facts: [second], policy: .init())
     }, lookup: { _ in [] }, apply: { _ in try await gate.lookup() }, wake: { _ in }, now: { now })
     await service.requestSweep(); await gate.waitUntilEntered()

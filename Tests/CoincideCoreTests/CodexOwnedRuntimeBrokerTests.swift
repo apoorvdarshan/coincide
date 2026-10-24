@@ -110,7 +110,7 @@ private final class OwnedBrokerFixture: @unchecked Sendable {
     }
     func provePrivateBytesAbsent(_ additional: Data = Data()) async throws {
         let bytes = (try? Data(contentsOf: root.appendingPathComponent("wire.jsonl"))) ?? Data()
-        let access = await peer.access, refresh = await peer.refresh
+        let access = peer.access, refresh = peer.refresh
         let documentData = try storage.read(instanceID: instanceID)
         let document = try documentData.map { try JSONDecoder().decode(JSONValue.self, from: $0) }
         let idTokens = document?["profiles"].array?.compactMap { $0["credential"]["idToken"].string } ?? []

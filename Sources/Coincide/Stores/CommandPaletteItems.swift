@@ -154,7 +154,7 @@ enum CommandPaletteItems {
         let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short
         let threads = store.snapshot.threads.filter { !$0.isArchived && projects[$0.projectID] != nil }.sorted { $0.updatedAt > $1.updatedAt }
         let tokens = CommandPaletteSearch.normalize(needle).split(separator: " ").map(String.init)
-        return Array(threads.lazy.compactMap { thread -> PaletteItem? in
+        return Array(threads.lazy.compactMap { [controller] thread -> PaletteItem? in
             guard let capture = controller.captureThread(thread) else { return nil }
             let projectName = groups[thread.projectID] ?? projects[thread.projectID]?.name ?? ""
             var description = [projectName]

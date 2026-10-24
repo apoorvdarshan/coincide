@@ -28,7 +28,7 @@ private struct ProductionCheckoutBridgeSession: GitHubPullRequestCheckoutSession
     func run(_ plan: GitHubPullRequestCheckoutPlan) async throws -> GitHubPullRequestCheckoutResult {
         try await probe.beforeWrite(plan)
         let result = try await service.run(plan)
-        if await probe.lostReply { throw GitHubPullRequestCheckoutError(.commandFailed, mayHaveChanged: true) }
+        if probe.lostReply { throw GitHubPullRequestCheckoutError(.commandFailed, mayHaveChanged: true) }
         return result
     }
     func inspectCompletion(_ plan: GitHubPullRequestCheckoutPlan) async throws -> GitHubPullRequestCheckoutInspection {

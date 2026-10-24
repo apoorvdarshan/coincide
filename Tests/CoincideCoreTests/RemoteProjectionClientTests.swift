@@ -190,7 +190,7 @@ func remoteProjectionClientBindsContinuationToExactOffsetTotalQueryAndImmutableP
     do {
         _ = try await client.connectProjection(); let binding = try await client.openProjection(scope: .thread(peer.threadID))
         let first = try await client.projectionMessages(.init(binding: binding, threadID: peer.threadID, newestFirst: false))
-        let request = RemoteProjectionMessagesRequest(binding: binding, threadID: peer.threadID, newestFirst: false, cursor: try #require(first.nextCursor))
+        let request = RemoteProjectionMessagesRequest(binding: binding, threadID: peer.threadID, newestFirst: false, cursor: first.nextCursor)
         if mode == "cursor-changed-replay" { _ = try await client.projectionMessages(request) }
         await #expect(throws: RemoteEnvironmentClientError(.invalidResponse)) { _ = try await client.projectionMessages(request) }
         #expect(await !client.isConnected()); try await peer.finish(client)

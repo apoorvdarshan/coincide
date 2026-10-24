@@ -71,34 +71,32 @@ func transcriptActionSourceRejectsReboundOwnershipAndSameLengthMessageRevisions(
 @MainActor @Test(.timeLimit(.minutes(1)), arguments: ["birth", "project", "workspace", "configuration", "message", "selection"])
 func retainedTranscriptEditAndForkActionsCannotRetargetAfterTheirSourceChanges(mode: String) async throws {
     let f = try await TranscriptActionFixture.make()
-    do {
-        var presented: [TranscriptSheetRequest] = []
-        let view = TranscriptRowsView(store: f.store, thread: f.thread, state: TranscriptViewState(), present: { presented.append($0) })
-        let rows = TranscriptLayout.rows(thread: f.thread)
-        guard case .message(let input, let inputMeta)? = rows.first(where: { $0.id == "input" }),
-              case .message(let response, let responseMeta)? = rows.first(where: { $0.id == "response" }) else {
-            Issue.record("The private completed run has no attributed transcript messages."); await f.finish(); return
-        }
-        let edit = view.actions(input, inputMeta), fork = view.actions(response, responseMeta)
-        #expect(edit.editFromHere != nil && fork.forkFromHere != nil)
-        edit.editFromHere?(); fork.forkFromHere?()
-        #expect(presented.map(\.action) == [.history(f.runID, .rewindBeforeRun), .history(f.runID, .forkAfterRun)])
-        presented.removeAll()
-        switch mode {
-        case "birth": f.store.snapshot.threads[0].createdAt = f.thread.createdAt.addingTimeInterval(1)
-        case "project": f.store.snapshot.threads[0].projectID = UUID()
-        case "workspace": f.store.snapshot.threads[0].workspacePath += "/replacement"
-        case "configuration": f.store.snapshot.threads[0].model = "changed-model"
-        case "message":
-            f.store.snapshot.threads[0].messages[0].text = "Source other"
-            f.store.snapshot.threads[0].messages[1].text = "Source other"
-            #expect(f.store.snapshot.threads[0].messages[0].text.utf8.count == input.text.utf8.count)
-        default: f.store.selectedThreadID = nil
-        }
-        edit.editFromHere?(); fork.forkFromHere?()
-        #expect(presented.isEmpty)
-        #expect(f.store.snapshot.threads[0].queuedTurns.isEmpty && f.store.snapshot.threads[0].activeRun == nil)
-    } catch { await f.finish(); throw error }
+    var presented: [TranscriptSheetRequest] = []
+    let view = TranscriptRowsView(store: f.store, thread: f.thread, state: TranscriptViewState(), present: { presented.append($0) })
+    let rows = TranscriptLayout.rows(thread: f.thread)
+    guard case .message(let input, let inputMeta)? = rows.first(where: { $0.id == "input" }),
+          case .message(let response, let responseMeta)? = rows.first(where: { $0.id == "response" }) else {
+        Issue.record("The private completed run has no attributed transcript messages."); await f.finish(); return
+    }
+    let edit = view.actions(input, inputMeta), fork = view.actions(response, responseMeta)
+    #expect(edit.editFromHere != nil && fork.forkFromHere != nil)
+    edit.editFromHere?(); fork.forkFromHere?()
+    #expect(presented.map(\.action) == [.history(f.runID, .rewindBeforeRun), .history(f.runID, .forkAfterRun)])
+    presented.removeAll()
+    switch mode {
+    case "birth": f.store.snapshot.threads[0].createdAt = f.thread.createdAt.addingTimeInterval(1)
+    case "project": f.store.snapshot.threads[0].projectID = UUID()
+    case "workspace": f.store.snapshot.threads[0].workspacePath += "/replacement"
+    case "configuration": f.store.snapshot.threads[0].model = "changed-model"
+    case "message":
+        f.store.snapshot.threads[0].messages[0].text = "Source other"
+        f.store.snapshot.threads[0].messages[1].text = "Source other"
+        #expect(f.store.snapshot.threads[0].messages[0].text.utf8.count == input.text.utf8.count)
+    default: f.store.selectedThreadID = nil
+    }
+    edit.editFromHere?(); fork.forkFromHere?()
+    #expect(presented.isEmpty)
+    #expect(f.store.snapshot.threads[0].queuedTurns.isEmpty && f.store.snapshot.threads[0].activeRun == nil)
     await f.finish()
 }
 

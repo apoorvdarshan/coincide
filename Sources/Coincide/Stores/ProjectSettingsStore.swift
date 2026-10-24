@@ -252,7 +252,7 @@ final class ProjectSettingsStore {
         closed = true
         let pendingLoads = Array(loads.values)
         for task in pendingLoads { task.cancel() }
-        for task in pendingLoads { await task.value }
+        for task in pendingLoads { _ = await task.value }
         for task in iconJobs.values { task.cancel() }
         while !iconJobs.isEmpty { for task in Array(iconJobs.values) { await task.value }; await Task.yield() }
         await writeTail?.value

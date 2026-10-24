@@ -61,7 +61,7 @@ private actor DefaultWorkspaceUINoProvider: ProviderSession {
                 let captured = try await DraftWorkspaceIntent.captureIfRepository(
                     project: project, threadID: thread.id, threadCreatedAt: thread.createdAt,
                     startFromOrigin: true, submodules: .none)
-                thread.draftWorkspaceIntent = try #require(captured)
+                thread.draftWorkspaceIntent = captured
             }
             snapshot.threads = [thread]
         }
