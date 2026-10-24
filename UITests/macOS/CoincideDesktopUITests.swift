@@ -47,8 +47,9 @@ final class CoincideDesktopUITests: XCTestCase {
         f.app.typeKey(",", modifierFlags: .command)
         let search = f.app.textFields["settings-search"]
         XCTAssertTrue(search.waitForExistence(timeout: 10)); search.click(); search.typeText("sandbox")
-        XCTAssertTrue(f.app.buttons["settings-page-configuration"].exists)
-        XCTAssertFalse(f.app.buttons["settings-page-about"].exists)
+        XCTAssertTrue(waitForValue(search, value: "sandbox", timeout: 5))
+        XCTAssertTrue(f.app.buttons["settings-page-configuration"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForAbsence(f.app.buttons["settings-page-about"], timeout: 5))
         f.app.buttons["settings-clear-search"].click()
         XCTAssertTrue(waitForValue(search, value: "", timeout: 5))
         XCTAssertTrue(f.app.buttons["settings-page-about"].exists)
@@ -128,7 +129,8 @@ final class CoincideDesktopUITests: XCTestCase {
         XCTAssertTrue(waitForValue(field, value: "unsaved-model", timeout: 5), "Settings navigation must retain the edit for its exact source.")
         XCTAssertEqual(try Data(contentsOf: file), original)
         try chooseConfiguration("configuration-provider", value: "Claude", in: f.app)
-        let keep = f.app.buttons["Keep editing"]
+        // The confirmation dialog also exposes its cancel action to the sheet; use one.
+        let keep = f.app.buttons["Keep editing"].firstMatch
         XCTAssertTrue(keep.waitForExistence(timeout: 5)); keep.click()
         XCTAssertTrue(waitForValue(field, value: "unsaved-model", timeout: 5))
         XCTAssertEqual(try Data(contentsOf: file), original)

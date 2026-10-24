@@ -69,14 +69,8 @@ struct ProviderConfigurationEditorView: View {
                 }
             }.disabled(store.isBusy)
 
-            if let error = store.errorMessage {
-                Label(error, systemImage: "exclamationmark.triangle").font(.system(size: 13)).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("configuration-error")
-            }
-            if let message = store.message {
-                Label(message, systemImage: "checkmark.circle").font(.system(size: 13)).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("configuration-saved")
-            }
+            // Load failures have no form; save results appear beside the Save button.
+            if store.document == nil, let error = store.errorMessage { errorLabel(error) }
             if let document = store.document {
                 ForEach(store.groups, id: \.self) { group in
                     let fields = document.fields.filter { $0.group == group }
@@ -94,6 +88,11 @@ struct ProviderConfigurationEditorView: View {
                     Button("Discard") { store.discard() }.disabled(!store.hasChanges || store.isBusy).accessibilityIdentifier("configuration-discard")
                     Button("Save changes") { Task { await store.save() } }.disabled(!store.hasChanges || store.isBusy).accessibilityIdentifier("configuration-save")
                 }.buttonStyle(SettingsActionButtonStyle())
+                if let error = store.errorMessage { errorLabel(error) }
+                if let message = store.message {
+                    Label(message, systemImage: "checkmark.circle").font(.system(size: 13)).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("configuration-saved")
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(document.notices, id: \.self) { Text($0).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
                 }
@@ -110,6 +109,11 @@ struct ProviderConfigurationEditorView: View {
             }
             Button("Keep editing", role: .cancel) { pendingProvider = nil; pendingScope = nil }
         } message: { Text("The provider's files have not been changed.") }
+    }
+
+    private func errorLabel(_ error: String) -> some View {
+        Label(error, systemImage: "exclamationmark.triangle").font(.system(size: 13)).foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("configuration-error")
     }
 
     @ViewBuilder private func fieldRow(_ field: ProviderConfigurationField) -> some View {
