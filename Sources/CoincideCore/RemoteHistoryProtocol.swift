@@ -91,16 +91,9 @@ public enum RemoteHistoryAction: Codable, Sendable, Equatable {
     case acknowledgeFiles(operationID: UUID)
     case recallPrompt(operationID: UUID)
     case dismissRecall(operationID: UUID)
-    case keepOpenCodeV1Original(operationID: UUID)
-    case clearMaintenance(operationID: UUID, reviewID: UUID, digest: String)
-    case keepPiOriginal(operationID: UUID)
-    case cancelPi(operationID: UUID)
-    case respondPi(operationID: UUID, sessionID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
     case inspectClaudeResume(selectionID: UUID, consumerRunID: UUID)
-    case acknowledgePiFreshUnwritten(intentID: UUID, consumerRunID: UUID)
-    case confirmPiFreshPersisted(intentID: UUID, consumerRunID: UUID)
     public var requiresBoundRoot: Bool {
-        switch self { case .acknowledgeFiles, .recallPrompt, .dismissRecall, .cancelPi, .respondPi: false; default: true }
+        switch self { case .acknowledgeFiles, .recallPrompt, .dismissRecall: false; default: true }
     }
 }
 public struct RemoteHistoryOperationView: Codable, Sendable, Equatable {
@@ -113,26 +106,17 @@ public struct RemoteHistoryOperationView: Codable, Sendable, Equatable {
     public let needsPromptRecall: Bool
     public let recalled: Bool
     public let recallDismissed: Bool
-    public let piSessionID: UUID?
-    public let piRequests: RemoteProjectionContentReference?
-    public let maintenanceClaim: RemoteHistoryMaintenanceClaim?
-    public init(binding: RemoteHistoryBinding, operation: RemoteOperationSummary, kind: ConversationHistoryKind, provider: ProviderKind, filesPhase: ConversationHistoryFilesPhase?, filesAcknowledged: Bool, needsPromptRecall: Bool, recalled: Bool, recallDismissed: Bool, piSessionID: UUID?, piRequests: RemoteProjectionContentReference?, maintenanceClaim: RemoteHistoryMaintenanceClaim? = nil) {
+    public init(binding: RemoteHistoryBinding, operation: RemoteOperationSummary, kind: ConversationHistoryKind, provider: ProviderKind, filesPhase: ConversationHistoryFilesPhase?, filesAcknowledged: Bool, needsPromptRecall: Bool, recalled: Bool, recallDismissed: Bool) {
         self.binding = binding; self.operation = operation; self.kind = kind; self.provider = provider; self.filesPhase = filesPhase; self.filesAcknowledged = filesAcknowledged
-        self.needsPromptRecall = needsPromptRecall; self.recalled = recalled; self.recallDismissed = recallDismissed; self.piSessionID = piSessionID; self.piRequests = piRequests
-        self.maintenanceClaim = maintenanceClaim
+        self.needsPromptRecall = needsPromptRecall; self.recalled = recalled; self.recallDismissed = recallDismissed
     }
 }
-public struct RemoteHistoryMaintenanceClaim: Codable, Sendable, Equatable {
-    public let id: UUID
-    public let digest: String
-    public init(id: UUID, digest: String) { self.id = id; self.digest = digest }
-}
 public struct RemoteHistoryThreadControls: Codable, Sendable, Equatable {
-    public let claudeSelectionID: UUID?, claudeConsumerRunID: UUID?, piIntentID: UUID?, piConsumerRunID: UUID?
-    public let canInspectClaudeResume: Bool, canInspectPiFresh: Bool
-    public init(claudeSelectionID: UUID?, claudeConsumerRunID: UUID?, piIntentID: UUID?, piConsumerRunID: UUID?, canInspectClaudeResume: Bool, canInspectPiFresh: Bool) {
-        self.claudeSelectionID = claudeSelectionID; self.claudeConsumerRunID = claudeConsumerRunID; self.piIntentID = piIntentID; self.piConsumerRunID = piConsumerRunID
-        self.canInspectClaudeResume = canInspectClaudeResume; self.canInspectPiFresh = canInspectPiFresh
+    public let claudeSelectionID: UUID?, claudeConsumerRunID: UUID?
+    public let canInspectClaudeResume: Bool
+    public init(claudeSelectionID: UUID?, claudeConsumerRunID: UUID?, canInspectClaudeResume: Bool) {
+        self.claudeSelectionID = claudeSelectionID; self.claudeConsumerRunID = claudeConsumerRunID
+        self.canInspectClaudeResume = canInspectClaudeResume
     }
 }
 public struct RemoteHistoryRecallPayload: Codable, Sendable, Equatable {
@@ -149,8 +133,6 @@ public enum RemoteHistoryQuery: Codable, Sendable, Equatable {
     case operation(operationID: UUID)
     case controls
     case recall(operationID: UUID)
-    case piFresh(intentID: UUID, consumerRunID: UUID)
-    case maintenance(operationID: UUID)
     case release(binding: RemoteHistoryBinding)
     case prefix(binding: RemoteHistoryBinding, newestFirst: Bool, cursor: UUID?)
     case paths(binding: RemoteHistoryBinding, cursor: UUID?)
@@ -179,14 +161,7 @@ public enum RemoteHistoryValue: Codable, Sendable, Equatable {
     case messages(RemoteHistoryPage<RemoteMessageSummary>)
     case paths(RemoteHistoryPage<String>)
     case content(RemoteHistoryContent)
-    case piFresh(RemoteHistoryPiFreshInspection)
     case released(Bool)
-}
-public struct RemoteHistoryPiFreshInspection: Codable, Sendable, Equatable {
-    public enum State: String, Codable, Sendable { case unwritten, persisted, unavailable }
-    public let intentID: UUID, consumerRunID: UUID
-    public let state: State
-    public init(intentID: UUID, consumerRunID: UUID, state: State) { self.intentID = intentID; self.consumerRunID = consumerRunID; self.state = state }
 }
 public struct RemoteHistoryReadResult: Codable, Sendable, Equatable {
     public let target: RemoteWorkspaceTarget

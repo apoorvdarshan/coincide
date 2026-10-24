@@ -241,7 +241,7 @@ private actor LiveSteeringObservedSession: ProviderSession {
                 while case .context(_, let child) = item { item = child }
                 switch item {
                 case .thread(let id): try? await audit.native(id)
-                case .approval(let request), .sessionApproval(let request):
+                case .approval(let request):
                     try? await audit.unexpected(tool: false)
                     if request.isQuestion { try? await inner.answer(request, answers: [:]) }
                     else { try? await inner.respond(request, allow: false) }

@@ -7,15 +7,14 @@ private struct TypedSteeringFixture {
     let incarnation = UUID(), runtimeID = UUID(), now = Date(timeIntervalSince1970: 1_800_000_000)
     var thread: CodingThread { snapshot.threads[0] }
     var run: ActiveRun { thread.activeRun! }
-    init(provider: ProviderKind = .pi, nativeTurn: Bool = false) throws {
+    init(provider: ProviderKind = .codex, nativeTurn: Bool = false) throws {
         let project = WorkspaceProject(path: "/fixture/typed-steering")
         var thread = CodingThread(project: project); thread.provider = provider; thread.checkpointPolicy = .disabled
-        if provider == .pi { thread.piConfiguration = .init(executable: "/fixture/pi") }
         snapshot.projects = [project]; snapshot.threads = [thread]
         try apply(.client(.submit(threadID: thread.id, text: "Original input")))
         let runID = run.id
         try apply(.runtimeOpened(threadID: thread.id, runID: runID, runtimeID: runtimeID))
-        try apply(.provider(threadID: thread.id, runtimeID: runtimeID, event: .thread("/fixture/pi-session.jsonl")))
+        try apply(.provider(threadID: thread.id, runtimeID: runtimeID, event: .thread("native-session")))
         if nativeTurn { try apply(.provider(threadID: thread.id, runtimeID: runtimeID, event: .turn("native-turn"))) }
         snapshot.threads[0].draft = "Exact Unicode guidance 😀 工作"
     }
@@ -52,11 +51,11 @@ private func typedSteeringEncoder() -> JSONEncoder { let value = JSONEncoder(); 
 }
 
 @Test(arguments: ProviderKind.allCases)
-func typedSteeringAdapterTargetMatchesOnlyItsPiRunWithoutInventingNativeHistory(provider: ProviderKind) throws {
+func typedSteeringAdapterTargetNeverMatchesARunWithoutInventingNativeHistory(provider: ProviderKind) throws {
     var thread = CodingThread(project: WorkspaceProject(path: "/fixture/steering")); thread.provider = provider
     var run = ActiveRun(id: UUID(), configuration: .init(thread: thread), startedAt: .now)
     let target = ProviderSteeringTarget.adapterRun(run.id)
-    #expect(target.matches(run: run) == (provider == .pi))
+    #expect(!target.matches(run: run))
     #expect(!ProviderSteeringTarget.adapterRun(UUID()).matches(run: run))
     run.nativeTurnID = "real-native-turn"
     #expect(!target.matches(run: run))
@@ -64,47 +63,11 @@ func typedSteeringAdapterTargetMatchesOnlyItsPiRunWithoutInventingNativeHistory(
     #expect(!ProviderSteeringTarget.nativeTurn("").matches(run: run))
 }
 
-@Test func typedSteeringPiAcceptanceAndLateReceiptRetainOneRunAndNoNativeTurnIDs() throws {
-    var fixture = try TypedSteeringFixture()
-    let originalRun = fixture.run, operation = fixture.operation()
-    #expect(fixture.snapshot.promptSteeringTargetReason(threadID: fixture.thread.id) == nil)
-    let accepted = try fixture.apply(.promptSteeringAccepted(operation))
-    let request = WorkspaceEffectRequest.promptSteering(threadID: fixture.thread.id, operationID: operation.id)
-    #expect(accepted.effects.map(\.request) == [request])
-    try fixture.apply(.promptSteeringDispatching(operationID: operation.id, incarnation: fixture.incarnation))
-    try fixture.apply(.client(.submit(threadID: fixture.thread.id, text: "Later FIFO")))
-    try fixture.apply(.provider(threadID: fixture.thread.id, runtimeID: fixture.runtimeID,
-        event: .context(runID: originalRun.id, event: .completed(.idle))))
-    #expect(fixture.thread.activeRun == nil && fixture.thread.queuedTurns.map(\.text) == ["Later FIFO"])
-    let receipt = try ProviderSteeringReceipt(target: .adapterRun(originalRun.id))
-    try fixture.apply(.promptSteeringEffectResult(request, .promptSteeringDelivered(receipt), incarnation: fixture.incarnation))
-    #expect(fixture.snapshot.promptSteering(operation.id)?.target == .adapterRun(originalRun.id))
-    #expect(fixture.snapshot.promptSteering(operation.id)?.receipt?.turnID == nil)
-    #expect(fixture.thread.runHistory?.first?.turnIDs == [] && fixture.thread.runHistory?.first?.id == originalRun.id)
-    #expect(fixture.thread.messages.filter { $0.promptSteeringID == operation.id }.count == 1)
-    #expect(fixture.thread.activeRun?.id != originalRun.id && fixture.thread.activeRun?.nativeTurnID == nil)
-    try WorkspaceJournal.validate(fixture.snapshot)
-}
-
-@Test func typedSteeringReducerRejectsWrongAdapterRunProviderReceiptAndDispatchAfterTargetChange() throws {
-    var fixture = try TypedSteeringFixture()
-    let wrongRun = fixture.operation(target: .adapterRun(UUID()))
-    #expect(throws: (any Error).self) { try fixture.apply(.promptSteeringAccepted(wrongRun)) }
+@Test func typedSteeringReducerRejectsAdapterRunTargetForNativeProvider() throws {
     var native = try TypedSteeringFixture(provider: .codex)
     #expect(native.snapshot.promptSteeringTargetReason(threadID: native.thread.id) != nil)
     let foreign = native.operation()
     #expect(throws: (any Error).self) { try native.apply(.promptSteeringAccepted(foreign)) }
-    let operation = fixture.operation()
-    try fixture.apply(.promptSteeringAccepted(operation))
-    var changed = fixture
-    try changed.apply(.provider(threadID: changed.thread.id, runtimeID: changed.runtimeID, event: .turn("unexpected-native-turn")))
-    #expect(throws: (any Error).self) { try changed.apply(.promptSteeringDispatching(operationID: operation.id, incarnation: changed.incarnation)) }
-    try fixture.apply(.promptSteeringDispatching(operationID: operation.id, incarnation: fixture.incarnation))
-    let request = WorkspaceEffectRequest.promptSteering(threadID: fixture.thread.id, operationID: operation.id)
-    for receipt in [try ProviderSteeringReceipt(target: .adapterRun(UUID())), try .init(turnID: "native-turn")] {
-        #expect(throws: (any Error).self) { try fixture.apply(.promptSteeringEffectResult(request, .promptSteeringDelivered(receipt), incarnation: fixture.incarnation)) }
-    }
-    #expect(fixture.snapshot.promptSteering(operation.id)?.phase == .dispatching && fixture.thread.activeRun?.nativeTurnID == nil)
 }
 
 @Test func typedSteeringNativeOperationLegacyEncodingRoundTripHasNoNewTargetKeys() throws {
@@ -120,23 +83,4 @@ func typedSteeringAdapterTargetMatchesOnlyItsPiRunWithoutInventingNativeHistory(
     let corrupted = try JSONDecoder().decode(PromptSteeringOperation.self, from: JSONSerialization.data(withJSONObject: ambiguous))
     #expect(corrupted.target == nil)
     #expect(throws: (any Error).self) { try corrupted.validate() }
-}
-
-@Test(arguments: [PromptSteeringPhase.accepted, .dispatching])
-func typedSteeringPiRestartNeverReplaysAndDatabaseReopenKeepsNativeHistoryEmpty(phase: PromptSteeringPhase) async throws {
-    var fixture = try TypedSteeringFixture(); let operation = fixture.operation()
-    try fixture.apply(.promptSteeringAccepted(operation))
-    if phase == .dispatching { try fixture.apply(.promptSteeringDispatching(operationID: operation.id, incarnation: fixture.incarnation)) }
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-typed-steering-" + UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let url = root.appendingPathComponent("workspace.sqlite"), database = try WorkspaceDatabase(url: url)
-    try await database.save(fixture.snapshot, event: "typed.steering.fixture")
-    let reopened = try WorkspaceDatabase(url: url)
-    let restored = try await reopened.load()
-    #expect(restored.promptSteering(operation.id) == fixture.snapshot.promptSteering(operation.id))
-    var recovered = restored; recovered.recoverInterruptedWork()
-    #expect(recovered.promptSteering(operation.id)?.phase == (phase == .accepted ? .failed : .unconfirmed))
-    #expect(recovered.promptSteering(operation.id)?.receipt == nil && recovered.promptSteering(operation.id)?.adapterRunID == operation.runID)
-    #expect(recovered.threads[0].activeRun == nil && recovered.threads[0].runHistory?.first?.turnIDs == [])
-    try WorkspaceJournal.validate(recovered)
 }

@@ -117,40 +117,6 @@ def verify(executable, python):
             linked_root.unlink()
         assert wire.read_bytes() == before, "Rejected input must never reach the peer."
 
-        # Pi keeps the same immutable image and private descriptor, with only
-        # version/idle-entry inspection here. No model input is generated.
-        pi_home, pi_agent, pi_sessions = (root / value for value in ("private-pi-home", "private-pi-agent", "private-pi-sessions"))
-        for path in (pi_home, pi_agent, pi_sessions):
-            path.mkdir(mode=0o700)
-        state.write_text(json.dumps(dict(cwd=str(checkout), historyMode="normal", actions={}))); state.chmod(0o600)
-        pi_wire = root / "pi-wire.jsonl"
-        pi = dict(original, tool="pi", peer="pi_history_ui.py", wire=str(pi_wire))
-        pi_descriptor = root / "pi.offline.json"
-        pi_descriptor.write_text(json.dumps(pi)); pi_descriptor.chmod(0o600)
-        command = private_bin / "pi"; command.symlink_to(executable)
-        pi_env = dict(environment, HOME=str(pi_home), PI_CODING_AGENT_DIR=str(pi_agent), PI_CODING_AGENT_SESSION_DIR=str(pi_sessions))
-        assert call(0, arguments=("--version",), env=pi_env, payload_override="").stdout.strip() == "0.80.5"
-        frames = [dict(type="get_state", id="pi-preflight-state"), dict(type="get_entries", id="pi-preflight-entries")]
-        idle = call(0, arguments=("--mode", "rpc"), env=pi_env,
-                    payload_override="".join(json.dumps(frame) + "\n" for frame in frames))
-        replies = [json.loads(line) for line in idle.stdout.splitlines()]
-        assert [frame["id"] for frame in replies] == [frame["id"] for frame in frames]
-        assert all(frame["success"] for frame in replies) and replies[1]["data"] == dict(entries=[], leafId=None)
-        assert not list(pi_sessions.iterdir()), "Version/metadata inspection cannot create a persisted native session."
-        if str(root).startswith("/private/var/"):
-            alias = str(root)[len("/private"):]
-            pi_descriptor.write_text(json.dumps(dict(pi, root=alias, state=alias + "/state.json", wire=alias + "/pi-wire.jsonl"))); pi_descriptor.chmod(0o600)
-            alias_env = dict(pi_env, COINCIDE_UI_TEST_ROOT=alias, PI_CODING_AGENT_DIR=alias + "/private-pi-agent",
-                             PI_CODING_AGENT_SESSION_DIR=alias + "/private-pi-sessions")
-            assert call(0, arguments=("--version",), env=alias_env, payload_override="").stdout.strip() == "0.80.5"
-            pi_descriptor.write_text(json.dumps(pi)); pi_descriptor.chmod(0o600)
-        pi_before = pi_wire.read_bytes()
-        call(78, arguments=("--mode", "rpc", "--unsafe"), env=pi_env)
-        call(78, arguments=("--mode", "rpc"), env=dict(pi_env, PI_CODING_AGENT_DIR=str(checkout)))
-        pi_descriptor.write_text(json.dumps(dict(pi, peer="codex_models_ui.py"))); pi_descriptor.chmod(0o600)
-        call(78, arguments=("--mode", "rpc"), env=pi_env)
-        assert pi_wire.read_bytes() == pi_before
-
         # Same immutable image serves gh. No provider/system fallback is used.
         github_state = dict(cwd=str(checkout), repository="fixture/native-pr", published=dict(main="a" * 40), creates=0)
         state.write_text(json.dumps(github_state))

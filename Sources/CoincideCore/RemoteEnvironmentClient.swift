@@ -279,7 +279,6 @@ public actor RemoteEnvironmentClient {
             if case .begin(_, let digest, let title) = action {
                 guard Self.isTerminalDigest(digest), title.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 4_096 && !$0.contains("\0") }) ?? true else { throw RemoteHistoryFailure(.invalidRequest) }
             }
-            if case .clearMaintenance(_, _, let digest) = action, !Self.isTerminalDigest(digest) { throw RemoteHistoryFailure(.invalidRequest) }
         }
         if case .checkpoint(let target, let action) = command {
             guard target.environmentID == environment, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteCheckpointFailure(.invalidTarget) }
@@ -648,10 +647,6 @@ public actor RemoteEnvironmentClient {
                     // The host supplies physical spelling. Passing it explicitly
                     // keeps this validation lexical; no remote path is resolved here.
                     expected.claudeRuntimeConfiguration = try source.replacingWorkspace(review.plan.destinationPath, physicalPath: replacement.workspacePath)
-                }
-                if let source = configuration.piConfiguration, let runtime = source.runtime, let replacement = actual.piConfiguration?.runtime {
-                    expected.piConfiguration = .init(instanceID: source.instanceID, executable: source.executable, model: source.model,
-                        thinkingLevel: source.thinkingLevel, runtime: try runtime.replacingWorkspace(review.plan.destinationPath, physicalPath: replacement.workspacePath))
                 }
                 guard review.projectID == request.target.projectID,
                       review.registeredWorkspacePath.utf8.elementsEqual(request.target.workspacePath.utf8),
@@ -2053,7 +2048,7 @@ extension RemoteEnvironmentClient {
         try validateWorkspaceResponse(generation: owned) {
             guard try Self.samePullRequestTarget(result.target, request.target) else { throw RemoteEnvironmentClientError(.invalidResponse) }
             switch (request.query, result.value) {
-            case (.operation(let id), .operation(let value)), (.maintenance(let id), .operation(let value)):
+            case (.operation(let id), .operation(let value)):
                 guard value.operation.id == id, value.binding.objectID == id,
                       value.operation.kind == .conversationHistory, value.operation.threadID == request.target.threadID,
                       value.operation.projectID == request.target.projectID, value.provider == request.target.configuration.provider,
@@ -2063,16 +2058,9 @@ extension RemoteEnvironmentClient {
                 if let error = value.operation.error { try Self.validateProjectionText(error) }
                 for availability in value.operation.actions.values { try Self.validateProjectionAvailability(availability) }
                 for path in value.operation.workspacePaths { try ProviderHistoryValidation.path(path) }
-                if let requests = value.piRequests { try Self.validateProjectionReference(requests, kind: .runtimeRequests) }
-                if let claim = value.maintenanceClaim {
-                    guard value.provider == .opencode, Self.isTerminalDigest(claim.digest) else { throw RemoteEnvironmentClientError(.invalidResponse) }
-                }
                 try rememberHistoryBinding(value.binding, target: request.target)
             case (.controls, .controls(let controls)):
-                guard !controls.canInspectClaudeResume || (controls.claudeSelectionID != nil && controls.claudeConsumerRunID != nil),
-                      !controls.canInspectPiFresh || (controls.piIntentID != nil && controls.piConsumerRunID != nil) else { throw RemoteEnvironmentClientError(.invalidResponse) }
-            case (.piFresh(let intentID, let consumerRunID), .piFresh(let value)):
-                guard value.intentID == intentID, value.consumerRunID == consumerRunID else { throw RemoteEnvironmentClientError(.invalidResponse) }
+                guard !controls.canInspectClaudeResume || (controls.claudeSelectionID != nil && controls.claudeConsumerRunID != nil) else { throw RemoteEnvironmentClientError(.invalidResponse) }
             case (.release, .released): break
             case (.recall(let id), .recall(let recall)):
                 guard recall.operationID == id, recall.binding.objectID == id, !recall.messageID.isEmpty,

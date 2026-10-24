@@ -207,7 +207,7 @@ final class LocalAppControl {
             let kind = args["kind"].string.flatMap(ProviderIntegrationKind.init(rawValue:))
             let provider = args["provider"].string.flatMap(ProviderKind.init(rawValue:))
             guard args["kind"].string == nil || kind != nil,
-                  args["provider"].string == nil || provider?.isSupported == true else { throw MCPError(.invalidParams) }
+                  args["provider"].string == nil || provider != nil else { throw MCPError(.invalidParams) }
             let scope = store.integrationScope
             await store.integrations.refresh(scope: scope)
             guard store.integrationScope == scope, store.integrations.scope == scope else { throw CoincideError("The selected workspace changed. Refresh integrations again.") }
@@ -230,7 +230,7 @@ final class LocalAppControl {
             }
             result = .object(["integrationId": .string(id), "action": .string(invocation.toolName), "sent": .bool(false)])
         case "sessions":
-            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported else { throw MCPError(.invalidParams) }
+            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw) else { throw MCPError(.invalidParams) }
             let snapshot = try await ProviderSessionsService.list(scope: store.providerSessionsScope(provider))
             result = .object(["sessions": .array(snapshot.sessions.map { session in
                 .object(["id": .string(session.id), "nativeId": .string(session.nativeID), "provider": .string(session.provider.rawValue),
@@ -238,7 +238,7 @@ final class LocalAppControl {
                     "state": .string(session.state.rawValue), "canStop": .bool(session.canStop)])
             }), "hasMore": .bool(snapshot.hasMore), "note": .string("Provider-owned sessions; importing creates independent Coincide conversations.")])
         case "configuration":
-            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported,
+            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw),
                   let scope = ProviderConfigurationScope(rawValue: args["scope"].string ?? "user") else { throw MCPError(.invalidParams) }
             let source = try ProviderConfigurationEditor.sourceURL(provider: provider, scope: scope,
                 codex: store.integrationCodexConfiguration, claude: store.integrationClaudeProfile, workspacePath: store.integrationScope.workspacePath)
@@ -266,11 +266,11 @@ final class LocalAppControl {
             result = .object(["saved": .bool(true), "provider": .string(saved.provider.rawValue),
                 "source": .string(saved.sourceURL.path), "field": .string(field)])
         case "session-details", "session-stop":
-            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported else { throw MCPError(.invalidParams) }
+            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw) else { throw MCPError(.invalidParams) }
             result = try await ProviderSessionsLocalControl.invoke(action: invocation.toolName, arguments: args, scope: store.providerSessionsScope(provider))
         case "model":
             let thread = try target(args)
-            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported,
+            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw),
                   let model = args["model"].string, model.utf8.count <= 512 else { throw MCPError(.invalidParams) }
             guard await store.choosePickerModel(provider: provider, modelID: model, threadID: thread.id),
                   let updated = store.thread(thread.id) else { throw CoincideError("Model selection was not completed. Inspect the current thread before retrying.") }

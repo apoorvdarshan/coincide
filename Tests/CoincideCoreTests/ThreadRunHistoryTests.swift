@@ -104,23 +104,6 @@ struct RunHistoryFixture {
     #expect(f.thread.activeRun == nil && f.thread.queuePaused)
 }
 
-@Test(arguments: ["end_turn", "cancelled", "error", "future_reason"]) func runHistoryAgentInitiatedActivityHasNoFakeUserMessage(_ reason: String) throws {
-    var f = RunHistoryFixture(); f.snapshot.threads[0].runtimeID = f.runtimeID
-    let id = UUID()
-    try f.event(.activity(.init(id: id, state: .running)))
-    #expect(f.thread.runHistory?.first?.origin == .agent && f.thread.messages.isEmpty)
-    #expect(f.thread.runHistory?.first?.userMessageID == nil)
-    try f.event(.activity(.init(id: id, state: .requiresAction)))
-    #expect(f.thread.runHistory?.first?.status == .awaitingApproval)
-    try f.event(.activity(.init(id: id, state: .idle, stopReason: .string(reason))))
-    let expected: ThreadRunStatus = reason == "end_turn" ? .completed : reason == "cancelled" ? .interrupted : reason == "error" ? .failed : .unknown
-    #expect(f.thread.runHistory?.first?.status == expected && f.thread.runHistory?.first?.providerStopReason == reason)
-    #expect(f.thread.runHistory?.first?.endReason == .providerActivity)
-    #expect(f.thread.messages.allSatisfy { $0.role != .user })
-    let finished = f.snapshot; try f.event(.activity(.init(id: id, state: .running)))
-    #expect(f.snapshot == finished)
-}
-
 @Test func runHistoryRestartPreservesKnownRunsAndDoesNotBackfillLegacyTranscript() throws {
     var f = RunHistoryFixture()
     f.snapshot.threads[0].messages = [.init(role: .user, text: "Old unknown turn"), .init(role: .assistant, text: "Old reply")]

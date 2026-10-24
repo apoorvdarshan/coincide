@@ -45,7 +45,6 @@ public actor ProviderConfigurationEditor {
     public static func sourceURL(provider: ProviderKind, scope: ProviderConfigurationScope,
         codex: CodexRuntimeConfiguration, claude: ClaudeRuntimeProfile, workspacePath: String?,
         environment: [String: String] = ProcessChannel.environment()) throws -> URL {
-        guard provider.isSupported else { throw CoincideError("Choose Codex or Claude.") }
         let home = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
         let root: URL
         if scope == .user {
@@ -64,7 +63,6 @@ public actor ProviderConfigurationEditor {
     }
 
     public func load(provider: ProviderKind, scope: ProviderConfigurationScope, sourceURL: URL) throws -> ProviderConfigurationDocument {
-        guard provider.isSupported else { throw CoincideError("Choose Codex or Claude.") }
         let read = try readSource(sourceURL)
         let definitions = Self.definitions(provider: provider, scope: scope)
         var fields: [ProviderConfigurationField] = []

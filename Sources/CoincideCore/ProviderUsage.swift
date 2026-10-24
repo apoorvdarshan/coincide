@@ -4,10 +4,9 @@ import Foundation
 /// Each case is boxed so runtime events and retained run frames stay small.
 public indirect enum ProviderUsageUpdate: Codable, Sendable, Equatable {
     case claude(ClaudeUsageSnapshot)
-    case openCode(OpenCodeTurnUsage)
 
     public var provider: ProviderKind {
-        switch self { case .claude: .claude; case .openCode: .opencode }
+        switch self { case .claude: .claude }
     }
 
     public func validate(provider expected: ProviderKind, runID: UUID) throws {
@@ -21,9 +20,6 @@ public indirect enum ProviderUsageUpdate: Codable, Sendable, Equatable {
             try value.validate()
             guard live && value.runID == nil || (runID != nil && value.runID == runID) else { throw Self.invalid() }
             if live && value.runID == nil { guard value.turn == nil else { throw Self.invalid() } }
-        case .openCode(let value):
-            try value.validate()
-            guard runID != nil else { throw Self.invalid() }
         }
     }
 
@@ -34,8 +30,6 @@ public indirect enum ProviderUsageUpdate: Codable, Sendable, Equatable {
         switch (previous, self) {
         case (.claude(let old), .claude(let current)):
             return old.runID == current.runID && current.revision > old.revision
-        case (.openCode, .openCode): return false // One terminal observation per native turn.
-        default: return false
         }
     }
 

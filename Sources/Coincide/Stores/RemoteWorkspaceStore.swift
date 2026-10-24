@@ -268,10 +268,6 @@ final class RemoteWorkspaceStore {
                   (try? RemoteHistoryProtocol.payload(review.target)) == (try? RemoteHistoryProtocol.payload(target)) else { return false }
             return checkpointFilesStillAllowed(paths: review.value.mutatingPaths + review.value.coordinationPaths)
         }
-        if case .clearMaintenance(let id, let reviewID, let digest) = action {
-            guard let claim = history.current?.operationViews[id]?.maintenanceClaim else { return false }
-            return claim.id == reviewID && claim.digest == digest
-        }
         return true
     }
     private func checkpointFilesStillAllowed(paths: [String]) -> Bool {

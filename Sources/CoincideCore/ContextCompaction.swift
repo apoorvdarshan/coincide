@@ -49,7 +49,7 @@ public struct ContextCompactionOperation: Codable, Sendable, Equatable, Identifi
     }
     func validate(thread: CodingThread) throws {
         guard threadID == thread.id, projectID == thread.projectID, threadCreatedAt == thread.createdAt,
-              provider.isSupported, configuration.provider == provider,
+              configuration.provider == provider,
               configuration.nativeThreadID?.isEmpty == false,
               createdAt.timeIntervalSince1970.isFinite, updatedAt.timeIntervalSince1970.isFinite,
               updatedAt >= createdAt,
@@ -114,7 +114,7 @@ extension WorkspaceSnapshot {
         contextCompactionOperations?.first { $0.threadID == threadID }
     }
     public func contextCompactionUnavailableReason(threadID: UUID) -> String? {
-        guard let thread = threads.first(where: { $0.id == threadID }), thread.provider.isSupported else {
+        guard let thread = threads.first(where: { $0.id == threadID }) else {
             return ProviderContextCompactionError(.unsupported).localizedDescription
         }
         if contextCompaction(threadID: threadID)?.isWorking == true { return "Wait for context compaction to finish." }

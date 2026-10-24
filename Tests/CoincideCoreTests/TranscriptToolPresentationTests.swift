@@ -89,13 +89,6 @@ private func json(_ object: [String: JSONValue]) -> String { JSONValue.object(ob
                       "rawInput": .object(["q": .string("x")]), "rawOutput": .object(["error": .string("denied")])])
     let mcpCard = TranscriptToolPresentation.card(for: mcp, context: .init(provider: .codex))
     #expect(mcpCard.kind == .mcp && mcpCard.title == "Called docs.search" && mcpCard.status == .failed)
-    let pi = entity(["title": .string("bash"), "status": .string("completed"),
-                     "content": .array([.object(["type": .string("content"), "content": .object(["type": .string("text"), "text": .string("ok")])])])])
-    let piCard = TranscriptToolPresentation.card(for: pi, context: .init(provider: .pi))
-    #expect(piCard.kind == .command && piCard.title == "Ran command" && piCard.output == "ok")
-    let opencode = entity(["title": .string("src/app.ts"), "kind": .string("other"), "status": .string("completed"), "rawInput": .object(["filePath": .string("/w/src/app.ts")])])
-    let openCard = TranscriptToolPresentation.card(for: opencode, context: .init(provider: .opencode, workspacePath: "/w"))
-    #expect(openCard.kind == .read && openCard.subject == "/w/src/app.ts")
     let unknown = entity(["title": .string("Custom thing"), "status": .string("completed"), "rawInput": .object(["a": .number(1)])])
     let unknownCard = TranscriptToolPresentation.card(for: unknown)
     #expect(unknownCard.kind == .other && unknownCard.title == "Custom thing" && unknownCard.input != nil)
@@ -103,17 +96,13 @@ private func json(_ object: [String: JSONValue]) -> String { JSONValue.object(ob
     #expect(TranscriptToolPresentation.card(for: antigravity).kind == .command)
 }
 
-@Test func plansAndTaskListsAreClassifiedForACPGrokAndPlanEntities() {
+@Test func plansAndTaskListsAreClassifiedFromPlanEntities() {
     let entries = entity(["entries": .array([.object(["content": .string("One"), "status": .string("completed")]),
                                              .object(["content": .string("Two"), "status": .string("pending")])])], type: "plan", id: "plan-1")
     let list = TranscriptToolPresentation.card(for: entries)
     #expect(list.kind == .todo && list.todos.map(\.text) == ["One", "Two"] && list.title == "Updated plan")
     let grok = entity(["content": .string("# Ship it\n- step")], type: "plan", id: "grok-proposed-plan-1")
     #expect(TranscriptToolPresentation.card(for: grok).kind == .plan && TranscriptToolPresentation.card(for: grok).plan == "# Ship it\n- step")
-    let acpList = TranscriptToolPresentation.card(for: tool("acp-3-plan", "- [x] Done\n- [ ] Next"), context: .init(provider: .acp))
-    #expect(acpList.kind == .todo && acpList.todos.map(\.isCompleted) == [true, false])
-    let grokV1 = TranscriptToolPresentation.card(for: tool(UUID().uuidString, "## Plan\nDo the work"), context: .init(provider: .acp))
-    #expect(grokV1.kind == .other && grokV1.plan == nil && grokV1.output == "Do the work", "Unattributed legacy text is not native plan provenance.")
     let orphan = TranscriptToolPresentation.card(for: tool("result-missing", "output"))
     #expect(orphan.kind == .other && orphan.output == "output")
 }

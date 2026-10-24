@@ -77,8 +77,6 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
     private var activeRunID: UUID? { foreground?.runID }
     private var nativeTurnID: String?
     private var nativeThreadID: String?
-    private var sessionRequests: Set<JSONValueID> = []
-    private var activityID: UUID?
     private var blocked = false
     private var historyUncertain = false
     private var closing = false
@@ -93,9 +91,6 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
         }
         appMCPConnection = connection
     }
-    // Approval IDs are arbitrary JSON values; encoding is private, bounded by
-    // the already validated native request, and never used as auth identity.
-    private struct JSONValueID: Hashable { let bytes: Data }
 
     public init(configuration: CodexRuntimeConfiguration, cwd: URL, acquireAccess: @escaping AcquireAccess,
                 accountSnapshot: @escaping AccountSnapshot) {
@@ -109,14 +104,6 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
     public func codexSkills(forceReload: Bool = false) async throws -> ProviderSkillInventory {
         let child = try await ensure(refresh: false)
         return try await call(epoch: child.epoch) { try await child.resource.session.codexSkills(forceReload: forceReload) }
-    }
-    public func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
-        let child = try await ensure(refresh: false)
-        return try await call(epoch: child.epoch) { try await child.resource.session.openCodeInventory() }
-    }
-    public func acpConnectionInfo() async throws -> ACPConnectionInfo {
-        let child = try await ensure(refresh: false)
-        return try await call(epoch: child.epoch) { try await child.resource.session.acpConnectionInfo() }
     }
     public func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection {
         let child = try await ensure(refresh: false)
@@ -243,7 +230,7 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
     private func markHistoryUncertain(_ error: any Error) {
         if error is CancellationError || (error as? ProviderHistoryError)?.kind == .outcomeUncertain { historyUncertain = true }
     }
-    private var busy: Bool { foreground != nil || activityID != nil || !sessionRequests.isEmpty || blocked }
+    private var busy: Bool { foreground != nil || blocked }
     private func validate() throws {
         try configuration.validate()
         guard !closing, configuration.authenticationMode == .ownedChatGPT, configuration.accountBinding != nil,
@@ -353,11 +340,6 @@ public actor CodexOwnedSession: ProviderSession, CustomStringConvertible, Custom
         case .completed, .failure:
             if foreground != nil, scope == activeRunID { foreground = nil; nativeTurnID = nil }
         case .connectionClosed: blocked = true; foreground = nil; nativeTurnID = nil
-        case .activity(let value):
-            if value.state != .idle { activityID = value.id }
-            else if value.finishesRun && activityID == value.id { activityID = nil }
-        case .sessionApproval(let value): if let bytes = try? JSONEncoder().encode(value.id) { sessionRequests.insert(.init(bytes: bytes)) }
-        case .sessionApprovalDismissed(let id): if let bytes = try? JSONEncoder().encode(id) { sessionRequests.remove(.init(bytes: bytes)) }
         default: break
         }
     }

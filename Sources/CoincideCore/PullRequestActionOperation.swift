@@ -134,8 +134,6 @@ extension WorkspaceDecision {
                 guard !held(thread.workspacePath), !held(path) else { throw WorkspaceCommandError("Wait for the pull request action to stop before changing its checkout.") }
             case .claudeWorkspace(let configuration):
                 guard !held(thread.workspacePath), !held(configuration.registeredWorkspacePath) else { throw WorkspaceCommandError("Wait for the pull request action to stop before changing its checkout.") }
-            case .piWorkspace(let configuration):
-                guard !held(thread.workspacePath), !held(configuration.registeredWorkspacePath) else { throw WorkspaceCommandError("Wait for the pull request action to stop before changing its checkout.") }
             default: break
             }
         case .settleThread(let id, let path, _):

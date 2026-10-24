@@ -207,9 +207,6 @@ enum ProviderUsagePresentation {
             input = snapshot.turn?.inputTokens; cached = snapshot.turn?.cachedInputTokens
             created = snapshot.turn?.cacheCreationTokens; output = snapshot.turn?.outputTokens; reasoning = snapshot.turn?.reasoningTokens
             hasSubagents = snapshot.turn?.hasSubagents == true
-        case .openCode(let value):
-            status = value.usageStatus.rawValue; input = value.inputTokens; cached = value.cachedInputTokens
-            created = value.cacheCreationTokens; output = value.outputTokens; reasoning = value.reasoningTokens; hasSubagents = value.hasSubagents
         }
         let label: String
         switch status { case "complete": label = String(localized: "Complete"); case "partial": label = String(localized: "Partial"); default: label = String(localized: "Unavailable") }

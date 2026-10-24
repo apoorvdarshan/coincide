@@ -49,7 +49,6 @@ import Testing
     await #expect(throws: CoincideError.self) {
         try await f.store.cancelContextCompaction(threadID: f.threadID, operationID: UUID())
     }
-    f.store.snapshot.threads[0].provider = .pi
     #expect(throws: CoincideError.self) { try f.store.prepareContextCompaction(threadID: f.threadID) }
     await f.cleanup()
 }

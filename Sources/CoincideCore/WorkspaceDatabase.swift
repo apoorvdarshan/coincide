@@ -115,12 +115,6 @@ public actor WorkspaceDatabase {
                   if case .conversationHistory(let id, let operationID) = effect.request {
                       return snapshot.conversationHistoryOperation(operationID).map { $0.phase == .accepted && $0.review.sourceThreadID == id && effect.id == operationID } ?? false
                   }
-                  if case .conversationHistoryMaintenance(let id, let operationID, let attemptID) = effect.request {
-                      return snapshot.conversationHistoryOperation(operationID).map {
-                          $0.phase == .unconfirmed && $0.review.sourceThreadID == id && $0.maintenance?.phase == .accepted &&
-                          $0.maintenance?.id == attemptID && effect.id == attemptID
-                      } ?? false
-                  }
                   if case .conversationHistoryFiles(let id, let operationID, let fileAttemptID) = effect.request {
                       return snapshot.conversationHistoryOperation(operationID).map {
                           $0.phase == .applied && $0.review.sourceThreadID == id && $0.files?.phase == .accepted &&

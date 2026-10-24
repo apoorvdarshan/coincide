@@ -15,7 +15,6 @@ struct CheckpointRestoreFixture {
         let project = WorkspaceProject(path: "/tmp/coincide-restore-main")
         var thread = CodingThread(project: project, model: "retained model")
         thread.workspacePath = "/tmp/coincide-restore-isolated"; thread.provider = provider
-        if provider == .acp { thread.acpAgent = .init(name: "Offline agent configuration", executable: "unused-restore-test-agent") }
         thread.draft = "Keep the latest draft"; thread.title = "Retain this title"; thread.providerThreadID = "retained-provider-thread"
         threadID = thread.id; runID = UUID(); attemptID = UUID()
         let active = ActiveRun(id: runID, configuration: .init(thread: thread), startedAt: now, nativeTurnID: "retained-turn")
@@ -29,7 +28,6 @@ struct CheckpointRestoreFixture {
         message.runReference = .init(threadID: thread.id, runID: runID)
         thread.messages = [message]; thread.runHistory = [record]
         snapshot = .init(); snapshot.projects = [project]; snapshot.threads = [thread]
-        if let agent = thread.acpAgent { snapshot.acpAgents = [agent] }
     }
     static func plan(id: UUID = UUID(), path: String) throws -> GitCheckpointPlan {
         let identity = GitWorktreeNodeIdentity(device: 1, inode: 42)
@@ -60,7 +58,7 @@ struct CheckpointRestoreFixture {
     }
 }
 
-@Test(arguments: [ProviderKind.codex, .claude, .acp])
+@Test(arguments: [ProviderKind.codex, .claude])
 func checkpointRestoreUsesTheExactCheckpointAcrossAllProviders(provider: ProviderKind) throws {
     var fixture = try CheckpointRestoreFixture(provider: provider); let review = try fixture.review(), before = fixture.thread
     try fixture.accept(review); try fixture.dispatch(review); try fixture.finish(review, .checkpointRestoreConfirmed(fixture.receipt(review)))

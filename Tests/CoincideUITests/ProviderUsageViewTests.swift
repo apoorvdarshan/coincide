@@ -21,7 +21,7 @@ private func providerUsageViewClaude(runID: UUID = UUID()) throws -> ClaudeUsage
         observedAt: providerUsageViewNow)
 }
 
-@Test @MainActor func providerUsagePresentationDistinguishesMissingFromReportedZeroAndSharesMainAgentCounters() throws {
+@Test @MainActor func providerUsagePresentationDistinguishesMissingFromReportedZeroAndReportsMainAgentCounters() throws {
     let locale = Locale(identifier: "en_US")
     let partial = try ClaudeUsageSnapshot(runID: UUID(), revision: 1,
         turn: .init(usageStatus: .partial, inputTokens: 1_234, outputTokens: 0), observedAt: providerUsageViewNow)
@@ -34,14 +34,11 @@ private func providerUsageViewClaude(runID: UUID = UUID()) throws -> ClaudeUsage
     let claude = try ClaudeUsageSnapshot(runID: UUID(), revision: 1,
         turn: .init(usageStatus: .complete, inputTokens: 100, cachedInputTokens: 20, cacheCreationTokens: 30,
             outputTokens: 10, reasoningTokens: 2, hasSubagents: true), observedAt: providerUsageViewNow)
-    let openCode = try OpenCodeTurnUsage(usageStatus: .complete, inputTokens: 100, cachedInputTokens: 20, cacheCreationTokens: 30,
-        outputTokens: 10, reasoningTokens: 2, hasSubagents: true)
     let first = ProviderUsagePresentation.mainAgent(.claude(claude), locale: locale)
-    let second = ProviderUsagePresentation.mainAgent(.openCode(openCode), locale: locale)
-    #expect(first.rows.map(\.value) == second.rows.map(\.value) && first.status == "Complete" && second.status == "Complete")
-    #expect(first.hasSubagents && second.hasSubagents)
-    let unavailable = try OpenCodeTurnUsage(usageStatus: .unavailable)
-    let missing = ProviderUsagePresentation.mainAgent(.openCode(unavailable), locale: locale)
+    #expect(first.rows.map(\.value) == ["100", "20", "30", "10", "2"] && first.status == "Complete")
+    #expect(first.hasSubagents)
+    let unavailable = try ClaudeUsageSnapshot(runID: UUID(), revision: 1, turn: .init(usageStatus: .unavailable), observedAt: providerUsageViewNow)
+    let missing = ProviderUsagePresentation.mainAgent(.claude(unavailable), locale: locale)
     #expect(missing.status == "Unavailable" && missing.rows.allSatisfy { $0.value == "Not reported" })
 }
 
@@ -63,22 +60,19 @@ private func providerUsageViewClaude(runID: UUID = UUID()) throws -> ClaudeUsage
 func providerUsageViewsFitSmallOffscreenLightDarkWidthsAndRunHistoryKeepsOriginalRecords() throws {
     _ = NSApplication.shared
     let claudeRunID = UUID(), claude = try providerUsageViewClaude(runID: claudeRunID)
-    let openCode = try OpenCodeTurnUsage(usageStatus: .complete, inputTokens: 100, cachedInputTokens: 20, cacheCreationTokens: 30,
-        outputTokens: 10, reasoningTokens: 2, hasSubagents: true)
-    let unavailable = try ClaudeUsageSnapshot(runID: UUID(), revision: 1, turn: .init(usageStatus: .unavailable), observedAt: providerUsageViewNow)
+    let unavailableRunID = UUID()
+    let unavailable = try ClaudeUsageSnapshot(runID: unavailableRunID, revision: 1, turn: .init(usageStatus: .unavailable), observedAt: providerUsageViewNow)
     var thread = CodingThread(project: .init(path: "/private/provider-usage-offscreen")); thread.provider = .claude
     thread.title = "Observed provider accounting"; thread.draft = "Unsent draft stays unchanged e\u{301}"
     var claudeRecord = ThreadRunRecord(run: .init(id: claudeRunID, configuration: .init(thread: thread), startedAt: providerUsageViewNow), origin: .legacy)
     claudeRecord.status = .completed; claudeRecord.endedAt = providerUsageViewNow; claudeRecord.endReason = .providerCompleted
     claudeRecord.providerUsage = .claude(claude)
-    var secondConfiguration = ProviderConfiguration(thread: thread); secondConfiguration.provider = .opencode
-    var openCodeRecord = ThreadRunRecord(run: .init(id: UUID(), configuration: secondConfiguration, startedAt: providerUsageViewNow), origin: .legacy)
-    openCodeRecord.status = .completed; openCodeRecord.endedAt = providerUsageViewNow; openCodeRecord.endReason = .providerCompleted
-    openCodeRecord.providerUsage = .openCode(openCode); thread.runHistory = [claudeRecord, openCodeRecord]
+    var unavailableRecord = ThreadRunRecord(run: .init(id: unavailableRunID, configuration: .init(thread: thread), startedAt: providerUsageViewNow), origin: .legacy)
+    unavailableRecord.status = .completed; unavailableRecord.endedAt = providerUsageViewNow; unavailableRecord.endReason = .providerCompleted
+    unavailableRecord.providerUsage = .claude(unavailable); thread.runHistory = [claudeRecord, unavailableRecord]
     let before = thread
     let model = try #require(claude.session?.models.first), session = try #require(claude.session), limit = try #require(claude.rateLimits.first)
-    let contents: [AnyView] = [AnyView(ProviderUsageView(usage: .claude(claude))), AnyView(ProviderUsageView(usage: .openCode(openCode))),
-        AnyView(ProviderUsageView(usage: .claude(unavailable))), AnyView(ClaudeUsageModelView(value: model)),
+    let contents: [AnyView] = [AnyView(ProviderUsageView(usage: .claude(claude))), AnyView(ProviderUsageView(usage: .claude(unavailable))), AnyView(ClaudeUsageModelView(value: model)),
         AnyView(ClaudeUsageSessionView(value: session)), AnyView(ClaudeUsageLimitView(value: limit))]
     for scheme in [ColorScheme.light, .dark] {
         for width in [CGFloat(280), 320, 560] {

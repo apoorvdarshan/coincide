@@ -76,14 +76,6 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
     public var claudeResumeSelection: ClaudeResumeSelection?
     public var claudeResumeConsumerRunID: UUID?
     public var claudeInheritedHead: ClaudeInheritedHead?
-    public var acpAgent: ACPAgentConfiguration?
-    public var openCodeConfiguration: OpenCodeConfiguration?
-    public var piConfiguration: PiConfiguration?
-    public var piFreshSessionIntent: PiFreshSessionIntent?
-    public var piFreshConsumerRunID: UUID?
-    public var piFreshContextResolutions: [PiFreshContextResolution]?
-    public var museConfiguration: MuseConfiguration?
-    public var antigravityConfiguration: AntigravityConfiguration?
     public var agentModeID: String?
     public var agentConfigValues: [String: String]?
     public var providerMetadata: JSONValue?
@@ -130,10 +122,8 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         case queuedTurns, queuePaused, activeRun, runHistory, checkpointPolicy, contextTransferLineage, contextProviderBindings, forkedFromHistoryOperationID, createdByAppMCP, transcriptPlanSource, pullRequestCheckoutOperationID, runtimeID, steeringCapabilityRevision, runtimeRequests, workspacePreparation, scratchWorkspace, settlement, workspaceLifecycle
         case draftWorkspaceIntent
         case draftAttachments, reasoningEffort, codexReasoningPreferences, codexModelSelectionSource
-        case acpAgent, openCodeConfiguration, piConfiguration, agentModeID, agentConfigValues, providerMetadata
-        case piFreshSessionIntent, piFreshConsumerRunID, piFreshContextResolutions
-        case museConfiguration
-        case antigravityConfiguration, codexRuntimeConfiguration
+        case agentModeID, agentConfigValues, providerMetadata
+        case codexRuntimeConfiguration
         case claudeRuntimeConfiguration, claudeResumeSelection, claudeResumeConsumerRunID, claudeInheritedHead
         case providerActivity, agentConfiguration
     }
@@ -155,14 +145,6 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         claudeResumeSelection = try values.decodeIfPresent(ClaudeResumeSelection.self, forKey: .claudeResumeSelection)
         claudeResumeConsumerRunID = try values.decodeIfPresent(UUID.self, forKey: .claudeResumeConsumerRunID)
         claudeInheritedHead = try values.decodeIfPresent(ClaudeInheritedHead.self, forKey: .claudeInheritedHead)
-        acpAgent = try values.decodeIfPresent(ACPAgentConfiguration.self, forKey: .acpAgent)
-        openCodeConfiguration = try values.decodeIfPresent(OpenCodeConfiguration.self, forKey: .openCodeConfiguration)
-        piConfiguration = try values.decodeIfPresent(PiConfiguration.self, forKey: .piConfiguration)
-        piFreshSessionIntent = try values.decodeIfPresent(PiFreshSessionIntent.self, forKey: .piFreshSessionIntent)
-        piFreshConsumerRunID = try values.decodeIfPresent(UUID.self, forKey: .piFreshConsumerRunID)
-        piFreshContextResolutions = try values.decodeIfPresent([PiFreshContextResolution].self, forKey: .piFreshContextResolutions)
-        museConfiguration = try values.decodeIfPresent(MuseConfiguration.self, forKey: .museConfiguration)
-        antigravityConfiguration = try values.decodeIfPresent(AntigravityConfiguration.self, forKey: .antigravityConfiguration)
         agentModeID = try values.decodeIfPresent(String.self, forKey: .agentModeID)
         agentConfigValues = try values.decodeIfPresent([String: String].self, forKey: .agentConfigValues)
         providerMetadata = try values.decodeIfPresent(JSONValue.self, forKey: .providerMetadata)
@@ -199,14 +181,13 @@ public struct CodingThread: Codable, Identifiable, Sendable, Equatable {
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
     }
     public var isBusy: Bool { contextCompactionID != nil || activeRun != nil || state == .running || state == .awaitingApproval }
-    public var providerName: String { provider == .acp ? acpAgent?.name ?? provider.name : provider.name }
+    public var providerName: String { provider.name }
 }
 
 public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var schemaVersion: Int = 1
     public var projects: [WorkspaceProject] = []
     public var threads: [CodingThread] = []
-    public var acpAgents: [ACPAgentConfiguration] = []
     public var sidebarPreferences: SidebarPreferences?
     public var conversationHistoryOperations: [ConversationHistoryOperation]?
     public var pullRequestCreations: [PullRequestCreationOperation]?
@@ -223,14 +204,13 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var scheduler: ScheduledTaskLedger?
     public var workspaceLifecyclePolicy: WorkspaceLifecyclePolicy?
     public init() {}
-    enum CodingKeys: String, CodingKey { case contextCompactionOperations, scheduler, schemaVersion, projects, threads, acpAgents, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestActions, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
+    enum CodingKeys: String, CodingKey { case contextCompactionOperations, scheduler, schemaVersion, projects, threads, sidebarPreferences, conversationHistoryOperations, checkpointRestoreOperations, pullRequestCreations, pullRequestActions, pullRequestCheckouts, promptSteerings, contextTransfers, delegatedTasks, delegatedTaskCohorts, delegatedTaskTransfers, agentSessionImports, workspaceLifecyclePolicy }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         scheduler = try values.decodeIfPresent(ScheduledTaskLedger.self, forKey: .scheduler)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         projects = try values.decodeIfPresent([WorkspaceProject].self, forKey: .projects) ?? []
         threads = try values.decodeIfPresent([CodingThread].self, forKey: .threads) ?? []
-        acpAgents = try values.decodeIfPresent([ACPAgentConfiguration].self, forKey: .acpAgents) ?? []
         sidebarPreferences = try values.decodeIfPresent(SidebarPreferences.self, forKey: .sidebarPreferences)
         conversationHistoryOperations = try values.decodeIfPresent([ConversationHistoryOperation].self, forKey: .conversationHistoryOperations)
         pullRequestCreations = try values.decodeIfPresent([PullRequestCreationOperation].self, forKey: .pullRequestCreations)
@@ -316,8 +296,6 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
                 files.error = accepted ? ConversationHistoryFilesState.notStartedMessage : ConversationHistoryFilesState.unconfirmedMessage
                 files.updatedAt = Date(); operation.files = files; operation.updatedAt = files.updatedAt
             }
-            operation.piControls = nil
-            operation.recoverMaintenanceAfterProcessRestart()
             conversationHistoryOperations?[i] = operation
         }
         for i in projects.indices {
@@ -379,17 +357,9 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var id: JSONValue
     public var method: String
     public var params: JSONValue
-    public var isQuestion: Bool { method == AntigravityProtocol.questionMethod || method == "muse/userInput" || method == "opencode/form" || method == "opencode/question" || GrokACP.questionMethod(method) || method == "item/tool/requestUserInput" || (method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion") || CursorACPMethod.canonical(method) == CursorACPMethod.question }
+    public var isQuestion: Bool { method == "item/tool/requestUserInput" || isClaudeQuestion }
     public var isClaudeQuestion: Bool { method == "can_use_tool" && params["tool_name"].string == "AskUserQuestion" }
     public var claudeQuestion: ClaudeQuestionRequest? { isClaudeQuestion ? try? .init(request: self) : nil }
-    public var openCodeForm: OpenCodeV2Form? { try? OpenCodeV2Form.presentation(self) }
-    public var openCodeQuestion: OpenCodeV1Question? { try? OpenCodeV1Question.presentation(self) }
-    public var grokQuestion: GrokACPQuestionRequest? { GrokACP.questionMethod(method) ? try? .init(params: params) : nil }
-    public var isGrokQuestion: Bool { GrokACP.questionMethod(method) }
-    public var piExtension: PiExtensionRequest? { try? PiExtensionRequest.presentation(self) }
-    public var museApproval: MuseApprovalRequest? { try? MuseApprovalRequest.presentation(self) }
-    public var museUserInput: MuseUserInputRequest? { try? MuseUserInputRequest.presentation(self) }
-    public var antigravityPermission: AntigravityPermissionRequest? { try? AntigravityPermissionRequest.presentation(self) }
     public var codexMCPApproval: CodexMCPApproval? { method == CodexMCPApproval.method ? try? .init(params: params) : nil }
     public var questions: [JSONValue] {
         if method == "can_use_tool" {
@@ -404,32 +374,11 @@ public struct ApprovalRequest: Identifiable, Codable, Sendable, Equatable {
     public var title: String {
         if isClaudeQuestion { return "Answer Claude questions" }
         if let approval = codexMCPApproval { return approval.title }
-        if method == AntigravityProtocol.questionMethod || method == AntigravityProtocol.permissionMethod {
-            return antigravityPermission?.title ?? "Antigravity needs a decision"
-        }
-        if method == "muse/approval" { return museApproval?.title ?? "Muse needs your approval" }
-        if method == "muse/userInput" { return "Answer Muse questions" }
-        if method == "pi/extension" { return piExtension?.title ?? "Pi needs your input" }
-        if method == "opencode/question" { return "Answer OpenCode questions" }
-        if GrokACP.questionMethod(method) { return "Answer Grok questions" }
-        if method == "opencode/form" || method == "opencode/permission" { return params["title"].string ?? "OpenCode needs your input" }
-        if let question = cursorQuestion { return question.title ?? "Answer Cursor questions" }
-        if let plan = cursorPlan { return plan.name ?? "Review Cursor plan" }
-        if method == "session/request_permission" { return params["title"].string ?? params["toolCall"]["title"].string ?? "Approve agent tool" }
         if method == "can_use_tool" { return "Approve \(params["tool_name"].string ?? "tool")" }
         return method.contains("fileChange") ? "Approve file changes" : "Approve command"
     }
     public var detail: String {
         if let approval = codexMCPApproval { return approval.detail }
-        if method == AntigravityProtocol.questionMethod || method == AntigravityProtocol.permissionMethod { return antigravityPermission?.title ?? "Review Antigravity's request." }
-        if method == "muse/approval" { return museApproval?.detail ?? "Review Muse's request." }
-        if method == "pi/extension" { return piExtension?.message ?? "Review Pi's request." }
-        if method == "opencode/permission" { return params["description"].string ?? "Review the requested action." }
-        if let plan = cursorPlan { return plan.plan }
-        if method == "session/request_permission" {
-            if params.object?["subject"] != nil { return [params["description"].string, params["subject"].pretty].compactMap { $0 }.joined(separator: "\n") }
-            return params["description"].string ?? params["toolCall"]["rawInput"].pretty
-        }
         if method == "can_use_tool" { return params["input"]["command"].string ?? params["input"].pretty }
         return params["command"].string ?? params["reason"].string ?? params.pretty
     }

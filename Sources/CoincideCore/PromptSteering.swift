@@ -83,9 +83,8 @@ public struct PromptSteeringOperation: Codable, Sendable, Equatable, Identifiabl
     public func validate() throws {
         guard let target else { throw ProviderSteeringError(.invalidRequest) }
         try target.validate(); try ProviderSteeringValidation.id(nativeThreadID)
-        if case .adapterRun(let id) = target {
-            guard id == runID, configuration.provider == .pi else { throw ProviderSteeringError(.invalidRequest) }
-        }
+        // Only removed adapter providers steered runs without a native turn.
+        if case .adapterRun = target { throw ProviderSteeringError(.invalidRequest) }
         try ProviderSteeringValidation.id(messageID); try ProviderHistoryValidation.path(configuration.workspacePath)
         try AttachmentLimits.validate(input.attachments ?? [])
         guard preservesComposer != true || (queuedID == nil && input.attachments?.isEmpty != false) else { throw ProviderSteeringError(.invalidRequest) }
@@ -146,7 +145,7 @@ extension WorkspaceSnapshot {
     func promptSteeringTargetReason(threadID: UUID, queuedID: UUID? = nil, target: ProviderSteeringTarget? = nil) -> String? {
         guard let thread = threads.first(where: { $0.id == threadID }), !thread.isArchived,
               let run = thread.activeRun, !run.stopRequested,
-              run.nativeTurnID.map({ !$0.isEmpty }) == true || (thread.provider == .pi && run.nativeTurnID == nil),
+              run.nativeTurnID.map({ !$0.isEmpty }) == true,
               thread.runtimeID != nil, thread.providerThreadID != nil,
               thread.provider == run.configuration.provider, workspaceReady(for: thread),
               thread.runtimeRequests.isEmpty, thread.settlement == nil,

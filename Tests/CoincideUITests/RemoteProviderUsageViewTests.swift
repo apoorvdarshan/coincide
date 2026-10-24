@@ -73,7 +73,7 @@ func providerUsageRemoteReaderKeepsExactLeaseAndRejectsLateReplyAfterSelectionCh
     #expect(await peer.calls.isEmpty)
     await reader.load(.init(binding: binding, reference: reference, provider: .claude, runID: UUID(), live: false), access: access)
     #expect(reader.value == nil && reader.errorMessage != nil)
-    await reader.load(.init(binding: binding, reference: reference, provider: .opencode, runID: runID, live: false), access: access)
+    await reader.load(.init(binding: binding, reference: reference, provider: .codex, runID: runID, live: false), access: access)
     #expect(reader.value == nil && reader.errorMessage != nil)
     let corrupt = RemoteProviderUsageContentAccess(connected: { true }, document: { _, _ in Data("PRIVATE-HOST-DATA".utf8) })
     await reader.load(.init(binding: binding, reference: reference, provider: .claude, runID: runID, live: false), access: corrupt)
@@ -104,7 +104,7 @@ func providerUsageRemoteViewsRenderInlineReferenceAndPassiveStatesOffscreenWitho
         AnyView(RemoteProviderUsageView(binding: binding, contentAccess: access, provider: .claude, runID: runID, inline: value, reference: nil)),
         AnyView(RemoteProviderUsageView(binding: binding, contentAccess: access, provider: .claude, runID: runID, inline: nil, reference: reference)),
         AnyView(RemoteProviderUsageView(binding: binding, contentAccess: access, provider: .claude, runID: nil, inline: passive, reference: nil, live: true)),
-        AnyView(RemoteProviderUsageView(binding: binding, contentAccess: access, provider: .opencode, runID: runID, inline: value, reference: nil)),
+        AnyView(RemoteProviderUsageView(binding: binding, contentAccess: access, provider: .codex, runID: runID, inline: value, reference: nil)),
         AnyView(RemoteProviderUsageView(binding: binding, contentAccess: access, provider: .claude, runID: runID, inline: nil, reference: nil))]
     for scheme in [ColorScheme.light, .dark] {
         for width in [CGFloat(280), 560] {

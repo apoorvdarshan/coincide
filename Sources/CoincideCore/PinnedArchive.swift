@@ -2,46 +2,6 @@ import CryptoKit
 import Darwin
 import Foundation
 
-public enum AntigravityArchiveError: String, LocalizedError, Sendable, Equatable {
-    case invalidRelease, invalidDestination, network, redirectDenied, responseRejected
-    case sizeMismatch, checksumMismatch, archiveInvalid, io, cancelled, timedOut
-    public var errorDescription: String? {
-        switch self {
-        case .invalidRelease: "The pinned Antigravity release is invalid."
-        case .invalidDestination: "The owned Antigravity staging location is unavailable or changed."
-        case .network: "The Antigravity download could not complete. Nothing was installed."
-        case .redirectDenied: "The Antigravity download redirected unexpectedly. Nothing was installed."
-        case .responseRejected: "The Antigravity download returned an unexpected response."
-        case .sizeMismatch: "The Antigravity archive did not match its pinned size."
-        case .checksumMismatch: "The Antigravity archive failed its SHA-256 check."
-        case .archiveInvalid: "The Antigravity archive contains invalid, unsafe or unexpected members."
-        case .io: "The Antigravity staging files could not be written or verified."
-        case .cancelled: "The Antigravity installation was cancelled."
-        case .timedOut: "The Antigravity download exceeded its time limit."
-        }
-    }
-}
-
-public enum AntigravityArchiveDownloader {
-    public static func download(release: AntigravityManagedRelease, to destination: URL,
-                                progress: @escaping @Sendable (Int64) -> Void) async throws {
-        try await download(release: release, to: destination, progress: progress, configuration: nil, deadline: .seconds(45 * 60))
-    }
-    // Fixtures may inject URLProtocol, never weaken the production HTTPS/origin rules.
-    static func download(release: AntigravityManagedRelease, to destination: URL, progress: @escaping @Sendable (Int64) -> Void,
-                         configuration: URLSessionConfiguration?, deadline: Duration) async throws {
-        do { try release.validate() } catch { throw AntigravityArchiveError.invalidRelease }
-        let spec = PinnedArchiveDownload(url: release.url, archiveBytes: release.archiveBytes, sha256: release.sha256,
-                                         accept: "application/zip", redirects: .none)
-        do { try await PinnedArchiveDownloader.download(spec: spec, to: destination, progress: progress, configuration: configuration, deadline: deadline) }
-        catch {
-            if let error = error as? AntigravityArchiveError { throw error }
-            if let error = error as? PinnedArchiveError, let mapped = AntigravityArchiveError(rawValue: error.rawValue) { throw mapped }
-            throw error is CancellationError ? AntigravityArchiveError.cancelled : AntigravityArchiveError.network
-        }
-    }
-}
-
 // These errors never carry URLs, server bodies or private staging paths. Public
 // provider wrappers translate them into their own fixed presentation errors.
 enum PinnedArchiveError: String, Error, Sendable {

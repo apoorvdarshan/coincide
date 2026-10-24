@@ -147,7 +147,7 @@ struct TranscriptRowsView: View {
                 ReasoningRowView(text: entry.message.text, live: entry.trailing, duration: scoped.reasoning.duration(entry.message),
                                  expanded: binding(entry.id, \.expandedEntries), workspace: workspace, openFile: openPath)
             } else if let card = entry.card {
-                ToolCardView(card: card, entity: entry.message.providerEntity, workspacePath: thread.workspacePath, caption: TranscriptEntryCaption.copilot(entry.message),
+                ToolCardView(card: card, entity: entry.message.providerEntity, workspacePath: thread.workspacePath,
                              expanded: binding(entry.id, \.expandedEntries, alternate: entry.result?.id), openFile: openPath)
                     .accessibilityIdentifier("transcript-tool-\(entry.id)")
             }
@@ -182,15 +182,6 @@ struct TranscriptRowsView: View {
 enum TranscriptPreferences {
     static let timestampFormatKey = "transcriptTimestampFormat"
     static let foldCompletedRunsKey = "transcriptFoldCompletedRuns"
-}
-
-enum TranscriptEntryCaption {
-    /// Copilot child activity names the background task that produced it.
-    static func copilot(_ message: ChatMessage) -> String? {
-        guard let owner = message.runReference, let metadata = message.providerEntity?.fields["_meta"]["github.com/copilot"],
-              metadata["parentRunID"].string == owner.runID.uuidString, metadata["parentToolCallId"].string != nil else { return nil }
-        return String(localized: "Copilot task · \(metadata["taskTitle"].string ?? String(localized: "Background task"))")
-    }
 }
 
 /// Native working status and elapsed time for the active reply.

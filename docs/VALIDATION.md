@@ -212,8 +212,7 @@ Automated tests and hosted CI remain deferred by user direction.
   including the main test/package job and all four native GUI shards.
 
 - The complete serial suite exits zero: 2072 of 2085 declarations pass, with
-  thirteen optional installed/live checks skipped and pinned Pi package
-  acceptance enabled. Core covers 1736 declarations in 509.772 seconds; UI/store
+  thirteen optional installed/live checks skipped. Core covers 1736 declarations in 509.772 seconds; UI/store
   319 in 78.166 seconds; terminal seventeen in 10.282 seconds; Markdown thirteen
   in 0.139 seconds. Build time is 0.69 seconds. No production source changes
   follow this run.
@@ -241,17 +240,10 @@ No installed app was changed and no native GUI XCTest was executed locally.
   operation and zero mutation requests rather than treating intent acceptance as
   proof that external work succeeded.
 - Eight Core declarations/fourteen cases cover exact original-UUID receipts,
-  stale authority, bounded UTF-8 prefix/content/cursors, native OpenCode v2
-  maintenance claims, late-review close, accepted scratch preservation and
+  stale authority, bounded UTF-8 prefix/content/cursors, late-review close, accepted scratch preservation and
   rootless recovery. A private SQLite writer gate verifies both duplicate
   acceptance references while the real commit is blocked, refuses concurrent
   discard and joins close without deleting accepted uncertain evidence.
-- Positive remote Pi worker verification passes both normal response and held
-  response/cancel cases in 0.419 seconds after a 14.19-second build. The response
-  commits its exact receipt before held native I/O finishes; separate cancellation
-  drains that worker without replaying a question, candidate mutation or prompt.
-  The private fixture registers Foundation's canonical workspace spelling while
-  preserving Pi's realpath cwd; no production path guard was weakened.
 - Client and private-draft checks cover exact full-target lease ownership,
   immutable page/content replies and cursor queries, malformed bounded metadata,
   SHA/byte assembly, old-helper refusal, sanitized live failures, benign read
@@ -261,23 +253,16 @@ No installed app was changed and no native GUI XCTest was executed locally.
   recovery with concurrent local typing and a new imported attachment, restart
   deduplication and intentional later deletion, caller cancellation with owned
   synchronization, fast-fork navigation, exact maintenance claims, rootless/
-  bound lease reads and disposal, reconnect rebinding, Pi controls, retained-page
+  bound lease reads and disposal, reconnect rebinding, retained-page
   duplicates and light/dark offscreen layouts. Existing checkpoint/PR reconnect
   regressions also verify new host anchors without losing private drafts.
-- The previous pushed head `5c85ef4` completed its hosted full run with exactly
-  two issues: an ACP v2 Stop timing failure and checkpoint-close error taxonomy.
+- The previous pushed head `5c85ef4` completed its hosted full run with two
+  issues, including checkpoint-close error taxonomy.
   Every native PR declaration passed there, including checkout local/worktree/
   reuse in 29.781 seconds. The close service now reports unavailable after close
-  while preserving foreign-target refusal. A deterministic quiet ACP startup
-  reproduces the Stop bug without the early native-running event: an owned
-  runtime close failed suspended setup before prompt dispatch. The narrow fix
-  classifies that pre-dispatch close as cancellation and preserves dispatched
-  uncertainty and unexpected transport failures. Both Stop modes and all 26
-  focused ACP declarations pass. No deadline, retry or no-prompt assertion was
-  relaxed.
+  while preserving foreign-target refusal.
 - The final complete serial suite exits zero: 2015 of 2028 declarations pass,
-  with thirteen optional installed/live checks skipped and pinned Pi package
-  acceptance enabled. Core covers 1689 declarations in 489.005 seconds; UI/store
+  with thirteen optional installed/live checks skipped. Core covers 1689 declarations in 489.005 seconds; UI/store
   309 in 76.698 seconds; terminal seventeen in 10.306 seconds; Markdown thirteen
   in 0.136 seconds. Build time is 0.62 seconds. No production source changes
   follow that run.
@@ -302,8 +287,7 @@ and no native GUI XCTest was executed locally.
 ## 2026-10-23 — Bounded remote state and paged native browsing
 
 - The final complete serial suite passes 1975 of 1988 declarations, with
-  thirteen optional installed/live checks skipped and pinned Pi package
-  acceptance enabled. Core covers 1661 declarations in 456.603 seconds; Store/
+  thirteen optional installed/live checks skipped. Core covers 1661 declarations in 456.603 seconds; Store/
   view 297 in 75.817 seconds; terminal seventeen in 10.327 seconds; Markdown
   thirteen in 0.132 seconds. The process exits zero. No production source
   changes follow this full run.
@@ -374,21 +358,13 @@ SSH/provider acceptance, persistent hosts, or complete T3 parity.
 ## 2026-10-23 — Remote run checkpoint controls
 
 - The complete serial run executes 1959 declarations: 1945 pass, thirteen
-  optional installed/live checks skip, and one existing Pi permission-fixture
+  optional installed/live checks skip, and one existing permission-fixture
   declaration fails (two issues from its mode case). Core completes 1645
   declarations in 498.406 seconds; Store/view 284 in 72.435 seconds; terminal
   seventeen in 10.349 seconds; Markdown thirteen in 0.134 seconds. The full
   process exits one; it is not recorded as a clean full-suite pass.
-- A controlled Node probe proves the permission-fixture cause: the private
-  runner's inherited umask `077` turns its requested `0644` test file into `0600`,
-  which the product correctly accepts as private. The fixture now chmods its
-  exclusively created sidecar to the exact requested mode and asserts `0644`
-  before retaining the original refusal checks. Product permission rules and
-  timers are unchanged. No production source changes follow the full run.
-- After the fixture correction and bounded PR diagnostics, all eighteen
-  affected Pi input-bridge/native PR declarations pass under umask `077` in
-  100.786 seconds (eleven Pi declarations and seven native PR declarations).
-  This rechecks every caller of the changed permission fixture and all native
+- After the fixture correction and bounded PR diagnostics, the seven affected
+  native PR declarations pass under umask `077`. This rechecks all native
   PR fixture paths. The three checkout modes pass in 43.422 seconds. This is
   focused follow-up evidence, not a rewritten outcome for the failed full run.
 - The focused serial run passes all 26 new declarations (54 expanded cases):
@@ -455,7 +431,7 @@ acceptance remain unfinished; full T3 parity is not claimed.
 ## 2026-10-23 — Remote GitHub pull request workflows
 
 - The final complete serial suite passes 1920 of 1933 declarations, with thirteen
-  optional installed/live checks skipped and pinned Pi package acceptance enabled.
+  optional installed/live checks skipped.
   Core covers 1629 declarations in 475.555 seconds; native view/store 274 in
   72.565 seconds; terminal seventeen in 10.371 seconds; Markdown thirteen in
   0.127 seconds. The final process exits zero. No production source changes
@@ -521,7 +497,7 @@ not establish full T3 feature parity or release signing/notarization.
 ## 2026-10-23 — Remote attachment transfer and retained drafts
 
 - The final complete serial suite passes 1887 of 1900 declarations, with thirteen
-  optional installed/live checks skipped and pinned Pi package acceptance enabled.
+  optional installed/live checks skipped.
   Core covers 1608 declarations in 378.595 seconds; native view/store 262 in
   72.457 seconds; terminal seventeen in 10.319 seconds; Markdown thirteen in
   0.134 seconds. No production source changes follow this full run.
@@ -558,7 +534,7 @@ not establish full T3 feature parity or release signing/notarization.
   establish the stalled operation. All six isolated OAuth rotation-failure cases
   pass locally in 0.005 seconds, so no speculative OAuth or timeout change was
   made. The previous worktree head's run 39904821308 completed its 1873-test
-  suite with one Pi history late-reservation case failing its private eventual
+  suite with one history late-reservation case failing its private eventual
   boundary, so packaging and GUI execution were skipped. The current full local
   suite passes that unchanged case; its hosted failure remains unresolved. The
   earlier observed SwiftUI layout/teardown stall is also unresolved.
@@ -570,7 +546,7 @@ capabilities remain open. These checks do not establish full T3 feature parity.
 ## 2026-10-23 — Remote worktree preparation and recovery
 
 - The final complete serial suite passes 1860 of 1873 declarations, with thirteen
-  optional installed/live checks skipped and pinned Pi package acceptance enabled.
+  optional installed/live checks skipped.
   Core covers 1593 declarations in 407.787 seconds; native view/store 250 in
   71.724 seconds; terminal seventeen in 10.238 seconds; Markdown thirteen in
   0.142 seconds. This includes the final seventeen malformed-client cases and
@@ -624,7 +600,7 @@ checks do not establish complete T3 Code parity.
 ## 2026-10-23 — Remote PTYs and terminal panel
 
 - The complete serial suite passes 1838 of 1851 declarations, with thirteen
-  optional installed/live checks skipped and pinned Pi package acceptance enabled.
+  optional installed/live checks skipped.
   Core covers 1579 declarations in 371.967 seconds; native view/store 242 in
   74.037 seconds; terminal seventeen in 10.278 seconds; Markdown thirteen in
   0.144 seconds. No source changes follow this full run.
@@ -680,7 +656,7 @@ host or complete T3 Code parity is established by these checks.
 ## 2026-10-23 — Remote Files and Git inspector
 
 - The full serial run passes 1815 of 1828 declarations, with thirteen optional
-  installed/live checks skipped. Pinned Pi package acceptance is enabled. Core
+  installed/live checks skipped. Core
   covers 1570 declarations in 368.438 seconds; native view/store covers 234 in
   72.807 seconds, terminal eleven in 1.417 seconds and Markdown thirteen in
   0.140 seconds. No source changes follow this full run.
@@ -736,8 +712,7 @@ host or complete T3 Code parity is established by these checks.
 ## 2026-10-23 — Native SSH environment host and remote workspace window
 
 - The complete serial run passes 1793 of 1806 declarations, with thirteen
-  optional installed/live declarations skipped. Pinned Pi package acceptance is
-  enabled. Core covers 1556 declarations in 361.373 seconds; native view/store
+  optional installed/live declarations skipped. Core covers 1556 declarations in 361.373 seconds; native view/store
   covers 226 in 70.452 seconds, terminal eleven in 1.422 seconds and Markdown
   thirteen in 0.133 seconds. After the final app-only focused-menu and disconnect
   diagnostic changes, an incremental compile and focused rerun pass all 39
@@ -783,12 +758,12 @@ host or complete T3 Code parity is established by these checks.
   still separate pending evidence for that earlier implementation. Actual
   two-Mac SSH/provider and new rendered remote-window acceptance remain required.
 
-## 2026-10-23 — OpenCode steering, Claude commands and terminal restoration
+## 2026-10-23 — Claude commands and terminal restoration
 
 - The complete serial local run covers 1784 declarations: 1539 Core in 383.972
   seconds, 221 native view/store in 68.887 seconds, eleven terminal in 1.398
   seconds and thirteen Markdown in 0.134 seconds. Thirteen opt-in installed
-  declarations are skipped; pinned Pi package acceptance is enabled. There are
+  declarations are skipped. There are
   1769 passes and two failing declarations (four failing expanded cases): an old
   script test reuses a suspended window without restoration, and an old Claude
   steering peer emits orphan deltas/tool blocks without native message starts.
@@ -802,12 +777,6 @@ host or complete T3 Code parity is established by these checks.
   records. Final native GUI compilation and all 72 Python harness checks pass.
   The installed app is not replaced or launched; the development bundle is
   `dist/Coincide.app`.
-- OpenCode v1 active steering passes 68 focused declarations (110 expanded
-  cases), including 11 new steering declarations (19 expanded cases). Native
-  user-message identity, original-run ownership, pending-request admission,
-  stale idle reads, cancellation, uncertain delivery, FIFO and SQLite/history
-  evidence are covered. These are controlled protocol/Engine checks, not an
-  installed OpenCode 1 model run.
 - Claude stream/final reconciliation now retains native content-block indices
   across per-block assistant envelopes. Root/child ownership, equal text in
   distinct blocks, explicit replay, tool/reasoning blocks, repeated inputs and
@@ -851,8 +820,7 @@ host or complete T3 Code parity is established by these checks.
   local serial suite: 1743 actual passes out of 1755 declarations, with twelve
   optional live declarations skipped. Core reports 1520 declarations in 358.738
   seconds, native view/store 216 in 67.416 seconds, terminal six in 1.393 seconds
-  and Markdown thirteen in 0.132 seconds. Pinned Pi package acceptance is enabled.
-  This includes the native OpenCode default/readiness fixes, window command
+  and Markdown thirteen in 0.132 seconds. This includes the window command
   placement and Claude consumer-inspection submission hold.
 - Build-only packaging, deep strict signature verification, native math resource
   rendering and the async-default ABI guard pass again (912 objects, zero weak
@@ -891,32 +859,10 @@ host or complete T3 Code parity is established by these checks.
 - The complete serial local suite passes 1738 of 1750 declarations, with twelve
   optional live declarations skipped: 1515 Core declarations in 350.534 seconds,
   216 native view/store in 65.869 seconds, six terminal in 1.384 seconds and
-  thirteen Markdown in 0.137 seconds. The pinned Pi package acceptance is enabled.
-  This run includes typed Claude questions, OpenCode app-MCP integration and
-  notification transition/revalidation coverage. The subsequent OpenCode path
-  normalization and alias cases are verified separately below.
-- Five final OpenCode app-MCP declarations pass in 2.180 seconds, including both
-  generations through real owned-process/HTTP/SSE/Engine paths and explicit
-  symlinked workspace aliases, FIFO, Stop, durable writes, namespace collisions,
-  registration failures, credential redaction and metadata-only isolation.
-  The native child remains a deterministic peer.
+  thirteen Markdown in 0.137 seconds. This run includes typed Claude questions
+  and notification transition/revalidation coverage.
 - The combined installed-provider acceptance completes both model turns and
-  durability checks for Codex 0.163.0 and Claude 2.1.308. Installed OpenCode 2.1.3
-  exposes a genuine directory-scope mismatch: owned transport and actor now use
-  the same resolved path. Native readback also materializes an omitted model
-  variant as the literal `default`; the adapter now sends that sentinel while
-  preserving captured choices and strict readback. Thirteen focused declarations
-  pass in 4.298 seconds, including implicit/default and explicit-variant controls.
-  A later retry reaches native execution; reading only its generated native
-  history identifies `provider.auth` failures with HTTP 403. The configured
-  provider rejects access, so further model calls stop without silently changing
-  models or credentials. Live OpenCode tool execution remains unaccepted.
-  Generated failures are retained without printing arbitrary error payloads.
-- Native v2 can return model-inventory HTTP 503 after its identity is ready.
-  A ten-second read-only readiness loop retries only that explicit temporary
-  failure. Eleven final focused declarations pass in 12.978 seconds, including
-  fail-fast authentication/schema/scope errors, cancellation/close and persistent
-  unavailability ending after 10.194 seconds. No submitted prompt is retried.
+  durability checks for Codex 0.163.0 and Claude 2.1.308.
 - The focused integration run passes 27 Core declarations and three native
   view/store declarations. Claude question coverage exercises the real Engine
   command path and native stdio response, exact request ownership, single/multiple
@@ -957,24 +903,6 @@ host or complete T3 Code parity is established by these checks.
   revised GUI runner compiles without launching an app. Fresh hosted acceptance
   is still required; the timeout is not a passing UI result.
 
-## 2026-10-23 — Installed OpenCode 2 MCP registration contract
-
-- An isolated probe of installed OpenCode **2.1.3** passes the native runtime
-  sequence: location-scoped `GET /api/mcp`, a collision-free
-  `PUT /api/experimental/mcp/coincide` returning 204, a matching `connected`
-  status, and `DELETE` returning 204 followed by absence from the catalogue.
-  The loopback MCP peer receives initialize, initialized and tools/list exactly
-  once. There are no session, prompt, model or tool-call requests. The owned
-  parent and both pipe readers join after stdin closes.
-- All XDG locations and the workspace are private scratch. A macOS sandbox
-  denies reads/writes in the user's home, security services and external
-  networking, while allowing loopback communication. Seven generated files have
-  no exact app-MCP header or token matches; the probe's size-bounded scan excludes
-  a 9660064-byte extracted Bun runtime library. This is native registration
-  evidence only: Coincide's OpenCode adapters still need app-MCP integration,
-  inbound redaction, lifecycle tests and model-driven acceptance. OpenCode 1's
-  different endpoints remain a separate integration.
-
 ## 2026-10-23 — Native Codex MCP approval and installed model acceptance
 
 - The first installed app-tool acceptance check passed on Claude **2.1.308** but
@@ -1004,7 +932,7 @@ host or complete T3 Code parity is established by these checks.
 - The complete serial suite passes 1711 of 1723 declarations, with twelve optional
   live declarations skipped: 1491 Core declarations in 347.647 seconds, 213 native
   view/store in 66.518 seconds, six terminal in 1.356 seconds and thirteen Markdown
-  in 0.140 seconds. The pinned Pi package acceptance remains enabled in this run.
+  in 0.140 seconds.
   Build-only packaging, deep strict signature verification and native-resource
   loading pass. The async-default ABI guard checks 899 objects, including 591 Core
   and 228 app objects, with zero weak records. Hosted UI verification is separate.
@@ -1013,7 +941,7 @@ host or complete T3 Code parity is established by these checks.
   [run 39883323528](https://github.com/apoorvdarshan/coincide/actions/runs/39883323528).
   Both isolated Codex runtime inspections, the async-default ABI guard (794
   objects, zero weak records), packaging, signature and resource checks pass.
-  This run does not reproduce the previous Pi history stack crash. Native UI
+  Native UI
   execution and the later `9bc5f7d` approval commit's hosted result are pending.
 
 ## 2026-10-23 — Codex/Claude app tools, window recovery and history stack lifetimes
@@ -1024,7 +952,7 @@ host or complete T3 Code parity is established by these checks.
   1.376 seconds and Markdown in 0.163 seconds. A fresh focused run against the
   recovered working tree passes all 96 declarations (86 Core and ten native
   view/store), including MCP registration, credential redaction, permission
-  leases, window coordination and Pi history. All 67 Python harness checks pass.
+  leases and window coordination. All 67 Python harness checks pass.
   The 25-case hosted UI runner compiles locally without launching the GUI;
   build-only packaging, deep strict signature verification and native-resource
   loading pass. The async-default ABI guard checks 897 objects with zero weak
@@ -1072,30 +1000,18 @@ host or complete T3 Code parity is established by these checks.
 - Prior [run 39875604721](https://github.com/apoorvdarshan/coincide/actions/runs/39875604721)
   at `0d51e0df` passes build/test/package but reproduces nine passes and fifteen
   failures across 24 hosted UI cases, in 1934.860 seconds. AX artifacts confirm
-  the same nine windowless processes and six Claude/Pi harness defects as the
+  the same nine windowless processes and six harness defects as the
   earlier run. The current Claude pending-banner query accepts the exact AX
   label **or value**, retaining the original text and deadline. The window recovery
   implementation is not evidence that the initial windowless cause is resolved.
-- [Run 39879831113](https://github.com/apoorvdarshan/coincide/actions/runs/39879831113)
-  at `806fa53` fails Core with a native SIGBUS at a stack guard. Its sanitized
-  fault stack directly enters Pi candidate/source/files history validation and
-  retained checkpoint-path validation. Candidate reduction now bypasses the broad
-  Pi mutation frame; full native-source validation returns before files validation
-  begins, and app-MCP guard copies live outside the common command router. Static
-  extraction checks preserve all validation bodies, their order and errors.
-  Local Xcode 27.1 object inspection shows about 10.6 KiB less overlapping fixed
-  reserve and fewer metadata-sized buffers on that descent; instruction counts
-  are not byte totals or proof of hosted Xcode 26.6 success. Hosted crash recovery
-  remains to be verified without larger stacks, retries or disabled tests.
 
-Full T3 parity, the remaining providers' app-tool registration, broader setup/auth
-and hosted GUI acceptance remain unfinished. See [MCP.md](MCP.md) and
-[PROVIDER_PARITY.md](PROVIDER_PARITY.md) for the boundaries.
+Full T3 parity, broader setup/auth and hosted GUI acceptance remain unfinished.
+See [MCP.md](MCP.md) for the boundaries.
 
-## 2026-10-23 — native app MCP, scoped Engine actions and Pi tools
+## 2026-10-23 — native app MCP and scoped Engine actions
 
-- Full serial `NSUnbufferedIO=YES swift test --no-parallel`, with the two
-  isolated pinned-Pi checks explicitly enabled, exits zero. The runners report
+- Full serial `NSUnbufferedIO=YES swift test --no-parallel` exits zero. The
+  runners report
   1699 test declarations: 1688 pass and eleven optional installed-provider
   checks skip. Core reports 1470 declarations across eight suites in 334.449
   seconds; native view/store 210 in 67.395 seconds, terminal six in 1.342 seconds
@@ -1114,27 +1030,11 @@ and hosted GUI acceptance remain unfinished. See [MCP.md](MCP.md) and
   guards refuse a successor run/runtime; pending-question guards refuse a reused
   ID, changed question, changed runtime or an already-responding request. A
   permission request cannot be answered through the question-only tool.
-- The intact pinned Pi 0.80.5 package runs through the production factory,
-  native RPC extension, real authenticated loopback MCP server, Engine and
-  SQLite. A synthetic in-process model reads its actual thread without an
-  approval, requests a rename that waits for supervised approval, observes the
-  native result, then reads the renamed thread on a second explicit turn using
-  the same provider runtime. Native tool rows retain exact run ownership and
-  history proof; journal rebuild/reopen retains the title and performs no replay.
-  The test verifies one owned native PID and its exit after shutdown. It passes
-  in 1.100 seconds in the full suite and 1.106 seconds in the final focused run.
-  The separate intact-package skill/template/steering test passes in 1.312
-  seconds in the full suite, retaining its independent digest-only journal proof.
-- These two package checks use private homes and a synthetic local model, with
-  OS policy denying external networking; the MCP check permits loopback only.
-  They use no saved account or paid model and make no authenticated-model claim.
-  Six generated-JavaScript HTTP peer variants additionally cover JSON/SSE,
-  wrong IDs, tool errors, redirects and exact explicit cancellation.
 - Storage 41 retains nonsecret parent-creation identities and independent queue
   title intent; command receipt fingerprints bind scoped authority. Migration checks accept prior supported storage versions
   and refuse storage 42 without downgrading it. Runtime bearer credentials are
-  non-Codable, passed through a private 0600 sidecar, and absent from the native
-  launch environment, extension source, journal and diagnostics.
+  non-Codable and absent from the native launch environment, journal and
+  diagnostics.
 - The final 67 Python harness/configuration checks pass in 2.342 seconds.
   Build-only packaging, deep strict signature verification and the packaged
   native-resource CLI all pass, without opening or installing the desktop app.
@@ -1145,8 +1045,7 @@ and hosted GUI acceptance remain unfinished. See [MCP.md](MCP.md) and
 - Hosted run `39871242182` at `b69e59d` passes its build/core/package job but
   fails native UI: nine of 24 scenarios pass and fifteen fail. Artifact AX/logs
   establish the three Claude cases used an over-128-character XCTest identifier
-  query and the three Pi cases searched alerts instead of actual nested sheets
-  or attempted ordinary Quit with history sheets still open. Targeted harness
+  query. Targeted harness
   corrections preserve exact labels, assertions, deadlines, durable unknown-state
   evidence and normal Quit/relaunch. They have not yet passed hosted GUI testing.
   Nine other failures show a new process with menus and no native window; their
@@ -1155,137 +1054,11 @@ and hosted GUI acceptance remain unfinished. See [MCP.md](MCP.md) and
 The implemented surface and remaining services/providers are listed in
 [MCP.md](MCP.md). App MCP is enabled in the native product; library callers opt in
 explicitly. Ordinary synthetic GUI transport fixtures remain isolated from it.
-Full T3 parity, other-provider MCP registration and installed/authenticated
-provider acceptance remain unfinished.
+Full T3 parity and installed/authenticated provider acceptance remain
+unfinished.
 
-## 2026-10-23 — native Pi/OpenCode commands, skills and expanded-input ownership
+## 2026-10-23 — hosted Claude history harness repair
 
-- Full `NSUnbufferedIO=YES swift test --no-parallel` exits zero with 1659
-  declarations: 1647 pass and twelve optional checks skip. Core's 1430
-  declarations across eight suites finish in 333.761 seconds; native view/store
-  210 in 67.770 seconds, terminal six in 1.389 seconds and Markdown thirteen in
-  0.138 seconds. Eleven skips are installed-provider checks; the twelfth is the
-  opt-in full Pi package test, independently exercised below.
-- After the last narrow Pi hook admission refinement, all fifteen affected
-  bridge, crash-recovery, compaction and intact-package declarations pass in
-  3.418 seconds. This includes seven selected-skill refusal cases, exact handled
-  refusal for foreign/replayed/invalid input and all later inputs on the invalid
-  bridge. The actual pinned-package case passes again in 1.564 seconds. Unrelated
-  production code and native UI remain as checked by the full run above.
-- Focused command, metadata, Engine, bridge and composer checks pass 48
-  declarations: 43 Core declarations in 2.777 seconds and five native view/store
-  declarations in 1.966 seconds. Parameterized cases cover partial catalogs,
-  conflicts, disabled invocations, exact native IDs, captured settings,
-  cancellation, stale ownership, callback-before-terminal and
-  terminal-before-callback ordering, uncertain delivery, FIFO and restart.
-  Sixteen offscreen command/composer layouts cover narrow/wide, light/dark and
-  both text directions; these do not establish hosted interactive acceptance.
-- Real loopback HTTP/SSE tests pass both successful v2 callback orderings and
-  the ambiguous/lost-root cases. They exercise the default production factory,
-  actor, Engine and SQLite with actual native root IDs, unchanged authored
-  text, held FIFO and no ordinary-prompt fallback. The callback must finish
-  before terminal completion; bounded post-callback message/inbox inspection
-  refuses multiple roots. This is local ownership proof, not external-writer CAS.
-- Pi input reservations are committed before publication/write. The app-owned
-  extension binds the authored digest to its actual native user object; terminal
-  reads independently verify nonce, marker adjacency, actual expanded input,
-  complete baseline and ordered owners. Selected skill read/UTF-8/size failures
-  and ambiguous names invalidate admission instead of proving literal fallback.
-  Unknown variables remain literal. Native templates and leading `/skill:`
-  expansion remain in Pi's own pipeline. Normal `/compact` now uses its actual
-  RPC, optional instructions and completed/quiet observation without a fake turn.
-- The opt-in intact-package Engine/Session check passes in 1.581 seconds using
-  Pi 0.80.5, four locally implemented synthetic model streams, private homes,
-  explicit fixture resources and an OS network denial. It proves repeated and
-  multiple inline skills, active steering while the first stream is held,
-  actual native template and leading-skill expansion, nonce-bound actual native
-  user mappings, digest-only journal records, SQLite rebuild and restart without
-  replay. No real account, credential or model-service request is exercised.
-  The test is enabled only by `COINCIDE_NATIVE_PI_PACKAGE_ROOT` and
-  `COINCIDE_NATIVE_PI_NODE`; it does not install a runtime or use the user's
-  provider data. Its initial harness-only failure enforced the project's exact
-  registered workspace spelling; the fixture now captures that same spelling.
-- Reusable `script/verify_pi_native_history.py` independently verifies all 821
-  original files against the exact official 0.80.5 archive and 128 installed
-  dependency versions against its published runtime lock. Dependencies were
-  prepared in private scratch without installation scripts; the original
-  package manifest/payload remain unchanged. Actual network-denied RPC passes
-  historical fork, first-user cut and CLI `--fork`, with unchanged source,
-  exact retained entries and zero-exit owned drain. This check sends no prompt
-  and has no credentials. The first-user result contains four model/thinking
-  metadata entries but no persisted candidate file: production still refuses
-  that unsupported nonempty-unpersisted reset rather than calling it empty.
-- Four crash-inspection cases independently reprove expanded native inputs from
-  the exact anchored file after loss before terminal journal persistence; wrong
-  nonces, later replacement and foreign users remain unavailable. Storage 40
-  preserves bridge ownership; migrations retain older versions and refuse 41.
-- The new Node bridge helper originally stalled in Foundation `waitUntilExit`
-  after its child exited, confirmed by a process sample. It now uses the existing
-  bounded asynchronous `ProcessChannel`, owns cancellation/drain, and passes all
-  retirement, unsafe-file, replay and selected-skill-failure cases without longer
-  deadlines. Production process handling was not changed by this test fix.
-- All 67 Python harness checks pass in 4.003 seconds. The compiled async-default
-  guard passes on 873 Mach-O objects (app 226, Core 567), with three local default
-  records and zero weak records. The final app packages with `--build-only`,
-  passes deep strict signature verification and renders bundled math through
-  `--verify-resources`. These checks neither open an app window nor install a
-  system app.
-- Full provider parity, authenticated acceptance, MCP, session import, usage and
-  hosted interactive command/skill acceptance remain unfinished. Current native
-  UI CI results remain separate from the offline and isolated-package evidence.
-
-## 2026-10-23 — durable Pi fork, rewind and explicit fresh context
-
-- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with
-  1611 declarations: 1600 pass and eleven optional installed-provider checks
-  skip. Core's 1387 declarations across eight suites finish in 325.892 seconds;
-  all 205 native view/store declarations pass in 65.411 seconds, terminal six
-  in 1.364 seconds and Markdown thirteen in 0.128 seconds. No issue is reported.
-- Focused Pi provider, history, journal, Engine and native Store/view checks pass
-  54 declarations: 51 Core declarations in 6.668 seconds and three native
-  view/store declarations in 0.351 seconds. They exercise the production Pi
-  actor against a private synthetic stdio peer, durable candidate admission,
-  lifecycle-dialog ownership, lost acknowledgments, restart without replay,
-  source preservation, inherited lineage, fresh-context consumers and recovery.
-  These checks do not invoke an installed Pi package, authentication or a model.
-- A subsequent production-Engine filter passes four declarations/six cases in
-  16.213 seconds. Real Git worktrees exercise conversation-only rewind, combined
-  file restoration with once-only latest-draft recall, standalone files-only
-  restoration, and stale-file-review refusal before provider mutation. The
-  selected receipt is the previous completed run's post-run checkpoint, rather
-  than the selected run's later baseline. Native session bytes, shared checkout,
-  HEAD, branches, immutable run origins and SQLite replay remain checked.
-  Warm runtime cases also verify conclusive veto retains its exact process and
-  reader, while successful rewind drains it before the next explicit input.
-  Initial failures in this new fixture correctly enforced isolation and exact
-  checkpoint-path admission; it now uses real Engine worktree preparation and
-  Git's canonical path spelling. No production guard or deadline was weakened.
-- Storage 39 retains typed Pi history operations, candidate ownership, lifecycle
-  controls, immutable adoption proof and explicit fresh-context intent. Schema
-  assertions now expect 39, retain older-version migration cases and refuse 40.
-  The first full attempt reached the end without a crash, with nineteen issues
-  confined to stale schema-38 assertions; its native view/store, terminal and
-  Markdown targets passed. The final canonical run above verifies the fixes.
-- The original-source fork generator produces a separate 98,326-byte,
-  thirteen-case fixture with SHA-256
-  `4429c00ca0154c9839138649a4f0db54207cfe7281962f131d7a82dde6af9239`.
-  Ten native transform outputs, two native rejections and one policy refusal
-  cover retained branches, exclusive user cuts and unwritten results. Its
-  restricted original-source execution reports no forbidden operations and
-  closes all 53 opened descriptors. The previous eleven-case graph fixture is
-  byte-identical. This is source-transform evidence, not full vendor RPC or
-  installed-package execution.
-- The app packages with `--build-only`, passes deep strict signature verification
-  and renders its bundled math resources through the verification CLI. The
-  compiled async-default guard passes on 858 Mach-O objects (app 221, Core 554),
-  with three local records and zero weak records. The native
-  UI runner also builds and signs without launching a window; its immutable
-  launcher verifier exercises the new private Pi namespace, version, state,
-  entries and refusal envelopes. All 67 Python harness tests pass, with the five
-  affected Pi-peer tests rerun after bounded input handling. Three additive Pi
-  GUI scenarios bring the hosted gate to 24 with zero allowed skips. Actual
-  hosted execution of those scenarios remains pending; no local GUI or system
-  app installation is used for these checks.
 - Hosted [run 39863932911](https://github.com/apoorvdarshan/coincide/actions/runs/39863932911)
   at `5c71a5c92006b02f3569119dd46408f246747380` passes its Swift build/test,
   async-default guard, packaging, signature and resource-loading steps. Its
@@ -1296,47 +1069,15 @@ provider acceptance remain unfinished.
   [run 39871242182](https://github.com/apoorvdarshan/coincide/actions/runs/39871242182)
   passes its production build/test, async guard, packaging, signature and
   resource checks. Its separate 24-scenario native GUI result is pending.
-- Pi 0.80.5 installed-package/RPC acceptance remains unverified. In particular,
-  nonempty cuts that have not produced a native session file, including a
-  model/thinking-only first-user reset, remain unavailable rather than being
-  relabeled empty. Session browsing/import, broader native extension behavior,
-  provider parity and full GUI acceptance remain unfinished. See
-  [PI_HISTORY.md](PI_HISTORY.md) and [PROVIDER_PARITY.md](PROVIDER_PARITY.md).
 
-## 2026-10-23 — captured Pi runtime and durable native entry evidence
+## 2026-10-23 — installed Claude history and journal stack checks
 
-- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with
-  1579 declarations: 1568 pass and eleven optional installed-provider checks
-  skip. Core's 1358 declarations across eight suites finish in 305.858 seconds;
-  all 202 native view/store declarations pass in 65.268 seconds, terminal six
-  in 1.354 seconds and Markdown thirteen in 0.130 seconds. These results include
-  immutable Pi capture storage, both reducer boundaries and phased steering validation.
 - The separate opt-in installed Claude history check passes in 20.384 seconds:
   four actual model turns exercise production Engine fork/deferred-rewind context,
   unchanged native source, selected-chain proof and SQLite restart. The native
   app also packages successfully with `--build-only`, passes strict signature
   verification and renders its bundled math resources through the verification
   CLI. No app window or system installation is used for these checks.
-- The final focused serial run passes all 74 declarations: sixteen native
-  view/store checks in 4.058 seconds and 58 Core checks in 5.447 seconds. These include the
-  real stdio peer through the production factory, independent SQLite admission
-  observations, exact prepared steering reservations, Stop/incarnation fencing,
-  forged and stale proof containment, held responses/terminal reads, legacy
-  configuration preservation, FIFO/restart, native Store capture ordering and
-  five existing Claude history Engine declarations, including all three rewind shapes.
-  This is offline coverage, not installed Pi authentication or model acceptance.
-- Storage 38 retains the selected launcher/workspace/storage namespace and the
-  prospective baseline/input audit. Entry evidence precedes completion; invalid
-  or rewritten windows stay unavailable. Pi fork/rollback, session browsing and
-  native history recovery controls remain unfinished. See [the contract](PI_HISTORY.md).
-- The original-source generator reproduces the 87,371-byte golden fixture
-  exactly (SHA-256 `7760a7c6d72e11176331d996dad119ca40b950ddbfcd03e3611374a99d55aa2b`).
-  Eleven histories cover 41 live branch/reset observations and thirteen exclusive
-  user cuts. Restricted original source execution records zero forbidden
-  operations; all 44 read descriptors close. Existing output, changed source
-  hashes, source symlinks and non-private output are refused. Swift consumes the
-  committed fixture without Node or an installed provider. This is a graph,
-  context classification and reload comparison, not full native mutation proof.
 - New synchronous journal scenarios exposed 544 KiB worker-stack guard faults
   in steering validation and general command admission/submission. Validation
   now uses small ownership projections and separate noninlined phases; admission
@@ -1344,11 +1085,7 @@ provider acceptance remain unfinished.
   confirms the extracted submission body and timestamp/writeback tail are
   unchanged, along with validation order, error text and snapshot semantics.
   The first full attempt also exposes a guard fault in existing Claude history
-  ledger validation. Pi captures now retain immutable payload storage with the
-  same flat Codable keys and content equality/hash; a standalone native layout
-  observation measures capture values at eight bytes rather than 168, and
-  provider configurations at 1000 rather than 1160. Pure semantic checks verify
-  independent decoding, hashing, namespace intent and workspace rebinding.
+  ledger validation.
   The unchanged focused scenarios pass without increasing stack limits,
   deadlines or retries. The compiled async-default guard passes on 846 objects
   (app 218, Core 542), with three local records and zero weak records.
@@ -1375,7 +1112,7 @@ provider acceptance remain unfinished.
   bodies remain unchanged. The hosted result gate requires all 21 with zero
   skips; actual hosted accessibility/sandbox execution remains unverified.
 
-## 2026-10-23 — byte-bounded events, Pi history reads and client command storage
+## 2026-10-23 — client command storage
 
 - Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits zero with
   1550 declarations: 1539 pass and eleven optional installed-provider checks
@@ -1384,42 +1121,16 @@ provider acceptance remain unfinished.
   in 1.352 seconds and Markdown thirteen in 0.131 seconds. The final compiled
   async-default guard passes on 838 Mach-O objects (app 218, Core 534), with
   three local records and zero weak records. These results include the indirect
-  `WorkspaceCommand` representation below. The unchanged ACP v2 regression that
-  crashed in hosted CI also passes separately with all three parameter cases in
-  0.324 seconds. Hosted Swift 6.3.3 and interactive GUI acceptance remain pending.
+  `WorkspaceCommand` representation below. Hosted Swift 6.3.3 and interactive GUI acceptance remain pending.
 - A separate opt-in installed Claude check passes in 13.426 seconds after the
   command-storage change. Its four generated turns exercise the actual CLI
   through Engine, native fork and deferred-rewind context recall, exact
   unchanged-source/selected-chain checks and SQLite restart. It uses a new
   private workspace and does not establish broader history compatibility or
   interactive GUI acceptance.
-- A deterministic check at the real HTTP delegate-state boundary delivers 33
-  independent eleven-byte callbacks before consumption. The original queue loses
-  the last fragment: 352 of 363 bytes remain and `eventBufferOverflow` is reported.
-  URLProtocol/TCP writes can coalesce and did not establish that callback count.
-  Raw events now coalesce into at most 32 chunks of at most 16 KiB under the same
-  512 KiB byte budget. The unchanged over-limit check still preserves exactly
-  512 KiB before its fixed failure. The new tiny-callback case passes in 0.001
-  seconds; it, the existing overflow case and unread-stream abandonment pass
-  together in 0.072 seconds. Cancellation, EOF and first-error ordering retain
-  their owned request boundaries; no limit, fixture pacing or retry was increased.
-- Known HTTP failures survive the SSE boundary as finite diagnostic categories;
-  unknown errors remain sanitized. V1 logs only a fixed category and generated
-  local run UUID. A controlled existing EOF regression produces exactly one
-  matching unified-log line, while its generic connection-loss behavior remains.
-  These diagnostics do not retroactively prove the cause of the earlier
-  intermittent OpenCode connection loss.
-- Ten new Pi declarations cover 24 cases: append inventory versus runtime/reload
-  leaf, exact active ancestry, compaction/custom-message context, unchanged native
-  entry windows and exclusive user boundaries, malformed/legacy/deep inputs and
-  bounded anchored exact-file reads. An 18,000-entry chain passes in 0.785 seconds.
-  File checks include FIFO/symlink/hardlink refusal and file/parent replacement.
-  Raw records remain transient; a file reload does not prove a live branch pointer
-  or local run ownership. Native fork/rollback controls, original-source oracle,
-  installed Pi acceptance and complete provider parity remain unfinished.
 - Hosted [run 39853472698](https://github.com/apoorvdarshan/coincide/actions/runs/39853472698)
   at `3c798cf` passes both isolated Codex checks (4.175 and 0.470 seconds), then
-  crashes in the unchanged ACP v2 Engine test on Swift 6.3.3. Its sanitized native
+  crashes in an unchanged Engine test on Swift 6.3.3. Its sanitized native
   report identifies a guard-region fault at `___chkstk_darwin`, through an outlined
   `WorkspaceCommand` copy, `preventDelayedPromptSteering`, command admission and
   `makeGeneral`. The async-default guard separately reports zero weak records.
@@ -1433,7 +1144,7 @@ provider acceptance remain unfinished.
 
 - Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits 1 with
   1535 declarations: 1523 pass, eleven optional installed-provider checks skip,
-  and one existing OpenCode v1 HTTP history declaration fails. All 1318 Core
+  and one existing declaration fails. All 1318 Core
   declarations across eight suites finish in 299.697 seconds; all 198 native
   view/store declarations pass in 64.638 seconds, terminal six in 1.376 seconds
   and Markdown thirteen in 0.127 seconds. This adds 45 declarations without
@@ -1441,16 +1152,6 @@ provider acceptance remain unfinished.
   objects (app 218, Core 531), with three local records
   and zero weak records. Packaging and interactive GUI acceptance remain hosted
   gates; no system app install/relaunch occurs locally.
-- The failed existing declaration is
-  `openCodeV1HistoryHTTPRepeatedAdoptionsResolveImmutableRunsAndPublishCandidateBeforeFurtherWire`.
-  Its second source input loses the event connection between fixture observations;
-  the durable run is failed with `connectionLost`, rather than completed. The
-  exact unchanged declaration passes separately in 1.624 seconds. The retained
-  generated diagnostic does not contain the underlying HTTP/SSE failure category,
-  so neither raw-buffer overflow nor delayed idle is established as its cause.
-  No pacing, timeout, assertion, retry policy or production transport was changed
-  to conceal this failure. The full suite remains unconfirmed until this failure
-  is diagnosed and a fresh complete run passes; hosted acceptance is also pending.
 - Claude Run History is connected to the native Swift transcript service, durable
   command/effect journal and native review/recovery UI. New user runs capture the
   physical runtime/configuration/profile and exact registered workspace spelling,
@@ -1615,70 +1316,6 @@ provider acceptance remain unfinished.
   that revision's separate native GUI job remains pending. No interactive GUI
   tests or system-app install/relaunch ran locally for this change.
 
-## 2026-10-23 — native OpenCode v1 clone and adoption history
-
-- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` exits 0 with
-  1464 declarations: 1454 pass and ten optional installed-provider checks skip.
-  Core reports 1255 declarations across eight suites in 298.657 seconds; all 190
-  native view/store declarations pass in 64.576 seconds, terminal six in 1.372
-  seconds and Markdown 13 in 0.130 seconds. This adds 36 declarations to the
-  prior suite without weakening existing deadlines or assertions. The compiled
-  ABI guard passes on 815 Mach-O objects (app coverage 217, Core 511), with
-  three local default records and zero weak default records. Native GUI
-  acceptance remains a separate hosted job; complete T3 parity is unfinished.
-- V1 history reads bounded native message/part inventories through opaque header
-  cursors. The exact native lexical fork cut must agree with the chronological
-  whole-run boundary. Copy proof compares complete normalized content, unique
-  regenerated message/part IDs and assistant parent positions; native compaction
-  references remain literal. Quiet snapshots include session metadata and owned
-  descendant/status/permission/question observations, without claiming native CAS.
-- Both actions use native fork. Rewind atomically adopts the verified new native
-  ID within the original local conversation, preserving immutable prior run IDs,
-  current settings and the latest draft. A candidate acknowledgement is durably
-  saved before later native reads or clone-only policy writes. Subsequent cuts
-  follow applied copy maps, checking exact user provenance while permitting native
-  assistant tool-output pruning. Indexed lookup and bounded per-call memoization
-  avoid repeated full inventory scans; no runtime speedup is claimed.
-- Unknown fork acknowledgements are not guessed or replayed. Known rewind
-  candidates can be adopted after read-only complete copy and policy verification.
-  Explicit Keep Original verifies the unchanged native source and retains an
-  orphan warning/candidate audit. Pending native source and candidate aliases are
-  held; an unconfirmed fork can release its source while reserving its candidate.
-  Native view/store checks exercise the separate confirmation, cancellation and
-  latest-draft preservation. Storage 36 prevents old readers from reopening the
-  new candidate and adoption semantics.
-- Cross-cut review found that combined file restoration still required the
-  pre-adoption native ID. The post-provider guard now permits only the verified
-  adopted ID, preserving all other captured settings. A reviewed-only checkpoint
-  resolver grants ownership to exact immutable input records, including mixed A/B
-  origins after repeated adoption; the public legacy resolver stays strict. New
-  reducer checks drive provider adoption, file dispatch/receipt and one-time
-  latest-draft recall. Their negative cases independently reject old/foreign IDs
-  and changed model/permission settings. This is separate from the existing real
-  Git restoration checks, not a live combined-v1 acceptance claim.
-- Adopted native candidates also stay reserved through incomplete file work or
-  pending prompt recall, then release after completion/dismissal. Applied fork
-  targets remain usable. Broader serial regression exposed an inadvertent wait
-  on an already-held close during review; that run was stopped. Review again
-  refuses pending cleanup immediately, while dispatched work still joins its
-  owned closes before I/O. The unchanged archived-source regression passes in
-  0.038 seconds; both new combined-file checks pass in the same focused run.
-- Initial focused checks pass 39 Core declarations and two native view/store declarations.
-  Real offline TCP/SSE peers exercise three A runs, A-to-B adoption, a B input,
-  another fork and B-to-C rewind through retained original run references; exact
-  dispatch/candidate persistence precedes native I/O. They verify copy ownership,
-  wrong same-count/reused-part refusal, changed-tail refusal, lost acknowledgement,
-  restart/read-only recovery, untouched Git files/index/HEAD and exact owned
-  process/event-stream drain. These are synthetic peers, not installed OpenCode.
-- Initial TCP execution exposed the fixture's strict parsing of an empty health
-  query under system Python; parsing only nonempty queries restores the exact
-  health route. A second test correction explicitly creates a new draft after
-  the B input, which intentionally clears the preceding draft. Original deadlines,
-  copy/ownership assertions and production transport behavior remain intact.
-  A separate 10,001-record legacy Codex audit regression ensures the v1 evidence
-  limit cannot reject unrelated history. Installed/hosted v1 history acceptance
-  and complete T3 Code parity remain unfinished.
-
 ## 2026-10-23 — async default closure context isolation
 
 - Hosted [run 39832918696 at 4fadc85](https://github.com/apoorvdarshan/coincide/actions/runs/39832918696)
@@ -1734,32 +1371,8 @@ provider acceptance remain unfinished.
   assertions were weakened. Hosted test/package confirmation is recorded above;
   native GUI acceptance and complete T3 Code parity remain unfinished.
 
-## 2026-10-22 — native OpenCode v2 history and staged-revert recovery
+## 2026-10-22 — hosted Codex installation verifier diagnostics
 
-- OpenCode v2 history uses ordered native messages and exact deterministic local
-  opening/steering ownership. Reviewed cuts retain entire runs, including their
-  steers and synthetic tail. Forks regenerate message IDs; confirmation compares
-  the complete semantic prefix and the native ancestry, normalizing only the
-  compaction keep-reference that the provider rewrites. Codex turn boundaries and
-  their legacy serialized bytes remain separate.
-- Rewind requires an initially clean, quiet native session, stages literal
-  `files: false` and commits only that reviewed cut. Native read-back must prove
-  the exact prefix. A possible write with a lost response remains held across
-  restart; inspection does not replay the mutation or clear a stage implicitly.
-  The lock covers other local conversations and captured inputs targeting the
-  same native session. It does not exclude independent external writers.
-- Review found and fixed two additional proof/ownership gaps: an archived then
-  unarchived source must wait for its exact old session to finish closing, and
-  every copied fork message ID must be disjoint from the entire source inventory.
-  New regressions cover the retained close, successful operation after drain and
-  wholly/partly reused IDs, including an ID from the removed source suffix.
-- Explicit staged-revert cleanup has its own durable acceptance/dispatch/result
-  record and current-process incarnation. It accepts only the exact reviewed
-  history-only stage, waits for its owned empty execution and records the exact
-  start event, terminal event and corresponding single idle message. A separate
-  read-only reconciliation decides whether the original history or reviewed cut
-  is present. Cleanup never invents a local turn, restores files, recalls a draft
-  or automatically resumes a queue. Storage 35 protects this evidence.
 - Hosted run `39824687279` at `09eb51d` fails in both the fresh isolated managed
   installation test and the unchanged full serial suite. The isolated step's
   displayed conclusion is masked by `continue-on-error`; the raw log and final
@@ -1771,49 +1384,9 @@ provider acceptance remain unfinished.
   its default async closure. It runs separately before the existing isolation and
   unchanged full suite; all failure outcomes remain enforced. This experiment is
   not a hosted crash fix or a successful GUI acceptance claim.
-- The focused serial run passes 110 Core declarations and both new native
-  view/store declarations, without failures or skips. Real offline HTTP/SSE peers
-  exercise the production factory and Engine, three runs with two steers, whole
-  history cuts, persisted dispatch before writes, lost stage/commit/clear replies,
-  restart/reconciliation, exact empty-execution receipts and session aliases.
-  Tests verify Git files/index/HEAD and the latest draft/settings remain intact,
-  and exact owned HTTP/SSE processes finish. Narrow/normal sheet layout covers
-  both appearances and LTR/RTL; no actual GUI interaction or installed OpenCode
-  history call is claimed by those tests.
-- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` succeeds with
-  1428 declarations: 1418 pass and ten optional installed-provider checks skip.
-  Core reports 1221 declarations in eight suites in 290.466 seconds; all 188
-  native view/store declarations pass in 64.326 seconds, terminal six in 1.383
-  seconds and Markdown 13 in 0.128 seconds. All 49 Python harness checks pass.
-  No deadline, assertion or complete-suite gate was weakened. The staged patch
-  passes the secret scan. Hosted diagnostics and native GUI acceptance remain
-  separate pending evidence; this batch does not establish complete T3 parity.
 
-## 2026-10-22 — typed Pi and native Muse steering
+## 2026-10-22 — hosted Codex skill-chooser workflows
 
-- Steering now distinguishes a native turn from an adapter-owned run. Pi uses
-  only the latter, with no fabricated native turn or history IDs. Storage 34
-  protects that distinction; native receipt and operation serialization retain
-  their legacy bytes when the new optional adapter reference is absent.
-- Pi sends native atomic `prompt` steering with captured settings and the exact
-  session file. Its correlated response proves admission only. Old idle probes
-  are invalidated before handoff, outstanding admission holds settlement, and a
-  missing possible-write response never becomes an acknowledgement or replay.
-  Stop during unresolved admission retires the owned connection. A later native
-  cycle can succeed after an earlier native abort without inheriting that abort;
-  explicit user Stop remains separate. `/compact` uses its native command.
-- Muse sends `turn/steer` with an exact native `expectedTurnId` and UUIDv7 command.
-  Exact command/session/turn admission or a matching native steered user-message
-  item proves acceptance. Late old rejection/cancellation cannot retire a healthy
-  successor; original-run background items keep their ownership. Neither settings
-  nor uncertain inputs are silently replaced or resent.
-- Real offline stdio peers exercise each production adapter and Engine, retained
-  future-turn FIFO/settings, authored rows, durable receipts, Stop and shutdown.
-  Pi additionally verifies restart/rebuild without native turns or replay.
-  The initial build found one existing Codex reasoning assertion passing the now
-  optional native reference; it now explicitly requires that native reference.
-  The focused serial run passes 194 Core declarations in three suites and all
-  25 selected native view/store declarations, with no failures or skips.
 - Two new hosted GUI workflows cover the actual Codex skill chooser in light and
   dark appearance: Unicode draft insertion, arrows/Return/Escape, explicit chooser
   search, refresh, no send/config mutation and restoration after graceful restart.
@@ -1828,16 +1401,8 @@ provider acceptance remain unfinished.
   before the unchanged complete serial suite, with pipeline failure propagation,
   sanitized crash collection and a final gate preserving either failure. This is
   a controlled diagnostic experiment, not a claim that the hosted crash is fixed.
-- Final canonical `NSUnbufferedIO=YES swift test --no-parallel` succeeds with
-  1394 declarations: 1384 pass and ten optional installed-provider checks skip.
-  Core reports 1189 declarations in eight suites in 284.713 seconds; all 186
-  native view/store declarations pass in 64.054 seconds, terminal six in 1.367
-  seconds and Markdown 13 in 0.131 seconds. No test deadline, assertion or full
-  coverage gate was weakened. The staged patch passes the secret scan.
-- Installed Pi/Muse acceptance and hosted GUI execution remain unverified;
-  offline peers do not establish vendor access or complete T3 Code parity.
 
-## 2026-10-22 — scoped Codex skills and native OpenCode v2 steering
+## 2026-10-22 — scoped Codex skills
 
 - Codex `skills/list` reads use the exact workspace and captured runtime/account,
   with a separate metadata actor, bounded response/items/problems and physical
@@ -1852,14 +1417,6 @@ provider acceptance remain unfinished.
   Focused checks found that Foundation's range conversion permits a split UTF-16
   surrogate; explicit scalar-boundary validation fixes insertion and native
   selection requests while retaining the original failing assertion.
-- OpenCode v2 steering binds its deterministic inbox identity and exact payload
-  to the captured native session/run. It preserves original-turn receipts and
-  model/agent/permission settings, holds successful terminals across outstanding
-  steering and the next execution, and cancels only exact pending inbox IDs on
-  Stop. A lost unproven write remains uncertain and cannot be resent as a queue.
-  V1 and provider history contracts are unchanged. A real offline TCP/SSE peer
-  exercises the production factory, Engine steering, captured future FIFO,
-  original execution ownership, Stop/process drain and durable replay.
 - Hosted run `39817860781` at `f22f7aa` fails with signal 10 in
   `CodexInstallationVerifier.inspect`, through `memset_s` and the Swift task
   allocator. It reaches beyond the previous run-history crash site. Local Swift
@@ -1881,7 +1438,7 @@ provider acceptance remain unfinished.
   declarations pass in 63.829 seconds, terminal six in 1.393 seconds and Markdown
   13 in 0.129 seconds. No full-run failure, deadline change or test bypass is
   hidden by the earlier focused fixes. The staged patch passes the secret scan.
-- Actual hosted skill-picker acceptance and installed OpenCode steering remain
+- Actual hosted skill-picker acceptance remains
   unverified. Neither local protocol peers nor offscreen native layout rendering
   establishes current vendor compatibility or full T3 Code parity.
 
@@ -2086,17 +1643,10 @@ provider acceptance remain unfinished.
   pass again. Managed OAuth/accounts, broader provider controls and full T3
   parity remain unfinished.
 
-## 2026-10-22 — managed Antigravity runtime and history acceptance stack
+## 2026-10-22 — history acceptance stack
 
-- Explicit native install/verify/update/cancel/remove actions keep account setup
-  separate. Downloads stream into owned private staging, enforce the pinned size
-  and SHA-256, and validate a bounded two-member ZIP before activation. Runtime
-  leases pin old immutable versions across updates and guard removal, including
-  custom aliases. Ownership-record replacement prevents publication. Storage 31
-  captures managed versus external selection; legacy captures remain external.
-- The first focused check passes 35 Core declarations plus four native view/store
-  declarations; the optional real-artifact check skips. Both arguments of the
-  existing history recall acceptance regression pass. The complete canonical
+- Both arguments of the existing history recall acceptance regression pass.
+  The complete canonical
   `swift test --no-parallel` run passes 1170 declarations: 1161 pass and nine
   optional checks skip. Core reports 993 declarations (274.484 seconds), native
   view/store 158 (54.255 seconds), terminal six (1.357 seconds), and Markdown
@@ -2110,28 +1660,6 @@ provider acceptance remain unfinished.
   unchanged acceptance logic. This is a measured reduction in that call chain;
   it does not establish the crash's cause or hosted resolution. Assertions and
   deadlines remain unchanged.
-- The explicit real-artifact check downloads the exact 111456962-byte macOS
-  arm64 release and passes its pinned SHA-256, but initially fails during
-  extraction before launching the native server. Offline fixture success is not
-  claimed as real installation success. The compatibility fault is investigated
-  against that verified archive. libz produced additional output without
-  consuming new input at a valid chunk boundary. The reader now accepts either
-  input or output progress and advances on an empty-input/no-output buffer
-  boundary; exact compressed/decoded lengths, CRC and stream-end checks remain.
-  The production real-artifact check then passes in 14.052 seconds: download,
-  extraction, native initialize-only verification, activation, lease acquisition
-  and owned removal all complete. No authentication or model request is sent.
-  The final focus passes 35 Core declarations (15.347 seconds, including this
-  actual check) and four native view/store declarations (3.426 seconds).
-- The offscreen harness emits 24 narrow/wide, light/dark and LTR/RTL captures.
-  An opaque native window background avoids transparent exported PNGs;
-  representative narrow captures are inspected for wrapping and action placement.
-  Vibrant text and composited Liquid Glass contrast still require actual window
-  captures; offscreen dark-mode pixels are not claimed as contrast acceptance.
-- The two synthetic decompression-boundary regressions and all ten existing
-  extractor declarations pass (12 declarations, 0.099 seconds); truncated input
-  remains rejected and owned partial output is removed. These were added after
-  the full-suite run above, so that earlier count does not include them.
 - Packaging completes in 0.67 seconds. Strict/deep signature verification and
   native math-resource rendering pass. The development app reopens and its real
   window is captured. A consistent private backup precedes storage 30-to-31;
@@ -2139,54 +1667,11 @@ provider acceptance remain unfinished.
   canonical workspace payload hash. No installed provider sign-in is performed.
   Hosted verification of the pushed changes remains pending.
 
-## 2026-10-22 — native Antigravity ACP and explicit account setup
+## 2026-10-22 — grouped checkout selection test fix
 
-- Added a dedicated native adapter for the pinned flat ACP dialect and paired
-  server/harness. Native prompt responses finish turns; admission, idle status
-  and locally generated IDs cannot substitute for terminal proof. Models,
-  account generations and modes are captured independently of future choices.
-- Explicit account setup stages isolated profiles and Keychain credentials under
-  an Engine lease. Google URLs remain transient and open only from the explicit
-  native action. Initialization-only runtime checks do not claim account access.
-  Failed or uncertain logout downgrades the exact saved generation rather than
-  permitting automatic repeat. Credentials and authorization URLs are excluded
-  from workspace persistence.
-- Offline peers cover native framing, process ownership, setup, resume, questions,
-  permissions, delegated files and Engine integration. Synthetic account sessions
-  and private temporary registries keep these checks independent of real Google
-  accounts and the user's Keychain. Installed execution, managed installation,
-  usage, skills/MCP and broader recovery remain unfinished.
-- All 57 focused declarations pass: nine native view/store declarations
-  (1.059 seconds) and 48 Core declarations (0.674 seconds), including existing
-  grouping and OpenCode stop-observation regressions. These include 49 new
-  Antigravity declarations. The incremental build completes in 6.12 seconds.
-  Real pipes verify cancelled queued notifications send no bytes, already-started
-  frames finish intact, and the next request stays usable. A gated native probe
-  verifies shutdown waits for a process whose metadata RPC already returned.
-  Account leases reject new starts atomically and drain held baseline capture.
-- The complete canonical `swift test --no-parallel` run passes 1131 declarations:
-  1123 pass and eight optional installed-provider checks skip. Core reports 958
-  declarations (270.968 seconds); all 154 native view/store declarations
-  (51.536 seconds), six terminal declarations (1.333 seconds) and 13 Markdown
-  declarations (0.127 seconds) pass. An earlier default-parallel invocation
-  produced widespread timing failures under excess process load; it is not the
-  documented/CI runner mode and is not claimed as passing. Assertions, deadlines
-  and test coverage were not relaxed.
-- Packaging completes in 0.58 seconds. Strict/deep signature verification and
-  native math-resource rendering pass. The development app reopens and its real
-  window is captured. A consistent private backup precedes storage 29-to-30;
-  integrity remains `ok`, with the same three conversations, 25 messages and
-  canonical workspace payload hash. Hosted native GUI acceptance remains pending.
-- An opt-in offscreen render of the native question, permission and account views
-  produces 24 narrow/wide, light/dark and left-to-right/right-to-left captures;
-  its declaration passes in 0.866 seconds. Representative captures were inspected
-  for wrapping and control placement. These do not establish composited glass
-  contrast or installed-provider interaction acceptance.
-- Hosted production run `39784118056` reports assertion failures in OpenCode's
-  synthetic stop observation and grouped checkout selection. The exact same
-  production Core code passes in `39783333814`; the failure is not a crash.
-  OpenCode's fixture now retains its exact request owner and observes the native
-  stop callback within the existing budget. The grouping test waits for thread
+- Hosted production run `39784118056` reports assertion failures in grouped
+  checkout selection. The exact same production Core code passes in
+  `39783333814`; the failure is not a crash. The grouping test waits for thread
   creation's selection continuation before issuing the next selection. Existing
   assertions, coverage and deadlines are preserved.
 
@@ -2208,94 +1693,8 @@ provider acceptance remain unfinished.
   (15.963 seconds). The build finishes in 3.89 seconds. These checks do not
   replace the next hosted native accessibility run, which remains pending.
 
-## 2026-10-22 — initial native Muse Session Protocol
+## 2026-10-22 — atomic creation regression
 
-- Added a dedicated native MSP transport and session actor using the pinned
-  1.4.6 SDK contract. The bounded stdio connection separates RPC IDs, command
-  IDs and server presentation requests, scrubs the inherited Meta API key,
-  disables automatic updates and never retries an uncertain write. A metadata
-  process has shell/write tools disabled and does not establish login or access.
-- Captured model, effort and launch authority survive FIFO execution, SQLite
-  reopen and journal replay. Storage 29 fences the new fields while preserving
-  prior Pi and other conversations. Before a prompt, session read-back must
-  prove the workspace, selected model and required permission profile. Old
-  hosts lacking profile proof are refused; a model selected explicitly or
-  observed during resume is never mislabeled as the native default.
-- Actual admission and owned native turn completion have separate identities.
-  ACK, idle and a reused view cursor cannot complete a run. Revisioned native
-  snapshots replace partial text/tool output; retained background items keep
-  their original run. Stop targets the native turn and waits for its terminal.
-  Uncertain preparation, gaps, EOF and overflow fail closed without resending.
-- The initial focused run passed 43 declarations: 38 Core (3.134 seconds,
-  including the existing creation regression) and five native view/store
-  declarations (2.734 seconds). Real offline stdio peers exercise the production
-  factory, Engine FIFO, policy replacement, exact Stop and durable reopen.
-  Compatibility effort descriptions retain their fallback provenance even when
-  native per-tier descriptive text is also present.
-- The initial complete local run passed 1076 declarations: 1068 passed and eight
-  optional installed-provider checks skipped. Core reports 910 declarations
-  (264.069 seconds), all 147 native view/store declarations pass (51.253 seconds),
-  and all six terminal and 13 Markdown declarations pass. This run precedes the
-  lifecycle corrections below and does not stand in for their validation.
-- Review found and corrected three lifecycle gaps: shared response effects could
-  dismiss a Muse row on ACK; pruning could let an absent old run's waiter close
-  a healthy successor; and direct RPC catches could overtake already-queued native
-  terminal proof. Muse rows now await native settlement, callback ownership must
-  still exist, and turn/Stop responses follow the ordered stream. Stop registers
-  its terminal waiter before dispatch and joins owned command tasks on close.
-  Real stdio regressions cover terminal-before-held Stop ACK/error, pruning,
-  late replies and ACK-before-native question/approval settlement. Deterministic
-  transport tests pause consumption and verify notification-before-failure order,
-  exact-once local failure callbacks and zero writes for rejected requests.
-- After those fixes, all 49 focused declarations pass: 44 Core (4.894 seconds,
-  including the existing creation regression) and five native view/store
-  declarations (2.603 seconds).
-- The final complete local rerun is green: 1082 declarations, 1074 passed and
-  eight optional installed-provider checks skipped. Core reports 916 declarations
-  (265.823 seconds); all 147 native view/store declarations (51.415 seconds), six
-  terminal declarations (1.373 seconds) and 13 Markdown declarations
-  (0.139 seconds) pass. This includes all lifecycle corrections above.
-- Native approval choices retain their exact labels, scopes and rule previews;
-  questions retain offered order, selections, separate notes and UTF-16 limits.
-  Rendering never submits or cancels. Sixteen narrow/wide, light/dark and
-  left-to-right/right-to-left offscreen layout combinations passed geometry
-  checks. Full offered approval labels wrap separately from native action
-  buttons. Offscreen glass/vibrant text caching is not reliable evidence of
-  dark contrast; actual composited dialog appearance remains unverified.
-- Packaging, strict/deep signature verification and native math-resource
-  rendering pass. The development app reopened and its actual window was
-  captured. A consistent private backup preceded the 28-to-29 migration;
-  SQLite integrity and canonical workspace content remain unchanged, with
-  three conversations and 25 messages.
-- These checks use synthetic peers only. No installed Muse process, login,
-  model turn or provider setup was performed. Steering, active-session adoption,
-  history/gap recovery, MCP/configuration, skills, usage and full T3 parity remain
-  unfinished. Exact owned-parent drain does not prove OS descendant exit.
-
-## 2026-10-22 — native Pi RPC and atomic creation regression
-
-- Added a dedicated Pi JSONL actor, typed durable provider/model/thinking captures,
-  native confirm/select/input/editor controls and captured tool-approval policy.
-  Native session-file resume validates an existing regular header and workspace
-  before switching. Storage 28 preserves the new captures through queue/reopen
-  and journal replay; older provider conversations retain their settings.
-- Real stdio peers exercise command correlation, exact Unicode/tool projection,
-  lost replies, lifecycle/compaction, cancellation, extension expiry and native
-  abort. Only settled-plus-idle evidence releases a turn; ACK and `agent_end`
-  alone do not. Run-owned waiter retirement prevents a completed run's deadlines
-  or Stop replies from terminating its successor. Unresolved pre-start Stop
-  retires the runtime rather than claiming a confirmed native interruption.
-- The production factory-to-Engine fixture verifies captured FIFO settings,
-  policy-driven process replacement, native session continuation, actual abort,
-  source-file preservation and durable restart without resending. These are
-  offline peers, not installed Pi or model-access verification. No Pi login,
-  installation or vendor turn was performed. Steering, native history changes,
-  broader extension behavior, setup/auth and usage remain unfinished.
-- All 29 focused declarations passed: 26 Core declarations (3.193 seconds) and
-  three native view/store declarations (0.176 seconds). A stale thinking choice
-  now receives a normal rejected command; the engine stays healthy and accepts
-  a subsequent valid default selection. Native dialog rendering preserves empty
-  values/prefill and never answers merely because the view appeared.
 - The isolated managed-project registration test reproducibly exited with
   signal 10 before its dispatch returned. Removing the compound creation path's
   recursive entry into the large reducer made that same test pass, including
@@ -2314,12 +1713,8 @@ provider acceptance remain unfinished.
   `6568cf9d61f2dcbeae6a317f67ebc641c8c2ab7dca3013ce1660a0c08b898804`.
 - The complete local run reached its end: 1034 declarations across 873 Core,
   142 native view/store, six terminal and 13 Markdown tests. There was one
-  failing Pi fixture observation and eight optional installed-provider skips;
-  all other declarations passed. The failure read the peer's response log before
-  the peer consumed the completed pipe write. The test now waits for a complete
-  received frame and observed dismissal under its unchanged deadline, and ignores
-  a partially appended final log record. All 29 Pi declarations then passed again
-  (Core 3.218 seconds, native 0.187 seconds). This is not a claim that the earlier
+  failing fixture observation and eight optional installed-provider skips;
+  all other declarations passed. This is not a claim that the earlier
   full run was green; final hosted verification remains pending.
 - Rebuilt packaging, strict/deep signature verification and native math-resource
   rendering passed. The development app reopened and a fresh window screenshot
@@ -2360,49 +1755,6 @@ provider acceptance remain unfinished.
 - All 33 Python configuration/peer/diagnostic checks passed (1.967 seconds).
   Delayed capture and phase attribution still require the next hosted run.
 
-## 2026-10-22 — native OpenCode 1 and Grok ACP flows
-
-- Added a separate native OpenCode 1 HTTP/SSE conversation actor, preserving its
-  server-generated sessions, authored-message/assistant-parent ownership, native
-  idle completion, captured model/variant/agent/rules, questions and scoped
-  permissions. A real TCP fixture exercises the production factory, owned
-  process, URLSession, SSE, Engine FIFO and SQLite; it is not an installed server.
-- Added a named Grok profile to both ACP adapters, prompt-correlated xAI
-  completion/background activity, captured Ask/Auto/Always approve launch policy,
-  existing noninteractive sign-in, cancellation metadata and typed questions with
-  choices and notes in one durable response. Initialize-only status does not
-  authenticate. Storage 27 fences the new profile/response semantics; migration
-  from both 25 and 26 preserves existing native OpenCode and ACP conversations.
-- The serialized local suite executed 1003 test declarations: 995 passed and
-  eight optional installed-provider checks were skipped. Core reports 845
-  declarations including those skips (258.375 seconds); all 139 native view/store
-  tests (49.144 seconds), six terminal tests and 13 Markdown tests passed.
-- Subsequent source review found that a delta could reveal an ignored/synthetic
-  OpenCode part after its hidden snapshot. Projection now retains suppression
-  through deltas, while an authoritative visible snapshot can clear it.
-  A separate review corrected Default Model: v1 now omits model/variant and lets
-  the native server resolve agent/history/config defaults, rather than guessing
-  from per-provider catalog defaults. Grok v2 review also fixed raw RPC rejection
-  text reaching durable errors and native idle bypassing unfinished background
-  tasks. Real stdio regressions exercise both paths.
-- After all four corrections, expanded OpenCode/ACP checks executed 120 test
-  declarations: 115 passed and five optional installed checks were skipped.
-  Core reports 112 including skips (6.546 seconds); all eight selected native
-  view/store tests passed (0.299 seconds). Separate ignored/synthetic cases,
-  captured default versus future-header selection, native question controls,
-  Grok v1/v2/fallback and the real TCP Engine test are included. This final
-  targeted run covers the corrections made after the full-suite result above.
-- Final packaging, strict/deep signatures and native math-resource rendering
-  passed. The rebuilt development app reopened and a fresh window screenshot
-  was captured. A private consistent backup preceded the 26-to-27 migration;
-  SQLite integrity and canonical workspace content remain unchanged, with
-  three conversations and 25 messages.
-- These checks use offline peers. No installed Grok or OpenCode 1 turn was sent;
-  the installed OpenCode CLI is 2.1.2. Exact owned-parent shutdown is not proof of
-  OS descendant exit. Native authentication/setup, broader controls/history,
-  usage, other providers and complete T3 parity remain unfinished. Hosted GUI
-  acceptance remains pending.
-
 ## 2026-10-22 — bounded hosted test crash diagnostics
 
 - Exact head `d33e7c7`, run `39766284863`, built successfully but its production
@@ -2426,46 +1778,6 @@ provider acceptance remain unfinished.
   this does not establish whether report arrival, matching or another condition
   prevented capture. No stack or assertion localized the cause. The dependent
   native GUI job was skipped, so this run executed zero of its 14 scenarios.
-
-## 2026-10-22 — native OpenCode 2 conversations
-
-- Added a dedicated native HTTP/SSE conversation adapter, durable captured
-  model/variant/agent settings, advertised menu choices, tool/text projection,
-  typed permission scopes/forms and exact Stop routing. Storage 26 preserves
-  these choices through queued turns, journal replay and restart, while existing
-  OpenCode ACP conversations keep their transport. Native v1 chat, authentication,
-  history, steering, reconciliation and complete provider parity remain open.
-- Synthetic actor coverage separates HTTP admission, owned delivered input,
-  execution start, step completion and terminal evidence. It covers stale/late
-  responses, lost replies with conclusive native evidence, Stop during preparation
-  and before admission, malformed ownership, child settlement after parent failure,
-  autonomous Stop and separate retained-run projection budgets. Unknown delivery
-  pauses the queue and never causes automatic replay.
-- The real TCP Engine integration passed in 0.225 seconds through the default
-  production factory, owned executable, URLSession, SSE, reducer and SQLite
-  journal. It verifies exact queued model/variant/agent/permission capture,
-  authoritative text/tool replacement, execution-only FIFO advancement, inbox
-  cancellation plus interruption, concurrent shutdown, stdin EOF and exact owned
-  PID disappearance. This executable is a private synthetic peer; no installed
-  OpenCode server, model, provider authentication or account was used.
-- Its first run rejected the fixture directory before creating a session:
-  Foundation retained `/var/...`, while Python resolved the same working directory
-  to `/private/var/...`. The peer now verifies the Foundation-provided directory
-  with `samefile` before readiness, then retains strict literal protocol equality.
-  Assertions and deadlines were unchanged. Failure diagnostics retain only bounded
-  synthetic state and semantic wire fields, excluding credentials and raw headers.
-- The final serialized full suite executed 961 declarations: 953 passed and
-  eight optional installed-provider checks were skipped. Core reports 806
-  declarations including those skips (256.033 seconds); all 136 native view/store
-  tests (48.700 seconds), six terminal tests and 13 Markdown tests passed.
-  This run includes the final unknown-admission Stop regression and the real TCP
-  Engine integration (0.224 seconds), rather than relying on earlier synthetic
-  or component results for the final implementation.
-- Packaging, strict/deep signatures and bundled native math rendering passed.
-  The rebuilt development bundle reopened successfully; a fresh native-window
-  screenshot was captured. A consistent private backup preceded storage 25-to-26
-  migration. SQLite integrity and canonical workspace content remain unchanged:
-  three conversations and 25 messages. No installed-provider turn was sent.
 
 ## 2026-10-22 — native GUI workflow follow-through
 
@@ -2519,58 +1831,14 @@ provider acceptance remain unfinished.
   Neither those results nor component tests establish hosted success for these
   subsequent changes; the next pushed head requires its own full GUI evidence.
 
-## 2026-10-22 — native OpenCode HTTP/SSE foundation
+## 2026-10-22 — installed Codex and Claude handshake checks
 
-- Added native Swift generation/version types, runtime-only header credentials,
-  an owned loopback server, bounded URLSession networking, generation-specific
-  metadata projections and a volatile SSE connection. The existing ACP provider,
-  composer choices and storage version 25 are unchanged. This foundation does
-  not yet implement native OpenCode HTTP chat, approvals, steering or history;
-  [the integration boundary](OPENCODE_HTTP.md) records the remaining full scope.
-- HTTP identity rejects HTML 200, unsupported/wrong generations and mismatched
-  owned v2 PIDs. Authentication failure does not select another generation.
-  Catalogs retain exact advertised wire model/variant/agent IDs and workspace
-  scope while discarding raw headers, settings, system prompts and unknown fields.
-  Metadata cancellation joins only owned reads and preserves shared event I/O.
-- Networking rejects redirects and URL credentials, uses ephemeral state and
-  incrementally bounds bodies, headers and stream buffers. SSE preserves split
-  Unicode, CR/LF, comments, multiline data, empty/reset IDs and large single-line
-  tool snapshots. An incomplete frame cannot advance its committed cursor.
-  Heartbeat bytes refresh a 45-second watchdog; EOF, silence, malformed framing
-  and overflow require reconciliation instead of completing or replaying a turn.
-- Server fixtures cover exact generation-specific argv, fresh credentials,
-  coalesced start, independent waiter cancellation, readiness rejection, deadlines,
-  startup floods, continued post-ready log drainage and repeated/concurrent close.
-  Process output can be bounded explicitly. Exact-PID termination replaces
-  Foundation's group-targeting operation; nonblocking output readers can be
-  closed and joined without signaling a descendant retaining inherited writers.
-  The inherited-pipe test failed with the previous termination call and passed
-  after targeting the positive owned PID. It also verifies the descendant remains
-  alive until its own test-owned release.
-- Testing exposed a synchronous stream-destructor deadlock on rejected/cancelled
-  event opening. Teardown now retains the unreturned stream until after releasing
-  the state lock. Native URLProtocol fixtures explicitly supply JSON MIME types
-  for early body-limit checks and await their actual stop callbacks before
-  asserting counts. No retry, timeout expansion or coverage reduction was added.
-- All 60 focused checks passed in 4.705 seconds. The subsequent serialized full
-  suite executed 906 declarations: 898 passed and eight optional installed checks
-  were skipped. Core reports 757 declarations including those skips (254.826
-  seconds); native views/stores 130 (48.385 seconds), terminal six and Markdown 13
-  all passed. The later large-single-line framing regression is included in that
-  full run.
-- A separately added real TCP integration passed in 0.240 seconds. Its private
-  Python server exercised the actual native owner, HTTP client, metadata reader
-  and SSE connection together: ephemeral header authentication, owned PID/version,
-  directory/model/variant selection, gated fragmented Unicode after metadata
-  closure, independent stream/client lifetimes, real 401 and graceful server EOF.
-  This is a synthetic server, not an installed OpenCode HTTP/provider result.
 - Installed Codex and Claude handshake/model-discovery checks also passed (two
   tests, 1.816 seconds) after the common process changes; neither sent a model
   turn. Nineteen Python harness checks passed. Native GUI runner compilation,
   immutable helper checks, packaging, strict/deep signatures and math resources
   passed. Canonical user workspace content and SQLite integrity stayed unchanged
-  (three conversations, 25 messages). No installed OpenCode server, authentication
-  or database migration was performed for this work.
+  (three conversations, 25 messages).
 
 ## 2026-10-22 — native workflow accessibility and model summary repairs
 
@@ -2609,61 +1877,8 @@ provider acceptance remain unfinished.
   incomplete; the preceding integration suite and installed-provider limitations
   below still apply.
 
-## 2026-10-22 — native Cursor and Copilot ACP integrations
+## 2026-10-22 — hosted account-commit GUI result
 
-- Explicit vendor profiles are captured with each invocation, conversation and
-  queued input. Settings adds native setup and initialize-only connection checks
-  on separate owned transports. Observations stay in memory, require the exact
-  saved configuration and drain replaced/cancelled work at shutdown. They do not
-  authenticate, send a prompt or prove model entitlement.
-- Cursor questions retain exact option IDs and multiple selections. Plans use
-  explicit Accept/Decline; Skip, Stop, remote cancellation and reused wire IDs
-  cannot accidentally answer an earlier request. Known payloads are bounded and
-  unknown fields discarded. Todo notifications merge/replace; task/image events
-  display activity without executing client tools or reading supplied paths.
-- Copilot negotiates its documented raw-event metadata. Exact raw/chunk pairing,
-  task/agent identity and original-run attribution keep child text/reasoning/tools
-  separate from root output. Background launcher completion does not finish the
-  child. Old children can finish while another run or baseline capture is active;
-  invalid runtime/session/owner updates are discarded and replay retains ownership.
-  Both ACP versions and same-transport v1 adoption retain the vendor flavor.
-  Experimental v2 also opens a distinct owner before agent-initiated output and
-  closes that exact activity. Its children retain it after idle, and an old
-  activity ending during a new user's configuration cannot consume the unsent
-  user's owner. Both normal and held-configuration sequences are covered.
-- Review found pre-dispatch ownership and cancellation bugs: configuration replies
-  can resume before preceding notifications drain, and Stop can arrive during a
-  held configuration RPC. Both adapters now drain pre-dispatch events before
-  assigning Copilot ownership; v1 also rechecks Stop before writing a prompt.
-  Bounded fixtures verify resumed-running/idle transitions and zero prompts after
-  cancellation, along with malformed child IDs failing without a process trap.
-- The final full integration suite executed 844 Swift test declarations: 836
-  passed and eight optional installed-provider checks were skipped. The core
-  target reports 696 declarations including those skips (252.280 seconds); all
-  129 native view/store (48.588 seconds), six terminal and 13 Markdown tests passed.
-  The full run includes late configuration cancellation and both autonomous-wake
-  regressions. All 89 focused protocol/view/store/history tests also passed before
-  that final wake regression was added. Nineteen Python fixture/configuration
-  checks passed.
-- The actual installed Cursor CLI (`2026.10.19-6bbf2c4`) completed initialization,
-  session creation and model discovery; the independent metadata-only test passed
-  in 7.057 seconds. Its implementation-name field is optional and absent. A real
-  marker turn returned `Upgrade your plan to continue` instead of the marker:
-  successful model execution remains blocked by that provider plan, and no more
-  model calls were attempted after identifying it. Copilot is not installed here;
-  its evidence is protocol fixtures, not a live authenticated turn.
-- Native Cua inspection of the packaged application verified both setup sheets,
-  literal commands, existing-login guidance, experimental-v2 default off and
-  visible Save/Cancel controls. Both sheets were cancelled without saving. Eight
-  narrow/wide/light/dark component captures and geometry assertions verified
-  bounded scrolling/action placement; offscreen PNGs do not establish WindowServer
-  glass/vibrancy or a complete GUI interaction workflow.
-- Packaging, strict/deep signatures and native math resources passed. The existing
-  database was privately backed up before opening storage 25; SQLite integrity
-  passed and canonical workspace content stayed identical (three conversations,
-  25 messages). Staged/outgoing secret scans accompany the pushed implementation.
-  This does not complete native authentication, full vendor SDK/control/history
-  parity, installed Copilot verification or the full T3 Code port.
 - The preceding account commit `a3ad449` completed hosted run `39746111640`:
   production passed its 792-declaration test run plus packaging/resources. Native GUI execution
   ran all 14 scenarios with eight passes, six failures and zero skips in 1454.225
@@ -3294,9 +2509,7 @@ milestone does not establish full T3 parity.
   non-use, not independent reaping of every provider descendant.
 - Exact `fc869947` [run 39712233248](https://github.com/apoorvdarshan/coincide/actions/runs/39712233248)
   executed 491 production tests and failed two timing fixtures; its GUI job was
-  skipped. ACP recovery now waits for the exact completed run's provider release
-  and final checkpoint before shutdown, and checks the provider-start effect
-  rather than the earlier checkpoint effect. Organization replay waits for its
+  skipped. Organization replay waits for its
   exact final checkpoint before comparing projections. Automatic checkpoints,
   assertions and timeout budgets remain enabled.
 - The hosted gate now requires all nine real GUI workflows with zero failures
@@ -3522,7 +2735,7 @@ compare-and-swap history RPC, so another client can still race the final read.
   all. The late-acknowledgment protocol fixture also covers this ordering.
 - Seven focused Core test declarations cover these transitions, legacy recovery,
   journal reconstruction and invalid boundaries, including parameterized failure
-  and ACP activity cases. The existing real-engine FIFO test also verifies the
+  cases. The existing real-engine FIFO test also verifies the
   completed run settings, user references and rebuilt projection.
 - The workspace menu opens a read-only native Run History sheet. Three native
   cases check captured settings, mixed/unknown history, agent-managed model
@@ -3625,7 +2838,7 @@ compare-and-swap history RPC, so another client can still race the final read.
   compilation then succeeded in run `39703856781`. Its setup Store test failed
   because the default Codex executable was absent on the runner, so the Store
   rejected input before reaching the injected provider. A four-line fixture fix
-  at `d14b85a` saves/selects a synthetic ACP executable (`/usr/bin/true`); the
+  at `d14b85a` saves/selects a synthetic executable (`/usr/bin/true`); the
   injected peer still owns protocol behavior and all queue assertions remain.
   Seven focused native setup/settlement cases pass locally with that fixture.
   Hosted push run `39704717961` passes all 375 tests (142.235 seconds), packaging,
@@ -3814,7 +3027,7 @@ compare-and-swap history RPC, so another client can still race the final read.
 - Worktree choices now save an intent and target cwd before asynchronous local Git
   resolution. A second durable stage saves the immutable plan before Git mutation;
   readiness, the prepared target, and the first eligible FIFO provider effect commit
-  together. Queued turns preserve provider/model/permission/ACP/attachments. Retry
+  together. Queued turns preserve provider/model/permission/attachments. Retry
   changes only their cwd/native-session fields when assigning a fresh destination.
   Old provider session IDs cannot resume in the newly selected checkout.
 - Native choices cover a new branch with an explicit local base, an existing local
@@ -4038,7 +3251,7 @@ Full T3 Code parity remains incomplete; see `PORTING.md` for the remaining areas
 - The full suite passed 243 tests: 200 core, 4 terminal, 13 Markdown, and 26 native
   UI/store. Independent source review found no remaining blocker. Hosted run
   39689027117 exposed an installed-Codex assumption in the preceding grouping
-  fixture; that test now configures its injected ACP agent explicitly and passes
+  fixture; that test now configures its injected provider explicitly and passes
   locally without depending on a developer's installed Codex.
 - The third hosted GUI workflow now includes native whole-group rename, physical
   mode headers, removal-sheet paths, Cancel/draft retention, confirmed removal,
@@ -4383,58 +3596,6 @@ Clone/progress/retry, PR/stack/host integrations, checkpoints, worktree cleanup 
 setup, automatic-pull policies, and comprehensive network/credential recovery
 remain open Git parity work. No external repository was used by these fixtures.
 
-## 2026-10-22 — opt-in ACP v2 connections and foreground lifecycle
-
-- Added an opt-in native adapter for the current ACP v2 draft, using the same
-  [official schema baseline](https://github.com/agentclientprotocol/agent-client-protocol/blob/main/schema/v2/schema.json)
-  (`e47fe81d2db877fe182bdca2ce4ac52ffd62ec61`) inspected for transcript entities.
-  Initialization supplies v2 `info`/`capabilities` plus legacy fields for agents
-  choosing v1. A v1 result adopts the existing connection without another process
-  or handshake. The per-agent **Use ACP v2 (experimental)** switch defaults off.
-- Prompt responses associate the inserted native user ID with its client command;
-  they never imply completion. Foreground state updates control busy/action/idle
-  state independently of pending session-level permission requests. Native
-  agent-initiated work creates no synthetic user message. Early setup/resume
-  notifications are drained in order, and repeated idle snapshots do not complete
-  a new submission. Unknown idle outcomes end busy state but hold the queue.
-- Native select/boolean options use v2 `configId` and the schema's `id`/`boolean`
-  request value types. Each queued turn captures its own typed configuration.
-  Reset Agent Options clears overrides without changing saved invocations.
-  Native settings/store tests verify experimental-mode and boolean persistence.
-- Permission responses use a runtime-pinned outbox action, so a background request
-  can remain pending through another foreground turn. Resolving one of several
-  requests never infers that the agent has resumed; its state update is authoritative.
-  Rejected and unconfirmed user submissions retain visible error information and
-  are never automatically retried. Request cancellation before insertion uses
-  `$/cancel_request`; active work uses `session/cancel`. Unresponsive cancellation
-  stops only the owned process after the configured timeout.
-- The transport now retains JSON-RPC error code/data and can deliver a request's
-  outcome in order with notifications and disconnection. A regression confirms
-  acceptance is associated even when the peer immediately exits. Other tests cover
-  echo-before/after acceptance, idle-before-ack, repeated idle, pre-insertion hook
-  failure, lost acceptance response, concurrent/background permissions, autonomous
-  activity, resume while waiting for permission, cancellation before/after insertion,
-  unknown outcomes, queue configuration, and journal rebuild after restart.
-- Review found a startup Stop race: an early native running snapshot could make
-  Stop available while configuration was still waiting. The adapter now cancels
-  that unsent input and checks cancellation after setup/configuration. A gated
-  regression verifies the start effect becomes cancelled and the peer never receives
-  `session/prompt`, even after releasing its delayed configuration response.
-- The complete suite passed 107 tests (86 core, 4 terminal, 13 Markdown, 4 native
-  UI/store) with Codex/Claude discovery and image/file turns, OpenCode discovery
-  and a real marker turn, and the v2-negotiation marker turn enabled. Installed
-  OpenCode selected **v1**, and fallback completed a real turn. This is not live
-  v2-server validation; the v2 lifecycle cases use deterministic stdio peers.
-- Native packaging, launch, strict signature verification, and bundled-font runtime
-  verification passed. A private backup preceded storage migration 5 → 6; canonical
-  comparison excluding only new optional fields preserved all 3 existing
-  conversations and 25 messages. Physical interaction with the new settings and
-  state/error UI remains part of unlocked-desktop QA.
-
-The v2 protocol is still a draft. Older draft variants, live v2-provider checks,
-native authentication/elicitation, managed agents, session browsing/import/fork,
-live notices, richer media, and display-terminal UI remain open parity work.
-
 ## 2026-10-22 — durable provider transcript entities
 
 - Added native transcript entities keyed by session, type, and opaque ID. The
@@ -4447,12 +3608,7 @@ live notices, richer media, and display-terminal UI remain open parity work.
   [ACP v2 entity rules](https://agentclientprotocol.com/protocol/v2/prompt-lifecycle)
   and [tool/terminal updates](https://agentclientprotocol.com/protocol/v2/tool-calls).
   The inspected official schema's Git blob was
-  `e47fe81d2db877fe182bdca2ce4ac52ffd62ec61`. The v2 wire adapter is not implemented
-  yet; these tests do not establish v2 connection or foreground-lifecycle support.
-- ACP v1 tool updates now use these entities, preserving their input/output,
-  locations, status, and other metadata. The native disclosure shows the tool
-  title/status, input, output, files, and raw details. Its v1 adapter filters null
-  updates according to v1 semantics before applying the native patch.
+  `e47fe81d2db877fe182bdca2ce4ac52ffd62ec61`.
 - A gated protocol test waits for the engine to become idle before allowing the
   fixture to send background tool output. The update is saved without starting a
   new turn and survives journal rebuild. Restart/resume tests now verify three
@@ -4465,62 +3621,18 @@ live notices, richer media, and display-terminal UI remain open parity work.
 - Malformed entity updates fail their owning runtime while the workspace command
   engine remains usable. A regression sends another turn and completes it with a
   new provider connection after that failure.
-- `COINCIDE_LIVE_ACP=1 COINCIDE_LIVE_ACP_TURN=1 COINCIDE_ACP_TEST_MODEL=opencode/glm-5.3-flash-free swift test --no-parallel`
-  passed all 93 tests: 72 core, 4 terminal, 13 Markdown, and 4 native UI/store.
-  Installed OpenCode discovery and a generated-marker turn passed again.
 - Packaging, launch, strict signature verification, and bundled-font verification
   passed. A private SQLite backup preceded storage migration 4 → 5; canonical
   comparison excluding only the new optional entity field confirmed all 3 prior
   conversations and 25 messages were unchanged. Physical interaction with the new
   tool disclosures remains part of unlocked-desktop QA.
 
-## 2026-10-22 — native ACP v1 agents
+## 2026-10-22 — live Codex and Claude attachment turns
 
-- Added a native JSON-RPC 2.0 stdio adapter following the official
-  [initialization](https://agentclientprotocol.com/protocol/v1/initialization),
-  [prompt lifecycle](https://agentclientprotocol.com/protocol/v1/prompt-turn), and
-  [configuration](https://agentclientprotocol.com/protocol/v1/session-config-options)
-  contracts. No T3 server or JavaScript adapter is launched by Coincide.
-- Deterministic tests cover streaming, images, reasoning, tool updates, plans,
-  opaque permission options, model/mode changes through both legacy fields and
-  grouped config options, unsupported versions/images/resume, authentication
-  errors, concurrent discovery, and cancellation (including an agent that ignores
-  Stop). Client filesystem, terminal, authentication, and elicitation capabilities
-  are not advertised yet. Unknown configuration categories keep their select UI.
-- The native engine test confirms a start effect settles while a permission is
-  still waiting; two queued turns complete through exact permission responses.
-  After shutdown/reopen, the same native session loads and completes another turn
-  without duplicating its replayed history. Event barriers drain already-decoded
-  notifications and release their waiters on cancellation or connection close.
-- Native store tests cover saving, selecting, editing, removing, and reopening
-  agent configurations. Existing conversations retain their captured invocation.
-  Light/dark offscreen AppKit settings captures were inspected. Physical settings,
-  permission-button, and keyboard interaction still need unlocked-desktop QA.
-- Real installed OpenCode initialized, advertised models through config options,
-  and completed a generated-marker turn through the native engine using the
-  advertised `opencode/glm-5.3-flash-free` model. The agent's default
-  `opencode/flint-40b-free` failed after roughly 91 seconds with
-  `Endpoint is unavailable`; this service failure remains recorded. No sign-in,
-  provider installation, credential changes, or user files were needed.
 - A combined live-provider check also exercised Codex and Claude attachment turns.
   One Codex OCR response substituted an en dash for the image marker's hyphen.
   The fixture now uses letters and digits to avoid that visual ambiguity; its
   exact independent image/file-marker assertion remains unchanged.
-- The complete offline suite passed 84 tests: 63 core, 4 terminal, 13 Markdown,
-  and 4 native UI/store tests. A combined run enabling live Codex/Claude discovery,
-  both image/file cases, OpenCode discovery, and its native-engine turn also passed
-  all 84 tests. CI keeps live-provider checks opt-in. The preceding
-  transport fix passed [GitHub CI](https://github.com/apoorvdarshan/coincide/actions/runs/39667658837)
-  with every test retained and the original one-second deadline assertions.
-- Packaging, launch, strict signature verification, and bundled-font runtime
-  verification passed. A private SQLite backup preceded storage migration 3 → 4.
-  Canonical comparison excluding only new ACP fields confirmed all 3 existing
-  conversations and 25 prior messages were unchanged.
-
-ACP v2, registry/managed installs, native authentication and elicitation, delegated
-filesystem/terminal operations, richer content/config types, session browsing and
-import, and provider-specific features remain pending. These checks establish a
-working ACP v1 integration, not full ACP or T3 Code parity.
 
 ## 2026-10-22 — durable native attachments
 
@@ -4848,11 +3960,11 @@ on the oldest declared macOS version. CI results remain separate live evidence.
   reducer. Heavy task request/preparation payloads now use value-semantic heap
   storage with unchanged flat Codable, and completion steering calls the same
   guarded native helper directly. Existing steering cases verify the fix without
-  changing stack sizes, deadlines or assertions. The complete run exposed two
-  additional stack-pressure paths: isolated worktree admission and Pi history
-  preparation. New lineage/completion metadata is also heap-backed, and native
-  worktree/Pi preparation now use small dedicated reducers with independently
-  compared, unchanged validation and effect bodies.
+  changing stack sizes, deadlines or assertions. The complete run exposed an
+  additional stack-pressure path: isolated worktree admission. New
+  lineage/completion metadata is also heap-backed, and native worktree
+  preparation now uses a small dedicated reducer with independently compared,
+  unchanged validation and effect bodies.
 - Hosted run 39942092760 reached its 35-minute job limit after a 721.81-second
   cold compile and progressing tests; it produced no passing overall result or
   GUI artifact. Compilation now has a separate 35-minute job. Tests restore only
@@ -4867,8 +3979,7 @@ Final verification on the frozen Core and corrected App source:
   declarations (1,761 passed, 13 optional installed/live checks skipped) in
   550.585 seconds; 332 UI/store declarations in 79.976 seconds; 17 terminal
   declarations in 10.259 seconds; 13 Markdown declarations in 0.130 seconds.
-  This is 2,123 passed declarations plus 13 optional skips. The intact pinned
-  Pi 0.80.5 package acceptance remains enabled with its isolated synthetic stream.
+  This is 2,123 passed declarations plus 13 optional skips.
 - The complete run passed Core, terminal and Markdown. Its one UI failure exposed
   a recovery-inventory await after document publication, allowing fresh contents
   to appear before write readiness. FileBrowserStore now completes that I/O and
@@ -4878,8 +3989,7 @@ Final verification on the frozen Core and corrected App source:
   separate passing target runs, not a claim that the earlier aggregate exit was
   successful.
 - The final targeted stack regression passes 23 Core and four UI declarations,
-  including actual private-Git worktree/setup admission and forged Pi history
-  proof handling. UI recovery tests also cover both same-root and replaced-root
+  including actual private-Git worktree/setup admission. UI recovery tests also cover both same-root and replaced-root
   late save acknowledgements.
 - All 75 Python CI/launcher/crash-collector checks pass in 2.669 seconds. Changed
   private Python fixtures parse without writing bytecode; workflow YAML and the
@@ -4930,23 +4040,22 @@ hosts, hosted verification of this commit and full T3 Code parity remain pending
   metadata and imported native transcript content.
 - Final source compilation passes. The new checks cover 51 Core and 16
   native UI/store declarations; the repaired focus run passes 66 Core and 19
-  UI/store declarations, including existing Pi and attachment regressions. Initial test-only formatter and registered-path
+  UI/store declarations, including existing attachment regressions. Initial test-only formatter and registered-path
   fixtures were corrected, retaining their assertions and production guards.
   The final serial aggregate run exits zero: **2190 declarations pass and 13
   optional installed/live-provider declarations skip**, covering all 2203 listed
   declarations. Core covers 1825 in 523.480 seconds (1812 pass, 13 skip), native
   UI/store 348 in 79.464 seconds, Terminal 17 in 10.423 seconds, and Markdown 13
-  in 0.137 seconds. The full Pi package uses the existing pinned offline runtime;
-  no model service is contacted. This final run includes the previously crashing
-  Pi adoption/restart case and unchanged legacy attachment/removal assertions.
+  in 0.137 seconds. This final run includes unchanged legacy attachment/removal
+  assertions.
 - The first aggregate regression run exposed two App-only attachment-state/
-  removal regressions and a reproducible Pi native-history validation stack fault.
+  removal regressions and a reproducible native-history validation stack fault.
   Busy-state reporting is again separate from failed/unknown submission blocking;
   removed transient imports drain/dispose while global saved prompts and original
   receipts remain recoverable. Existing assertions and deadlines are preserved.
   Native journal validation now runs in a non-inlined 112-byte wrapper before
   entering the separate 5584-byte event-diff frame (formerly 5648 bytes allocated
-  during validation). The previously crashing exact Pi case and complete focused
+  during validation). The previously crashing case and complete focused
   history/Unicode/import checks pass. Hashing, stack limits and validations stay
   unchanged. The final aggregate run below is separate from that failed attempt.
 - All 75 Python support tests pass in 2.743 seconds; both new private Python peers
@@ -5077,7 +4186,7 @@ never executed tests or native UI shards.
 
 ### Provider usage and remote lifecycle controls (2026-10-23)
 
-This batch adds typed Claude/OpenCode usage retention and native/remote displays,
+This batch adds typed Claude usage retention and native/remote displays,
 plus capability-negotiated remote conversation lifecycle controls and automatic
 sweeps. Remote manual settlement currently exposes an explicit **without cleanup
 script** action; normal reviewed remote cleanup execution, stop and output remain
@@ -5093,7 +4202,7 @@ Local Apple Swift **6.4** (`swiftlang-6.4.0.34.1`) verification:
 - One serial `swift test --skip-build --no-parallel` selection passes **423
   declarations**: the complete **368-test CoincideUITests suite in 80.734 seconds**
   and **55 Core declarations in 3.193 seconds**, including parameterized cases.
-  The selection covers Claude/OpenCode usage ownership and normalization,
+  The selection covers Claude usage ownership and normalization,
   cumulative replacement, durable replay and proof invariance, context-profile
   handoff, large leased usage documents, remote native-helper lifecycle controls,
   lost-reply receipt recovery and stale roots/claims, negotiated auto-settlement,
@@ -5174,7 +4283,7 @@ changed or real SSH host modified. Remote setup/standalone scripts, persistent
 host behavior, native GUI interaction for this new workflow, installed-provider
 acceptance and broader T3 parity remain unfinished.
 
-### Hosted remote-script workflow and OpenCode uncertainty ordering (2026-10-23)
+### Hosted remote-script workflow (2026-10-23)
 
 The hosted native suite now has **28 workflows**, selected exactly once across
 four seven-test shards. The new workflow connects to the real bundled
@@ -5193,29 +4302,11 @@ The seed helper uses production JSON-RPC registration/worktree/draft operations,
 not direct native-plan or snapshot injection. It rejects aliased/symlinked paths
 and foreign helpers. No new local GUI execution was performed.
 
-Separately, [hosted run 39984676572](https://github.com/apoorvdarshan/coincide/actions/runs/39984676572)
-passed Swift 6.3.3 compilation but failed its complete test job: 2302 declarations
-completed with two issues in the ambiguous-root/dropped-no-root OpenCode v2
-uncertain-command case. Its native UI shards were skipped; the aggregate native
-UI failure is not evidence that a GUI scenario ran and failed. Safe retained
-local diagnostics reproduce both cases: usage was present, one queued input was
-held, no runtime remained and no engine error occurred, but the record ended as
-`startFailed` instead of `connectionLost`. The generic failed-send effect could
-overtake the native reader after its usage event and before closure committed.
-
-The provider-start catch now waits for that exact native OpenCode v2 reader only
-when the thrown error is typed `uncertainDelivery`, then rethrows the original
-error. Usage remains before closure; no successful dispatch, fallback or retry
-is fabricated. Regression assertions retain the original end-reason, FIFO,
-restart and no-fallback requirements and additionally require recorded usage.
-
 Verification:
 
-- `swift build --build-tests` passes. The exact two-case failure reproduces
-  before the correction (16.274 seconds) and passes after it (0.380 seconds).
+- `swift build --build-tests` passes.
 - Broader selected regression run passes **40 declarations**: 11 UI in
-  0.347 seconds and 29 Core in 4.077 seconds, including command HTTP ownership,
-  usage, restart, remote script helper and test-connection guards.
+  0.347 seconds and 29 Core in 4.077 seconds, including usage, restart, remote script helper and test-connection guards.
 - All **75 Python checks pass in 2.631 seconds**, including exact native
   discovery/count/shard validation. The native runner's final
   `--build-for-testing` succeeds with its new bundled seed resource, without
@@ -5232,9 +4323,8 @@ Verification:
   `224230E4-4489-3F17-B161-90A3B683E24E`, CoincideScriptHelper
   `93FFCE49-AECE-3D3D-A10C-9A1EA6BE1DF4`.
 
-Local logs use `/tmp/coincide-native-remote-script-ui-*-20261023.log` and
-`/tmp/coincide-opencode-ordering-*-20261023.log`. Run 39989401534 for the previous
-commit is still testing at this check and does not include the ordering fix.
+Local logs use `/tmp/coincide-native-remote-script-ui-*-20261023.log`. Run
+39989401534 for the previous commit is still testing at this check.
 The next exact-head CI must verify the full suite and the new 28th native
 interaction. No installed app was replaced/opened, real SSH host changed,
 vendor model request made or authentication migrated. Full T3 parity remains
@@ -5343,8 +4433,7 @@ Local verification on Apple Swift 6.4:
 
 Hosted run `39997298835` failed Swift 6.3 type-checking at the Mermaid sequence
 column-gap expression; this integration separates its explicitly typed CGFloat
-steps. Hosted `39993961762` verifies both OpenCode uncertain-loss modes, but its
-2323-declaration run has one offscreen script-view timeout (150.607 seconds under
+steps. Hosted `39993961762`'s 2323-declaration run has one offscreen script-view timeout (150.607 seconds under
 an unchanged 60-second limit). That declaration passes locally; bounded fixed
 phase/elapsed diagnostics now distinguish reads, hydration, each appearance's
 banner/sheet layout and shutdown in the next CI run without logging content,
@@ -5548,47 +4637,6 @@ URL-handler, install, shell-startup or power-assertion acceptance claim. No user
 credential, real SSH host, installed app or shell configuration was changed. Complete
 T3 parity, remaining transcript/project-script features and live/hosted acceptance remain
 unfinished. See [desktop behavior and limits](DESKTOP_SHELL.md).
-
-
-## 2026-10-24: Hosted protocol failures and status reconciliation
-
-Hosted Git-actions run `40010287048` compiled successfully and completed 2500 tests
-across eight suites in 1403.512 seconds with two issues: the Muse flood expectation
-and OpenCode v1 steering's status boundary. The remote 5001-line review-sheet test
-passed in 0.102 seconds. Native GUI shards were skipped after Core failures; their
-aggregate failure is not a GUI-test result.
-
-- Muse's old stimulus assumed 5000 ignored status notifications would overflow a
-  128-slot transport buffer. A consumer keeping up correctly avoids overflow, so
-  the expectation depended on scheduling. The fixture now acknowledges each of
-  64 valid pending approvals before emitting the 65th, deterministically reaching
-  the Session's explicit limit. Failure, exact 64 presentations, no fabricated
-  completion and no reuse remain asserted. The separate deliberately unopened
-  consumer test still proves actual transport-buffer overflow. Production Muse
-  behavior and all deadlines are unchanged.
-- A controlled OpenCode v1 held-busy-response regression failed before the fix in
-  5.045 seconds: a later native idle could be overwritten by an older status read.
-  Each owned run now versions idle/busy/retry observations. Stale reads cannot
-  retire newer idle evidence or finish work after newer activity; reconciliation
-  preserves current run/input/admission ownership. Held idle/busy/retry tests prove
-  one completion and two total prompts without replay. Early-idle fixtures omit a
-  later busy notification when their purpose is to require status reconciliation;
-  original assertions and deadlines remain.
-
-Final local verification: `swift build --build-tests` passes in 18.89 seconds;
-ABI coverage reports 1418 Mach-O objects, 1018 Core/459 App coverage counters,
-zero weak async-default records and six local records. The complete affected
-selection passes **137 Core declarations in 14.578 seconds** and **7 UI/store
- declarations in 2.784 seconds**. Build-only packaging, strict deep signatures and
-native math rendering pass. Compiled/package UUIDs match: Coincide
-`EB0CB1C9-D84A-33AD-B5E7-7E8084BA0894`, CoincideEnvironment
-`AE35FE90-82B2-31F6-A4B7-33A1DA7DD96D`, CoincideScriptHelper
-`F8192742-18E2-3948-94EC-C9132D3530C1`.
-
-Logs use `/tmp/coincide-protocol-ci-*-20261024.log`. Staged secret scanning passes.
-No live provider/model request or installed-app launch was performed. Hosted
-success for this follow-up and full native GUI/provider/T3 acceptance remain
-unproven; the overall app goal remains active.
 
 
 ## 2026-10-24: parallel Work starting checkpoint

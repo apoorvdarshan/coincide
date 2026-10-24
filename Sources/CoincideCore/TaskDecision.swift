@@ -53,8 +53,7 @@ extension WorkspaceDecision {
                       worktree.sourcePath.utf8.elementsEqual(proof.projectPath.utf8), worktree.expectedSourceIdentity == proof.projectIdentity else { throw DelegatedTaskError.invalidRequest }
                 try d.beginWorktreePreparation(threadID: child.id, request: worktree,
                     expectedSourcePath: child.workspacePath, previousAttemptID: nil, reviewSetup: true,
-                    claudeRuntimeConfiguration: try child.claudeRuntimeConfiguration?.replacingWorkspace(worktree.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(worktree.destinationPath, allowMissing: true)),
-                    piRuntimeConfiguration: try child.piConfiguration?.runtime?.replacingWorkspace(worktree.destinationPath, physicalPath: PiRuntimeConfiguration.physical(worktree.destinationPath, allowMissing: true)), now: now)
+                    claudeRuntimeConfiguration: try child.claudeRuntimeConfiguration?.replacingWorkspace(worktree.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(worktree.destinationPath, allowMissing: true)), now: now)
                 child = d.snapshot.threads.first { $0.id == child.id }!
             } else {
                 guard prepared.isolation == nil, request.isolation == .shared,

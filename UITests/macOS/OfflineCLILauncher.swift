@@ -3,7 +3,7 @@ import Foundation
 import MachO
 
 /// Test-only executable. Its immutable signed bytes stay in the test bundle;
-/// private codex/gh/claude/pi paths are symlinks, and per-test configuration is data.
+/// private codex/gh/claude paths are symlinks, and per-test configuration is data.
 @main struct OfflineCLILauncher {
     struct Descriptor: Decodable {
         let version: Int
@@ -18,8 +18,7 @@ import MachO
     static let peers: [String: Set<String>] = [
         "codex": ["codex_history_ui.py", "codex_steering_ui.py", "codex_models_ui.py"],
         "gh": ["github_pr_ui.py"],
-        "claude": ["claude_history_ui.py"],
-        "pi": ["pi_history_ui.py"]
+        "claude": ["claude_history_ui.py"]
     ]
     static func main() {
         do { try execute() }
@@ -34,8 +33,6 @@ import MachO
         let arguments = Array(CommandLine.arguments.dropFirst())
         let tool: String
         if arguments == ["app-server", "--stdio"] { tool = "codex" }
-        else if arguments == ["--version"], URL(fileURLWithPath: CommandLine.arguments[0]).lastPathComponent == "pi" { tool = "pi" }
-        else if validPiArguments(arguments) { tool = "pi" }
         else if validClaudeArguments(arguments) { tool = "claude" }
         else if let first = arguments.first, ["api", "pr", "--version"].contains(first) { tool = "gh" }
         else { throw InvalidFixture() }
@@ -88,12 +85,6 @@ import MachO
                       info.st_mode & 0o077 == 0 else { throw InvalidFixture() }
             }
         }
-        if tool == "pi" {
-            for (key, child) in [("HOME", "private-pi-home"), ("PI_CODING_AGENT_DIR", "private-pi-agent"),
-                                 ("PI_CODING_AGENT_SESSION_DIR", "private-pi-sessions")] {
-                guard let value = environment[key], privatePiDirectory(value, expected: rootPath + "/" + child) else { throw InvalidFixture() }
-            }
-        }
         let peer = resources.appendingPathComponent(descriptor.peer)
         _ = try regularData(peer.path, maximum: 1_048_576, privateFile: false)
         // No shell, search path, fork, or persistent launcher parent. Python
@@ -109,21 +100,6 @@ import MachO
     static let claudeArguments = ["--print", "--input-format", "stream-json", "--output-format", "stream-json",
         "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio",
         "--allow-dangerously-skip-permissions"]
-    static func validPiArguments(_ arguments: [String]) -> Bool {
-        guard Array(arguments.prefix(2)) == ["--mode", "rpc"] else { return false }
-        if arguments.count == 2 { return true }
-        guard arguments.count == 4, arguments[2] == "--extension", validAbsolutePath(arguments[3]) else { return false }
-        let path = URL(fileURLWithPath: arguments[3])
-        return path.lastPathComponent == "permission.ts" && path.deletingLastPathComponent().lastPathComponent.hasPrefix("coincide-pi-")
-    }
-    static func privatePiDirectory(_ value: String, expected: String) -> Bool {
-        func appleSpelling(_ path: String) -> String { path.hasPrefix("/private/var/") ? String(path.dropFirst(8)) : path }
-        guard validAbsolutePath(value), appleSpelling(value) == appleSpelling(expected) else { return false }
-        var supplied = stat(), bound = stat()
-        return lstat(value, &supplied) == 0 && stat(expected, &bound) == 0 &&
-            supplied.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR) && supplied.st_uid == getuid() && supplied.st_mode & 0o077 == 0 &&
-            supplied.st_dev == bound.st_dev && supplied.st_ino == bound.st_ino
-    }
     static func validClaudeArguments(_ arguments: [String]) -> Bool {
         guard Array(arguments.prefix(claudeArguments.count)) == claudeArguments else { return false }
         let suffix = Array(arguments.dropFirst(claudeArguments.count))

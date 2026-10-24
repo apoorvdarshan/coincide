@@ -10,14 +10,14 @@ private struct MCPAuthorityFixture {
     var target: CodingThread { snapshot.threads[1] }
     var context: AppMCPContext {
         let run = caller.activeRun!
-        return .init(scope: .init(sessionID: sessionID, threadID: caller.id, projectID: caller.projectID, provider: .pi,
+        return .init(scope: .init(sessionID: sessionID, threadID: caller.id, projectID: caller.projectID, provider: .codex,
             runtimeID: runtimeID, incarnation: incarnation, providerInstanceID: instanceID, workspacePath: caller.workspacePath,
             permission: run.configuration.permission, capabilities: [.orchestration, .worktree]), runID: run.id, configuration: run.configuration)
     }
     init(permission: PermissionMode = .supervised) throws {
         let project = WorkspaceProject(path: "/tmp/coincide-mcp-authority-fixture")
         var owner = CodingThread(project: project)
-        owner.provider = .pi; owner.piConfiguration = .init(instanceID: instanceID); owner.permission = permission; owner.checkpointPolicy = .disabled
+        owner.provider = .codex; owner.codexRuntimeConfiguration = .init(instanceID: instanceID); owner.permission = permission; owner.checkpointPolicy = .disabled
         var other = CodingThread(project: project); other.checkpointPolicy = .disabled
         snapshot.projects = [project]; snapshot.threads = [owner, other]
         snapshot = try WorkspaceDecision.make(.client(.submit(threadID: owner.id, text: "Owned native call")), id: UUID(), snapshot: snapshot, now: now).snapshot
@@ -42,7 +42,7 @@ private struct MCPAuthorityFixture {
     #expect(throws: AppMCPError.self) { _ = try AppMCPCommandAuthority(context: .init(scope: fixture.context.scope, runID: nil, configuration: fixture.context.configuration)) }
     var changed = fixture.context.configuration; changed.permission = .fullAccess
     #expect(throws: AppMCPError.self) { _ = try AppMCPCommandAuthority(context: .init(scope: fixture.context.scope, runID: fixture.context.runID, configuration: changed)) }
-    changed = fixture.context.configuration; changed.piConfiguration = .init(instanceID: UUID())
+    changed = fixture.context.configuration; changed.codexRuntimeConfiguration = .init(instanceID: UUID())
     #expect(throws: AppMCPError.self) { _ = try AppMCPCommandAuthority(context: .init(scope: fixture.context.scope, runID: fixture.context.runID, configuration: changed)) }
 }
 
@@ -58,7 +58,7 @@ func appMCPAuthorityRejectsStaleCallerAtSnapshotCommitBoundary(fault: String) th
     case "project": fixture.snapshot.threads[0].projectID = UUID()
     case "run": fixture.snapshot.threads[0].activeRun!.id = UUID()
     case "stopped": fixture.snapshot.threads[0].activeRun!.stopRequested = true
-    case "instance": fixture.snapshot.threads[0].activeRun!.configuration.piConfiguration = .init(instanceID: UUID())
+    case "instance": fixture.snapshot.threads[0].activeRun!.configuration.codexRuntimeConfiguration = .init(instanceID: UUID())
     case "capturedPermission": fixture.snapshot.threads[0].activeRun!.configuration.permission = .fullAccess
     default: break
     }
@@ -82,7 +82,7 @@ func appMCPAuthorityRejectsStaleCallerAtSnapshotCommitBoundary(fault: String) th
         try AppMCPAdmission.validate(authority: restricted, snapshot: raised.snapshot, commands: [.client(.editThread(raised.target.id, .title("Cannot borrow a later raise")))])
     }
     raised.snapshot.threads[1].permission = .supervised
-    raised.snapshot.threads[0].piConfiguration = raised.caller.piConfiguration?.selecting(thinkingLevel: "high")
+    raised.snapshot.threads[0].reasoningEffort = "high"
     raised.snapshot.threads[0].agentModeID = "future-model-choice"
     try AppMCPAdmission.validate(authority: restricted, snapshot: raised.snapshot, commands: [.client(.editThread(raised.target.id, .title("Allowed with original ceiling")))])
     var lowered = try MCPAuthorityFixture(permission: .fullAccess)

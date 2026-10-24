@@ -118,10 +118,10 @@ func transcriptPlanOriginalCommandReceiptSurvivesRestartWithoutResubmittingAnAcc
     } catch { await engine.shutdown(); throw error }
 }
 
-@Test func transcriptPlanImplementationRefusesUnmarkedLegacyACPOutputAndAmbiguousSourceIDs() {
+@Test func transcriptPlanImplementationRefusesUnmarkedLegacyOutputAndAmbiguousSourceIDs() {
     var f = TranscriptPlanFixture()
     var legacy = f.message; legacy.providerEntity = nil
-    f.snapshot.threads[0].provider = .acp
+    f.snapshot.threads[0].provider = .codex
     f.snapshot.threads[0].messages = [legacy]
     let legacyRequest = TranscriptPlanImplementation(thread: f.snapshot.threads[0], message: legacy)
     #expect(throws: WorkspaceCommandError.self) { _ = try legacyRequest.command(in: f.snapshot) }

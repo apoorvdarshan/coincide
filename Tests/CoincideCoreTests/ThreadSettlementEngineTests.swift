@@ -169,7 +169,6 @@ private actor SettlementProviderPeer: ProviderSession {
     func interrupt() { if let runID { sink.yield(.context(runID: runID, event: .completed(.interrupted))) } }
     func respond(_ request: ApprovalRequest, allow: Bool) { }
     func answer(_ request: ApprovalRequest, answers: [String: String]) { }
-    func ask(_ request: ApprovalRequest) { sink.yield(.sessionApproval(request)) }
     func holdClosure() { holdClose = true }
     func releaseClosure() { closeGate.finish(.success(())) }
     func close() async {

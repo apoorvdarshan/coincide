@@ -81,7 +81,6 @@ extension WorkspaceDecision {
             operation.scratchFork = grant.holding(held.acknowledgment)
             operation.phase = .unconfirmed; operation.result = nil
             operation.error = ConversationHistoryOperation.unconfirmedMessage; operation.updatedAt = now
-            operation.piControls = nil
             try operation.validate()
             snapshot.conversationHistoryOperations?[index] = operation
         } catch {

@@ -7,7 +7,6 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case projectUpserted(WorkspaceProject)
     case projectRemoved(UUID)
     case projectsOrdered([UUID])
-    case acpAgentsReplaced([ACPAgentConfiguration])
     case sidebarPreferencesChanged(SidebarPreferences?)
     case conversationHistoryOperationsReplaced([ConversationHistoryOperation]?)
     case pullRequestCreationsReplaced([PullRequestCreationOperation]?)
@@ -46,7 +45,6 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .promptSteeringsReplaced(let operations): snapshot.promptSteerings = operations
         case .checkpointRestoreOperationsReplaced(let operations): snapshot.checkpointRestoreOperations = operations
         case .sidebarPreferencesChanged(let preferences): snapshot.sidebarPreferences = preferences
-        case .acpAgentsReplaced(let agents): snapshot.acpAgents = agents
         case .imported(let value): try WorkspaceJournal.validate(value); snapshot = value
         case .projectUpserted(let project):
             if let i = snapshot.projects.firstIndex(where: { $0.id == project.id }) { snapshot.projects[i] = project }
@@ -183,15 +181,11 @@ public enum WorkspaceJournal {
                 }
             }
             guard snapshot.workspaceReady(for: thread) || !thread.isBusy else { throw CoincideError("A conversation cannot run before its repository is ready.") }
-            if let agent = thread.acpAgent { try agent.validate() }
-            if thread.provider == .acp, thread.acpAgent == nil { throw CoincideError("This conversation has no ACP agent configuration.") }
             try AttachmentLimits.validate(thread.draftAttachments)
             for queued in thread.queuedTurns { try AttachmentLimits.validate(queued.attachments ?? []); try CodexReasoningValidation.configuration(queued.configuration) }
             for message in thread.messages { try AttachmentLimits.validate(message.attachments ?? []) }
         }
         guard checkpointIDs.isDisjoint(with: preparationIDs), checkpointIDs.isDisjoint(with: scriptIDs) else { throw CoincideError("Run checkpoint ownership overlaps another operation.") }
-        guard Set(snapshot.acpAgents.map(\.id)).count == snapshot.acpAgents.count else { throw CoincideError("Agent configurations must have unique identities.") }
-        for agent in snapshot.acpAgents { try agent.validate() }
         try snapshot.sidebarPreferences?.validate(projectIDs: projects)
         let preferences = snapshot.effectiveSidebarPreferences, groups = snapshot.projectGroups
         guard Set(preferences.threadOrder).isSubset(of: threads) else { throw CoincideError("Custom chat order references a conversation that no longer exists.") }
@@ -240,7 +234,6 @@ public enum WorkspaceJournal {
         if previous.promptSteerings != next.promptSteerings { events.append(.promptSteeringsReplaced(next.promptSteerings)) }
         if previous.checkpointRestoreOperations != next.checkpointRestoreOperations { events.append(.checkpointRestoreOperationsReplaced(next.checkpointRestoreOperations)) }
         if previous.sidebarPreferences != next.sidebarPreferences { events.append(.sidebarPreferencesChanged(next.sidebarPreferences)) }
-        if previous.acpAgents != next.acpAgents { events.append(.acpAgentsReplaced(next.acpAgents)) }
         let oldProjects = Dictionary(uniqueKeysWithValues: previous.projects.map { ($0.id, $0) })
         let newProjects = Set(next.projects.map(\.id))
         for project in previous.projects where !newProjects.contains(project.id) { events.append(.projectRemoved(project.id)) }

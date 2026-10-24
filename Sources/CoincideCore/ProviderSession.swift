@@ -1,12 +1,11 @@
 import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case codex, claude, opencode, pi, muse, antigravity, acp
-    public static var builtIn: [Self] { [.codex, .claude] }
-    public var isSupported: Bool { self == .codex || self == .claude }
+    case codex, claude
+    public static var builtIn: [Self] { allCases }
     public var id: String { rawValue }
-    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude"; case .opencode: "OpenCode"; case .pi: "Pi"; case .muse: "Muse"; case .antigravity: "Antigravity"; case .acp: "ACP Agent" } }
-    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude"; case .opencode: "opencode"; case .pi: "pi"; case .muse: "muse"; case .antigravity: "agy_acp_server.par"; case .acp: "" } }
+    public var name: String { switch self { case .codex: "Codex"; case .claude: "Claude" } }
+    public var executable: String { switch self { case .codex: "codex"; case .claude: "claude" } }
 }
 
 /// Ephemeral app-tool authority. Only a private provider handoff may expose
@@ -73,15 +72,8 @@ public enum ProviderEvent: Codable, Sendable, Equatable {
     indirect case usage(ProviderUsageUpdate)
     case entity(ProviderEntityUpdate)
     case runEntity(runID: UUID, update: ProviderEntityUpdate)
-    case associateEntity(ProviderEntityKey, clientMessageID: String)
-    case activity(ProviderActivity)
-    case sessionApproval(ApprovalRequest)
-    case sessionApprovalDismissed(JSONValue)
-    case submissionFailed(clientMessageID: String, reason: String)
     case steeringCapabilitiesChanged
     case claudeHistoryEvidence(ClaudeRunHistoryEvidence)
-    case piHistoryEvidence(PiRunHistoryEvidence)
-    case piHistoryBarrier(UUID)
     indirect case context(runID: UUID, event: ProviderEvent)
 }
 
@@ -92,28 +84,12 @@ public protocol ProviderSession: Actor {
     func models() async throws -> [ProviderModel]
     func codexSkills(forceReload: Bool) async throws -> ProviderSkillInventory
     func providerCommands(forceReload: Bool) async throws -> ProviderCommandInventory
-    func openCodeInventory() async throws -> OpenCodeMetadataSnapshot
     func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection
     func codexAccountSnapshot() async throws -> CodexAccountSnapshot
-    func acpConnectionInfo() async throws -> ACPConnectionInfo
     func compactContext(thread: CodingThread, operationID: UUID) async throws -> ProviderContextCompactionReceipt
     func send(text: String, thread: CodingThread) async throws
     func send(input: ProviderInput, thread: CodingThread) async throws
     func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition
-    /// Captures an owned native baseline without sending input. The caller must
-    /// persist this preparation before admitting its exact one-use prompt.
-    func preparePiRun(input: ProviderInput, thread: CodingThread) async throws -> PiRunHistoryPreparation
-    func sendPreparedPi(input: ProviderInput, thread: CodingThread, preparation: PiRunHistoryPreparation) async throws
-    func preparePiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String) async throws -> PiSteeringHistoryPreparation
-    func sendPreparedPiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String, preparation: PiSteeringHistoryPreparation) async throws -> ProviderSteeringReceipt
-    func cancelPiSteeringPreparation(_ preparation: PiSteeringHistoryPreparation) async
-    func piHistorySnapshot(threadID: String) async throws -> PiHistorySnapshot
-    func applyPiHistory(review: PiHistoryReviewEvidence, configuration: ProviderConfiguration, operationID: UUID,
-        candidate: @escaping @Sendable (PiHistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot
-    func inspectPiHistoryCandidate(review: PiHistoryReviewEvidence, candidate: PiHistoryCandidate,
-        configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
-    func inspectPiHistoryOriginal(expected: PiHistorySnapshot) async throws -> PiHistorySnapshot
-    func piHistoryEventBarrier(_ id: UUID) async throws
     func interrupt() async throws
     func interrupt(expectedRunID: UUID) async throws
     func steeringCapabilities() async -> ProviderSteeringCapabilities
@@ -126,15 +102,6 @@ public protocol ProviderSession: Actor {
     func choose(_ request: ApprovalRequest, optionID: String) async throws
     func close() async
     func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities
-    func openCodeV1HistorySnapshot(threadID: String) async throws -> OpenCodeV1HistorySnapshot
-    func applyOpenCodeV1History(review: OpenCodeV1HistoryReviewEvidence, kind: ConversationHistoryKind,
-        configuration: ProviderConfiguration,
-        candidate: @escaping @Sendable (OpenCodeV1HistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot
-    func inspectOpenCodeV1HistoryCandidate(review: OpenCodeV1HistoryReviewEvidence, candidate: OpenCodeV1HistoryCandidate,
-        configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
-    func openCodeV2HistorySnapshot(threadID: String) async throws -> OpenCodeV2HistorySnapshot
-    func applyOpenCodeV2History(review: OpenCodeV2HistoryReviewEvidence, kind: ConversationHistoryKind, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
-    func clearOpenCodeV2HistoryStage(expected: OpenCodeV2HistorySnapshot) async throws -> OpenCodeV2HistorySnapshot
     func conversationSnapshot(threadID: String) async throws -> ProviderConversationSnapshot
     func historyPage(threadID: String, cursor: String?, limit: Int) async throws -> ProviderHistoryPage
     func forkConversation(source: ProviderConversationReference, boundary: ProviderHistoryBoundary, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot
@@ -146,26 +113,6 @@ extension ProviderSession {
     public func contextInputDisposition(input: ProviderInput, thread: CodingThread) async throws -> ProviderContextInputDisposition { .ordinary }
     public nonisolated var supportsAppMCP: Bool { false }
     public func configureAppMCP(_ connection: AppMCPConnection) async throws { throw MCPError(.unavailable) }
-    public func preparePiRun(input: ProviderInput, thread: CodingThread) async throws -> PiRunHistoryPreparation {
-        throw ProviderHistoryError(.unsupported)
-    }
-    public func sendPreparedPi(input: ProviderInput, thread: CodingThread, preparation: PiRunHistoryPreparation) async throws {
-        throw ProviderHistoryError(.unsupported)
-    }
-    public func preparePiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String) async throws -> PiSteeringHistoryPreparation {
-        throw ProviderSteeringError(.unsupported)
-    }
-    public func sendPreparedPiSteering(input: ProviderInput, thread: CodingThread, target: ProviderSteeringTarget, clientMessageID: String, preparation: PiSteeringHistoryPreparation) async throws -> ProviderSteeringReceipt {
-        throw ProviderSteeringError(.unsupported)
-    }
-    public func cancelPiSteeringPreparation(_ preparation: PiSteeringHistoryPreparation) async {}
-    public func piHistorySnapshot(threadID: String) async throws -> PiHistorySnapshot { throw ProviderHistoryError(.unsupported) }
-    public func applyPiHistory(review: PiHistoryReviewEvidence, configuration: ProviderConfiguration, operationID: UUID,
-        candidate: @escaping @Sendable (PiHistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
-    public func inspectPiHistoryCandidate(review: PiHistoryReviewEvidence, candidate: PiHistoryCandidate,
-        configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
-    public func inspectPiHistoryOriginal(expected: PiHistorySnapshot) async throws -> PiHistorySnapshot { throw ProviderHistoryError(.unsupported) }
-    public func piHistoryEventBarrier(_ id: UUID) async throws { throw ProviderHistoryError(.unsupported) }
     public func codexSkills(forceReload: Bool = false) async throws -> ProviderSkillInventory {
         throw ProviderSkillError(.unsupported)
     }
@@ -175,12 +122,6 @@ extension ProviderSession {
     /// The default retains older adapters' behavior. Adapters with weak native
     /// turn identities can additionally fence interruption by the local run.
     public func interrupt(expectedRunID: UUID) async throws { try await interrupt() }
-    public func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
-        throw CoincideError("This provider does not expose a native OpenCode catalog.")
-    }
-    public func acpConnectionInfo() async throws -> ACPConnectionInfo {
-        throw CoincideError("This provider does not expose an ACP connection.")
-    }
     public func selectAnswers(_ request: ApprovalRequest, selections: [String: [String]]) async throws {
         throw CoincideError("This provider does not expose selectable question answers.")
     }
@@ -201,15 +142,6 @@ extension ProviderSession {
     }
     public func steer(input: ProviderInput, thread: CodingThread, expectedTurnID: String, clientMessageID: String) async throws -> ProviderSteeringReceipt { throw ProviderSteeringError(.unsupported) }
     public func historyCapabilities(threadID: String) async throws -> ProviderHistoryCapabilities { throw ProviderHistoryError(.unsupported) }
-    public func openCodeV1HistorySnapshot(threadID: String) async throws -> OpenCodeV1HistorySnapshot { throw ProviderHistoryError(.unsupported) }
-    public func applyOpenCodeV1History(review: OpenCodeV1HistoryReviewEvidence, kind: ConversationHistoryKind,
-        configuration: ProviderConfiguration,
-        candidate: @escaping @Sendable (OpenCodeV1HistoryCandidate) async throws -> Void) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
-    public func inspectOpenCodeV1HistoryCandidate(review: OpenCodeV1HistoryReviewEvidence, candidate: OpenCodeV1HistoryCandidate,
-        configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
-    public func openCodeV2HistorySnapshot(threadID: String) async throws -> OpenCodeV2HistorySnapshot { throw ProviderHistoryError(.unsupported) }
-    public func applyOpenCodeV2History(review: OpenCodeV2HistoryReviewEvidence, kind: ConversationHistoryKind, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
-    public func clearOpenCodeV2HistoryStage(expected: OpenCodeV2HistorySnapshot) async throws -> OpenCodeV2HistorySnapshot { throw ProviderHistoryError(.unsupported) }
     public func conversationSnapshot(threadID: String) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
     public func historyPage(threadID: String, cursor: String? = nil, limit: Int = 100) async throws -> ProviderHistoryPage { throw ProviderHistoryError(.unsupported) }
     public func forkConversation(source: ProviderConversationReference, boundary: ProviderHistoryBoundary, configuration: ProviderConfiguration) async throws -> ProviderConversationSnapshot { throw ProviderHistoryError(.unsupported) }
@@ -224,12 +156,9 @@ extension ProviderSession {
 }
 
 public enum ProviderSessions {
-    public static func make(for thread: CodingThread, antigravityStateRoot: URL? = nil,
-                            antigravityInstallation: AntigravityInstallation = .shared,
-                            antigravityAccountRoot: URL? = nil,
+    public static func make(for thread: CodingThread,
                             codexInstallation: CodexInstallation = .shared,
                             codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared) throws -> any ProviderSession {
-        guard thread.provider.isSupported else { throw CoincideError("Coincide supports Codex and Claude only.") }
         if thread.provider == .codex {
             try CodexRuntimeConfigurationValidation.configuration(.init(thread: thread))
             let configuration = thread.codexRuntimeConfiguration ?? .init()
@@ -261,11 +190,6 @@ public enum ProviderSessions {
         case .codex: throw CodexRuntimeConfiguration.invalid()
         case .claude: return try ClaudeSession(executable: executable, cwd: cwd, resumeID: thread.providerThreadID,
             modelOptions: try ClaudeModelControl.options(in: thread.activeRun?.configuration ?? .init(thread: thread)))
-        case .opencode: throw OpenCodeConfiguration.invalid()
-        case .pi: throw PiConfiguration.invalid()
-        case .muse: throw MuseConfiguration.invalid()
-        case .antigravity: throw AntigravityConfiguration.invalid()
-        case .acp: throw CoincideError("Choose an ACP agent.")
         }
     }
 }

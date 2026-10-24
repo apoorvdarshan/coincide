@@ -129,7 +129,6 @@ private actor RunCheckpointProviderPeer: ProviderSession {
     func finish(_ state: ThreadState = .idle) {
         if let currentRun { sink.yield(.context(runID: currentRun, event: .completed(state))) }
     }
-    func activity(_ value: ProviderActivity) { sink.yield(.activity(value)) }
     func interrupt() { interrupts += 1; finish(.interrupted) }
     func respond(_ request: ApprovalRequest, allow: Bool) { }
     func answer(_ request: ApprovalRequest, answers: [String: String]) { }
@@ -468,28 +467,6 @@ func runCheckpointCleanupWarningKeepsSavedEvidenceReadyAndDoesNotBlockTheProvide
     var recordJSON = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
     recordJSON.removeValue(forKey: "checkpoints")
     #expect(try JSONDecoder().decode(ThreadRunRecord.self, from: JSONSerialization.data(withJSONObject: recordJSON)).checkpoints == nil)
-}
-
-@Test(.timeLimit(.minutes(1)))
-func runCheckpointAgentInitiatedWorkRecordsUnavailableBaselineAndCapturesItsObservedEnd() async throws {
-    try await withRunCheckpoint { f in
-        let first = try await f.start(), provider = try f.provider()
-        await provider.finish(); try await f.complete(.postRun, runID: first.id)
-        let preparedBefore = f.harness.checkpointAttempts().reduce(0) { $0 + $1.prepares }, agentID = UUID()
-        await provider.activity(.init(id: agentID, state: .running, finishesRun: false))
-        try await waitRunCheckpoint { await f.peekRecord()?.id == agentID }
-        let agent = try await f.record(agentID)
-        #expect(agent.origin == .agent && agent.userMessageID == nil)
-        #expect(agent.checkpoints?.baseline.phase == .unavailable)
-        #expect(agent.checkpoints?.baseline.unavailableReason == .agentInitiated)
-        #expect(agent.checkpoints?.providerReleased == true && agent.checkpoints?.pendingStart == nil)
-        #expect(f.harness.checkpointAttempts().reduce(0) { $0 + $1.prepares } == preparedBefore)
-        await provider.activity(.init(id: agentID, state: .idle, stopReason: .string("end_turn")))
-        try await f.complete(.postRun, runID: agentID)
-        #expect(try await f.record(agentID).status == .completed)
-        #expect(try await f.checkpoint(.postRun, runID: agentID).receipt != nil)
-        #expect(await f.harness.sent(f.thread.id).count == 1)
-    }
 }
 
 @Test(.timeLimit(.minutes(1)), arguments: [ThreadState.interrupted, .failed])

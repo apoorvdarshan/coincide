@@ -267,8 +267,7 @@ func conversationHistoryRewindRemovesHiddenUserActivityFromProjectSortAndKeepsQu
 func conversationHistoryRemovedAuditCannotBeReplacedAppendedOrReassociatedByNewRunEvents() throws {
     var fixture = ConversationHistoryFixture()
     func entityUpdate(_ type: String, id: String, text: String) throws -> ProviderEntityUpdate {
-        try .acp(.object(["sessionUpdate": .string(type), "messageId": .string(id),
-            "content": .array([.object(["type": .string("text"), "text": .string(text)])])]), sessionID: "native-source")
+        .patch(.init(sessionID: "native-source", type: type, id: id), .object(["content": .string(text)]))
     }
     let oldReply = try entityUpdate("agent_message", id: "removed-provider-reply", text: "Reply 2")
     let oldUser = try entityUpdate("user_message", id: "removed-provider-user", text: "Prompt 2")
@@ -278,20 +277,17 @@ func conversationHistoryRemovedAuditCannotBeReplacedAppendedOrReassociatedByNewR
     try fixture.accept(review); try fixture.dispatch(review); try fixture.confirm(review)
     let removedMessages = fixture.thread.messages.filter { $0.removedByHistoryOperationID != nil }
     let removedRuns = fixture.thread.runHistory!.filter { $0.removedByHistoryOperationID != nil }
-    let removedReplyID = fixture.thread.messages[3].id, removedUserID = fixture.thread.messages[2].id
+    let removedReplyID = fixture.thread.messages[3].id
     let runID = UUID(), runtimeID = UUID()
     try fixture.command(.client(.submit(threadID: fixture.threadID, text: "Active post-rewind turn")), id: runID)
     try fixture.command(.runtimeOpened(threadID: fixture.threadID, runID: runID, runtimeID: runtimeID))
-    let currentUserID = try #require(fixture.thread.runHistory?.last?.userMessageID)
     let activeEcho = try entityUpdate("user_message", id: "active-provider-echo", text: "Active echo")
     try fixture.command(.provider(threadID: fixture.threadID, runtimeID: runtimeID,
         event: .context(runID: runID, event: .entity(activeEcho))))
     let staleReplacement = ChatMessage(id: removedReplyID, role: .assistant, text: "Stale replacement")
     let staleEvents: [ProviderEvent] = [
         .message(staleReplacement), .delta(id: removedReplyID, role: .assistant, text: " stale append"),
-        .entity(try entityUpdate("agent_message", id: "removed-provider-reply", text: "Stale entity replacement")),
-        .associateEntity(activeEcho.key, clientMessageID: removedUserID),
-        .associateEntity(oldUser.key, clientMessageID: currentUserID)
+        .entity(try entityUpdate("agent_message", id: "removed-provider-reply", text: "Stale entity replacement"))
     ]
     for event in staleEvents {
         try fixture.command(.provider(threadID: fixture.threadID, runtimeID: runtimeID, event: .context(runID: runID, event: event)))

@@ -182,7 +182,7 @@ private func organizationOrder(_ snapshot: WorkspaceSnapshot, mode: ProjectSortM
     ]
     let snapshot = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONSerialization.data(withJSONObject: legacy))
     #expect(snapshot.projects.count == 1 && snapshot.projects[0].createdAt == nil && snapshot.projects[0].updatedAt == nil)
-    #expect(snapshot.sidebarPreferences == nil && snapshot.acpAgents.isEmpty)
+    #expect(snapshot.sidebarPreferences == nil)
     #expect(snapshot.effectiveSidebarPreferences == SidebarPreferences())
     #expect(snapshot.isProjectExpanded(id) && snapshot.orderedProjects.map(\.id) == [id])
     let encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])

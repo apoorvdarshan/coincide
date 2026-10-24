@@ -12,7 +12,7 @@ public enum ProviderSteeringTarget: Codable, Sendable, Equatable {
         guard (try? validate()) != nil else { return false }
         switch self {
         case .nativeTurn(let id): return run.nativeTurnID == id
-        case .adapterRun(let id): return run.id == id && run.nativeTurnID == nil && run.configuration.provider == .pi
+        case .adapterRun: return false // Only removed adapter providers owned runs without native turns.
         }
     }
 }

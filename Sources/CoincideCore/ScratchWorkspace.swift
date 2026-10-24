@@ -170,7 +170,6 @@ public struct ScratchThreadCreation: Codable, Sendable, Equatable {
               !thread.isBusy, !thread.isArchived, thread.runtimeID == nil, thread.runtimeRequests.isEmpty,
               thread.contextTransferLineage == nil, thread.contextProviderBindings == nil,
               thread.claudeResumeSelection == nil, thread.claudeResumeConsumerRunID == nil, thread.claudeInheritedHead == nil,
-              thread.piFreshSessionIntent == nil, thread.piFreshConsumerRunID == nil,
               thread.forkedFromHistoryOperationID == nil, thread.pullRequestCheckoutOperationID == nil,
               thread.providerMetadata == nil, thread.providerActivity == nil,
               thread.delegatedTaskLineage == nil, thread.settlement == nil, thread.draftWorkspaceIntent == nil,
@@ -180,8 +179,7 @@ public struct ScratchThreadCreation: Codable, Sendable, Equatable {
         for edit in modelEdits {
             switch edit {
             case .codexModel, .codexReasoning, .codexDefaultModel, .codexServiceTier,
-                 .claudeModel, .claudeModelOptions, .openCodeModel, .openCodeVariant,
-                 .piModel, .piThinking, .museModel, .museReasoning: break
+                 .claudeModel, .claudeModelOptions: break
             default: throw ScratchWorkspaceError("A scratch launch can capture model choices, not arbitrary workspace or runtime edits.")
             }
         }

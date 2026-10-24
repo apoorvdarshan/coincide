@@ -120,7 +120,7 @@ class NativeUIConfigurationTests(unittest.TestCase):
         workflow = (root / ".github/workflows/swift.yml").read_text()
         shard = workflow.split("  native-ui-shard:\n", 1)[1].split("  native-ui:\n", 1)[0]
         gate = workflow.split("  native-ui:\n", 1)[1]
-        self.assertIn("needs: [test, changes]", shard)
+        self.assertIn("needs: [build, changes]", shard)
         self.assertIn("fail-fast: false", shard)
         self.assertIn("shard: [0, 1, 2, 3]", shard)
         self.assertIn('--shard-index "${{ matrix.shard }}" --shard-count 4', shard)
@@ -136,28 +136,6 @@ class NativeUIConfigurationTests(unittest.TestCase):
         self.assertIn('"${TEST_SELECTION[@]}"', runner)
         self.assertIn("get test-results tests", runner)
         self.assertIn('--manifest "$ARTIFACTS/selection.json"', runner)
-    def test_isolated_crash_probe_cannot_replace_full_coverage_or_hide_its_failure(self):
-        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
-        isolation = workflow.split("      - name: Isolate the Codex executable inspection crash", 1)[1].split("      - name: Build and test", 1)[0]
-        complete = workflow.split("      - name: Build and test", 1)[1].split("      - name: Collect sanitized", 1)[0]
-        direct = workflow.split("      - name: Inspect the Codex executable directly", 1)[1].split("      - name: Isolate", 1)[0]
-        self.assertIn("continue-on-error: true", direct)
-        self.assertIn("shell: bash", direct)
-        self.assertIn("--filter codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstallationClosure", direct)
-        self.assertIn("Test run with 1 tests? in ", direct)
-        self.assertIn("continue-on-error: true", isolation)
-        self.assertIn("shell: bash", isolation)
-        self.assertIn("--filter codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp", isolation)
-        self.assertIn("Test run with 1 tests? in ", isolation)
-        self.assertIn("swift test --skip-build --no-parallel\n", complete)
-        self.assertIn("swift test --skip-build --no-parallel --filter", direct)
-        self.assertIn("swift test --skip-build --no-parallel --filter", isolation)
-        self.assertNotIn("--filter", complete)
-        self.assertNotIn("continue-on-error", complete)
-        enforced = workflow.split("      - name: Enforce the isolated Codex inspection result", 1)[1].split("      - name: Package", 1)[0]
-        self.assertIn("if: always() && (steps.codex_inspection.outcome == 'failure' || steps.codex_direct_inspection.outcome == 'failure')", enforced)
-        self.assertIn("exit 1", enforced)
-
     def test_swift_compile_and_execution_use_the_same_exact_built_cache_and_toolchain(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
         build = workflow.split("  build:\n", 1)[1].split("  test:\n", 1)[0]
@@ -179,9 +157,16 @@ class NativeUIConfigurationTests(unittest.TestCase):
         self.assertNotIn("restore-keys:", tests)
         self.assertIn('cmp .build/coincide-swift-toolchain.txt "$RUNNER_TEMP/coincide-swift-toolchain-current.txt"', tests)
         self.assertLess(tests.index("cmp .build/coincide-swift-toolchain.txt"), tests.index("swift test --skip-build"))
-        self.assertEqual(tests.count("swift test --skip-build --no-parallel"), 3)
+        # One complete, unfiltered run; no probe can replace or duplicate it.
+        self.assertEqual(tests.count("swift test --skip-build --no-parallel"), 1)
+        self.assertIn("swift test --skip-build --no-parallel\n", tests)
+        self.assertNotIn("--filter", tests)
+        self.assertNotIn("continue-on-error: true\n        run: |\n          swift test", tests)
         self.assertNotIn("swift test --no-parallel", tests)
-        self.assertIn("Package the native app", tests)
+        # The app is packaged once with the build so desktop UI shards need not wait for tests.
+        self.assertIn("Package the native app", build)
+        self.assertNotIn("Package the native app", tests)
+        self.assertIn("coincide-native-app-${{ github.sha }}", build)
         self.assertIn("Verify async default closure contexts", tests)
 
     def test_offline_tools_are_built_signed_and_immutable_inside_the_test_bundle(self):
@@ -230,31 +215,6 @@ class NativeUIConfigurationTests(unittest.TestCase):
         self.assertNotIn('import urllib', peer)
         self.assertNotIn('import socket', peer)
         self.assertNotIn('subprocess', peer)
-
-    def test_retired_pi_ui_is_absent_while_offline_recovery_peer_stays_covered(self):
-        directory = Path(__file__).parent
-        harness = (directory / "CoincideDesktopUITests.swift").read_text()
-        launcher = (directory / "OfflineCLILauncher.swift").read_text()
-        project = (directory / "CoincideDesktopUITests.xcodeproj/project.pbxproj").read_text()
-        verifier = (directory / "verify_offline_launcher.py").read_text()
-        peer = (directory / "pi_history_ui.py").read_text()
-        for name in ("testNativePiHistoryQuestionsUseExactWorkerAndCancellationNeverSendsDraft",
-                     "testNativePiUnknownHistoryKeepsOriginalAcrossRestartWithoutRepeatingNativeFork",
-                     "testNativePiEmptyContextRecoveryRequiresExplicitAcknowledgementAndNeverReplaysUnknownInput"):
-            self.assertNotIn("func " + name + "() throws", harness)
-        core = Path(__file__).resolve().parents[2] / "Tests/CoincideCoreTests"
-        for filename in ("PiHistoryEngineTests.swift", "PiHistoryEngineIntegrationTests.swift", "PiHistoryOriginalSourceOracleTests.swift"):
-            self.assertTrue((core / filename).is_file())
-        self.assertIn('path = pi_history_ui.py;', project)
-        self.assertIn('"pi": ["pi_history_ui.py"]', launcher)
-        self.assertIn('validPiArguments(arguments)', launcher)
-        self.assertIn('privatePiDirectory(value, expected:', launcher)
-        self.assertIn('Exact immutable Pi helper preflight.', harness)
-        self.assertIn('Version/metadata inspection cannot create a persisted native session.', verifier)
-        for value in ('publish-and-disconnect', 'before-write-disconnect', 'extension_ui_response', 'os.O_NOFOLLOW', 'os.O_EXCL'):
-            self.assertIn(value, peer)
-        for value in ('import socket', 'import urllib', 'import subprocess'):
-            self.assertNotIn(value, peer)
 
     def test_change_filter_keeps_product_and_harness_paths_and_skips_unrelated_unit_docs(self):
         for path in ["Sources/Coincide/Views/ChatView.swift", "Sources/CoincideCore/WorkspaceEngine.swift", "UITests/macOS/Example.swift", "script/test_macos_ui.sh", "script/prepare_macos_signing.py", "Package.resolved", "script/Info.plist.template", "script/generate_app_icon.swift", "VERSION", "docs/third-party-notices.json", "docs/SwiftMathFonts-OFL-LICENSE.txt", "docs/SwiftMarkdown-NOTICE.txt"]:

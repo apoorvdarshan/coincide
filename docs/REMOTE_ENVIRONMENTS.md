@@ -183,7 +183,7 @@ verified isolated checkpoint is available. Combined rewind retains the provider
 outcome separately from the subsequent file stage.
 
 Only opaque review identities/digests authorize an accepted command. Complete
-Codex/Claude/OpenCode/Pi evidence, native inventories and restore manifests stay
+Codex/Claude evidence, native inventories and restore manifests stay
 on the host. A separate history lease pins display pages and content; those
 values never become native proofs. Responses retain the 256 KiB envelope budget,
 128 KiB exact byte chunks, immutable cursor positions and SHA-256 verification.
@@ -203,11 +203,7 @@ buffers and terminal tabs before admission.
 
 Recovery controls preserve each provider's actual behavior: inspect an uncertain
 provider result; inspect or explicitly keep current files; inspect a reserved
-Claude fork or a terminal run that consumed saved context; verify and keep an
-OpenCode v1/Pi original; review and clear the exact OpenCode v2 maintenance state;
-and inspect a Pi fresh-session consumer. Pi history questions and cancellation
-bind their exact worker/session/request; responding returns after its durable
-marker so cancellation remains reachable while native I/O runs. There is no
+Claude fork or a terminal run that consumed saved context. There is no
 generic provider-history acknowledgement or generic Codex/Claude cancellation.
 
 Recalled input is merged into the latest private local text with a durable
@@ -217,9 +213,7 @@ twice. Later local text and imported attachments survive; original recalled
 attachment references remain on the host. Oversized drafts, changed saved local
 data or unavailable storage fail explicitly and retain the pending recovery.
 
-Remote conversation creation still supports Codex and Claude. The closed
-recovery adapter also handles existing host-owned OpenCode/Pi histories; that
-does not add remote creation/authentication for those providers. Broader
+Remote conversation creation still supports Codex and Claude. Broader
 checkpoint ranges and live two-Mac/provider acceptance remain separate gaps.
 
 ## Reviewed context transfers
@@ -241,7 +235,7 @@ same project, and transfers child context rather than merging Git or files.
 Cross-provider remote destinations use host-captured Codex/Claude profiles;
 clients cannot supply executables, homes, credentials or native session IDs.
 Imported opaque model selections can be retained or cleared; a display string
-alone cannot select a different native OpenCode/Pi/Muse model remotely.
+alone cannot select a different native model remotely.
 
 Full native proof and the immutable archive remain host-owned. Independent
 eight-view/128 MiB leases expose bounded metadata, message pages and exact
@@ -330,8 +324,7 @@ Missing observations remain unknown; no capacity, cost or historical execution
 is inferred from a model name. Passive old-session meters are cleared on context
 handoff while immutable accounting stays with its original run. Paging telemetry
 does not grant provider-history or file-write authority and never launches a
-provider. Typed OpenCode history accounting does not enable OpenCode conversation
-creation on the current Codex/Claude remote surface. Live-provider and real SSH
+provider. Live-provider and real SSH
 usage acceptance remain unverified.
 
 ## Remote Files and Changes

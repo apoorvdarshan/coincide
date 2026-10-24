@@ -78,7 +78,7 @@ extension WorkspaceSnapshot {
               operation.review.removedRunIDs.allSatisfy({ id in thread.runHistory?.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) == true }),
               operation.review.removedMessageIDs.allSatisfy({ id in thread.messages.contains(where: { $0.id == id && $0.removedByHistoryOperationID == operation.id }) }) else { throw WorkspaceCommandError("The rewound conversation or its exact file target changed.") }
         var expectedConfiguration = operation.review.sourceConfiguration
-        if operation.review.openCodeV1 != nil || operation.review.claude != nil || operation.review.pi != nil {
+        if operation.review.claude != nil {
             // A validated native result can adopt a new conversation while
             // retaining the exact pre-adoption checkpoint/run audit. Only the
             // current native reference changes; no other reviewed setting does.
@@ -88,12 +88,6 @@ extension WorkspaceSnapshot {
             guard let selection = operation.result?.claude?.selection, thread.claudeResumeSelection == selection,
                   thread.claudeResumeConsumerRunID == nil, thread.claudeInheritedHead == operation.review.claude?.inheritedHead else {
                 throw WorkspaceCommandError("The selected Claude context changed before its workspace restoration.")
-            }
-        }
-        if operation.review.pi != nil {
-            guard let result = operation.result?.pi, thread.piFreshSessionIntent == result.freshIntent,
-                  thread.piFreshConsumerRunID == nil else {
-                throw WorkspaceCommandError("The selected Pi context changed before its workspace restoration.")
             }
         }
         guard ProviderConfiguration(thread: thread) == expectedConfiguration,

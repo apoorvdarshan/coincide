@@ -350,8 +350,6 @@ struct RemoteWorkspaceView: View {
                 ApprovalView(request: request.request, isResponding: request.responding || !store.canWrite,
                     onDecision: { response(thread, request.request, .decision($0)) },
                     onAnswer: { response(thread, request.request, .answers($0)) },
-                    onOption: { response(thread, request.request, .option($0)) },
-                    onSelections: { response(thread, request.request, .selections($0)) },
                     onSelectionsWithNotes: { response(thread, request.request, .selectionsWithNotes(selections: $0, notes: $1)) })
                     .id(request.id).padding(.horizontal, 20)
             }

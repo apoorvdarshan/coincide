@@ -53,7 +53,7 @@ public struct TranscriptToolContext: Sendable, Hashable {
 
 /// Derives per-tool cards from the transcript rows providers already produce:
 /// Codex `$ command` and `File changes` text, Claude `Name\n{input}` calls with
-/// `result-<id>` rows, and ACP/OpenCode/Pi/Muse/Antigravity `tool_call` entities.
+/// `result-<id>` rows, and Codex `tool_call` and plan entities.
 public enum TranscriptToolPresentation {
     /// A presentation predicate only. Run/thread/lease ownership must still be
     /// checked by the caller before merging a result into a call.
@@ -68,9 +68,7 @@ public enum TranscriptToolPresentation {
         } else if let entity = message.providerEntity { card = entityCard(entity, context: context) }
         else if message.text.hasPrefix("$ ") { card = codexCommand(message.text, context: context) }
         else if message.text == "File changes" || message.text.hasPrefix("File changes\n") { card = codexFileChange(message.text) }
-        else if message.id.hasPrefix("acp-"), message.id.hasSuffix("-plan") {
-            card = .init(kind: .todo, name: "plan", title: "Updated plan", status: .completed); card.todos = checklist(message.text)
-        } else if message.id.hasPrefix("result-") && result == nil {
+        else if message.id.hasPrefix("result-") && result == nil {
             card = .init(kind: .other, name: "result", title: String(localized: "Tool result"), status: .unknown); card.output = message.text
         } else if context.provider == .claude || claudeShaped(message.text) { card = claudeCard(message.text, result: result, context: context) }
         else {
@@ -219,28 +217,14 @@ public enum TranscriptToolPresentation {
             var card = TranscriptToolCard(kind: .plan, name: "plan", title: String(localized: "Proposed plan"), status: status)
             card.plan = fields["content"].string ?? contentText(fields["content"].array ?? [])
             return card
-        case "terminal":
-            var card = TranscriptToolCard(kind: .command, name: "terminal", subject: fields["command"].string, status: context.runActive ? .running : .unknown)
-            let data = Data(base64Encoded: fields["output"]["data"].string ?? "") ?? Data()
-            let output = String(decoding: data, as: UTF8.self)
-            card.output = output.isEmpty ? nil : output
-            if let code = number(fields["exitStatus"]["exitCode"]) ?? number(fields["exitCode"]) { card.exitCode = code; card.status = code == 0 ? .completed : .failed }
-            return card
-        case "compaction":
-            var card = TranscriptToolCard(kind: .compaction, name: "compaction", title: String(localized: "Compacted context"))
-            card.status = status(fields["status"].string, context: context)
-            let summary = contentText(fields["summary"].array ?? [])
-            card.output = summary.isEmpty ? nil : summary
-            return card
         default: break
         }
         let title = fields["title"].string ?? String(localized: "Tool")
-        let input = fields["rawInput"], meta = fields["_meta"]
-        var card = TranscriptToolCard(kind: .other, name: meta["museKind"].string ?? title)
+        let input = fields["rawInput"]
+        var card = TranscriptToolCard(kind: .other, name: title)
         if context.provider == .codex { card.kind = .mcp }
-        else if let kind = acpKind(fields["kind"].string) { card.kind = kind }
         else if fields["command"].string != nil { card.kind = .command }
-        else if let kind = inferredKind(name: meta["museKind"].string ?? meta["antigravityToolKind"].string ?? title, input: input) { card.kind = kind }
+        else if let kind = inferredKind(name: title, input: input) { card.kind = kind }
         card.status = status(fields["status"].string, context: context)
         if input != .null { card.input = input.string ?? input.pretty }
         var outputs: [String] = []
@@ -290,17 +274,6 @@ public enum TranscriptToolPresentation {
         case "declined", "denied", "rejected": .declined
         case "pending", "in_progress", "inProgress", "running": context.runActive ? .running : .unknown
         default: context.trailing ? .running : .unknown
-        }
-    }
-
-    static func acpKind(_ value: String?) -> TranscriptToolKind? {
-        switch value {
-        case "execute": .command
-        case "read": .read
-        case "edit", "delete", "move": .edit
-        case "search": .search
-        case "fetch": .fetch
-        default: nil
         }
     }
 
@@ -498,14 +471,6 @@ public enum TranscriptToolPresentation {
         (value.array ?? []).prefix(512).compactMap { item in
             guard let text = item["content"].string ?? item["text"].string ?? item["title"].string else { return nil }
             return .init(text: text, status: item["status"].string ?? "pending")
-        }
-    }
-    static func checklist(_ text: String) -> [TranscriptTodo] {
-        text.split(whereSeparator: \.isNewline).prefix(512).compactMap { line in
-            let value = line.trimmingCharacters(in: .whitespaces)
-            if value.hasPrefix("- [x] ") || value.hasPrefix("- [X] ") { return .init(text: String(value.dropFirst(6)), status: "completed") }
-            if value.hasPrefix("- [ ] ") { return .init(text: String(value.dropFirst(6)), status: "pending") }
-            return nil
         }
     }
     static func contentText(_ content: [JSONValue]) -> String {

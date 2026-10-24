@@ -79,25 +79,6 @@ private struct ConversationHistoryInspection {
     let task: Task<WorkspaceCommandReceipt, any Error>
 }
 
-private struct PiHistoryResponse {
-    let operationID: UUID
-    let sessionID: UUID
-    let request: ApprovalRequest
-    let owner: ConversationHistoryInspection
-}
-
-private struct PiFreshHistoryInspection {
-    let intent: PiFreshSessionIntent
-    let consumerRunID: UUID
-    let task: Task<(PiFreshSessionInspection, WorkspaceCommandReceipt?), any Error>
-}
-
-private struct PiFreshHistoryObservation {
-    let intent: PiFreshSessionIntent
-    let consumerRunID: UUID
-    let result: PiFreshSessionInspection
-}
-
 @MainActor private final class WeakTerminalStore {
     weak var value: TerminalWorkspaceStore?
     init(_ value: TerminalWorkspaceStore) { self.value = value }
@@ -107,7 +88,6 @@ private struct PiFreshHistoryObservation {
 final class WorkspaceStore {
     typealias ProjectCreator = @Sendable (String, URL) async throws -> ManagedProjectCreationResult
     typealias ClaudeRuntimeCapture = @Sendable (String) throws -> ClaudeRuntimeConfiguration
-    typealias PiRuntimeCapture = @Sendable (String, String, UUID) throws -> PiRuntimeConfiguration
     let managedProjectsRoot: URL
     let worktreesRoot: URL
     let threadActionUndo = ThreadActionUndoStore()
@@ -139,7 +119,6 @@ final class WorkspaceStore {
         let environment = ProcessChannel.environment()
         return { try ClaudeRuntimeConfiguration.capture(workspacePath: $0, environment: environment) }
     }
-    @ObservationIgnored private let piRuntimeCapture: PiRuntimeCapture
     var snapshot = WorkspaceSnapshot()
     @ObservationIgnored private var contextTransferStores: [UUID: ContextTransferStore] = [:]
     @ObservationIgnored lazy var notifications = NativeThreadNotifications { [weak self] id in
@@ -173,14 +152,6 @@ final class WorkspaceStore {
     var modelPickerLoading = false
     var modelPickerPresented = false
     var choosingModelThreads: Set<UUID> = []
-    var acpModels: [UUID: [ProviderModel]] = [:]
-    var openCodeCatalogs: [UUID: OpenCodeMetadataSnapshot] = [:]
-    var piModels: [UUID: [ProviderModel]] = [:]
-    var museModels: [UUID: [ProviderModel]] = [:]
-    var antigravityModels: [UUID: [ProviderModel]] = [:]
-    let antigravityAccount: AntigravityAccountStore
-    let antigravityInstallation: AntigravityInstallationStore
-    @ObservationIgnored private let antigravityRuntimeInstallation: AntigravityInstallation
     var isLoading = true
     var isRefreshingModels = false
     let codexAccount = CodexAccountStore()
@@ -200,7 +171,6 @@ final class WorkspaceStore {
     @ObservationIgnored private var codexMetadataScope = UUID()
     private var providerSkills: [UUID: ProviderSkillsStore] = [:]
     @ObservationIgnored private var providerSkillsDrains: [UUID: (scope: ProviderSkillsStore.Scope, task: Task<Void, Never>)] = [:]
-    let acpConnections = ACPConnectionStore()
     var inspectorVisible = false
     var sidebarVisible = true
     var showingSettings = false
@@ -260,10 +230,6 @@ final class WorkspaceStore {
     private var acceptingHistoryThreads: Set<UUID> = []
     private var historyNavigationRequests: [UUID: UUID] = [:]
     private var historyInspections: [UUID: ConversationHistoryInspection] = [:]
-    private var piHistoryResponses: [UUID: PiHistoryResponse] = [:]
-    private var piHistoryCancellations: [UUID: ConversationHistoryInspection] = [:]
-    private var piFreshHistoryReads: [UUID: PiFreshHistoryInspection] = [:]
-    private var piFreshHistoryObservations: [UUID: PiFreshHistoryObservation] = [:]
     private var recallingHistoryPrompts: Set<UUID> = []
     private var automaticHistoryRecallTasks: [UUID: Task<Void, Never>] = [:]
     private var automaticHistoryRecallErrors: [UUID: String] = [:]
@@ -275,11 +241,10 @@ final class WorkspaceStore {
     private var lastSequence: Int64 = -1
     private var terminating = false
 
-    init(databaseURL: URL? = nil, appMCPEnabled: Bool = true, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
+    init(databaseURL: URL? = nil, appMCPEnabled: Bool = true, codexInstallation: CodexInstallation = .shared,
          codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
          codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
-         piRuntimeCapture: PiRuntimeCapture? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization) {
         externalEditorDiscovery = nil; externalEditorHandoff = nil
         composerDraftTools = .init(root: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("ComposerDrafts", isDirectory: true))
@@ -289,31 +254,19 @@ final class WorkspaceStore {
         claudeRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot)
         self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
         projectSettings = .init(root: ProjectSettingsFiles.root(dataRoot: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot))
-        self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot, installation: codexInstallation)
         codexAuthentication = .init(configuration: codexRuntime.configuration)
         self.codexOwnedRuntime = codexOwnedRuntime; self.codexHostID = codexHostID ?? Self.savedCodexHostID()
         self.codexAuthorization = codexAuthorization
         self.codexListenerFactory = codexListenerFactory ?? { try await CodexOAuthLoopback.start() }
-        let runtimeRoot = databaseURL.map { $0.deletingLastPathComponent().appendingPathComponent("Providers/Antigravity", isDirectory: true) } ?? AntigravityRuntime.defaultStateRoot
-        antigravityRuntimeInstallation = runtimeInstallation
-        antigravityInstallation = .init(installation: runtimeInstallation)
-        antigravityAccount = .init(stateRoot: (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AntigravitySettings", isDirectory: true),
-                                  sessionFactory: AntigravityAuthentication.nativeSessionFactory(stateRoot: runtimeRoot, installation: runtimeInstallation))
-        defer {
-            if let engine { antigravityAccount.bind(engine: engine) }
-            bindAntigravityInstallation(); bindCodexRuntime(); bindComposerDraftTools(); bindAgentSessionImports()
-        }
+        defer { bindCodexRuntime(); bindComposerDraftTools(); bindAgentSessionImports() }
         projectScriptReader = { try await ProjectConfigurationService.load(using: $0) }
         managedProjectsRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Projects", isDirectory: true)
         worktreesRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("Worktrees", isDirectory: true)
         projectCreator = { name, root in try await ManagedProjectService(root: root).create(name: name) }
-        let accountRoot = (databaseURL?.deletingLastPathComponent() ?? Self.applicationDataRoot).appendingPathComponent("AntigravitySettings", isDirectory: true)
         let providers: WorkspaceEngine.ProviderFactory = {
-            try ProviderSessions.make(for: $0, antigravityStateRoot: runtimeRoot,
-                antigravityInstallation: runtimeInstallation, antigravityAccountRoot: accountRoot, codexInstallation: codexInstallation,
-                codexOwnedRuntime: codexOwnedRuntime)
+            try ProviderSessions.make(for: $0, codexInstallation: codexInstallation, codexOwnedRuntime: codexOwnedRuntime)
         }
         do {
             if let databaseURL { engine = try WorkspaceEngine(url: databaseURL, appMCPEnabled: appMCPEnabled, workspaceLifecycleEnabled: true, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory); return }
@@ -322,12 +275,11 @@ final class WorkspaceStore {
             engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), appMCPEnabled: appMCPEnabled, workspaceLifecycleEnabled: true, providerFactory: providers, projectScriptFactory: Self.managedScriptFactory)
         } catch { errorMessage = error.localizedDescription }
     }
-    init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, runtimeInstallation: AntigravityInstallation = .shared, codexInstallation: CodexInstallation = .shared,
+    init(engine: WorkspaceEngine, managedProjectsRoot: URL? = nil, codexInstallation: CodexInstallation = .shared,
          codexOwnedRuntime: CodexOwnedRuntimeBroker = .shared, codexHostID: UUID? = nil,
          codexListenerFactory: CodexAuthentication.ListenerFactory? = nil,
          codexAuthorization: @escaping CodexAuthentication.AuthorizationHandler = WorkspaceStore.openCodexAuthorization,
          claudeRuntimeCapture: ClaudeRuntimeCapture? = nil,
-         piRuntimeCapture: PiRuntimeCapture? = nil,
          projectScriptReader: NativeProjectScriptService.Reader? = nil,
          projectCreator: ProjectCreator? = nil, projectSettingsStore: ProjectSettingsStore? = nil,
          externalEditorDiscovery: NativeExternalEditorService.Discovery? = nil,
@@ -340,24 +292,18 @@ final class WorkspaceStore {
         claudeRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent())
         self.claudeRuntimeCaptureOverride = claudeRuntimeCapture
         projectSettings = projectSettingsStore ?? .init(root: ProjectSettingsFiles.root(dataRoot: engine.worktreesRoot.deletingLastPathComponent()))
-        self.piRuntimeCapture = piRuntimeCapture ?? { try PiRuntimeConfiguration.capture(workspacePath: $0, executable: $1, instanceID: $2) }
         codexRuntimeInstallation = codexInstallation
         codexRuntime = .init(rootURL: engine.worktreesRoot.deletingLastPathComponent(), installation: codexInstallation)
         codexAuthentication = .init(configuration: codexRuntime.configuration)
         self.codexOwnedRuntime = codexOwnedRuntime; self.codexHostID = codexHostID ?? Self.savedCodexHostID()
         self.codexAuthorization = codexAuthorization
         self.codexListenerFactory = codexListenerFactory ?? { try await CodexOAuthLoopback.start() }
-        antigravityRuntimeInstallation = runtimeInstallation
-        antigravityInstallation = .init(installation: runtimeInstallation)
-        antigravityAccount = .init(stateRoot: engine.worktreesRoot.deletingLastPathComponent().appendingPathComponent("AntigravitySettings", isDirectory: true),
-                                  sessionFactory: AntigravityAuthentication.nativeSessionFactory(installation: runtimeInstallation))
         self.engine = engine
         self.managedProjectsRoot = managedProjectsRoot ?? Self.applicationDataRoot.appendingPathComponent("Projects", isDirectory: true)
         self.worktreesRoot = engine.worktreesRoot
         self.projectCreator = projectCreator ?? { name, root in try await ManagedProjectService(root: root).create(name: name) }
         self.projectScriptReader = projectScriptReader ?? { try await ProjectConfigurationService.load(using: $0) }
-        antigravityAccount.bind(engine: engine)
-        bindAntigravityInstallation(); bindCodexRuntime(); bindComposerDraftTools(); bindAgentSessionImports()
+        bindCodexRuntime(); bindComposerDraftTools(); bindAgentSessionImports()
     }
     private func bindAgentSessionImports() {
         agentSessionImports.bind(.init(scan: { [weak self] in
@@ -630,10 +576,10 @@ final class WorkspaceStore {
                 })
         } else { transport = nil }
         model.update(sourceThreadID: threadID, snapshot: snapshot, transport: transport,
-            destination: { [weak self] kind, provider, path, selectedModel, permission, agentID in
+            destination: { [weak self] kind, provider, path, selectedModel, permission in
                 guard let self else { throw CancellationError() }
                 return try self.contextTransferDestination(threadID: threadID, kind: kind, provider: provider,
-                    path: path, model: selectedModel, permission: permission, agentID: agentID)
+                    path: path, model: selectedModel, permission: permission)
             }, canReview: { [weak self] in self?.canReviewContextTransfer(threadID: threadID) == true },
             canAccept: { [weak self] review in
                 guard let self, self.canReviewContextTransfer(threadID: threadID),
@@ -686,9 +632,9 @@ final class WorkspaceStore {
         commandTail = task; await task.value
     }
     private func contextTransferDestination(threadID: UUID, kind: ContextTransferFormKind, provider: ProviderKind,
-                                            path: String, model: String, permission: PermissionMode, agentID: UUID?) throws -> ProviderConfiguration {
+                                            path: String, model: String, permission: PermissionMode) throws -> ProviderConfiguration {
         guard let source = thread(threadID), canReviewContextTransfer(threadID: threadID) else { throw ContextTransferError.unavailable }
-        let sameProvider = provider == source.provider && (provider != .acp || agentID == source.acpAgent?.id)
+        let sameProvider = provider == source.provider
         var configuration: ProviderConfiguration
         if sameProvider { configuration = .init(thread: source) }
         else {
@@ -698,15 +644,6 @@ final class WorkspaceStore {
             switch provider {
             case .codex: fresh.codexRuntimeConfiguration = codexRuntime.configuration
             case .claude: fresh.claudeRuntimeConfiguration = try claudeRuntimeCapture(path)
-            case .pi:
-                let runtime = try piRuntimeCapture(path, ProviderKind.pi.executable, UUID())
-                fresh.piConfiguration = .init(instanceID: runtime.instanceID, executable: runtime.requestedExecutable, runtime: runtime)
-            case .opencode: fresh.openCodeConfiguration = .init()
-            case .muse: fresh.museConfiguration = .init()
-            case .antigravity: fresh.antigravityConfiguration = antigravityAccount.configuration
-            case .acp:
-                guard let agent = snapshot.acpAgents.first(where: { $0.id == agentID }) else { throw ContextTransferError.unavailable }
-                fresh.acpAgent = agent
             }
             configuration = .init(thread: fresh)
         }
@@ -721,56 +658,21 @@ final class WorkspaceStore {
                     projectDirectoryName: runtime.projectDirectoryName, environment: environment,
                     instanceID: runtime.instanceID, launchSettings: runtime.launchSettings)
             }
-            if let native = configuration.piConfiguration, let runtime = native.runtime {
-                let captured = try PiRuntimeConfiguration.capture(workspacePath: path, executable: runtime.requestedExecutable,
-                    instanceID: runtime.instanceID, environment: runtime.environment())
-                configuration.piConfiguration = .init(instanceID: native.instanceID, executable: native.executable,
-                    model: native.model, thinkingLevel: native.thinkingLevel, runtime: captured)
-            }
         }
-        if model != configuration.model {
-            let rows = sameProvider ? models(for: source) : providerModels[provider] ?? []
-            let row = rows.first { $0.id == model }
-            switch provider {
-            case .opencode:
-                guard model.isEmpty || row?.openCodeSelection != nil else { throw CoincideError("Use the CLI default or a model already refreshed for OpenCode.") }
-                configuration.openCodeConfiguration = configuration.openCodeConfiguration?.selecting(model: row?.openCodeSelection)
-            case .pi:
-                guard model.isEmpty || row?.piSelection != nil else { throw CoincideError("Use the CLI default or a model already refreshed for Pi.") }
-                configuration.piConfiguration = configuration.piConfiguration?.selecting(model: row?.piSelection)
-            case .muse:
-                guard model.isEmpty || row?.museSelection != nil else { throw CoincideError("Use the CLI default or a model already refreshed for Muse.") }
-                configuration.museConfiguration = configuration.museConfiguration?.selecting(model: row?.museSelection)
-            case .antigravity: configuration.antigravityConfiguration = configuration.antigravityConfiguration?.selecting(model: model.isEmpty ? nil : model)
-            default: break
-            }
-            configuration.reasoningEffort = nil
-        }
+        if model != configuration.model { configuration.reasoningEffort = nil }
         configuration.workspacePath = path; configuration.model = model; configuration.permission = permission
         if provider == .codex, let row = models(for: provider).first(where: { $0.id == model }) {
             // Keep the destination model and its advertised effort in the same
             // durable handoff, so a failed follow-up edit cannot split them.
             configuration.reasoningEffort = row.codexDefaultReasoningEffort
         }
-        configuration.nativeThreadID = nil; configuration.claudeLaunchSelection = nil; configuration.piFreshSessionIntent = nil
+        configuration.nativeThreadID = nil; configuration.claudeLaunchSelection = nil
         return configuration
     }
     private func newCodingThread(project: WorkspaceProject) -> CodingThread {
         var thread = CodingThread(project: project)
         if codexRuntime.configuration != .init() { thread.codexRuntimeConfiguration = codexRuntime.configuration }
         return thread
-    }
-    private func bindAntigravityInstallation() {
-        antigravityInstallation.bind { [weak self] in
-            guard let self else { return [] }
-            var configurations = [self.antigravityAccount.configuration]
-            for thread in self.snapshot.threads {
-                if let value = thread.antigravityConfiguration { configurations.append(value) }
-                if let value = thread.activeRun?.configuration.antigravityConfiguration { configurations.append(value) }
-                configurations += thread.queuedTurns.compactMap { $0.configuration.antigravityConfiguration }
-            }
-            return configurations.filter { $0.runtimeSelection == .external }.flatMap { [$0.executable] + ($0.harnessPath.map { [$0] } ?? []) }
-        }
     }
     private static var applicationDataRoot: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -896,11 +798,6 @@ final class WorkspaceStore {
         if source.provider == .claude, configuration.claudeRuntimeConfiguration == nil {
             guard let captured = try? legacyClaudeRuntimeCapture(source.workspacePath) else { return nil }
             configuration.claudeRuntimeConfiguration = captured
-        }
-        if source.provider == .pi, let native = source.piConfiguration, native.runtime == nil {
-            guard let captured = try? piRuntimeCapture(source.workspacePath, native.executable, native.instanceID) else { return nil }
-            configuration.piConfiguration = .init(instanceID: native.instanceID, executable: native.executable,
-                model: native.model, thinkingLevel: native.thinkingLevel, runtime: captured)
         }
         return (configuration, source.checkpointPolicy)
     }
@@ -1454,45 +1351,11 @@ final class WorkspaceStore {
                   scope.matches(next), update.snapshot.providerReady(for: next) else { return true }
             return false
         }
-        for id in Array(acpModels.keys) {
-            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
-            if old?.providerMetadata != next?.providerMetadata || old?.acpAgent != next?.acpAgent || old?.workspacePath != next?.workspacePath {
-                acpModels.removeValue(forKey: id)
-            }
-        }
-        for id in Array(openCodeCatalogs.keys) {
-            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
-            if next?.provider != .opencode || old?.workspacePath != next?.workspacePath ||
-                old?.openCodeConfiguration?.runtimeIdentity != next?.openCodeConfiguration?.runtimeIdentity {
-                openCodeCatalogs.removeValue(forKey: id)
-            }
-        }
-        for id in Array(piModels.keys) {
-            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
-            if next?.provider != .pi || old?.workspacePath != next?.workspacePath ||
-                old?.piConfiguration?.runtimeIdentity != next?.piConfiguration?.runtimeIdentity || old?.permission != next?.permission {
-                piModels.removeValue(forKey: id)
-            }
-        }
-        for id in Array(museModels.keys) {
-            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
-            if next?.provider != .muse || old?.workspacePath != next?.workspacePath ||
-                old?.museConfiguration?.runtimeIdentity != next?.museConfiguration?.runtimeIdentity || old?.permission != next?.permission {
-                museModels.removeValue(forKey: id)
-            }
-        }
         for id in Array(codexModels.keys) {
             let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
             if next?.provider != .codex || old?.workspacePath != next?.workspacePath ||
                 old.map({ ProviderConfiguration(thread: $0).codexRuntimeBinding }) != next.map({ ProviderConfiguration(thread: $0).codexRuntimeBinding }) {
                 codexModels.removeValue(forKey: id)
-            }
-        }
-        for id in Array(antigravityModels.keys) {
-            let old = snapshot.threads.first { $0.id == id }, next = update.snapshot.threads.first { $0.id == id }
-            if next?.provider != .antigravity || old?.workspacePath != next?.workspacePath ||
-                old?.antigravityConfiguration?.runtimeIdentity != next?.antigravityConfiguration?.runtimeIdentity || old?.permission != next?.permission {
-                antigravityModels.removeValue(forKey: id)
             }
         }
         let removedThreads = Set(snapshot.threads.map(\.id)).subtracting(update.snapshot.threads.map(\.id))
@@ -1508,7 +1371,6 @@ final class WorkspaceStore {
         lastSequence = update.sequence; snapshot = update.snapshot
         threadActionUndo.invalidate(snapshot: snapshot)
         if !terminating { notifications.observe(snapshot, baseline: isLoading, appIsActive: NSApp?.isActive ?? false) }
-        acpConnections.invalidate(validAgents: snapshot.acpAgents)
         for model in pullRequestStores.values { model.apply(snapshot) }
         for id in Array(contextTransferStores.keys) { updateContextTransferStore(threadID: id) }
         closeUnreferencedFileServices(previous: previous)
@@ -1525,7 +1387,7 @@ final class WorkspaceStore {
         let modelReads = threadIDs.compactMap { codexModelDefaultsReads[$0]?.task }
         let skills = providerSkillsDrains.values.filter { projectIDs.contains($0.scope.projectID) || threadIDs.contains($0.scope.threadID) }.map(\.task)
         for id in threadIDs {
-            pendingDrafts.removeValue(forKey: id); draftOverrides.removeValue(forKey: id); acpModels.removeValue(forKey: id)
+            pendingDrafts.removeValue(forKey: id); draftOverrides.removeValue(forKey: id)
             promptSteeringAvailability.removeValue(forKey: id)
             codexModelDefaultsReads.removeValue(forKey: id)?.task.cancel()
         }
@@ -1534,10 +1396,6 @@ final class WorkspaceStore {
         let worktreeReads = worktreeOptionsReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let historyReads = historyReviewReads.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
         let historyChecks = historyInspections.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
-        let piHistoryActions = piHistoryResponses.values.filter { threadIDs.contains($0.owner.threadID) }.map(\.owner.task)
-            + piHistoryCancellations.values.filter { threadIDs.contains($0.threadID) }.map(\.task)
-        let piFreshReads = piFreshHistoryReads.filter { threadIDs.contains($0.key) }.map(\.value.task)
-        for id in threadIDs { piFreshHistoryObservations.removeValue(forKey: id) }
         let automaticRecalls = automaticHistoryRecallTasks.filter { key, _ in
             conversationHistoryOperation(key).map { threadIDs.contains($0.review.sourceThreadID) } ?? true
         }.map(\.value)
@@ -1548,8 +1406,6 @@ final class WorkspaceStore {
         for task in imports { task.cancel() }; for task in worktrees { task.cancel() }; for task in retries { task.cancel() }
         for task in worktreeReads { task.cancel() }
         for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }
-        for task in piHistoryActions { task.cancel() }
-        for task in piFreshReads { task.cancel() }
         for task in restoreReads { task.cancel() }; for task in restoreChecks { task.cancel() }
         for task in automaticRecalls { task.cancel() }
         let terminals = terminalStores.values.compactMap(\.value)
@@ -1582,8 +1438,6 @@ final class WorkspaceStore {
             for task in worktrees { _ = await task.result }
             for task in worktreeReads { _ = await task.result }
             for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
-            for task in piHistoryActions { _ = await task.result }
-            for task in piFreshReads { _ = await task.result }
             for task in restoreReads { _ = await task.result }; for task in restoreChecks { _ = await task.result }
             for task in automaticRecalls { await task.value }
             for task in scriptReads { await task.value }
@@ -1957,7 +1811,6 @@ final class WorkspaceStore {
         switch provider {
         case .codex: return (try? codexRuntimeInstallation.resolve(configuration: codexRuntime.configuration)) != nil
         case .claude: return (try? claudeRuntimeCapture(workspacePath)) != nil
-        default: return false
         }
     }
     private func promptLinkModels(for fresh: CodingThread) -> [ProviderModel] {
@@ -2033,42 +1886,6 @@ final class WorkspaceStore {
             Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
             return
         }
-        if thread(id)?.provider == .antigravity {
-            _ = enqueuePreparing { [weak self] in
-                guard let self, !self.terminating, let current = self.thread(id), current.provider == .antigravity,
-                      model.isEmpty || self.models(for: current).contains(where: { $0.id == model }) else {
-                    throw WorkspaceCommandError("Refresh Antigravity models before choosing a model.")
-                }
-                return .editThread(id, .model(model))
-            }
-            return
-        }
-        if thread(id)?.provider == .muse {
-            _ = enqueueMuseEdit(threadID: id) { [weak self] current in
-                if model.isEmpty { return .museModel(nil) }
-                guard let row = self?.models(for: current).first(where: { $0.id == model }) else { throw CoincideError("Refresh Muse models before choosing a model.") }
-                return .museModel(row)
-            }
-            return
-        }
-        if thread(id)?.provider == .pi {
-            _ = enqueuePiEdit(threadID: id) { [weak self] current in
-                if model.isEmpty { return .piModel(nil) }
-                guard let row = self?.models(for: current).first(where: { $0.id == model }) else { throw CoincideError("Refresh Pi models before choosing a model.") }
-                return .piModel(row)
-            }
-            return
-        }
-        if let current = thread(id), current.provider == .opencode {
-            _ = enqueueOpenCodeEdit(threadID: id) { [weak self] current in
-                if model.isEmpty { return .openCodeModel(nil) }
-                guard let advertised = self?.models(for: current).first(where: { $0.id == model }) else {
-                    throw CoincideError("Refresh OpenCode models before choosing a model.")
-                }
-                return .openCodeModel(advertised)
-            }
-            return
-        }
         if let current = thread(id), current.provider == .codex, let advertised = models(for: current).first(where: { $0.id == model }) {
             sendCommand(.editThread(id, .codexModel(advertised)))
         } else { sendCommand(.editThread(id, .model(model))) }
@@ -2087,7 +1904,7 @@ final class WorkspaceStore {
     }
     /// A model row owns its provider; no separate provider picker is required.
     func choosePickerModel(provider: ProviderKind, modelID: String, threadID: UUID) async -> Bool {
-        guard provider.isSupported, !choosingModelThreads.contains(threadID), let original = thread(threadID) else { return false }
+        guard !choosingModelThreads.contains(threadID), let original = thread(threadID) else { return false }
         choosingModelThreads.insert(threadID)
         defer { choosingModelThreads.remove(threadID) }
         do {
@@ -2134,7 +1951,6 @@ final class WorkspaceStore {
         catch { if !terminating { errorMessage = error.localizedDescription }; return false }
     }
     func setProvider(_ provider: ProviderKind, id: UUID) {
-        guard provider.isSupported else { errorMessage = "Coincide supports Codex and Claude only."; return }
         let previousProvider = thread(id)?.provider
         guard provider != previousProvider else { return }
         if provider == .claude {
@@ -2150,94 +1966,6 @@ final class WorkspaceStore {
             cancelCodexModelDefaultsRead(id)
             sendCommand(.editThread(id, .codexProvider(codexRuntime.configuration)))
             return
-        }
-    }
-    func setACPAgent(_ agent: ACPAgentConfiguration, id: UUID) {
-        errorMessage = "Coincide supports Codex and Claude only."
-    }
-    @discardableResult func setOpenCodeVariant(_ variant: String?, model: ProviderModel, threadID: UUID) -> Task<Bool, Never> {
-        enqueueOpenCodeEdit(threadID: threadID) { [weak self] current in
-            guard current.model == model.id, let advertised = self?.models(for: current).first(where: { $0.id == model.id }) else {
-                throw CoincideError("The selected OpenCode model changed. Refresh models and choose again.")
-            }
-            return .openCodeVariant(model: advertised, variant: variant)
-        }
-    }
-    @discardableResult func setOpenCodeAgent(_ agent: String, threadID: UUID) -> Task<Bool, Never> {
-        enqueueOpenCodeEdit(threadID: threadID) { [weak self] _ in
-            guard self?.openCodeCatalogs[threadID]?.agents.contains(where: { $0.id == agent && !$0.hidden && $0.mode != .subagent }) == true else {
-                throw CoincideError("This OpenCode agent is no longer available. Refresh agents and choose again.")
-            }
-            return .openCodeAgent(agent)
-        }
-    }
-    func setOpenCodeGeneration(_ generation: OpenCodeGeneration, threadID: UUID) {
-        _ = enqueueOpenCodeEdit(threadID: threadID) { _ in .openCodeGeneration(generation) }
-    }
-    @discardableResult func setMuseReasoning(_ effort: String?, model: ProviderModel, threadID: UUID) -> Task<Bool, Never> {
-        enqueueMuseEdit(threadID: threadID) { [weak self] current in
-            guard current.model == model.id, let row = self?.models(for: current).first(where: { $0.id == model.id }) else { throw CoincideError("The selected Muse model changed. Refresh models and choose again.") }
-            return .museReasoning(model: row, effort: effort)
-        }
-    }
-    private func enqueueMuseEdit(threadID: UUID, prepare: @escaping @MainActor (CodingThread) throws -> ThreadEdit) -> Task<Bool, Never> {
-        guard !terminating, let captured = thread(threadID), captured.provider == .muse else { return Task { false } }
-        let task = enqueuePreparing { [weak self] in
-            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == .muse,
-                  current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
-                  ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: captured).museRuntimeBinding else { throw CancellationError() }
-            return .editThread(threadID, try prepare(current))
-        }
-        return Task {
-            do { _ = try await task.value; return true }
-            catch { if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription }; return false }
-        }
-    }
-    @discardableResult func setPiThinking(_ level: String?, model: ProviderModel, threadID: UUID) -> Task<Bool, Never> {
-        enqueuePiEdit(threadID: threadID) { [weak self] current in
-            guard current.model == model.id, let row = self?.models(for: current).first(where: { $0.id == model.id }) else { throw CoincideError("The selected Pi model changed. Refresh models and choose again.") }
-            return .piThinking(model: row, level: level)
-        }
-    }
-    private func enqueuePiEdit(threadID: UUID, prepare: @escaping @MainActor (CodingThread) throws -> ThreadEdit) -> Task<Bool, Never> {
-        guard !terminating, let captured = thread(threadID), captured.provider == .pi else { return Task { false } }
-        let task = enqueuePreparing { [weak self] in
-            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == .pi,
-                  current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
-                  current.piConfiguration?.runtimeIdentity == captured.piConfiguration?.runtimeIdentity else { throw CancellationError() }
-            return .editThread(threadID, try prepare(current))
-        }
-        return Task {
-            do { _ = try await task.value; return true }
-            catch { if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription }; return false }
-        }
-    }
-    func setGrokRuntimeMode(_ mode: GrokACPRuntimeMode, threadID: UUID) {
-        guard let captured = thread(threadID), captured.provider == .acp, captured.acpAgent?.integration == .grok else { return }
-        let task = enqueuePreparing { [weak self] in
-            guard let self, let current = self.thread(threadID), current.projectID == captured.projectID,
-                  current.workspacePath == captured.workspacePath, current.acpAgent == captured.acpAgent else { throw CancellationError() }
-            return .editThread(threadID, .grokRuntimeMode(mode))
-        }
-        Task {
-            do { _ = try await task.value }
-            catch { if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription } }
-        }
-    }
-    private func enqueueOpenCodeEdit(threadID: UUID, prepare: @escaping @MainActor (CodingThread) throws -> ThreadEdit) -> Task<Bool, Never> {
-        guard !terminating, let captured = thread(threadID), captured.provider == .opencode else { return Task { false } }
-        let task = enqueuePreparing { [weak self] in
-            guard let self, !self.terminating, let current = self.thread(threadID), current.provider == .opencode,
-                  current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
-                  current.openCodeConfiguration?.runtimeIdentity == captured.openCodeConfiguration?.runtimeIdentity else { throw CancellationError() }
-            return .editThread(threadID, try prepare(current))
-        }
-        return Task {
-            do { _ = try await task.value; return true }
-            catch {
-                if !(error is CancellationError), !terminating { errorMessage = error.localizedDescription }
-                return false
-            }
         }
     }
     func codexReasoningModel(threadID: UUID) -> ProviderModel? {
@@ -2316,25 +2044,16 @@ final class WorkspaceStore {
         return task
     }
     func setAgentMode(_ mode: String?, id: UUID) { sendCommand(.editThread(id, .agentMode(mode))) }
-    func setAgentConfig(_ optionID: String, value: String?, id: UUID) { sendCommand(.editThread(id, .agentConfig(id: optionID, value: value))) }
-    func setAgentConfiguration(_ optionID: String, value: JSONValue?, id: UUID) { sendCommand(.editThread(id, .agentConfiguration(id: optionID, value: value))) }
-    func resetAgentOptions(_ id: UUID) { sendCommand(.editThread(id, .resetAgentOptions)) }
     func setCheckpointPolicy(_ policy: RunCheckpointPolicy, id: UUID) {
         guard !terminating, thread(id) != nil else { return }
         sendCommand(.editThread(id, .checkpointPolicy(policy)))
     }
-    func saveACPAgent(_ agent: ACPAgentConfiguration) async throws { _ = try await enqueue(.saveACPAgent(agent)).value }
-    func removeACPAgent(_ id: UUID) { sendCommand(.removeACPAgent(id)) }
     func models(for provider: ProviderKind) -> [ProviderModel] {
         if provider == .codex, let selectedThread, selectedThread.provider == .codex { return models(for: selectedThread) }
         if provider == .claude, let selectedThread, selectedThread.provider == .claude { return models(for: selectedThread) }
         if provider == .claude, !claudeRuntime.isLoaded { return [] }
         if provider == .claude, neutralClaudeModelProfile != claudeRuntime.profile,
            !(neutralClaudeModelProfile == nil && claudeRuntime.profile == .init()) { return [] }
-        if provider == .opencode || provider == .pi || provider == .muse || provider == .antigravity {
-            guard let selectedThread, selectedThread.provider == provider else { return [] }
-            return models(for: selectedThread)
-        }
         return providerModels[provider] ?? []
     }
     func models(for thread: CodingThread) -> [ProviderModel] {
@@ -2342,25 +2061,8 @@ final class WorkspaceStore {
             guard let catalog = claudeModels[thread.id], catalog.identity == thread.claudeRuntimeConfiguration?.runtimeIdentity else { return [] }
             return catalog.models
         }
-        if thread.provider == .codex {
-            if let models = codexModels[thread.id] { return models }
-            return ProviderConfiguration(thread: thread).codexRuntimeBinding == CodexRuntimeConfiguration() && codexRuntime.configuration == .init() ? providerModels[.codex] ?? [] : []
-        }
-        if thread.provider == .pi { return piModels[thread.id] ?? [] }
-        if thread.provider == .muse { return museModels[thread.id] ?? [] }
-        if thread.provider == .antigravity { return antigravityModels[thread.id] ?? [] }
-        if thread.provider == .opencode {
-            guard let inventory = openCodeCatalogs[thread.id] else { return [] }
-            return inventory.models.filter(\.enabled).map { descriptor in
-                .init(id: descriptor.selection.catalogID, name: descriptor.name,
-                      isDefault: inventory.defaults.contains(descriptor.selection),
-                      openCodeSelection: descriptor.selection, openCodeVariants: descriptor.variants)
-            }
-        }
-        guard thread.provider == .acp else { return models(for: thread.provider) }
-        if let refreshed = acpModels[thread.id] { return refreshed }
-        if let metadata = thread.providerMetadata { return ACPConfigurationOptions.models(metadata) }
-        return []
+        if let models = codexModels[thread.id] { return models }
+        return ProviderConfiguration(thread: thread).codexRuntimeBinding == CodexRuntimeConfiguration() && codexRuntime.configuration == .init() ? providerModels[.codex] ?? [] : []
     }
     func setDraft(_ text: String, id: UUID) {
         guard !terminating, thread(id) != nil else { return }
@@ -2576,19 +2278,14 @@ final class WorkspaceStore {
         guard !Task.isCancelled, transcriptPlanReady(source, inNewConversation: destination != nil), let captured = thread(source.threadID), let engine else { return false }
         do {
             let claude = captured.provider == .claude && captured.claudeRuntimeConfiguration == nil ? try legacyClaudeRuntimeCapture(captured.workspacePath) : nil
-            let pi: PiRuntimeConfiguration?
-            if captured.provider == .pi, let native = captured.piConfiguration, native.runtime == nil {
-                pi = try piRuntimeCapture(captured.workspacePath, native.executable, native.instanceID)
-            } else { pi = nil }
             // Validate availability without launching or changing a provider.
             if captured.provider == .codex { _ = try codexRuntimeInstallation.resolve(configuration: captured.codexRuntimeConfiguration ?? .init()) }
             else {
                 let executable = captured.provider == .claude ? (captured.claudeRuntimeConfiguration ?? claude)?.executable ?? captured.provider.executable
-                    : captured.provider == .pi ? (captured.piConfiguration?.runtime ?? pi)?.executable ?? captured.piConfiguration?.executable ?? captured.provider.executable
-                    : captured.acpAgent?.executable ?? captured.antigravityConfiguration?.executable ?? captured.museConfiguration?.executable ?? captured.openCodeConfiguration?.executable ?? captured.provider.executable
+                    : captured.provider.executable
                 guard ProcessChannel.findExecutable(executable) != nil else { throw CoincideError("Choose an available provider runtime before implementing this plan.") }
             }
-            let request = TranscriptPlanImplementation(thread: captured, message: source.message, legacyClaudeConfiguration: claude, piConfiguration: pi, destination: destination)
+            let request = TranscriptPlanImplementation(thread: captured, message: source.message, legacyClaudeConfiguration: claude, destination: destination)
             let selectedProject = selectedProjectID, selectedThread = selectedThreadID
             flushDrafts()
             let previous = commandTail, commandID = UUID()
@@ -2635,7 +2332,7 @@ final class WorkspaceStore {
             errorMessage = "Use the composer to run Coincide app commands. They are never sent to an agent."
             return Task { false }
         }
-        guard !choosingModelThreads.contains(id), let thread = thread(id), thread.provider.isSupported, (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
+        guard !choosingModelThreads.contains(id), let thread = thread(id), (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !composerDraftTools.blocksSubmission(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !claudeResumeSelectionNeedsInspection(threadID: id),
@@ -2645,21 +2342,11 @@ final class WorkspaceStore {
             do { capturedClaude = try legacyClaudeRuntimeCapture(thread.workspacePath) }
             catch { errorMessage = "Install and sign in to Claude before sending a message."; return Task { false } }
         } else { capturedClaude = nil }
-        let capturedPi: PiRuntimeConfiguration?
-        if thread.provider == .pi, thread.piConfiguration?.runtime == nil {
-            guard let native = thread.piConfiguration else { return Task { false } }
-            do { capturedPi = try piRuntimeCapture(thread.workspacePath, native.executable, native.instanceID) }
-            catch { errorMessage = "Choose an available Pi runtime and storage namespace before sending a message."; return Task { false } }
-        } else { capturedPi = nil }
         let executable: String
         if thread.provider == .claude { executable = (thread.claudeRuntimeConfiguration ?? capturedClaude)?.executable ?? thread.provider.executable }
-        else if thread.provider == .pi { executable = (thread.piConfiguration?.runtime ?? capturedPi)?.executable ?? thread.piConfiguration?.executable ?? thread.provider.executable }
-        else { executable = thread.provider == .acp ? thread.acpAgent?.executable ?? "" : thread.antigravityConfiguration?.executable ?? thread.museConfiguration?.executable ?? thread.openCodeConfiguration?.executable ?? thread.provider.executable }
+        else { executable = thread.provider.executable }
         if thread.provider == .codex {
             do { _ = try codexRuntimeInstallation.resolve(configuration: thread.codexRuntimeConfiguration ?? .init()) }
-            catch { errorMessage = error.localizedDescription; return Task { false } }
-        } else if let native = thread.antigravityConfiguration {
-            do { _ = try antigravityRuntimeInstallation.resolve(configuration: native) }
             catch { errorMessage = error.localizedDescription; return Task { false } }
         } else if executable.isEmpty || ProcessChannel.findExecutable(executable) == nil {
             errorMessage = "Install and sign in to \(thread.providerName) before sending a message."
@@ -2669,9 +2356,8 @@ final class WorkspaceStore {
         draftOverrides[id] = ""
         let command: WorkspaceCommand
         if let intent = thread.draftWorkspaceIntent {
-            command = .submitDefaultWorktree(.init(thread: thread, intent: intent, text: prompt, claudeRuntime: capturedClaude, piRuntime: capturedPi))
+            command = .submitDefaultWorktree(.init(thread: thread, intent: intent, text: prompt, claudeRuntime: capturedClaude))
         } else if let capturedClaude { command = .submitCapturedClaude(threadID: id, text: prompt, configuration: capturedClaude) }
-        else if let capturedPi { command = .submitCapturedPi(threadID: id, text: prompt, configuration: capturedPi) }
         else { command = .submit(threadID: id, text: prompt) }
         let changesWorkspace = thread.draftWorkspaceIntent != nil
         let task = enqueue(command, preflight: { [weak self] in
@@ -2728,7 +2414,7 @@ final class WorkspaceStore {
             return steeringAvailability(threadID: threadID)?.unavailableReason
                 ?? String(localized: "Queue this message while the current turn becomes available for steering.")
         }
-        let name = configuration.provider == .acp ? configuration.acpAgent?.name ?? configuration.provider.name : configuration.provider.name
+        let name = configuration.provider.name
         let model = configuration.model.isEmpty ? String(localized: "its current model") : configuration.model
         if availability.interruptsTools {
             return String(localized: "Steer sends to \(name) with \(model) and interrupts its current tools. Future-turn settings stay separate.")
@@ -2901,10 +2587,6 @@ final class WorkspaceStore {
         let task = enqueue(.respond(threadID: id, requestID: request.id, response: .selectionsWithNotes(selections: selections, notes: notes)))
         do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
     }
-    func choose(_ request: ApprovalRequest, threadID id: UUID, optionID: String) async {
-        let task = enqueue(.respond(threadID: id, requestID: request.id, response: .option(optionID)))
-        do { _ = try await task.value } catch { errorMessage = error.localizedDescription }
-    }
     func removeQueued(_ queuedID: UUID, threadID: UUID) { sendCommand(.removeQueued(threadID: threadID, queuedID: queuedID)) }
     var queuedInputEditor: QueuedInputEditor?
     @ObservationIgnored private var queuedEditorDrains: [UUID: Task<Void, Never>] = [:]
@@ -2985,7 +2667,6 @@ final class WorkspaceStore {
         let kind = provider ?? catalogThread?.provider ?? .codex
         modelCatalogErrors.removeValue(forKey: kind)
         do {
-            guard kind.isSupported else { throw CoincideError("Coincide supports Codex and Claude only.") }
             if kind == .codex {
                 guard !codexRuntime.isApplying else { return }
                 let captured = catalogThread.flatMap { $0.provider == .codex ? $0 : nil }
@@ -3013,7 +2694,7 @@ final class WorkspaceStore {
                       current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
                       current.claudeRuntimeConfiguration?.runtimeIdentity == captured.claudeRuntimeConfiguration?.runtimeIdentity else { return }
                 claudeModels[captured.id] = (captured.claudeRuntimeConfiguration?.runtimeIdentity, models)
-            } else if kind == .claude {
+            } else {
                 guard !claudeRuntime.isApplying else { return }
                 let profile = claudeRuntime.profile
                 let path = catalogThread?.workspacePath ?? snapshot.projects.first?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
@@ -3021,50 +2702,7 @@ final class WorkspaceStore {
                 let models = try await engine.models(provider: .claude, claudeRuntimeConfiguration: runtime)
                 guard !terminating, claudeRuntime.isLoaded, profile == claudeRuntime.profile else { return }
                 neutralClaudeModelProfile = profile; providerModels[.claude] = models
-            } else if kind == .opencode {
-                guard let thread = catalogThread, thread.provider == .opencode else {
-                    throw CoincideError("Choose OpenCode in a conversation before refreshing its workspace models.")
-                }
-                let catalog = try await engine.openCodeInventory(thread: thread)
-                guard let current = self.thread(thread.id), current.provider == .opencode,
-                      current.projectID == thread.projectID, current.workspacePath == thread.workspacePath,
-                      current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity else { return }
-                openCodeCatalogs[thread.id] = catalog
-            } else if kind == .antigravity {
-                guard let thread = catalogThread, thread.provider == .antigravity else { throw CoincideError("Choose Antigravity in a conversation before refreshing its models.") }
-                let models = try await engine.models(thread: thread)
-                guard let current = self.thread(thread.id), current.projectID == thread.projectID, current.provider == .antigravity,
-                      current.workspacePath == thread.workspacePath,
-                      ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding else { return }
-                antigravityModels[thread.id] = models
-            } else if kind == .muse {
-                guard let thread = catalogThread, thread.provider == .muse else { throw CoincideError("Choose Muse in a conversation before refreshing its models.") }
-                let models = try await engine.models(thread: thread)
-                guard let current = self.thread(thread.id), current.projectID == thread.projectID, current.provider == .muse,
-                      current.workspacePath == thread.workspacePath,
-                      ProviderConfiguration(thread: current).museRuntimeBinding == ProviderConfiguration(thread: thread).museRuntimeBinding else { return }
-                museModels[thread.id] = models
-            } else if kind == .pi {
-                guard var thread = selectedThread, thread.provider == .pi, let native = thread.piConfiguration else { throw CoincideError("Choose Pi in a conversation before refreshing its models.") }
-                if native.runtime == nil {
-                    let captured = try piRuntimeCapture(thread.workspacePath, native.executable, native.instanceID)
-                    _ = try await enqueue(.editThread(thread.id, .piRuntimeConfiguration(captured))).value
-                    guard let current = self.thread(thread.id), current.provider == .pi,
-                          current.projectID == thread.projectID, current.workspacePath == thread.workspacePath,
-                          current.piConfiguration?.runtime == captured else { throw CancellationError() }
-                    thread = current
-                }
-                let models = try await engine.models(thread: thread)
-                guard let current = self.thread(thread.id), current.projectID == thread.projectID, current.provider == .pi,
-                      current.workspacePath == thread.workspacePath,
-                      ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding else { return }
-                piModels[thread.id] = models
-            } else if kind == .acp, let thread = catalogThread, thread.acpAgent != nil {
-                let models = try await engine.models(thread: thread)
-                guard let current = self.thread(thread.id), current.provider == thread.provider,
-                      current.acpAgent == thread.acpAgent, current.workspacePath == thread.workspacePath else { return }
-                acpModels[thread.id] = models
-            } else { providerModels[kind] = try await engine.models(provider: kind) }
+            }
         } catch is CancellationError { }
         catch {
             if !terminating {
@@ -3074,17 +2712,15 @@ final class WorkspaceStore {
         }
     }
     func skillsScope(threadID: UUID) -> ProviderSkillsStore.Scope? {
-        guard !terminating, let thread = thread(threadID), [.codex, .pi, .opencode, .claude].contains(thread.provider),
+        guard !terminating, let thread = thread(threadID),
               workspaceReady(for: thread), snapshot.providerReady(for: thread) else { return nil }
         let scope = ProviderSkillsStore.Scope(thread)
         if thread.provider == .codex {
             guard !codexRuntime.isApplying,
                   scope.configuration.authenticationMode != .ownedChatGPT || !codexAuthenticationChanges.contains(scope.configuration.instanceID) else { return nil }
-        } else if thread.provider == .pi {
-            guard scope.piConfiguration?.runtime != nil else { return nil }
         } else if thread.provider == .claude {
             guard scope.claudeConfiguration != nil else { return nil }
-        } else if scope.openCodeConfiguration == nil { return nil }
+        }
         return scope
     }
     func inspectDelegatedTask(parentThreadID: UUID, taskID: UUID) async throws -> DelegatedTaskStatusSnapshot {
@@ -3141,11 +2777,6 @@ final class WorkspaceStore {
         guard !terminating, !codexRuntime.isApplying, codexRuntime.configuration.authenticationMode == .cliDefault, let engine else { return }
         let configuration = codexRuntime.configuration
         await codexAccount.refresh { try await engine.codexAccountSnapshot(configuration: configuration) }
-    }
-    func refreshACPConnection(agent: ACPAgentConfiguration) async {
-        guard !terminating, let engine, snapshot.acpAgents.contains(agent) else { return }
-        acpConnections.invalidate(validAgents: snapshot.acpAgents)
-        await acpConnections.refresh(agent: agent) { try await engine.acpConnectionInfo(agent: agent) }
     }
     func canChooseProjectForDraft(_ threadID: UUID) -> Bool {
         guard snapshot.canAssignProjectToDraft(threadID: threadID), let current = thread(threadID),
@@ -3567,69 +3198,6 @@ final class WorkspaceStore {
     func canInspectConversationHistory(_ operation: ConversationHistoryOperation) -> Bool {
         !terminating && snapshot.canInspectConversationHistory(operationID: operation.id)
     }
-    func isRespondingPiHistory(operationID: UUID, sessionID: UUID, requestID: JSONValue) -> Bool {
-        piHistoryResponses.values.contains {
-            $0.operationID == operationID && $0.sessionID == sessionID && $0.request.id == requestID
-        }
-    }
-    func canRespondPiHistory(operationID: UUID, sessionID: UUID, requestID: JSONValue) -> Bool {
-        guard !terminating, engine != nil, let operation = conversationHistoryOperation(operationID),
-              operation.isPending, operation.review.pi != nil, operation.review.sourceConfiguration.provider == .pi,
-              thread(operation.review.sourceThreadID) != nil,
-              let controls = operation.piControls, controls.sessionID == sessionID,
-              controls.requests.contains(where: { $0.id == requestID && !$0.responding }),
-              piHistoryCancellations[operationID] == nil else { return false }
-        return !isRespondingPiHistory(operationID: operationID, sessionID: sessionID, requestID: requestID)
-    }
-    func respondPiHistory(operationID: UUID, sessionID: UUID, request: ApprovalRequest,
-                          response: ProviderApprovalResponse) async throws {
-        guard let engine, canRespondPiHistory(operationID: operationID, sessionID: sessionID, requestID: request.id),
-              let operation = conversationHistoryOperation(operationID),
-              operation.piControls?.requests.contains(where: { $0.request == request && !$0.responding }) == true else {
-            throw CancellationError()
-        }
-        let id = UUID()
-        let task = Task { try await engine.respondPiHistory(operationID: operationID, sessionID: sessionID,
-                                                           requestID: request.id, response: response) }
-        piHistoryResponses[id] = .init(operationID: operationID, sessionID: sessionID, request: request,
-            owner: .init(threadID: operation.review.sourceThreadID, task: task))
-        defer { piHistoryResponses.removeValue(forKey: id) }
-        let receipt: WorkspaceCommandReceipt
-        do { receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() } }
-        catch {
-            guard !terminating else { throw CancellationError() }
-            apply(await engine.current())
-            guard let current = conversationHistoryOperation(operationID), current.isPending,
-                  current.piControls?.sessionID == sessionID,
-                  current.piControls?.requests.contains(where: { $0.request == request }) == true else { throw CancellationError() }
-            throw error
-        }
-        guard !terminating else { throw CancellationError() }
-        apply(await engine.current())
-        if let rejection = receipt.rejection {
-            guard let current = conversationHistoryOperation(operationID), current.isPending,
-                  current.piControls?.sessionID == sessionID,
-                  current.piControls?.requests.contains(where: { $0.request == request }) == true else { throw CancellationError() }
-            throw CoincideError(rejection)
-        }
-    }
-    func isCancellingPiHistory(_ id: UUID) -> Bool { piHistoryCancellations[id] != nil }
-    func canCancelPiHistory(_ operation: ConversationHistoryOperation) -> Bool {
-        !terminating && engine != nil && operation.isPending && operation.review.pi != nil && operation.review.sourceConfiguration.provider == .pi &&
-            piHistoryCancellations[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
-    }
-    func cancelPiHistory(_ id: UUID) async throws {
-        guard let engine, let operation = conversationHistoryOperation(id), canCancelPiHistory(operation) else { throw CancellationError() }
-        // The Engine owns the accepted job. Keep cancellation independent of a
-        // response awaiting native I/O and of the workspace command queue.
-        let task = Task { try await engine.cancelPiHistory(operationID: id) }
-        piHistoryCancellations[id] = .init(threadID: operation.review.sourceThreadID, task: task)
-        defer { piHistoryCancellations.removeValue(forKey: id) }
-        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-        guard !terminating else { throw CancellationError() }
-        apply(await engine.current())
-        if let rejection = receipt.rejection { throw CoincideError(rejection) }
-    }
     func hasPendingClaudeResumeSelection(_ operation: ConversationHistoryOperation) -> Bool {
         snapshot.isClaudeResumeSelectionPending(operationID: operation.id)
     }
@@ -3651,116 +3219,9 @@ final class WorkspaceStore {
         apply(await engine.current())
         if let rejection = receipt.rejection { throw CoincideError(rejection) }
     }
-    func canKeepOpenCodeV1Original(_ operation: ConversationHistoryOperation) -> Bool {
-        !terminating && operation.phase == .unconfirmed && operation.review.kind == .rewindBeforeRun &&
-            operation.review.openCodeV1 != nil && !operation.isWorking &&
-            historyInspections[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
-    }
-    func canKeepPiOriginal(_ operation: ConversationHistoryOperation) -> Bool {
-        !terminating && operation.phase == .unconfirmed && operation.review.pi != nil && !operation.isWorking &&
-            historyInspections[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
-    }
-    func keepPiOriginal(_ id: UUID) async throws {
-        guard let engine, let operation = conversationHistoryOperation(id), canKeepPiOriginal(operation),
-              let source = thread(operation.review.sourceThreadID),
-              operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
-        let task = Task {
-            let expected = try await engine.inspectPiOriginal(operationID: id)
-            return try await engine.keepPiOriginal(operationID: id, expected: expected)
-        }
-        historyInspections[id] = .init(threadID: source.id, task: task)
-        defer { historyInspections.removeValue(forKey: id) }
-        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-        guard !terminating else { throw CancellationError() }
-        apply(await engine.current())
-        if let rejection = receipt.rejection { throw CoincideError(rejection) }
-    }
-    func piFreshSessionNeedsInspection(threadID: UUID) -> Bool {
-        snapshot.piFreshSessionNeedsInspection(threadID: threadID)
-    }
-    func isInspectingPiFreshSession(threadID: UUID) -> Bool {
-        piFreshHistoryReads[threadID] != nil || historyInspections[threadID] != nil
-    }
-    func canInspectPiFreshSession(threadID: UUID) -> Bool {
-        !terminating && engine != nil && piFreshSessionNeedsInspection(threadID: threadID) && !isInspectingPiFreshSession(threadID: threadID)
-    }
-    func inspectPiFreshSession(threadID: UUID) async throws {
-        guard let engine, canInspectPiFreshSession(threadID: threadID), let source = thread(threadID),
-              let intent = source.piFreshSessionIntent, let consumerRunID = source.piFreshConsumerRunID else { throw CancellationError() }
-        let task = Task<(PiFreshSessionInspection, WorkspaceCommandReceipt?), any Error> {
-            let result = try await engine.inspectPiFreshSession(threadID: threadID)
-            try Task.checkCancellation()
-            if case .persisted(let revision) = result {
-                return (result, try await engine.confirmPersistedPiFreshSession(threadID: threadID, expected: revision))
-            }
-            return (result, nil)
-        }
-        piFreshHistoryReads[threadID] = .init(intent: intent, consumerRunID: consumerRunID, task: task)
-        piFreshHistoryObservations.removeValue(forKey: threadID)
-        defer { piFreshHistoryReads.removeValue(forKey: threadID) }
-        let (result, receipt) = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-        guard !terminating else { throw CancellationError() }
-        apply(await engine.current())
-        if let rejection = receipt?.rejection { throw CoincideError(rejection) }
-        guard let current = thread(threadID), current.piFreshSessionIntent == intent, current.piFreshConsumerRunID == consumerRunID else { return }
-        piFreshHistoryObservations[threadID] = .init(intent: intent, consumerRunID: consumerRunID, result: result)
-    }
-    func canKeepUnwrittenPiFreshSession(threadID: UUID) -> Bool {
-        guard canInspectPiFreshSession(threadID: threadID), let current = thread(threadID),
-              let observed = piFreshHistoryObservations[threadID], current.piFreshSessionIntent == observed.intent,
-              current.piFreshConsumerRunID == observed.consumerRunID, case .unwritten = observed.result else { return false }
-        return true
-    }
-    func keepUnwrittenPiFreshSession(threadID: UUID) async throws {
-        guard let engine, canKeepUnwrittenPiFreshSession(threadID: threadID), let observed = piFreshHistoryObservations[threadID] else {
-            throw CancellationError()
-        }
-        let task = Task { try await engine.acknowledgeUnwrittenPiFreshSession(threadID: threadID,
-            expectedIntentID: observed.intent.id, expectedConsumerRunID: observed.consumerRunID) }
-        historyInspections[threadID] = .init(threadID: threadID, task: task)
-        defer { historyInspections.removeValue(forKey: threadID) }
-        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-        guard !terminating else { throw CancellationError() }
-        apply(await engine.current()); piFreshHistoryObservations.removeValue(forKey: threadID)
-        if let rejection = receipt.rejection { throw CoincideError(rejection) }
-    }
-    func keepOpenCodeV1Original(_ id: UUID) async throws {
-        guard let engine, let operation = conversationHistoryOperation(id), canKeepOpenCodeV1Original(operation),
-              let source = thread(operation.review.sourceThreadID),
-              operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
-        let task = Task {
-            let expected = try await engine.inspectOpenCodeV1Original(operationID: id)
-            return try await engine.keepOpenCodeV1Original(operationID: id, expected: expected)
-        }
-        historyInspections[id] = .init(threadID: source.id, task: task)
-        defer { historyInspections.removeValue(forKey: id) }
-        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-        guard !terminating else { throw CancellationError() }
-        apply(await engine.current())
-        if let rejection = receipt.rejection { throw CoincideError(rejection) }
-    }
-    func canClearConversationHistoryMaintenance(_ operation: ConversationHistoryOperation) -> Bool {
-        !terminating && operation.phase == .unconfirmed && operation.review.kind == .rewindBeforeRun &&
-            operation.review.openCodeV2 != nil && operation.maintenance?.phase.isWorking != true &&
-            operation.maintenance?.phase != .applied &&
-            historyInspections[operation.id] == nil && thread(operation.review.sourceThreadID) != nil
-    }
-    func clearConversationHistoryMaintenance(_ id: UUID) async throws {
-        guard let engine, let operation = conversationHistoryOperation(id), canClearConversationHistoryMaintenance(operation),
-              let source = thread(operation.review.sourceThreadID),
-              operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
-        let task = Task { try await engine.clearConversationHistoryMaintenance(operationID: id) }
-        historyInspections[id] = .init(threadID: source.id, task: task)
-        defer { historyInspections.removeValue(forKey: id) }
-        let receipt = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-        guard !terminating else { throw CancellationError() }
-        apply(await engine.current())
-        if let rejection = receipt.rejection { throw CoincideError(rejection) }
-    }
     func reconcileConversationHistory(_ id: UUID) async throws {
         guard !terminating, let engine, let operation = conversationHistoryOperation(id), canInspectConversationHistory(operation),
               historyInspections[id] == nil,
-              operation.maintenance?.phase.isWorking != true,
               let source = thread(operation.review.sourceThreadID),
               operation.files != nil || canEditWorkspace(source.workspacePath) else { throw CancellationError() }
         let task = Task { try await engine.reconcileConversationHistory(operationID: id) }
@@ -4079,8 +3540,6 @@ final class WorkspaceStore {
         codexAuthenticationBinding?.cancel()
         await codexAuthenticationBinding?.value
         await codexAuthentication.shutdown()
-        await antigravityAccount.shutdown()
-        await antigravityInstallation.shutdown()
         await codexAccount.cancel()
         await codexRuntime.shutdown()
         await claudeRuntime.shutdown()
@@ -4088,7 +3547,6 @@ final class WorkspaceStore {
         let codexReads = Array(codexCatalogReads.values)
         for task in codexReads { task.cancel() }
         for task in codexReads { _ = try? await task.value }
-        await acpConnections.cancel()
         let modelReads = codexModelDefaultsReads.values.map(\.task); codexModelDefaultsReads.removeAll()
         for task in modelReads { task.cancel() }; for task in modelReads { _ = await task.value }
         let recalls = Array(automaticHistoryRecallTasks.values)
@@ -4104,14 +3562,8 @@ final class WorkspaceStore {
         for task in refreshes { task.cancel() }; for task in refreshes { await task.value }
         let historyReads = historyReviewReads.values.map(\.task)
         let historyChecks = historyInspections.values.map(\.task)
-        let piHistoryActions = piHistoryResponses.values.map(\.owner.task) + piHistoryCancellations.values.map(\.task)
-        let piFreshReads = piFreshHistoryReads.values.map(\.task)
         for task in historyReads { task.cancel() }; for task in historyChecks { task.cancel() }
-        for task in piHistoryActions { task.cancel() }
-        for task in piFreshReads { task.cancel() }
         for task in historyReads { _ = await task.result }; for task in historyChecks { _ = await task.result }
-        for task in piHistoryActions { _ = await task.result }
-        for task in piFreshReads { _ = await task.result }
         let defaultsReads = projectDefaultReads.values.map(\.task)
         for task in defaultsReads { task.cancel() }
         for task in defaultsReads { _ = await task.result }

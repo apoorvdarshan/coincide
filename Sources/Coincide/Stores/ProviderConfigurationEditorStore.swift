@@ -54,7 +54,7 @@ import Observation
     /// link from another profile must never silently select the current home.
     static func destination(for item: ProviderIntegrationItem, codex: CodexRuntimeConfiguration,
                             claude: ClaudeRuntimeProfile, workspacePath: String?) -> Destination? {
-        guard item.available, item.provider.isSupported, item.importMode != .copied,
+        guard item.available, item.importMode != .copied,
               item.kind == .mcp || item.kind == .plugins || item.kind == .hooks,
               let scope = ProviderConfigurationScope(rawValue: item.scope.lowercased()),
               let source = try? ProviderConfigurationEditor.sourceURL(provider: item.provider, scope: scope,

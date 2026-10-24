@@ -175,8 +175,7 @@ struct RemoteProjectedMessageView: View {
                             try await workspace.saveTranscriptPlan(path: path, contents: contents, message: message, binding: binding, presentation: entry.presentation)
                         }, saveAvailable: current && workspace?.canWrite == true)
                 } else {
-                    ToolCardView(card: card, entity: entry?.presentation.providerEntity,
-                                 caption: entry.flatMap { TranscriptEntryCaption.copilot($0.message) }, expanded: $expanded)
+                    ToolCardView(card: card, entity: entry?.presentation.providerEntity, expanded: $expanded)
                 }
             } else if message.role == .tool {
                 DisclosureGroup(message.title?.preview ?? "Tool activity") { Text(displayText).font(.system(.caption, design: .monospaced)) }
@@ -294,7 +293,6 @@ struct RemoteProjectedConversationView: View {
                 if let request = control.requests.first {
                     ApprovalView(request: request.request, isResponding: request.responding || !store.canWrite,
                         onDecision: { respond(request.request, .decision($0)) }, onAnswer: { respond(request.request, .answers($0)) },
-                        onOption: { respond(request.request, .option($0)) }, onSelections: { respond(request.request, .selections($0)) },
                         onSelectionsWithNotes: { respond(request.request, .selectionsWithNotes(selections: $0, notes: $1)) })
                         .id(request.id).padding(.horizontal, 20)
                 }

@@ -91,8 +91,7 @@ for targeting saved chats, Settings navigation and screenshot behavior.
 [Product and design direction](docs/DESIGN.md) describes the current native app.
 
 The repository also retains deeper implementation and historical records:
-[porting](docs/PORTING.md), [provider inventory](docs/PROVIDER_PARITY.md),
-[transcript implementation](docs/TRANSCRIPT.md), [app tools](docs/MCP.md),
+[porting](docs/PORTING.md), [transcript implementation](docs/TRANSCRIPT.md), [app tools](docs/MCP.md),
 [remote environments](docs/REMOTE_ENVIRONMENTS.md),
 [earlier cloud task briefs](docs/CLOUD_TASKS.md) and
 [dated validation evidence](docs/VALIDATION.md).

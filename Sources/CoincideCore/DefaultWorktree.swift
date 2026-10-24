@@ -67,12 +67,11 @@ public struct DefaultWorktreeInput: Codable, Sendable, Equatable {
     public let text: String
     public let attachments: [ChatAttachment]
     public let claudeRuntime: ClaudeRuntimeConfiguration?
-    public let piRuntime: PiRuntimeConfiguration?
     public init(thread: CodingThread, intent: DraftWorkspaceIntent, text: String,
-                claudeRuntime: ClaudeRuntimeConfiguration? = nil, piRuntime: PiRuntimeConfiguration? = nil) {
+                claudeRuntime: ClaudeRuntimeConfiguration? = nil) {
         threadID = thread.id; threadCreatedAt = thread.createdAt; self.intent = intent
         configuration = .init(thread: thread); checkpointPolicy = thread.effectiveCheckpointPolicy; self.text = text; attachments = thread.draftAttachments
-        self.claudeRuntime = claudeRuntime; self.piRuntime = piRuntime
+        self.claudeRuntime = claudeRuntime
     }
 }
 
@@ -150,13 +149,6 @@ extension WorkspaceDecision {
                       runtime.registeredWorkspacePath.utf8.elementsEqual(thread.workspacePath.utf8) else { throw ClaudeRuntimeConfiguration.invalid() }
                 try runtime.validate(); captured.threads[captured.threads.firstIndex(where: { $0.id == thread.id })!].claudeRuntimeConfiguration = runtime
             }
-            if let runtime = input.piRuntime {
-                guard thread.provider == .pi, let selection = thread.piConfiguration, selection.runtime == nil,
-                      runtime.registeredWorkspacePath.utf8.elementsEqual(thread.workspacePath.utf8) else { throw WorkspaceCommandError("The Pi runtime changed before sending.") }
-                try runtime.validate()
-                captured.threads[captured.threads.firstIndex(where: { $0.id == thread.id })!].piConfiguration = .init(instanceID: selection.instanceID,
-                    executable: selection.executable, model: selection.model, thinkingLevel: selection.thinkingLevel, runtime: runtime)
-            }
         } catch let error as CoincideError { throw WorkspaceCommandError(error.localizedDescription) }
         let ready = captured.threads.first(where: { $0.id == thread.id })!
         var decision = Self(snapshot: captured)
@@ -164,9 +156,7 @@ extension WorkspaceDecision {
             try decision.beginWorktreePreparation(threadID: thread.id, request: request,
                 expectedSourcePath: thread.workspacePath, previousAttemptID: nil, reviewSetup: true,
                 claudeRuntimeConfiguration: try ready.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath,
-                    physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true)),
-                piRuntimeConfiguration: try ready.piConfiguration?.runtime?.replacingWorkspace(request.destinationPath,
-                    physicalPath: PiRuntimeConfiguration.physical(request.destinationPath, allowMissing: true)), now: now)
+                    physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true)), now: now)
         } catch let error as CoincideError { throw WorkspaceCommandError(error.localizedDescription) }
         // Native submission captures the repathed provider configuration and the
         // original draft attachments, then queues behind real checkout/setup readiness.

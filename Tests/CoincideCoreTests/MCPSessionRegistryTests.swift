@@ -31,7 +31,7 @@ private actor MCPRegistryCompletions {
     func has(_ value: Int) -> Bool { values.contains(value) }
 }
 private func registryScope(threadID: UUID = UUID(), sessionID: UUID = UUID(), capabilities: Set<MCPCapability> = [.orchestration]) -> MCPInvocationScope {
-    .init(sessionID: sessionID, threadID: threadID, projectID: UUID(), provider: .pi, runtimeID: UUID(), incarnation: UUID(),
+    .init(sessionID: sessionID, threadID: threadID, projectID: UUID(), provider: .codex, runtimeID: UUID(), incarnation: UUID(),
           providerInstanceID: UUID(), workspacePath: "/private/tmp/synthetic-mcp-workspace", permission: .supervised, capabilities: capabilities)
 }
 private func registryInitialize(_ registry: MCPSessionRegistry, credential: MCPSessionCredential) async throws {

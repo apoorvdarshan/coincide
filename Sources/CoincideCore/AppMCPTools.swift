@@ -425,7 +425,7 @@ public struct AppMCPTools: Sendable {
         guard first == nil || second == nil || first == second else { throw AppMCPError(.invalidRequest) }
         let provider: ProviderKind?
         if let raw = try input.text("driverKind", maximum: 64) {
-            guard let parsed = ProviderKind(rawValue: raw), parsed.isSupported else { throw AppMCPError(.invalidRequest) }; provider = parsed
+            guard let parsed = ProviderKind(rawValue: raw) else { throw AppMCPError(.invalidRequest) }; provider = parsed
         } else { provider = nil }
         var options: [String: JSONValue]?
         if let raw = input.object["options"] {

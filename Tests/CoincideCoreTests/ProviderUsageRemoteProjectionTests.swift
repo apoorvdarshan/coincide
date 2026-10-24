@@ -72,7 +72,7 @@ private func usageProjectionSource(_ snapshot: WorkspaceSnapshot) throws -> Remo
     }
     #expect(recorded.runID == run.id && recorded.turn?.inputTokens == 150)
     #expect(passive.runID == nil && passive.turn == nil && passive.rateLimits.first?.utilization == 0.8)
-    snapshot.threads[0].provider = .opencode
+    snapshot.threads[0].provider = .codex
     let changedHeader = try usageProjectionSource(snapshot)
     #expect(changedHeader.runs.first?.provider == .claude && changedHeader.runs.first?.providerUsage == run.providerUsage)
     #expect(changedHeader.detail?.liveProviderUsage == nil, "A previous Claude meter cannot attach to a different current provider.")

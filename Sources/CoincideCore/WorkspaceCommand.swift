@@ -48,30 +48,19 @@ public enum ThreadEdit: Codable, Sendable, Equatable {
     case title(String), model(String), provider(ProviderKind), permission(PermissionMode)
     case draft(String), pinned(Bool), archived(Bool), workspacePath(String)
     indirect case draftProject(DraftProjectAssignment)
-    case acpAgent(ACPAgentConfiguration), agentMode(String?)
+    case agentMode(String?)
     case codexInteractionMode(CodexModeSelection)
-    case agentConfig(id: String, value: String?)
-    case agentConfiguration(id: String, value: JSONValue?)
-    case resetAgentOptions
     case checkpointPolicy(RunCheckpointPolicy)
     case codexModel(ProviderModel), codexReasoning(model: ProviderModel, effort: String?), codexDefaultModel(CodexDefaultModelSelection)
     indirect case codexServiceTier(model: ProviderModel, tier: String?, expected: ProviderConfiguration? = nil)
     case claudeModel(ProviderModel?)
     indirect case claudeModelOptions(model: ProviderModel, options: ClaudeModelOptions, expected: ProviderConfiguration? = nil)
     indirect case resetProviderModelOptions(expected: ProviderConfiguration? = nil)
-    case openCodeModel(ProviderModel?), openCodeVariant(model: ProviderModel, variant: String?), openCodeAgent(String)
-    case openCodeGeneration(OpenCodeGeneration), grokRuntimeMode(GrokACPRuntimeMode)
-    case piModel(ProviderModel?), piThinking(model: ProviderModel, level: String?)
-    case museModel(ProviderModel?), museReasoning(model: ProviderModel, effort: String?)
-    case antigravityConfiguration(AntigravityConfiguration)
     case codexRuntimeConfiguration(CodexRuntimeConfiguration)
     case codexProvider(CodexRuntimeConfiguration)
     case claudeProvider(ClaudeRuntimeConfiguration)
     case claudeRuntimeConfiguration(ClaudeRuntimeConfiguration)
     case claudeWorkspace(ClaudeRuntimeConfiguration)
-    case piProvider(PiRuntimeConfiguration)
-    case piRuntimeConfiguration(PiRuntimeConfiguration)
-    case piWorkspace(PiRuntimeConfiguration)
 }
 
 /// Keep captured payloads off the stack while commands pass through admission,
@@ -103,7 +92,6 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case submit(threadID: UUID, text: String)
     case submitFromAppMCP(threadID: UUID, text: String, queueEvenWhenIdle: Bool)
     case submitCapturedClaude(threadID: UUID, text: String, configuration: ClaudeRuntimeConfiguration)
-    case submitCapturedPi(threadID: UUID, text: String, configuration: PiRuntimeConfiguration)
     case interrupt(threadID: UUID)
     case interruptFromAppMCP(threadID: UUID, expectedRunID: UUID?, expectedRuntimeID: UUID?)
     case respond(threadID: UUID, requestID: JSONValue, response: ProviderApprovalResponse)
@@ -120,8 +108,6 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case threadActionUndo(ThreadActionUndoClaim)
     case workspaceLifecycle(WorkspaceLifecycleAction)
     case setWorkspaceLifecyclePolicy(WorkspaceLifecyclePolicy)
-    case saveACPAgent(ACPAgentConfiguration)
-    case removeACPAgent(UUID)
     case startProjectClone(project: WorkspaceProject, thread: CodingThread)
     case cancelWorktreePreparation(UUID)
     case cancelProjectClone(UUID)
@@ -175,16 +161,12 @@ indirect enum EngineCommand: Codable, Sendable {
     case appMCPRequestGuard(threadID: UUID, runtimeID: UUID?, runID: UUID?, request: ApprovalRequest)
     case client(WorkspaceCommand)
     case runtimeOpened(threadID: UUID, runID: UUID, runtimeID: UUID)
-    case piRunHistoryPrepared(threadID: UUID, runtimeID: UUID, preparation: PiRunHistoryPreparation, incarnation: UUID)
-    case piSteeringInputPrepared(operationID: UUID, input: PiHistoryInputEvidence, incarnation: UUID)
     case provider(threadID: UUID, runtimeID: UUID, event: ProviderEvent)
     case effectResult(WorkspaceEffectRequest, EffectResult)
-    case beginWorktreePreparation(threadID: UUID, request: GitWorktreeRequest, expectedSourcePath: String, previousAttemptID: UUID?, incarnation: UUID, reviewSetup: Bool = false, claudeRuntimeConfiguration: ClaudeRuntimeConfiguration? = nil, piRuntimeConfiguration: PiRuntimeConfiguration? = nil)
+    case beginWorktreePreparation(threadID: UUID, request: GitWorktreeRequest, expectedSourcePath: String, previousAttemptID: UUID?, incarnation: UUID, reviewSetup: Bool = false, claudeRuntimeConfiguration: ClaudeRuntimeConfiguration? = nil)
     case worktreeStarted(threadID: UUID, attemptID: UUID)
     case worktreeRecovered(threadID: UUID, attemptID: UUID, incarnation: UUID, result: GitWorktreeResult)
     case pauseQueues
-    case antigravityAuthenticationPreparing(instanceID: UUID)
-    case antigravityAccountConfigured(AntigravityConfiguration)
     case codexAuthenticationPreparing(instanceID: UUID, threadIDs: Set<UUID>)
     case codexAccountConfigured(instanceID: UUID, binding: CodexAccountBinding?)
     case cloneStarted(projectID: UUID, attemptID: UUID)
@@ -204,20 +186,9 @@ indirect enum EngineCommand: Codable, Sendable {
     case conversationHistoryDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case conversationHistoryEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryScratchForkHeld(ScratchHistoryForkHeldResult)
-    case conversationHistoryCandidateObserved(operationID: UUID, candidate: OpenCodeV1HistoryCandidate, incarnation: UUID)
     case conversationHistoryClaudeForkReserved(operationID: UUID, publication: ClaudeTranscriptPublication, incarnation: UUID)
-    case conversationHistoryPiCandidateObserved(operationID: UUID, candidate: PiHistoryCandidate, incarnation: UUID)
-    case conversationHistoryPiControlsOpened(operationID: UUID, sessionID: UUID, incarnation: UUID)
-    case conversationHistoryPiControlEvent(operationID: UUID, sessionID: UUID, event: ProviderEvent, incarnation: UUID)
-    case conversationHistoryPiControlResponding(operationID: UUID, sessionID: UUID, requestID: JSONValue, response: ProviderApprovalResponse, incarnation: UUID)
-    case conversationHistoryPiControlsClosed(operationID: UUID, sessionID: UUID, incarnation: UUID)
-    case conversationHistoryPiCancelled(operationID: UUID, incarnation: UUID)
-    case piFreshSessionResolved(threadID: UUID, incarnation: UUID, intent: PiFreshSessionIntent, consumerRunID: UUID, inspection: PiFreshSessionInspection)
     case claudeResumeInspected(threadID: UUID, incarnation: UUID, selection: ClaudeResumeSelection, run: ThreadRunRecord, result: ClaudeResumeInspection)
     case conversationHistoryReconciled(operationID: UUID, incarnation: UUID, result: ConversationHistoryReconciliation)
-    case conversationHistoryMaintenanceAccepted(operationID: UUID, attempt: ConversationHistoryMaintenanceAttempt, incarnation: UUID)
-    case conversationHistoryMaintenanceDispatching(threadID: UUID, operationID: UUID, attemptID: UUID, incarnation: UUID)
-    case conversationHistoryMaintenanceEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryFilesDispatching(threadID: UUID, operationID: UUID, incarnation: UUID)
     case conversationHistoryFilesEffectResult(WorkspaceEffectRequest, EffectResult, incarnation: UUID)
     case conversationHistoryFilesInspected(operationID: UUID, incarnation: UUID, result: GitCheckpointRestoreInspection)
@@ -252,7 +223,6 @@ enum EffectResult: Codable, Sendable {
     case succeeded, failed(String), cancelled, stopped, worktreeResolved(GitWorktreePlan), worktreePrepared(GitWorktreeResult), projectScriptResolved(ProjectScriptExecutionPlan?)
     case checkpointResolved(GitCheckpointPlan), checkpointCaptured(GitCheckpointReceipt, cleanupWarning: Bool), checkpointUnavailable
     case conversationHistoryConfirmed(ProviderConversationSnapshot), conversationHistoryUnconfirmed
-    case conversationHistoryMaintenanceConfirmed(OpenCodeV2HistorySnapshot)
     case checkpointRestoreConfirmed(GitCheckpointRestoreReceipt), checkpointRestoreUnconfirmed
     case pullRequestCreationConfirmed(GitHubPullRequestCreateOutcome), pullRequestCreationUnconfirmed
     case pullRequestActionConfirmed(GitHubPullRequestActionOutcome), pullRequestActionUnconfirmed
@@ -275,18 +245,6 @@ struct WorkspaceDecision: Sendable {
         if let expected, !ProviderConfiguration(thread: thread).matchesModelControlCapture(expected) {
             throw WorkspaceCommandError("This conversation's model controls changed. Your current settings and draft were kept.")
         }
-    }
-
-    @inline(never)
-    private static func reducePiRunHistoryPrepared(_ command: EngineCommand, snapshot initial: WorkspaceSnapshot) throws -> Self {
-        guard case .piRunHistoryPrepared(let threadID, let runtimeID, let preparation, _) = command else { throw WorkspaceCommandError("This workspace command was routed incorrectly.") }
-        var snapshot = initial
-        guard let index = snapshot.threads.firstIndex(where: { $0.id == threadID }),
-              snapshot.threads[index].runtimeID == runtimeID,
-              !snapshot.isConversationHistoryLocked(threadID: threadID) else { throw WorkspaceCommandError("The Pi run changed before its native baseline was saved.") }
-        do { try snapshot.threads[index].preparePiRunHistory(preparation) }
-        catch { throw WorkspaceCommandError("The Pi run changed before its native baseline was saved.") }
-        return Self(snapshot: snapshot)
     }
 
     private struct GeneralReduction {
@@ -363,8 +321,6 @@ struct WorkspaceDecision: Sendable {
             reduced = .init(decision: try reduceWorktreeRecovery(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .beginWorktreePreparation:
             reduced = .init(decision: try reduceWorktreePreparation(command, snapshot: snapshot, now: now), requiresFinalization: true)
-        case .piRunHistoryPrepared:
-            reduced = .init(decision: try reducePiRunHistoryPrepared(command, snapshot: snapshot), requiresFinalization: true)
         case .delegatedTaskAccepted, .delegatedTaskCancel, .delegatedTaskDrained, .delegatedTaskObserved, .delegatedTaskWakePolicy, .delegatedTaskCompletionPrepared, .delegatedTaskCompletionCoalesced:
             reduced = .init(decision: try reduceDelegatedTask(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .contextTransferAccepted, .contextTransferDispatching, .contextTransferNativeReserved, .contextTransferNativeReady, .contextTransferRuntimeRebound, .contextTransferDeferred, .contextTransferSelectionPrepared, .contextTransferDelivered, .contextTransferUncertain, .client(.abandonContextTransfer):
@@ -373,14 +329,10 @@ struct WorkspaceDecision: Sendable {
             return try reduceRemoteEnvironment(command, id: id, snapshot: snapshot, now: now)
         case .appMCPRequestGuard, .appMCPTargetGuard, .appMCP:
             return try reduceAppMCPCommand(command, id: id, snapshot: snapshot, now: now)
-        case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
-             .conversationHistoryPiControlResponding, .conversationHistoryPiControlsClosed, .conversationHistoryPiCancelled, .piFreshSessionResolved:
-            reduced = .init(decision: try reducePiHistory(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .provider(let threadID, let runtimeID, let event):
             reduced = try reduceProvider(event, threadID: threadID, runtimeID: runtimeID, snapshot: snapshot, now: now)
-        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryScratchForkHeld, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
-             .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
-             .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt):
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryScratchForkHeld, .conversationHistoryClaudeForkReserved,
+             .conversationHistoryReconciled, .client(.recallConversationHistoryPrompt):
             reduced = .init(decision: try reduceConversationHistory(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
              .client(.acknowledgeConversationHistoryFiles), .client(.dismissConversationHistoryRecall):
@@ -396,7 +348,7 @@ struct WorkspaceDecision: Sendable {
             reduced = .init(decision: try reducePullRequestAction(command, snapshot: snapshot, now: now), requiresFinalization: true)
         case .client(.addProjectWithThread), .client(.startProjectClone):
             reduced = .init(decision: try reduceProjectRegistration(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
-        case .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi):
+        case .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude):
             reduced = .init(decision: try reduceSubmission(command, id: id, snapshot: snapshot, now: now), requiresFinalization: true)
         case .codexAuthenticationPreparing, .codexAccountConfigured:
             reduced = .init(decision: try reduceCodexAuthentication(command, snapshot: snapshot, now: now), requiresFinalization: true)
@@ -509,7 +461,7 @@ struct WorkspaceDecision: Sendable {
             try requireAvailable([input.intent.sourcePath, request.destinationPath])
         case .retryDefaultWorktree(let threadID, _):
             if let state = snapshot.threads.first(where: { $0.id == threadID })?.workspacePreparation { try requireAvailable([state.request.sourcePath, state.destinationPath]) }
-        case .beginWorktreePreparation(let id, let request, let source, _, _, _, _, _):
+        case .beginWorktreePreparation(let id, let request, let source, _, _, _, _):
             try requireAvailable([request.sourcePath, request.destinationPath, source] + snapshot.threads.filter { $0.id == id }.map(\.workspacePath))
         case .pullRequestCheckoutAccepted(let operation):
             try requireAvailable(operation.scopePaths + operation.coordinationPaths)
@@ -581,19 +533,10 @@ struct WorkspaceDecision: Sendable {
             decision.finishConversationHistory(request, result: result, incarnation: incarnation, now: now)
         case .conversationHistoryScratchForkHeld(let held):
             decision.holdScratchHistoryFork(held, now: now)
-        case .conversationHistoryCandidateObserved(let operationID, let candidate, let incarnation):
-            try decision.recordOpenCodeV1HistoryCandidate(operationID: operationID, candidate: candidate, incarnation: incarnation, now: now)
         case .conversationHistoryClaudeForkReserved(let operationID, let publication, let incarnation):
             try decision.recordClaudeHistoryForkPublication(operationID: operationID, publication: publication, incarnation: incarnation, now: now)
         case .conversationHistoryReconciled(let operationID, _, let result):
             try decision.reconcileConversationHistory(operationID: operationID, result: result, now: now)
-        case .conversationHistoryMaintenanceAccepted(let operationID, let attempt, let incarnation):
-            guard attempt.sourceIncarnation == incarnation else { throw WorkspaceCommandError("This provider maintenance owner changed. Inspect the current conversation again.") }
-            try decision.acceptConversationHistoryMaintenance(operationID: operationID, attempt: attempt, now: now)
-        case .conversationHistoryMaintenanceDispatching(let threadID, let operationID, let attemptID, let incarnation):
-            try decision.dispatchConversationHistoryMaintenance(threadID: threadID, operationID: operationID, attemptID: attemptID, incarnation: incarnation, now: now)
-        case .conversationHistoryMaintenanceEffectResult(let request, let result, let incarnation):
-            decision.finishConversationHistoryMaintenance(request, result: result, incarnation: incarnation, now: now)
         case .client(.recallConversationHistoryPrompt(let operationID)):
             try decision.recallConversationHistoryPrompt(operationID: operationID, now: now)
         default: throw WorkspaceCommandError("This workspace command was routed incorrectly.")
@@ -766,7 +709,7 @@ struct WorkspaceDecision: Sendable {
             guard let threadID = action.threadID, let index = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
             var thread = decision.snapshot.threads[index]
         switch action {
-            case .submit(_, let text), .submitFromAppMCP(_, let text, _), .submitCapturedClaude(_, let text, _), .submitCapturedPi(_, let text, _):
+            case .submit(_, let text), .submitFromAppMCP(_, let text, _), .submitCapturedClaude(_, let text, _):
                 guard thread.draftWorkspaceIntent == nil else { throw WorkspaceCommandError("Prepare the captured worktree or explicitly choose this checkout before sending.") }
                 let independent: Bool
                 let queueEvenWhenIdle: Bool
@@ -778,14 +721,8 @@ struct WorkspaceDecision: Sendable {
                           thread.claudeRuntimeConfiguration == nil || thread.claudeRuntimeConfiguration == configuration else { throw ClaudeRuntimeConfiguration.invalid() }
                     thread.claudeRuntimeConfiguration = configuration
                 }
-                if case .submitCapturedPi(_, _, let configuration) = action {
-                    try thread.capturePiRuntime(configuration)
-                }
                 guard thread.claudeResumeConsumerRunID == nil || thread.isBusy else {
                     throw WorkspaceCommandError("Inspect the previous Claude resume attempt before sending another message.")
-                }
-                guard thread.piFreshConsumerRunID == nil || thread.isBusy else {
-                    throw WorkspaceCommandError("Inspect the previous Pi empty-context attempt before sending another message.")
                 }
                 let text = independent ? text : text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (!independent && !thread.draftAttachments.isEmpty)), !thread.isArchived else { throw WorkspaceCommandError("Enter a message or attach a file in an active conversation.") }
@@ -855,11 +792,8 @@ struct WorkspaceDecision: Sendable {
             throw DelegatedTaskError.invalidRequest
         case .contextTransferAccepted, .contextTransferDispatching, .contextTransferNativeReserved, .contextTransferNativeReady, .contextTransferRuntimeRebound, .contextTransferDeferred, .contextTransferSelectionPrepared, .contextTransferDelivered, .contextTransferUncertain, .client(.abandonContextTransfer):
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
-        case .conversationHistoryPiCandidateObserved, .conversationHistoryPiControlsOpened, .conversationHistoryPiControlEvent,
-             .conversationHistoryPiControlResponding, .conversationHistoryPiControlsClosed, .conversationHistoryPiCancelled, .piFreshSessionResolved,
-             .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryScratchForkHeld, .conversationHistoryCandidateObserved, .conversationHistoryClaudeForkReserved,
-             .conversationHistoryReconciled, .conversationHistoryMaintenanceAccepted, .conversationHistoryMaintenanceDispatching,
-             .conversationHistoryMaintenanceEffectResult, .client(.recallConversationHistoryPrompt),
+        case .conversationHistoryAccepted, .conversationHistoryDispatching, .conversationHistoryEffectResult, .conversationHistoryScratchForkHeld, .conversationHistoryClaudeForkReserved,
+             .conversationHistoryReconciled, .client(.recallConversationHistoryPrompt),
              .conversationHistoryFilesDispatching, .conversationHistoryFilesEffectResult, .conversationHistoryFilesInspected,
              .client(.acknowledgeConversationHistoryFiles), .client(.dismissConversationHistoryRecall),
              .checkpointRestoreAccepted, .checkpointRestoreDispatching, .checkpointRestoreEffectResult,
@@ -869,23 +803,12 @@ struct WorkspaceDecision: Sendable {
              .pullRequestActionAccepted, .pullRequestActionDispatching, .pullRequestActionEffectResult,
              .pullRequestActionInspected, .pullRequestActionAcknowledged,
              .client(.addProjectWithThread), .client(.startProjectClone),
-             .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .client(.submitCapturedPi), .appMCP, .appMCPTargetGuard, .appMCPRequestGuard, .remoteEnvironment,
+             .client(.submit), .client(.submitFromAppMCP), .client(.submitCapturedClaude), .appMCP, .appMCPTargetGuard, .appMCPRequestGuard, .remoteEnvironment,
              .codexAuthenticationPreparing, .codexAccountConfigured,
              .projectScriptStarted, .projectScriptExited, .projectScriptStopped:
             return .init(decision: try make(command, id: id, snapshot: snapshot, now: now), requiresFinalization: false)
         case .queuedInputReplaced, .remoteThreadUndo: break
         case .promptSteeringAccepted(let operation): try decision.acceptPromptSteering(operation)
-        case .piRunHistoryPrepared:
-            return .init(decision: try reducePiRunHistoryPrepared(command, snapshot: snapshot), requiresFinalization: true)
-        case .piSteeringInputPrepared(let operationID, let input, let incarnation):
-            guard let operation = decision.snapshot.promptSteering(operationID), operation.sourceIncarnation == incarnation,
-                  operation.phase == .dispatching, operation.configuration.provider == .pi,
-                  operation.messageID == input.clientMessageID,
-                  let index = decision.snapshot.threads.firstIndex(where: { $0.id == operation.threadID }),
-                  decision.snapshot.threads[index].runtimeID == operation.runtimeID,
-                  decision.snapshot.threads[index].activeRun?.configuration == operation.configuration else { throw WorkspaceCommandError("The Pi steering target changed before its input was saved.") }
-            do { try decision.snapshot.threads[index].registerPiSteeringInput(runID: operation.runID, input: input) }
-            catch { throw WorkspaceCommandError("The Pi steering target changed before its input was saved.") }
         case .promptSteeringDispatching(let operation, let incarnation): try decision.dispatchPromptSteering(operationID: operation, incarnation: incarnation, now: now)
         case .promptSteeringEffectResult(let request, let result, let incarnation): try decision.finishPromptSteering(request, result: result, incarnation: incarnation, now: now)
         case .client(.acknowledgePromptSteering(let operation)): try decision.acknowledgePromptSteering(operationID: operation, now: now)
@@ -1175,9 +1098,6 @@ struct WorkspaceDecision: Sendable {
                   !decision.snapshot.cloneAttemptIDs.contains(plan.id) else { throw WorkspaceCommandError("This clone cannot be retried now. Refresh its status first.") }
             decision.snapshot.projects[i].clone = .init(plan: plan, now: now, previousPlans: old.previousPlans + [old.plan])
             decision.effects.append(.init(id: plan.id, request: .projectClone(projectID: projectID, plan: plan)))
-        case .client(.saveACPAgent):
-            throw WorkspaceCommandError("Coincide supports Codex and Claude only.")
-        case .client(.removeACPAgent(let id)): decision.snapshot.acpAgents.removeAll { $0.id == id }
         case .client(.addProject(let project)):
             guard project.clone == nil else { throw WorkspaceCommandError("Use Clone Repository to create a cloning project.") }
             if decision.snapshot.projects.contains(where: { $0.path == project.path }) { return .init(decision: decision, requiresFinalization: false) }
@@ -1195,37 +1115,6 @@ struct WorkspaceDecision: Sendable {
             return try reduceProvider(event, threadID: threadID, runtimeID: runtimeID, snapshot: snapshot, now: now)
         case .effectResult(let request, let result), .projectScriptEffectResult(let request, let result, _), .runCheckpointEffectResult(let request, let result, _):
             decision.finished(request, result: result, now: now)
-        case .antigravityAuthenticationPreparing(let instanceID):
-            for index in decision.snapshot.threads.indices {
-                var thread = decision.snapshot.threads[index]
-                guard thread.antigravityConfiguration?.instanceID == instanceID || thread.activeRun?.configuration.antigravityConfiguration?.instanceID == instanceID else { continue }
-                if var run = thread.activeRun {
-                    run.stopRequested = true; thread.activeRun = run; thread.updateRunRecord()
-                    if thread.runHistory?.first(where: { $0.id == run.id })?.checkpoints?.providerReleased == false {
-                        thread.updateCheckpoint(runID: run.id, stage: .baseline) {
-                            $0.phase = .interrupted; $0.error = ThreadRunCheckpointAttempt.interruptedMessage; $0.updatedAt = now
-                        }
-                        if let record = thread.runHistory?.firstIndex(where: { $0.id == run.id }) {
-                            thread.runHistory?[record].checkpoints?.pendingStart = nil
-                        }
-                    }
-                    thread.finishRunRecord(status: .interrupted, reason: .forcedStop, now: now)
-                    decision.requestPostRunCheckpoint(runID: run.id, in: &thread, now: now)
-                    thread.activeRun = nil; thread.state = .interrupted
-                }
-                thread.queuePaused = true; thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil
-                thread.updatedAt = now; decision.closeRuntimes.insert(thread.id); decision.snapshot.threads[index] = thread
-            }
-        case .antigravityAccountConfigured(let configuration):
-            try configuration.validate()
-            for index in decision.snapshot.threads.indices {
-                var thread = decision.snapshot.threads[index]
-                guard thread.provider == .antigravity, thread.antigravityConfiguration?.instanceID == configuration.instanceID else { continue }
-                guard thread.activeRun == nil, thread.runtimeID == nil else { throw WorkspaceCommandError("Wait for Antigravity sessions to close before changing the account.") }
-                thread.antigravityConfiguration = configuration.selecting(model: thread.antigravityConfiguration?.model)
-                thread.model = thread.antigravityConfiguration?.model ?? ""
-                thread.queuePaused = true; thread.updatedAt = now; decision.snapshot.threads[index] = thread
-            }
         case .pauseQueues:
             for i in (decision.snapshot.promptSteerings ?? []).indices where decision.snapshot.promptSteerings?[i].isWorking == true { decision.snapshot.promptSteerings?[i].fallbackAllowed = false }
             for i in decision.snapshot.threads.indices where !decision.snapshot.threads[i].queuedTurns.isEmpty { decision.snapshot.threads[i].queuePaused = true }
@@ -1269,100 +1158,24 @@ struct WorkspaceDecision: Sendable {
                 decision.closeRuntimes.insert(thread.id); thread.codexRuntimeConfiguration = configuration
                 thread.model = ""; thread.reasoningEffort = nil; thread.codexReasoningPreferences = nil; thread.codexModelSelectionSource = nil
                 thread.providerMetadata = nil; thread.runtimeID = nil
-            case .antigravityConfiguration(let configuration):
-                guard thread.provider == .antigravity, !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty,
-                      thread.runtimeRequests.isEmpty else { throw WorkspaceCommandError("Change the Antigravity runtime in a new, empty conversation.") }
-                do { try configuration.validate() }
-                catch { throw WorkspaceCommandError(AntigravityConfiguration.invalid().localizedDescription) }
-                decision.closeRuntimes.insert(thread.id); thread.antigravityConfiguration = configuration
-                thread.model = configuration.model ?? ""; thread.providerThreadID = nil; thread.runtimeID = nil
             case .checkpointPolicy(let value): thread.checkpointPolicy = value
             case .codexModel(let model): try thread.selectCodexModel(model)
             case .codexReasoning(let model, let effort): try thread.selectCodexReasoning(model: model, effort: effort)
             case .codexDefaultModel(let selection): try thread.selectCodexDefaultModel(selection)
-            case .openCodeModel(let model): try thread.selectOpenCodeModel(model)
-            case .piModel(let model):
-                do { try thread.selectPiModel(model) }
-                catch { throw WorkspaceCommandError(error.localizedDescription) }
-            case .piThinking(let model, let level):
-                do { try thread.selectPiThinking(model: model, level: level) }
-                catch { throw WorkspaceCommandError(error.localizedDescription) }
-            case .museModel(let model):
-                do { try thread.selectMuseModel(model) }
-                catch { throw WorkspaceCommandError(error.localizedDescription) }
-            case .museReasoning(let model, let effort):
-                do { try thread.selectMuseReasoning(model: model, effort: effort) }
-                catch { throw WorkspaceCommandError(error.localizedDescription) }
-            case .openCodeVariant(let model, let variant): try thread.selectOpenCodeVariant(model: model, variant: variant)
-            case .openCodeAgent(let agent):
-                guard thread.provider == .opencode, let native = thread.openCodeConfiguration else { throw OpenCodeConfiguration.invalid() }
-                let selected = native.selecting(agentID: agent); try selected.validate(); thread.openCodeConfiguration = selected
-            case .openCodeGeneration(let generation):
-                guard thread.provider == .opencode, let native = thread.openCodeConfiguration,
-                      !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else {
-                    throw WorkspaceCommandError("Start a new OpenCode conversation to choose a different server generation.")
-                }
-                if native.generation != generation {
-                    decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.providerThreadID = nil
-                    thread.openCodeConfiguration = .init(instanceID: id, generation: generation, executable: native.executable)
-                    thread.model = ""
-                }
-            case .grokRuntimeMode(let mode):
-                guard thread.provider == .acp, thread.acpAgent?.integration == .grok else { throw GrokConfigurationValidation.invalid() }
-                thread.permission = mode == .fullAccess ? .fullAccess : mode == .auto ? .auto : .supervised
             case .title(let title):
                 let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !title.isEmpty else { throw WorkspaceCommandError("A conversation title cannot be empty.") }; thread.title = title
             case .model(let model):
-                if thread.provider == .antigravity {
-                    do { try thread.selectAntigravityModel(model.isEmpty ? nil : model) }
-                    catch { throw WorkspaceCommandError(AntigravityConfiguration.invalid().localizedDescription) }
-                    break
-                }
-                if thread.provider == .muse {
-                    guard model.isEmpty else { throw WorkspaceCommandError("Choose an available Muse model.") }
-                    try thread.selectMuseModel(nil); break
-                }
-                if thread.provider == .pi {
-                    guard model.isEmpty else { throw WorkspaceCommandError("Choose an advertised Pi model.") }
-                    try thread.selectPiModel(nil); break
-                }
-                if thread.provider == .opencode {
-                    guard model.isEmpty else { throw WorkspaceCommandError("Choose an advertised native OpenCode model.") }
-                    try thread.selectOpenCodeModel(nil); break
-                }
                 if thread.model != model { thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil }
                 thread.model = model
-            case .permission(let mode):
-                if thread.provider == .muse, mode != .supervised && mode != .fullAccess {
-                    throw WorkspaceCommandError("Muse supports Ask and Always approve permissions.")
-                }
-                if thread.provider == .acp, thread.acpAgent?.integration == .grok {
-                    _ = try GrokACP.runtimeMode(permission: mode)
-                }
-                thread.permission = mode
+            case .permission(let mode): thread.permission = mode
             case .agentMode(let mode): thread.agentModeID = mode
             case .codexInteractionMode(let selection): try selection.apply(to: &thread)
-            case .agentConfig(let id, let value):
-                guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
-                var values = thread.agentConfigValues ?? [:]; values[id] = value; thread.agentConfigValues = values.isEmpty ? nil : values
-            case .agentConfiguration(let id, let value):
-                guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
-                if let value { guard value.string != nil || value == .bool(true) || value == .bool(false) else { throw WorkspaceCommandError("Choose a supported agent configuration value.") } }
-                var values = thread.agentConfiguration ?? [:]; values[id] = value; thread.agentConfiguration = values.isEmpty ? nil : values
-                thread.agentConfigValues?.removeValue(forKey: id)
-            case .resetAgentOptions:
-                guard thread.provider == .acp else { throw WorkspaceCommandError("Choose an ACP agent first.") }
-                thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.agentModeID = nil; thread.model = ""
             case .claudeRuntimeConfiguration(let configuration):
                 try configuration.validate()
                 guard thread.provider == .claude, thread.claudeRuntimeConfiguration == nil,
                       configuration.registeredWorkspacePath == thread.workspacePath else { throw ClaudeRuntimeConfiguration.invalid() }
                 thread.claudeRuntimeConfiguration = configuration
-            case .piRuntimeConfiguration(let configuration):
-                try thread.capturePiRuntime(configuration)
-            case .piProvider:
-                throw WorkspaceCommandError("Coincide supports Codex and Claude only.")
             case .provider, .codexProvider, .claudeProvider:
                 let kind: ProviderKind, codexConfiguration: CodexRuntimeConfiguration?, claudeConfiguration: ClaudeRuntimeConfiguration?
                 if case .provider(let value) = edit { kind = value; codexConfiguration = nil; claudeConfiguration = nil }
@@ -1375,19 +1188,11 @@ struct WorkspaceDecision: Sendable {
                     guard value.registeredWorkspacePath == thread.workspacePath else { throw ClaudeRuntimeConfiguration.invalid() }
                     kind = .claude; codexConfiguration = nil; claudeConfiguration = value
                 } else { throw WorkspaceCommandError("The provider selection is invalid.") }
-                guard kind.isSupported else { throw WorkspaceCommandError("Coincide supports Codex and Claude only.") }
                 guard !thread.isBusy, thread.messages.isEmpty, thread.queuedTurns.isEmpty else { throw WorkspaceCommandError("Start a new conversation to change providers.") }
-                decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.acpAgent = nil; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
-                thread.openCodeConfiguration = kind == .opencode ? .init(instanceID: id) : nil
-                thread.piConfiguration = kind == .pi ? .init(instanceID: id) : nil
-                thread.museConfiguration = kind == .muse ? .init(instanceID: id) : nil
-                thread.antigravityConfiguration = kind == .antigravity ? .init() : nil
+                decision.closeRuntimes.insert(thread.id); thread.provider = kind; thread.agentModeID = nil; thread.agentConfigValues = nil; thread.agentConfiguration = nil; thread.providerMetadata = nil; thread.providerActivity = nil; thread.runtimeRequests = []; thread.model = ""; thread.reasoningEffort = nil; thread.codexModelSelectionSource = nil; thread.providerThreadID = nil; thread.runtimeID = nil
                 thread.codexRuntimeConfiguration = codexConfiguration
                 thread.claudeRuntimeConfiguration = claudeConfiguration; thread.claudeResumeSelection = nil
                 thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
-                if kind == .muse, thread.permission != .supervised && thread.permission != .fullAccess { thread.permission = .supervised }
-            case .acpAgent:
-                throw WorkspaceCommandError("Coincide supports Codex and Claude only.")
             case .codexServiceTier(let model, let tier, let expected):
                 try Self.validateModelControlCapture(expected, thread: thread)
                 try thread.selectCodexServiceTier(model: model, tier: tier)
@@ -1398,8 +1203,7 @@ struct WorkspaceDecision: Sendable {
             case .resetProviderModelOptions(let expected):
                 try Self.validateModelControlCapture(expected, thread: thread)
                 let key: String
-                switch thread.provider { case .codex: key = CodexServiceTier.configurationKey; case .claude: key = ClaudeModelControl.configurationKey
-                default: throw WorkspaceCommandError("Choose a native Codex or Claude conversation before resetting its model controls.") }
+                switch thread.provider { case .codex: key = CodexServiceTier.configurationKey; case .claude: key = ClaudeModelControl.configurationKey }
                 thread.agentConfiguration?.removeValue(forKey: key)
                 if thread.agentConfiguration?.isEmpty == true { thread.agentConfiguration = nil }
             case .draft(let value): thread.draft = value
@@ -1428,11 +1232,10 @@ struct WorkspaceDecision: Sendable {
                         thread.settlement?.script = run
                     }
                 }
-            case .workspacePath, .claudeWorkspace, .piWorkspace:
-                let path: String, captured: ClaudeRuntimeConfiguration?, capturedPi: PiRuntimeConfiguration?
-                if case .workspacePath(let value) = edit { path = value; captured = nil; capturedPi = nil }
-                else if case .claudeWorkspace(let value) = edit { path = value.registeredWorkspacePath; captured = value; capturedPi = nil }
-                else if case .piWorkspace(let value) = edit { path = value.registeredWorkspacePath; captured = nil; capturedPi = value }
+            case .workspacePath, .claudeWorkspace:
+                let path: String, captured: ClaudeRuntimeConfiguration?
+                if case .workspacePath(let value) = edit { path = value; captured = nil }
+                else if case .claudeWorkspace(let value) = edit { path = value.registeredWorkspacePath; captured = value }
                 else { throw ClaudeRuntimeConfiguration.invalid() }
                 guard thread.settlement == nil else { throw WorkspaceCommandError("Resume this conversation before changing its workspace.") }
                 if thread.workspacePreparation != nil {
@@ -1447,17 +1250,6 @@ struct WorkspaceDecision: Sendable {
                     }
                     thread.claudeRuntimeConfiguration = captured
                 } else if captured != nil { throw ClaudeRuntimeConfiguration.invalid() }
-                if let native = thread.piConfiguration, let previous = native.runtime {
-                    let expected: PiRuntimeConfiguration
-                    do {
-                        guard let capturedPi else { throw PiRuntimeConfiguration.invalid() }
-                        expected = try previous.replacingWorkspace(path, physicalPath: capturedPi.workspacePath)
-                    } catch { throw WorkspaceCommandError("Choose this Pi workspace through its captured runtime.") }
-                    guard let capturedPi, capturedPi == expected else {
-                        throw WorkspaceCommandError("Choose this Pi workspace through its captured runtime.")
-                    }
-                    thread.piConfiguration = .init(instanceID: native.instanceID, executable: native.executable, model: native.model, thinkingLevel: native.thinkingLevel, runtime: capturedPi)
-                } else if capturedPi != nil { throw WorkspaceCommandError("The Pi runtime changed before its workspace was saved.") }
                 thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
                 thread.draftWorkspaceIntent = nil
                 thread.workspacePath = path; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; decision.closeRuntimes.insert(thread.id); thread.runtimeID = nil; thread.runtimeRequests = []; thread.providerActivity = nil; thread.providerMetadata = nil
@@ -1467,7 +1259,7 @@ struct WorkspaceDecision: Sendable {
                   thread.draftWorkspaceIntent?.threadCreatedAt == thread.createdAt, thread.messages.isEmpty, thread.queuedTurns.isEmpty,
                   thread.workspacePreparation == nil, !thread.isBusy else { throw WorkspaceCommandError("This workspace choice changed. Reopen the draft before changing it.") }
             thread.draftWorkspaceIntent = nil
-        case .submitDefaultWorktree, .submit, .submitFromAppMCP, .submitCapturedClaude, .submitCapturedPi:
+        case .submitDefaultWorktree, .submit, .submitFromAppMCP, .submitCapturedClaude:
             throw WorkspaceCommandError("This workspace command was routed incorrectly.")
         case .interrupt, .interruptFromAppMCP:
             if let operation = decision.snapshot.contextCompaction(threadID: thread.id), operation.isWorking {
@@ -1500,140 +1292,27 @@ struct WorkspaceDecision: Sendable {
             guard sessionScoped ? thread.runtimeID != nil : (thread.activeRun != nil && thread.activeRun?.stopRequested == false) else { throw WorkspaceCommandError("This provider request is no longer awaiting a response.") }
             let request = thread.runtimeRequests[i].request
             switch response {
-            case .option(let id):
-                if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
-                    guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity request is no longer available.") }
-                    do { _ = try input.response(optionID: id) }
-                    catch { throw WorkspaceCommandError("Choose a current Antigravity option.") }
-                    break
-                }
-                if request.method == "muse/approval" {
-                    guard thread.provider == .muse, let input = request.museApproval else { throw WorkspaceCommandError("This Muse approval is no longer available.") }
-                    do { _ = try input.decisionBody(choiceID: id) }
-                    catch { throw WorkspaceCommandError("Choose a current Muse approval option.") }
-                    break
-                }
-                if request.method == "pi/extension" {
-                    guard thread.provider == .pi, let input = request.piExtension, input.method == .select, input.options.contains(id) else {
-                        throw WorkspaceCommandError("This Pi choice is no longer available.")
-                    }
-                    break
-                }
-                guard (request.method == "session/request_permission" || (thread.provider == .opencode && request.method == "opencode/permission")),
-                      (request.params["options"].array ?? []).contains(where: { $0["optionId"].string == id }) else {
-                    throw WorkspaceCommandError("This permission option is no longer available.")
-                }
             case .decision(let allow):
                 if request.isClaudeQuestion {
                     guard thread.provider == .claude, !allow, request.claudeQuestion != nil else {
                         throw WorkspaceCommandError("Answer the Claude questions or cancel them.")
-                    }
-                } else if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
-                    guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity request is no longer available.") }
-                    do {
-                        if input.isQuestion {
-                            guard !allow else { throw AntigravityProtocol.failure() }
-                            _ = try input.response(optionID: nil)
-                        } else { _ = try input.decision(allow: allow) }
-                    } catch { throw WorkspaceCommandError("Choose a current Antigravity option or cancel the question.") }
-                } else if request.method == "muse/approval" || request.method == "muse/userInput" {
-                    guard thread.provider == .muse, !allow else { throw WorkspaceCommandError("Choose a Muse option or answer its questions.") }
-                    if request.method == "muse/approval" {
-                        guard let input = request.museApproval else { throw WorkspaceCommandError("This Muse approval is no longer available.") }
-                        do { _ = try input.declineBody() }
-                        catch { throw WorkspaceCommandError("Choose a current Muse approval option.") }
-                    } else { guard request.museUserInput != nil else { throw WorkspaceCommandError("This Muse question is no longer available.") } }
-                } else if request.method == "pi/extension" {
-                    guard thread.provider == .pi, !allow || request.piExtension?.method == .confirm else {
-                        throw WorkspaceCommandError("Answer the Pi request or cancel it.")
-                    }
-                } else if GrokACP.questionMethod(request.method) {
-                    guard thread.provider == .acp, thread.acpAgent?.integration == .grok, !allow else {
-                        throw WorkspaceCommandError("Answer the Grok question or cancel it.")
-                    }
-                } else if request.method == "opencode/question" {
-                    guard thread.provider == .opencode, !allow else { throw WorkspaceCommandError("Answer the OpenCode questions or cancel them.") }
-                } else if request.method == "opencode/form" {
-                    guard thread.provider == .opencode, !allow else { throw WorkspaceCommandError("Answer the OpenCode form or cancel it.") }
-                } else if let method = CursorACPMethod.canonical(request.method) {
-                    guard thread.provider == .acp, thread.acpAgent?.integration == .cursor,
-                          method == CursorACPMethod.question ? (!allow && request.cursorQuestion != nil) : request.cursorPlan != nil else {
-                        throw WorkspaceCommandError("This Cursor request is no longer valid.")
                     }
                 } else { guard !request.isQuestion else { throw WorkspaceCommandError("Answer this question before continuing.") } }
             case .answers(let answers):
                 if request.isClaudeQuestion {
                     guard thread.provider == .claude, let question = request.claudeQuestion else { throw WorkspaceCommandError("This Claude question is no longer available.") }
                     _ = try question.response(answers: answers)
-                } else if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
-                    guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity question is no longer available.") }
-                    do { _ = try input.answer(answers: answers) }
-                    catch { throw WorkspaceCommandError("Choose one offered Antigravity option.") }
-                } else if request.method == "muse/userInput" {
-                    guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
-                    do { _ = try input.answerBody(answers: answers) }
-                    catch { throw WorkspaceCommandError("Provide valid answers for the Muse questions.") }
-                } else if request.method == "pi/extension" {
-                    guard thread.provider == .pi, let input = request.piExtension,
-                          input.method == .input || input.method == .editor, Set(answers.keys) == ["value"],
-                          let value = answers["value"], value.utf8.count <= 1_048_576, !value.contains("\u{0}") else {
-                        throw WorkspaceCommandError("This Pi input is no longer valid.")
-                    }
-                } else if GrokACP.questionMethod(request.method) {
-                    guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else { throw ACPIntegrationValidation.failure() }
-                    _ = try question.response(answers: answers)
-                } else if request.method == "opencode/question" {
-                    guard thread.provider == .opencode, let question = request.openCodeQuestion else { throw OpenCodeV1ProtocolError.invalidAnswer }
-                    _ = try question.answerBody(answers: answers)
-                } else if request.method == "opencode/form" {
-                    guard thread.provider == .opencode, let form = request.openCodeForm else { throw WorkspaceCommandError("This OpenCode form is no longer valid.") }
-                    _ = try form.answerBody(answers: answers)
                 } else {
-                    guard CursorACPMethod.canonical(request.method) == nil, request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
+                    guard request.isQuestion, request.questions.allSatisfy({ !(answers[$0["id"].string ?? ""] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw WorkspaceCommandError("Answer every required question.") }
                 }
             case .selections(let selections):
                 if request.isClaudeQuestion {
                     guard thread.provider == .claude, let question = request.claudeQuestion else { throw WorkspaceCommandError("This Claude question is no longer available.") }
                     _ = try question.response(selections: selections)
-                } else if request.method == AntigravityProtocol.questionMethod || request.method == AntigravityProtocol.permissionMethod {
-                    guard thread.provider == .antigravity, let input = request.antigravityPermission else { throw WorkspaceCommandError("This Antigravity question is no longer available.") }
-                    do { _ = try input.answer(selections: selections) }
-                    catch { throw WorkspaceCommandError("Choose one offered Antigravity option.") }
-                } else if request.method == "muse/userInput" {
-                    guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
-                    do { _ = try input.answerBody(selections: selections) }
-                    catch { throw WorkspaceCommandError("Provide valid answers for the Muse questions.") }
-                } else if GrokACP.questionMethod(request.method) {
-                    guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else { throw ACPIntegrationValidation.failure() }
-                    _ = try question.response(selections: selections)
-                } else if request.method == "opencode/question" {
-                    guard thread.provider == .opencode, let question = request.openCodeQuestion else { throw OpenCodeV1ProtocolError.invalidAnswer }
-                    _ = try question.answerBody(selections: selections)
-                } else if request.method == "opencode/form" {
-                    guard thread.provider == .opencode, let form = request.openCodeForm else { throw WorkspaceCommandError("This OpenCode form is no longer valid.") }
-                    _ = try form.answerBody(selections: selections)
-                } else {
-                  guard thread.provider == .acp, thread.acpAgent?.integration == .cursor, let question = request.cursorQuestion else {
-                    throw WorkspaceCommandError("This selectable question is no longer valid.")
-                  }
-                  do { _ = try question.response(for: selections) }
-                  catch { throw WorkspaceCommandError("Select valid answers for every required question.") }
-                }
+                } else { throw WorkspaceCommandError("This selectable question is no longer valid.") }
             case .selectionsWithNotes(let selections, let notes):
-                if request.isClaudeQuestion {
-                    guard thread.provider == .claude, let question = request.claudeQuestion else { throw WorkspaceCommandError("This Claude question is no longer available.") }
-                    _ = try question.response(selections: selections, notes: notes)
-                    break
-                }
-                if request.method == "muse/userInput" {
-                    guard thread.provider == .muse, let input = request.museUserInput else { throw WorkspaceCommandError("This Muse question is no longer available.") }
-                    do { _ = try input.answerBody(selections: selections, notes: notes) }
-                    catch { throw WorkspaceCommandError("Provide valid answers for the Muse questions.") }
-                    break
-                }
-                guard thread.provider == .acp, thread.acpAgent?.integration == .grok, let question = request.grokQuestion else {
-                    throw WorkspaceCommandError("This provider question does not accept notes.")
-                }
+                guard request.isClaudeQuestion else { throw WorkspaceCommandError("This provider question does not accept notes.") }
+                guard thread.provider == .claude, let question = request.claudeQuestion else { throw WorkspaceCommandError("This Claude question is no longer available.") }
                 _ = try question.response(selections: selections, notes: notes)
             }
             thread.runtimeRequests[i].responding = true
@@ -1672,7 +1351,6 @@ struct WorkspaceDecision: Sendable {
                 throw WorkspaceCommandError("Remove the queued messages from this older import, then send them again to continue in an independent Coincide copy.")
             }
             guard thread.claudeResumeConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Claude resume attempt before resuming queued messages.") }
-            guard thread.piFreshConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Pi empty-context attempt before resuming queued messages.") }
             guard !thread.isBusy, !thread.isArchived else { throw WorkspaceCommandError("Wait for the current turn before resuming the queue.") }
             thread.queuePaused = false; decision.startNext(in: &thread, now: now)
         case .addAttachments(_, let attachments):
@@ -1682,7 +1360,7 @@ struct WorkspaceDecision: Sendable {
             thread.draftAttachments += attachments
         case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
         case .abandonContextTransfer, .replaceComposerDraft, .discardComposerDraft, .threadActionUndo, .workspaceLifecycle, .setWorkspaceLifecyclePolicy: break // Routed through their atomic reducers above.
-        case .scheduledTask, .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectPinned, .setThreadSortMode, .reorderThreads, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
+        case .scheduledTask, .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectPinned, .setThreadSortMode, .reorderThreads, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
         }
         if thread != decision.snapshot.threads[index] {
             if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -1693,11 +1371,9 @@ struct WorkspaceDecision: Sendable {
         try validateContextCompactionCommand(action)
         if !allowScratch { try validateScratchClientCommand(action) }
         try validateContextTransferCommand(action)
-        guard !snapshot.conversationHistoryMaintenanceReservedIDs.contains(commandID) else { throw WorkspaceCommandError("This identity is reserved by provider history maintenance.") }
         preventDelayedPromptSteering(action, now: now)
         try validatePromptSteeringCommand(action, commandID: commandID)
         try validateConversationHistoryLocks(action)
-        try validatePiFreshContextCommand(action)
         try validateCheckpointRestoreLocks(action)
         try validatePullRequestCreationLocks(action)
         try validatePullRequestCheckoutLocks(action)
@@ -1706,14 +1382,10 @@ struct WorkspaceDecision: Sendable {
     /// Compound registration shares the same insertion rules without entering
     /// the complete reducer a second time on the same task stack.
     private mutating func insertNewThread(_ thread: CodingThread, allowScratch: Bool = false) throws {
-        guard thread.provider.isSupported else { throw WorkspaceCommandError("Coincide supports Codex and Claude only.") }
         if !allowScratch { try validateScratchClientCommand(.createThread(thread)) }
         guard snapshot.projects.contains(where: { $0.id == thread.projectID }), !snapshot.threads.contains(where: { $0.id == thread.id }),
               thread.messages.isEmpty, !thread.isBusy, thread.queuedTurns.isEmpty, (thread.runHistory ?? []).isEmpty, thread.workspacePreparation == nil else { throw WorkspaceCommandError("A new conversation needs an existing project and a unique identity.") }
         guard snapshot.workspaceReady(for: thread) || snapshot.projects.first(where: { $0.id == thread.projectID })?.path == thread.workspacePath else { throw WorkspaceCommandError("Wait for the clone before choosing another workspace.") }
-        if thread.provider == .acp {
-            guard let agent = thread.acpAgent, snapshot.acpAgents.contains(agent) else { throw WorkspaceCommandError("Choose a saved ACP agent for this conversation.") }
-        }
         if let intent = thread.draftWorkspaceIntent {
             guard thread.scratchWorkspace == nil, intent.threadID == thread.id, intent.threadCreatedAt == thread.createdAt,
                   intent.projectID == thread.projectID,
@@ -1756,9 +1428,6 @@ struct WorkspaceDecision: Sendable {
             configuration.claudeLaunchSelection = selection
             thread.claudeResumeConsumerRunID = queued.id
         }
-        if configuration.provider == .pi, let intent = thread.piFreshSessionIntent, thread.piFreshConsumerRunID == nil {
-            configuration.piFreshSessionIntent = intent; thread.piFreshConsumerRunID = queued.id
-        }
         thread.activeRun = ActiveRun(id: queued.id, configuration: configuration, startedAt: now,
                                      delegatedTaskID: queued.delegatedTaskID, delegatedCompletion: queued.delegatedCompletion, delegatedTaskOwnershipRecorded: queued.delegatedTaskOwnershipRecorded,
                                      contextTransferIDs: queued.contextTransferIDs, contextDelivery: queued.contextDelivery)
@@ -1792,7 +1461,7 @@ struct WorkspaceDecision: Sendable {
         // These pure local gates cannot start work. Avoid materializing native
         // history proofs for a paused/empty queue, including read-only recovery.
         guard !thread.queuePaused, !thread.isBusy, !thread.isArchived, !thread.queuedTurns.isEmpty,
-              thread.claudeResumeConsumerRunID == nil, thread.piFreshConsumerRunID == nil,
+              thread.claudeResumeConsumerRunID == nil,
               !snapshot.isPromptSteeringHoldingQueue(threadID: thread.id), snapshot.providerReady(for: thread) else { return }
         let queued = thread.queuedTurns.removeFirst(); start(queued, in: &thread, now: now)
     }
@@ -1818,30 +1487,15 @@ struct WorkspaceDecision: Sendable {
         if case .thread(let nativeID) = event {
             let owner = snapshot.threads[index]
             let configuration = owner.activeRun?.configuration ?? ProviderConfiguration(thread: owner)
-            if snapshot.isOpenCodeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) || snapshot.isClaudeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) {
+            if snapshot.isClaudeHistoryScopeLocked(configuration: configuration, nativeThreadID: nativeID) {
                 event = .connectionClosed("This provider conversation is held by another conversation's pending history action.")
             }
-        }
-        if case .piHistoryEvidence(let observed) = event {
-            let owner = snapshot.threads[index]
-            guard owner.provider == .pi else { return }
-            if owner.activeRun?.id != observed.runID {
-                guard hasVerifiedRunContext else { return }
-                event = .connectionClosed(PiProtocol.historyFailure)
-            } else { do {
-                guard let previous = owner.runHistory?.first(where: { $0.id == observed.runID })?.pi else { throw PiHistoryGraphError(.invalidWindow) }
-                _ = try previous.merging(observed)
-            } catch {
-                // Untrusted or stale native proof can close this exact runtime,
-                // never turn a provider contract failure into a database failure.
-                event = .connectionClosed(PiProtocol.historyFailure)
-            } }
         }
         var thread = snapshot.threads[index]
         if let run = thread.activeRun, thread.runHistory?.first(where: { $0.id == run.id })?.checkpoints?.providerReleased == false {
             // Idle-session metadata may arrive while a baseline is being saved. It cannot
             // acknowledge, finish or append content to a provider turn never dispatched.
-            switch event { case .sessionApproval, .sessionApprovalDismissed, .configuration, .thread, .runEntity: break; default: return }
+            switch event { case .configuration, .thread, .runEntity: break; default: return }
         }
         switch event {
         case .usage(let observation):
@@ -1851,75 +1505,17 @@ struct WorkspaceDecision: Sendable {
                   (try? observation.validate(provider: run.configuration.provider, runID: run.id)) != nil,
                   observation.canReplace(thread.runHistory?[record].providerUsage) else { return }
             thread.runHistory?[record].providerUsage = observation
-        case .piHistoryBarrier: return
-        case .piHistoryEvidence(let evidence):
-            guard thread.provider == .pi, thread.activeRun?.id == evidence.runID else { return }
-            try thread.mergePiHistoryEvidence(evidence)
         case .claudeHistoryEvidence(let evidence):
             guard thread.provider == .claude, thread.activeRun?.id == evidence.runID else { return }
             try thread.mergeClaudeHistoryEvidence(evidence)
         case .steeringCapabilitiesChanged:
             guard thread.activeRun != nil else { return }
             thread.steeringCapabilityRevision = (thread.steeringCapabilityRevision ?? 0) &+ 1
-        case .submissionFailed(let id, let reason):
-            if let i = thread.messages.firstIndex(where: { $0.id == id && $0.role == .user }) { thread.messages[i].submissionError = reason; thread.queuePaused = true }
-        case .activity(let activity):
-            if activity.state != .idle, thread.activeRun == nil,
-               thread.runHistory?.contains(where: { $0.status.isTerminal && ($0.id == activity.id || $0.turnIDs.contains(activity.id.uuidString)) }) == true { return }
-            thread.providerActivity = activity
-            if activity.state != .idle {
-                if thread.activeRun == nil {
-                    let run = ActiveRun(id: activity.id, configuration: .init(thread: thread), startedAt: now)
-                    thread.activeRun = run
-                    let baseline = ThreadRunCheckpointAttempt(workspacePath: thread.workspacePath, phase: .unavailable, now: now, unavailableReason: .agentInitiated)
-                    thread.beginRunRecord(run, origin: .agent, checkpoints: thread.effectiveCheckpointPolicy == .automatic ? .init(baseline: baseline, providerReleased: true) : nil, attributesMessages: true)
-                }
-                thread.activeRun?.nativeTurnID = activity.id.uuidString
-                thread.state = activity.state == .requiresAction ? .awaitingApproval : .running
-                thread.updateRunRecord(status: activity.state == .requiresAction ? .awaitingApproval : .running)
-            } else if activity.finishesRun, let run = thread.activeRun, run.nativeTurnID == activity.id.uuidString {
-                let reason = activity.stopReason?.string
-                let normalCompletion = ["end_turn", "max_tokens", "max_turn_requests", "refusal"].contains(reason ?? "")
-                let status: ThreadRunStatus = run.stopRequested || reason == "cancelled" ? .interrupted : reason == "error" ? .failed : normalCompletion ? .completed : .unknown
-                thread.finishRunRecord(status: status, reason: .providerActivity, now: now, providerStopReason: reason)
-                requestPostRunCheckpoint(runID: run.id, in: &thread, now: now)
-                thread.activeRun = nil; thread.runtimeRequests.removeAll { $0.sessionScoped != true }
-                if run.stopRequested || reason == "cancelled" { thread.state = .interrupted }
-                else if reason == "error" {
-                    thread.state = .failed
-                    thread.appendRunMessage(role: .system, text: activity.error?["message"].string ?? "The agent stopped because of an error.", runID: run.id)
-                } else { thread.state = .idle }
-                if thread.state == .idle, normalCompletion, reason != "end_turn" {
-                    thread.appendRunMessage(role: .system, text: "The agent stopped: \((reason ?? "").replacingOccurrences(of: "_", with: " ")).", runID: run.id)
-                }
-                if thread.state != .idle || !normalCompletion { thread.queuePaused = true }
-                else { startNext(in: &thread, now: now) }
-            }
-        case .sessionApproval(let request):
-            if !thread.runtimeRequests.contains(where: { $0.id == request.id }) { thread.runtimeRequests.append(.init(request: request, sessionScoped: true)) }
-        case .sessionApprovalDismissed(let id): thread.runtimeRequests.removeAll { $0.id == id && $0.sessionScoped == true }
-        case .entity(let update), .runEntity(_, let update):
-            let attributedRun: UUID?
-            if case .runEntity(let owner, _) = event {
-                // Typed adapter attribution is checked against the journal's
-                // recorded provider/run. Raw entity metadata cannot retarget it.
-                guard let record = thread.runHistory?.first(where: { $0.id == owner }),
-                      record.removedByHistoryOperationID == nil, record.checkpoints?.providerReleased != false,
-                      (record.configuration.provider == .acp && record.configuration.acpAgent?.integration == .copilot) ||
-                        (thread.provider == .acp && thread.acpAgent?.integration == .grok &&
-                         record.configuration.provider == .acp && record.configuration.acpAgent == thread.acpAgent) ||
-                        (thread.provider == .opencode && record.configuration.provider == .opencode &&
-                         record.configuration.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity) ||
-                        (thread.provider == .muse && record.configuration.provider == .muse &&
-                         record.configuration.museConfiguration?.runtimeIdentity == thread.museConfiguration?.runtimeIdentity) ||
-                        (thread.provider == .antigravity && record.configuration.provider == .antigravity &&
-                         record.configuration.antigravityConfiguration?.runtimeIdentity == thread.antigravityConfiguration?.runtimeIdentity),
-                      record.providerThreadID == thread.providerThreadID else { return }
-                attributedRun = owner
-            } else { attributedRun = thread.activeRun?.id }
+        case .runEntity: return // Entities are attributed only to the active run.
+        case .entity(let update):
+            let attributedRun = thread.activeRun?.id
             if let i = thread.messages.firstIndex(where: { $0.providerEntity?.key == update.key }) {
                 guard thread.messages[i].removedByHistoryOperationID == nil else { return }
-                if case .runEntity = event, thread.messages[i].runReference?.runID != attributedRun { return }
                 let entity = try update.apply(to: thread.messages[i].providerEntity)
                 thread.messages[i].providerEntity = entity
                 if thread.messages[i].role != .user || !thread.messages[i].id.hasPrefix("user-") { thread.messages[i].text = entity.text }
@@ -1930,15 +1526,6 @@ struct WorkspaceDecision: Sendable {
                 message.runReference = attributedRun.map { .init(threadID: thread.id, runID: $0) }
                 thread.messages.append(message)
             }
-        case .associateEntity(let key, let clientID):
-            guard key.type == "user_message", let target = thread.messages.firstIndex(where: { $0.id == clientID && $0.role == .user }),
-                  thread.messages[target].removedByHistoryOperationID == nil,
-                  !thread.messages.contains(where: { $0.providerEntity?.key == key && $0.removedByHistoryOperationID != nil }) else { return }
-            guard thread.messages[target].providerEntity == nil || thread.messages[target].providerEntity?.key == key else { throw CoincideError("The agent changed an accepted message identity.") }
-            let echoed = thread.messages.firstIndex(where: { $0.providerEntity?.key == key })
-            let entity = echoed.flatMap { thread.messages[$0].providerEntity } ?? ProviderEntity(key: key)
-            thread.messages[target].providerEntity = entity
-            if let echoed, echoed != target { thread.messages.remove(at: echoed) }
         case .configuration(let metadata): thread.providerMetadata = metadata
         case .thread(let native): thread.providerThreadID = native; thread.updateRunRecord()
         case .turn(let native):
@@ -1995,8 +1582,7 @@ struct WorkspaceDecision: Sendable {
             thread.finishRunRecord(status: status, reason: .providerCompleted, now: now)
             if let runID = thread.activeRun?.id { requestPostRunCheckpoint(runID: runID, in: &thread, now: now) }
             thread.activeRun = nil; thread.runtimeRequests.removeAll { $0.sessionScoped != true }; thread.state = stopped ? .interrupted : state
-            if status == .completed { try thread.completeProvenPiFreshSession(now: now) }
-            if stopped || state != .idle || thread.claudeResumeConsumerRunID != nil || thread.piFreshConsumerRunID != nil { thread.queuePaused = true }
+            if stopped || state != .idle || thread.claudeResumeConsumerRunID != nil { thread.queuePaused = true }
             else { startNext(in: &thread, now: now) }
         case .failure(let message), .connectionClosed(let message):
             closeRuntimes.insert(thread.id); thread.runtimeID = nil
@@ -2021,7 +1607,7 @@ struct WorkspaceDecision: Sendable {
         if case .contextCompaction(let threadID, let operationID) = request {
             finishContextCompaction(threadID: threadID, operationID: operationID, result: result, now: now); return
         }
-        if request.promptSteeringOperationID != nil || request.conversationHistoryOperationID != nil || request.conversationHistoryMaintenanceOperationID != nil || request.checkpointRestoreOperationID != nil || request.conversationHistoryFilesOperationID != nil || request.pullRequestCreationOperationID != nil || request.pullRequestActionOperationID != nil || request.pullRequestCheckoutOperationID != nil { return }
+        if request.promptSteeringOperationID != nil || request.conversationHistoryOperationID != nil || request.checkpointRestoreOperationID != nil || request.conversationHistoryFilesOperationID != nil || request.pullRequestCreationOperationID != nil || request.pullRequestActionOperationID != nil || request.pullRequestCheckoutOperationID != nil { return }
         if request.checkpointOwner != nil { finishCheckpoint(request, result: result, now: now); return }
         if case .projectClone(let projectID, let plan) = request {
             guard let i = snapshot.projects.firstIndex(where: { $0.id == projectID }), var clone = snapshot.projects[i].clone,
@@ -2030,7 +1616,7 @@ struct WorkspaceDecision: Sendable {
             case .succeeded:
                 clone.phase = .completed; clone.error = nil; clone.progress = .init(stage: .checkout, percent: 100, detail: nil, stalled: false)
             case .failed(let message): clone.phase = .failed; clone.error = String(GitService.redactURLs(message).prefix(4_000))
-            case .promptSteeringDelivered, .promptSteeringUnconfirmed, .promptSteeringUnsentCompleted, .pullRequestCheckoutCompleted, .pullRequestCheckoutUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed, .pullRequestActionConfirmed, .pullRequestActionUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .conversationHistoryMaintenanceConfirmed, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: return
+            case .promptSteeringDelivered, .promptSteeringUnconfirmed, .promptSteeringUnsentCompleted, .pullRequestCheckoutCompleted, .pullRequestCheckoutUnconfirmed, .pullRequestCreationConfirmed, .pullRequestCreationUnconfirmed, .pullRequestActionConfirmed, .pullRequestActionUnconfirmed, .checkpointRestoreConfirmed, .checkpointRestoreUnconfirmed, .conversationHistoryConfirmed, .conversationHistoryUnconfirmed, .worktreeResolved, .worktreePrepared, .projectScriptResolved, .checkpointResolved, .checkpointCaptured, .checkpointUnavailable: return
             case .cancelled, .stopped:
                 clone.phase = clone.cancelRequested ? .cancelled : .interrupted; clone.error = nil
             }
@@ -2093,17 +1679,10 @@ struct WorkspaceDecision: Sendable {
             snapshot.threads[index] = thread; return
         }
         switch request {
-        case .contextCompaction, .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
+        case .contextCompaction, .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: break // Project-owned effects are handled before thread lookup.
         case .providerSessionRespond(_, let runtimeID, let request, _):
             guard thread.runtimeID == runtimeID, let i = thread.runtimeRequests.firstIndex(where: { $0.id == request.id && $0.sessionScoped == true }) else { return }
-            if case .succeeded = result {
-                // MSP acknowledges a decision before its native requirement
-                // changes or settles. Keep the exact row disabled until the
-                // adapter publishes that authoritative replacement/dismissal.
-                let waitsForNativeSettlement = thread.provider == .muse &&
-                    (request.method == "muse/approval" || request.method == "muse/userInput")
-                if !waitsForNativeSettlement { thread.runtimeRequests.remove(at: i) }
-            }
+            if case .succeeded = result { thread.runtimeRequests.remove(at: i) }
             else {
                 thread.runtimeRequests[i].responding = false
                 if case .failed(let message) = result { thread.appendRunMessage(role: .system, text: message) }
@@ -2153,8 +1732,8 @@ extension WorkspaceCommand {
         case .discardComposerDraft(let discard): discard.expected.threadID
         case .threadActionUndo(let claim): claim.threadID
         case .abandonContextTransfer(let id, _, _): id
-        case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectPinned, .setThreadSortMode, .reorderThreads, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
-        case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .submitFromAppMCP(let id, _, _), .submitCapturedClaude(let id, _, _), .submitCapturedPi(let id, _, _), .interrupt(let id), .interruptFromAppMCP(let id, _, _), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .replaceQueuedText(let id, _, _, _), .moveQueued(let id, _, _, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
+        case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectPinned, .setThreadSortMode, .reorderThreads, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
+        case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .submitFromAppMCP(let id, _, _), .submitCapturedClaude(let id, _, _), .interrupt(let id), .interruptFromAppMCP(let id, _, _), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .replaceQueuedText(let id, _, _, _), .moveQueued(let id, _, _, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }
 }

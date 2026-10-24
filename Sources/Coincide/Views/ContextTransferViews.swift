@@ -136,9 +136,8 @@ struct ContextTransferSheetContent: View {
         }
     }
     private var providerBinding: Binding<String> {
-        .init(get: { model.provider == .acp ? "agent:" + (model.agentID?.uuidString ?? "") : "provider:" + model.provider.rawValue }, set: { value in
-            if value.hasPrefix("agent:"), let id = UUID(uuidString: String(value.dropFirst(6))) { model.provider = .acp; model.agentID = id }
-            else if value.hasPrefix("provider:"), let kind = ProviderKind(rawValue: String(value.dropFirst(9))) { model.provider = kind; model.agentID = nil }
+        .init(get: { "provider:" + model.provider.rawValue }, set: { value in
+            if value.hasPrefix("provider:"), let kind = ProviderKind(rawValue: String(value.dropFirst(9))) { model.provider = kind }
         })
     }
 }

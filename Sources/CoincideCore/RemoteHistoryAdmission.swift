@@ -9,13 +9,6 @@ struct RemoteHistoryPreparedReview: Codable, Sendable {
     let native: ConversationHistoryReview
     let digest: String
 }
-struct RemoteHistoryMaintenanceReview: Codable, Sendable {
-    let id: UUID
-    let target: RemoteWorkspaceTarget
-    let operation: ConversationHistoryOperation
-    let expected: OpenCodeV2HistorySnapshot
-    let digest: String
-}
 struct RemoteHistoryPreparation: Codable, Sendable {
     enum Action: Codable, Sendable {
         case begin(ConversationHistoryReview, digest: String, title: String?, scratchFork: ScratchHistoryForkGrant? = nil)
@@ -24,18 +17,14 @@ struct RemoteHistoryPreparation: Codable, Sendable {
         case acknowledge(ConversationHistoryOperation)
         case recall(ConversationHistoryOperation, ChatMessage)
         case dismiss(ConversationHistoryOperation)
-        case maintenance(ConversationHistoryOperation, ConversationHistoryMaintenanceAttempt, reviewID: UUID, digest: String)
-        case cancelPi(ConversationHistoryOperation)
-        case respondPi(ConversationHistoryOperation, sessionID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse)
         case claudeResume(ClaudeResumeSelection, ThreadRunRecord, ClaudeResumeInspection)
-        case piFresh(PiFreshSessionIntent, ThreadRunRecord, PiFreshSessionInspection)
     }
     let target: RemoteWorkspaceTarget
     let incarnation: UUID
     let action: Action
     var allowsLockedTarget: Bool { if case .begin = action { false } else { true } }
     var requiresBoundRoot: Bool {
-        switch action { case .acknowledge, .recall, .dismiss, .cancelPi, .respondPi: false; default: true }
+        switch action { case .acknowledge, .recall, .dismiss: false; default: true }
     }
     var scope: RemoteHistoryScope {
         if case .begin(let review, _, _, _) = action, let files = review.files {
@@ -66,19 +55,8 @@ enum RemoteHistoryAdmission {
                   review.sourceThreadID == thread.id, review.projectID == thread.projectID,
                   review.sourceIncarnation == captured.incarnation else { throw RemoteEnvironmentAdmission.stale() }
             return [.conversationHistoryAccepted(review: review, title: title, scratchFork: grant)]
-        case (.inspectProvider(let id), .reconcile(let expected, let result)),
-             (.keepOpenCodeV1Original(let id), .reconcile(let expected, let result)),
-             (.keepPiOriginal(let id), .reconcile(let expected, let result)):
+        case (.inspectProvider(let id), .reconcile(let expected, let result)):
             try operation(expected, id: id)
-            switch (action, result) {
-            case (.keepOpenCodeV1Original, .openCodeV1NotAdopted):
-                guard expected.review.openCodeV1 != nil else { throw RemoteEnvironmentAdmission.stale() }
-            case (.keepPiOriginal, .piOriginalKept):
-                guard expected.review.pi != nil else { throw RemoteEnvironmentAdmission.stale() }
-            case (.inspectProvider, .openCodeV1NotAdopted), (.inspectProvider, .piOriginalKept): throw RemoteEnvironmentAdmission.stale()
-            case (.inspectProvider, _): break
-            default: throw RemoteEnvironmentAdmission.stale()
-            }
             return [.conversationHistoryReconciled(operationID: id, incarnation: captured.incarnation, result: result)]
         case (.inspectFiles(let id), .files(let expected, let result)):
             try operation(expected, id: id)
@@ -94,34 +72,11 @@ enum RemoteHistoryAdmission {
             return [.client(.recallConversationHistoryPrompt(operationID: id))]
         case (.dismissRecall(let id), .dismiss(let expected)):
             try operation(expected, id: id); return [.client(.dismissConversationHistoryRecall(operationID: id))]
-        case (.clearMaintenance(let id, let reviewID, let digest), .maintenance(let expected, let attempt, let savedID, let savedDigest)):
-            try operation(expected, id: id)
-            guard reviewID == savedID, digest == savedDigest, expected.review.openCodeV2 != nil else { throw RemoteEnvironmentAdmission.stale() }
-            return [.conversationHistoryMaintenanceAccepted(operationID: id, attempt: attempt, incarnation: captured.incarnation)]
-        case (.cancelPi(let id), .cancelPi(let expected)):
-            try operation(expected, id: id)
-            guard expected.review.pi != nil, expected.isPending else { throw RemoteEnvironmentAdmission.stale() }
-            return [.conversationHistoryPiCancelled(operationID: id, incarnation: captured.incarnation)]
-        case (.respondPi(let id, let sessionID, let request, let response), .respondPi(let expected, let savedSession, let savedRequest, let savedResponse)):
-            try operation(expected, id: id)
-            guard expected.review.pi != nil, expected.phase == .dispatching, expected.piControls?.sessionID == sessionID,
-                  expected.piControls?.requests.contains(where: { $0.id == request.id && !$0.responding && (try? RemoteHistoryProtocol.payload($0.request)) == (try? RemoteHistoryProtocol.payload(request)) }) == true,
-                  sessionID == savedSession, try RemoteHistoryProtocol.payload(request) == RemoteHistoryProtocol.payload(savedRequest),
-                  try RemoteHistoryProtocol.payload(response) == RemoteHistoryProtocol.payload(savedResponse) else { throw RemoteEnvironmentAdmission.stale() }
-            return [.conversationHistoryPiControlResponding(operationID: id, sessionID: sessionID, requestID: request.id,
-                response: response, incarnation: captured.incarnation)]
         case (.inspectClaudeResume(let id, let consumer), .claudeResume(let selection, let run, let result)):
             guard selection.id == id, run.id == consumer, thread.claudeResumeSelection == selection,
                   thread.claudeResumeConsumerRunID == consumer, let current = thread.runHistory?.first(where: { $0.id == consumer }),
                   try RemoteHistoryProtocol.payload(current) == RemoteHistoryProtocol.payload(run) else { throw RemoteEnvironmentAdmission.stale() }
             return [.claudeResumeInspected(threadID: thread.id, incarnation: captured.incarnation, selection: selection, run: run, result: result)]
-        case (.acknowledgePiFreshUnwritten(let id, let consumer), .piFresh(let intent, let run, .unwritten)),
-             (.confirmPiFreshPersisted(let id, let consumer), .piFresh(let intent, let run, .persisted)):
-            guard intent.id == id, run.id == consumer, thread.piFreshSessionIntent == intent, thread.piFreshConsumerRunID == consumer,
-                  let current = thread.runHistory?.first(where: { $0.id == consumer }),
-                  try RemoteHistoryProtocol.payload(current) == RemoteHistoryProtocol.payload(run) else { throw RemoteEnvironmentAdmission.stale() }
-            guard case .piFresh(_, _, let result) = captured.action else { throw RemoteEnvironmentAdmission.stale() }
-            return [.piFreshSessionResolved(threadID: thread.id, incarnation: captured.incarnation, intent: intent, consumerRunID: consumer, inspection: result)]
         default: throw RemoteEnvironmentAdmission.stale()
         }
     }

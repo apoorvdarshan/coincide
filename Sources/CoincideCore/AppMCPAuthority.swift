@@ -50,15 +50,6 @@ enum AppMCPAdmission {
         switch configuration.provider {
         case .codex: return configuration.codexRuntimeConfiguration?.instanceID ?? CodexRuntimeConfiguration.defaultInstanceID
         case .claude: return configuration.claudeRuntimeConfiguration?.instanceID ?? ClaudeRuntimeConfiguration.defaultInstanceID
-        case .antigravity: return configuration.antigravityConfiguration?.instanceID ?? AntigravityConfiguration.defaultInstanceID
-        case .pi:
-            guard let id = configuration.piConfiguration?.instanceID else { throw AppMCPError(.staleCaller) }; return id
-        case .opencode:
-            guard let id = configuration.openCodeConfiguration?.instanceID else { throw AppMCPError(.staleCaller) }; return id
-        case .muse:
-            guard let id = configuration.museConfiguration?.instanceID else { throw AppMCPError(.staleCaller) }; return id
-        case .acp:
-            guard let id = configuration.acpAgent?.id else { throw AppMCPError(.staleCaller) }; return id
         }
     }
 
@@ -164,7 +155,7 @@ enum AppMCPAdmission {
                 }
                 // Provider-native agent/model choices are validated by their
                 // existing reducers. They are not permission-mode aliases.
-            case .submit(let id, _), .submitFromAppMCP(let id, _, _), .submitCapturedClaude(let id, _, _), .submitCapturedPi(let id, _, _),
+            case .submit(let id, _), .submitFromAppMCP(let id, _, _), .submitCapturedClaude(let id, _, _),
                  .interrupt(let id), .interruptFromAppMCP(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _):
                 _ = try target(id)
             case .resumeQueue(let id):
@@ -203,7 +194,7 @@ enum AppMCPAdmission {
             _ = try target(review.sourceThreadID)
             try require(review.sourceConfiguration.permission, authority: authority, current: currentCeiling)
             try require(review.targetConfiguration.permission, authority: authority, current: currentCeiling)
-        case .beginWorktreePreparation(let id, _, _, _, _, _, _, _): _ = try target(id)
+        case .beginWorktreePreparation(let id, _, _, _, _, _, _): _ = try target(id)
         default: throw AppMCPError(.unsupported)
         }
     }

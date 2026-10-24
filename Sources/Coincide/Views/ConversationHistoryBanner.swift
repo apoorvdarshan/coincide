@@ -8,17 +8,11 @@ struct ConversationHistoryBanner: View {
         if let operation = store.conversationHistoryOperations(threadID: threadID).first(where: {
             $0.isWorking || $0.phase == .unconfirmed || $0.locksFiles ||
                 $0.needsPromptRecall || store.canRecallConversationHistoryPrompt($0) ||
-                store.hasPendingClaudeResumeSelection($0) ||
-                $0.error == ConversationHistoryOperation.openCodeV1NotAdoptedMessage ||
-                $0.error == ConversationHistoryOperation.piNotAdoptedMessage
+                store.hasPendingClaudeResumeSelection($0)
         }) {
             ConversationHistoryOperationView(store: store, operation: operation)
                 .padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .coincideSurface()
-        }
-        if let thread = store.thread(threadID), thread.provider == .pi, thread.piFreshSessionIntent != nil {
-            PiFreshSessionStateView(store: store, thread: thread)
-                .padding(12).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).coincideSurface()
         }
     }
 }
@@ -28,9 +22,6 @@ struct ConversationHistoryOperationView: View {
     let operation: ConversationHistoryOperation
     @State private var error: String?
     @State private var confirmingKeepFiles = false
-    @State private var confirmingMaintenance = false
-    @State private var confirmingKeepOriginal = false
-    @State private var confirmingKeepPiOriginal = false
 
     private var recalling: Bool { store.isRecallingConversationHistoryPrompt(operation.id) }
     private var claudeContext: Bool { ConversationHistoryPresentation.isClaudeContextSelection(operation.review) }
@@ -48,9 +39,7 @@ struct ConversationHistoryOperationView: View {
                     .accessibilityIdentifier("conversation-history-operation-status")
             }
             providerState
-            piHistoryState
             claudeResumeState
-            maintenanceState
             if let message = operation.error { detail(message) }
             if let files = operation.files {
                 if operation.isPending {
@@ -103,27 +92,6 @@ struct ConversationHistoryOperationView: View {
                      ? String(localized: "The saved Claude resume point remains selected for your next message. Current files and staging may contain a partial restoration. Continuing keeps those bytes, releases the workspace hold and leaves your latest draft unchanged; the original input will not be recalled.")
                      : String(localized: "The conversation rewind remains applied. Current files and staging may contain a partial restoration. Continuing keeps those bytes, releases the workspace hold and leaves your latest draft unchanged; the original input will not be recalled."))
             }
-            .alert("Clear the pending OpenCode revert?", isPresented: $confirmingMaintenance) {
-                Button("Cancel", role: .cancel) { }.keyboardShortcut(.defaultAction)
-                Button("Clear Pending Revert") { perform { try await store.clearConversationHistoryMaintenance(operation.id) } }
-                    .accessibilityIdentifier("conversation-history-clear-confirm")
-            } message: {
-                Text("Coincide checks the exact staged boundary before clearing it and waits for OpenCode’s empty cleanup execution to finish. This does not repeat the rewind, restore files or send your draft. Conversation work stays paused until its history is verified.")
-            }
-            .alert("Keep the original conversation?", isPresented: $confirmingKeepOriginal) {
-                Button("Cancel", role: .cancel) { }.keyboardShortcut(.defaultAction)
-                Button("Keep Original Conversation") { perform { try await store.keepOpenCodeV1Original(operation.id) } }
-                    .accessibilityIdentifier("conversation-history-keep-original-confirm")
-            } message: {
-                Text("Coincide verifies that the original native conversation is unchanged before releasing this hold. Your latest draft, settings and workspace files stay unchanged. A separate native conversation may remain; this does not repeat the history action or delete any native conversation.")
-            }
-            .alert("Keep the original Pi conversation?", isPresented: $confirmingKeepPiOriginal) {
-                Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
-                Button("Keep Original Conversation") { perform { try await store.keepPiOriginal(operation.id) } }
-                    .accessibilityIdentifier("conversation-history-pi-keep-original-confirm")
-            } message: {
-                Text("Coincide verifies the exact original native session before releasing the hold. Your draft, settings and files remain unchanged. Separate Pi copies may remain; none are deleted and the history action is not repeated.")
-            }
     }
 
     @ViewBuilder private var providerState: some View {
@@ -146,68 +114,8 @@ struct ConversationHistoryOperationView: View {
                 Button(operation.review.claude != nil && operation.review.kind == .forkAfterRun ? "Inspect Reserved Fork" : "Inspect Provider State") {
                     perform { try await store.reconcileConversationHistory(operation.id) }
                 }
-                    .disabled(store.isInspectingConversationHistory(operation.id) || operation.maintenance?.phase.isWorking == true).controlSize(.small)
+                    .disabled(store.isInspectingConversationHistory(operation.id)).controlSize(.small)
                     .accessibilityIdentifier("conversation-history-reconcile")
-            }
-            if operation.review.kind == .rewindBeforeRun {
-                if operation.review.openCodeV2 != nil {
-                    Button("Clear Pending Revert…") { confirmingMaintenance = true }
-                        .disabled(!store.canClearConversationHistoryMaintenance(operation)).controlSize(.small)
-                        .accessibilityIdentifier("conversation-history-clear")
-                } else if operation.review.openCodeV1 != nil {
-                    detail(String(localized: "OpenCode v1 rewinds through a separate native conversation. Inspect can adopt only the exact recorded candidate after its copy is verified. You can instead verify and keep the unchanged original; another native conversation may remain."))
-                    if let candidate = operation.openCodeV1Candidate {
-                        Text(candidate.reference.nativeThreadID).font(.caption.monospaced()).textSelection(.enabled)
-                            .accessibilityIdentifier("conversation-history-native-candidate")
-                    }
-                    Button("Keep Original Conversation…") { confirmingKeepOriginal = true }
-                        .disabled(!store.canKeepOpenCodeV1Original(operation)).controlSize(.small)
-                        .accessibilityIdentifier("conversation-history-keep-original")
-                }
-            }
-        }
-    }
-    @ViewBuilder private var piHistoryState: some View {
-        if operation.review.pi != nil {
-            if operation.isPending {
-                if let controls = operation.piControls {
-                    PiHistoryControlsView(store: store, operation: operation, controls: controls,
-                        respond: { request, response in
-                            perform {
-                                try await store.respondPiHistory(operationID: operation.id, sessionID: controls.sessionID,
-                                    request: request, response: response)
-                            }
-                        }, cancel: { perform { try await store.cancelPiHistory(operation.id) } })
-                        .id(controls.sessionID)
-                } else {
-                    Button("Cancel History Action") { perform { try await store.cancelPiHistory(operation.id) } }
-                        .disabled(!store.canCancelPiHistory(operation)).controlSize(.small)
-                        .accessibilityIdentifier("conversation-history-pi-cancel")
-                }
-            }
-            if operation.phase == .unconfirmed {
-                detail(String(localized: "Pi may have created separate native session files. Inspect only verifies recorded candidates; this action is never automatically repeated. An initial copy is not the final reviewed branch."))
-                Button("Keep Original Conversation…") { confirmingKeepPiOriginal = true }
-                    .disabled(!store.canKeepPiOriginal(operation)).controlSize(.small)
-                    .accessibilityIdentifier("conversation-history-pi-keep-original")
-            }
-            if let candidates = operation.piCandidates, !candidates.isEmpty {
-                DisclosureGroup("Recorded Pi copies") {
-                    VStack(alignment: .leading, spacing: 7) {
-                        ForEach(Array(candidates.enumerated()), id: \.offset) { _, candidate in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(PiHistoryPresentation.candidateStage(candidate.stage)).fontWeight(.medium)
-                                if let file = candidate.nativeSessionFile {
-                                    Text(file).font(.caption.monospaced()).textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-                    }.font(.caption).padding(.top, 4)
-                }.font(.caption)
-            }
-            if operation.phase == .applied, case .freshPiSession = operation.review.boundary {
-                detail(String(localized: "Empty Pi context is selected. The exact path is reserved, but a persisted native fork is not claimed. Your next explicit message creates the native session; no prompt was sent by this action."))
             }
         }
     }
@@ -223,25 +131,6 @@ struct ConversationHistoryOperationView: View {
                 detail(String(localized: "This Claude turn is using the saved context. Its selection remains recorded until the matching turn is confirmed."))
             } else {
                 detail(String(localized: "Your next explicit message will use the saved Claude context. Existing native transcripts are retained; this selection did not send a message."))
-            }
-        }
-    }
-    @ViewBuilder private var maintenanceState: some View {
-        if let maintenance = operation.maintenance {
-            if let message = maintenance.error { detail(message) }
-            if maintenance.phase == .applied {
-                detail(String(localized: "The pending revert was cleared without repeating the history action. Its exact cleanup execution is retained as evidence."))
-            }
-            if let prior = operation.previousMaintenanceAttempts, !prior.isEmpty {
-                DisclosureGroup("Earlier cleanup attempts") {
-                    ForEach(prior) { attempt in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(attempt.updatedAt, format: .dateTime.month(.abbreviated).day().hour().minute())
-                            if let message = attempt.error { Text(message).fixedSize(horizontal: false, vertical: true) }
-                            else { Text("Cleanup completed") }
-                        }.font(.caption).textSelection(.enabled)
-                    }
-                }.font(.caption)
             }
         }
     }
@@ -294,79 +183,6 @@ struct ConversationHistoryOperationView: View {
             do { try await action() }
             catch is CancellationError { }
             catch { self.error = ConversationHistoryPresentation.error(error) }
-        }
-    }
-}
-
-private struct PiFreshSessionStateView: View {
-    let store: WorkspaceStore
-    let thread: CodingThread
-    @State private var confirmingKeepEmpty = false
-    @State private var error: String?
-    private var inspecting: Bool { store.isInspectingPiFreshSession(threadID: thread.id) }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if store.piFreshSessionNeedsInspection(threadID: thread.id) {
-                Text("Pi’s use of the empty context could not be confirmed.").font(.caption.weight(.medium))
-                    .accessibilityIdentifier("conversation-history-pi-fresh-status")
-                Text("Inspect the exact reserved session file before continuing. A missing file does not prove the earlier input was never processed. No input is automatically replayed.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                ViewThatFits(in: .horizontal) {
-                    HStack { actions }.fixedSize(horizontal: true, vertical: false)
-                    VStack(alignment: .leading, spacing: 6) { actions }
-                }
-            } else if thread.piFreshConsumerRunID != nil {
-                Text("This explicit Pi turn is using the selected empty context. Its native session file must be verified before the selection is released.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("Empty Pi context is selected for your next explicit message. The native session file is created only when you send; nothing has been sent by this history action.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            if let error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
-        }
-        .onChange(of: thread.piFreshSessionIntent) { error = nil }
-        .onChange(of: thread.piFreshConsumerRunID) { error = nil }
-        .alert("Keep empty Pi context?", isPresented: $confirmingKeepEmpty) {
-            Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
-            Button("Keep Empty Context") { perform { try await store.keepUnwrittenPiFreshSession(threadID: thread.id) } }
-                .accessibilityIdentifier("conversation-history-pi-keep-empty-confirm")
-        } message: {
-            Text("The earlier input may have been processed even though no native session file remains. This keeps the empty context for a new, explicit input, leaves the earlier outcome unknown and keeps queued messages paused. Nothing is replayed or automatically sent.")
-        }
-    }
-    @ViewBuilder private var actions: some View {
-        Button(inspecting ? "Inspecting Pi Context…" : "Inspect Pi Context") { perform { try await store.inspectPiFreshSession(threadID: thread.id) } }
-            .disabled(!store.canInspectPiFreshSession(threadID: thread.id)).controlSize(.small)
-            .accessibilityIdentifier("conversation-history-pi-inspect-fresh")
-        if store.canKeepUnwrittenPiFreshSession(threadID: thread.id) {
-            Button("Keep Empty Context…") { confirmingKeepEmpty = true }.controlSize(.small)
-                .accessibilityIdentifier("conversation-history-pi-keep-empty")
-        }
-    }
-    private func perform(_ action: @escaping @MainActor () async throws -> Void) {
-        error = nil
-        Task {
-            do { try await action() }
-            catch is CancellationError {}
-            catch { self.error = ConversationHistoryPresentation.error(error) }
-        }
-    }
-}
-
-enum PiHistoryPresentation {
-    static func captureStatus(_ status: PiRunHistoryCaptureStatus) -> String {
-        switch status {
-        case .prepared: String(localized: "Waiting for terminal native evidence")
-        case .proven: String(localized: "Exact native input window verified")
-        case .noNativeChange: String(localized: "No native history change observed")
-        case .unavailable: String(localized: "Native boundary could not be verified")
-        }
-    }
-    static func candidateStage(_ stage: PiHistoryCandidate.Stage) -> String {
-        switch stage {
-        case .reserved: String(localized: "Reserved operation directory")
-        case .initialClone: String(localized: "Initial native copy; not adopted")
-        case .finalBranch: String(localized: "Final branch candidate")
         }
     }
 }

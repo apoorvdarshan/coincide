@@ -75,18 +75,16 @@ private struct CommandEngineFixture: Sendable {
     let thread: CodingThread
 }
 
-private func withCommandEngine(provider: ProviderKind = .opencode, generation: OpenCodeGeneration = .v2,
-                               held: Bool = false, resultPath: String? = nil,
+private func withCommandEngine(held: Bool = false, resultPath: String? = nil,
                                _ body: (CommandEngineFixture) async throws -> Void) async throws {
     let root = try temporaryWorkspace()
     defer { try? FileManager.default.removeItem(at: root) }
     let project = WorkspaceProject(path: root.path)
     var thread = CodingThread(project: project)
-    thread.provider = provider; thread.checkpointPolicy = .disabled
-    if provider == .opencode { thread.openCodeConfiguration = .init(generation: generation) }
-    if provider == .pi { thread.piConfiguration = .init() }
+    thread.provider = .claude; thread.checkpointPolicy = .disabled
     let databaseURL = root.appendingPathComponent("workspace.sqlite")
-    try await saveLegacyProviderFixture(project: project, threads: [thread], at: databaseURL)
+    var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
+    try await WorkspaceDatabase(url: databaseURL).save(snapshot, event: "Provider command engine fixture")
     let factory = CommandEngineFactory(held: held, resultPath: resultPath)
     let engine = try WorkspaceEngine(url: databaseURL,
         providerFactory: { factory.make($0) }, identityResolver: { _ in nil })
@@ -109,9 +107,9 @@ private func commandEngineEventually(_ predicate: () async -> Bool) async throws
     }
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: [OpenCodeGeneration.v1, .v2])
-func providerCommandsEngineUsesSeparateCapturedActorWithoutRetargetingActiveRun(generation: OpenCodeGeneration) async throws {
-    try await withCommandEngine(generation: generation) { f in
+@Test(.timeLimit(.minutes(1)))
+func providerCommandsEngineUsesSeparateCapturedActorWithoutRetargetingActiveRun() async throws {
+    try await withCommandEngine { f in
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "An existing foreground input"))
         try await commandEngineEventually { await f.engine.current().snapshot.threads.first?.activeRun?.nativeTurnID != nil }
         let before = await f.engine.current()
@@ -126,7 +124,7 @@ func providerCommandsEngineUsesSeparateCapturedActorWithoutRetargetingActiveRun(
         let launch = try #require(f.factory.launches.last)
         #expect(launch.activeRun == nil && launch.runtimeID == nil && launch.providerThreadID == nil)
         #expect(launch.runtimeRequests.isEmpty && launch.queuedTurns.isEmpty)
-        #expect(launch.openCodeConfiguration == thread.openCodeConfiguration)
+        #expect(launch.claudeRuntimeConfiguration == thread.claudeRuntimeConfiguration)
         let live = try #require(f.factory.peers.first), metadata = try #require(f.factory.peers.last)
         let prompts = await live.prompts, closes = await live.closes
         let reads = await metadata.reads, completed = await metadata.completedReads
@@ -145,15 +143,12 @@ func providerCommandsEngineFencesChangedCaptureIncarnationAndJoinsCanceledRead(c
         do {
             try await commandEngineEventually { await f.factory.peers.first?.reads == [false] }
             switch change {
-            case "agent": try await f.engine.dispatch(.editThread(f.thread.id, .openCodeAgent("plan")))
-            case "provider": try await f.engine.dispatch(.editThread(f.thread.id, .provider(.claude)))
+            case "agent": try await f.engine.dispatch(.editThread(f.thread.id, .agentMode("plan")))
+            case "provider": try await f.engine.dispatch(.editThread(f.thread.id, .provider(.codex)))
             case "reopen":
                 try await f.engine.dispatch(.removeProject(projectID: f.project.id, expectedThreadIDs: [f.thread.id]))
                 await f.engine.awaitProjectRemovalCleanup(projectID: f.project.id)
-                await #expect(throws: WorkspaceCommandError.self) {
-                    try await f.engine.dispatch(.addProjectWithThread(project: f.project, thread: f.thread))
-                }
-                // Reuse both public identities with a supported conversation.
+                // Reuse both public identities with a new conversation.
                 // The retired metadata read must not publish into that replacement.
                 var replacement = CodingThread(project: f.project); replacement.id = f.thread.id
                 try await f.engine.dispatch(.addProjectWithThread(project: f.project, thread: replacement))
@@ -178,15 +173,15 @@ func providerCommandsEngineFencesChangedCaptureIncarnationAndJoinsCanceledRead(c
 }
 
 @Test(.timeLimit(.minutes(1)))
-func providerCommandsEnginePiDiscoveryIsTransientAndForeignInventoryFailsClosed() async throws {
-    try await withCommandEngine(provider: .pi) { f in
+func providerCommandsEngineIdleDiscoveryIsTransientAndForeignInventoryFailsClosed() async throws {
+    try await withCommandEngine { f in
         let before = await f.engine.current()
         let inventory = try await f.engine.commands(thread: f.thread)
         let after = await f.engine.current()
         #expect(inventory.commands.count == 1)
         #expect(before.sequence == after.sequence && before.snapshot == after.snapshot)
         let launch = try #require(f.factory.launches.first)
-        #expect(launch.piConfiguration == f.thread.piConfiguration)
+        #expect(launch.claudeRuntimeConfiguration == f.thread.claudeRuntimeConfiguration)
         let peer = try #require(f.factory.peers.first)
         let prompts = await peer.prompts, completed = await peer.completedReads
         #expect(prompts == 0 && completed == 1)

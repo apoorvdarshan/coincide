@@ -31,10 +31,6 @@ import Testing
     var malicious = ChatMessage(id: "new-provider-message", role: .assistant, text: "Provider reply")
     malicious.runReference = .init(threadID: UUID(), runID: UUID())
     try f.event(.message(malicious))
-    let update = try ProviderEntityUpdate.acp(.object(["sessionUpdate": .string("user_message"),
-        "messageId": .string("user-echo"), "content": .array([.object(["type": .string("text"), "text": .string("Provider echo")])])]), sessionID: "native-session")
-    try f.event(.entity(update))
-    try f.event(.associateEntity(update.key, clientMessageID: "user-" + run.uuidString))
     #expect(f.thread.messages.count == 2)
     #expect(f.thread.messages.first?.text == "Accepted text")
     #expect(f.thread.messages.allSatisfy { $0.runReference == .init(threadID: f.threadID, runID: run) })
@@ -45,8 +41,7 @@ import Testing
     var f = RunHistoryFixture(); let run = UUID()
     try f.submit("Prompt", id: run); try f.connect()
     func update(_ id: String, _ text: String) throws -> ProviderEntityUpdate {
-        try .acp(.object(["sessionUpdate": .string("agent_message"), "messageId": .string(id),
-            "content": .array([.object(["type": .string("text"), "text": .string(text)])])]), sessionID: "native-session")
+        .patch(.init(sessionID: "native-session", type: "plan", id: id), .object(["content": .string(text)]))
     }
     try f.event(.entity(update("reply", "First reply")))
     try f.event(.completed(.idle), runID: run)
@@ -125,19 +120,6 @@ import Testing
     #expect(throws: CoincideError.self) { try interleaved.transcriptPrefix(runID: first, boundary: .afterRun) }
     #expect(throws: CoincideError.self) { try interleaved.transcriptPrefix(runID: second, boundary: .beforeRun) }
     #expect(interleaved.messages.count == f.thread.messages.count)
-}
-
-@Test func transcriptProvenanceRejectsAnActiveRunAndDoesNotInventAnAgentOpeningUserMessage() throws {
-    var f = RunHistoryFixture(); let run = UUID()
-    f.snapshot.threads[0].runtimeID = f.runtimeID
-    try f.event(.activity(.init(id: run, state: .running)))
-    try f.event(.delta(id: "agent-reply", role: .assistant, text: "Agent-initiated reply"))
-    #expect(throws: CoincideError.self) { try f.thread.transcriptPrefix(runID: run, boundary: .afterRun) }
-    try f.event(.activity(.init(id: run, state: .idle, stopReason: .string("end_turn"))))
-    #expect(f.thread.messages.allSatisfy { $0.role != .user })
-    #expect(try f.thread.transcriptPrefix(runID: run, boundary: .afterRun) == f.thread.messages)
-    #expect(throws: CoincideError.self) { try f.thread.transcriptPrefix(runID: run, boundary: .beforeRun) }
-    try WorkspaceJournal.validate(f.snapshot)
 }
 
 @Test(arguments: [false, true])

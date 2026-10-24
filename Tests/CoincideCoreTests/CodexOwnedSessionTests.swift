@@ -63,12 +63,6 @@ private actor OwnedCodexPeer: ProviderSession {
         calls.append("models"); await modelsGate?.wait()
         return [.init(id: "advertised-wire-model", name: "Advertised")]
     }
-    func openCodeInventory() async throws -> OpenCodeMetadataSnapshot {
-        calls.append("inventory"); throw CoincideError("Synthetic inventory is unavailable.")
-    }
-    func acpConnectionInfo() async throws -> ACPConnectionInfo {
-        calls.append("acp"); return try .init(.object(["protocolVersion": .number(1)]))
-    }
     func codexDefaultModelSelection() async throws -> CodexDefaultModelSelection {
         calls.append("defaults"); return try .init(workspacePath: "/owned-codex-fixture", model: "advertised-wire-model", reasoningEffort: "medium")
     }
@@ -226,9 +220,8 @@ private func ownedCodexEventually(_ predicate: @escaping @Sendable () async -> B
         await gate.release()
         let rows = try await first.value, other = try await second.value
         #expect(rows == other && rows.first?.id == "advertised-wire-model")
-        let defaults = try await fixture.wrapper.codexDefaultModelSelection(), info = try await fixture.wrapper.acpConnectionInfo()
-        #expect(defaults.reasoningEffort == "medium" && info.protocolVersion == 1)
-        await #expect(throws: CoincideError.self) { try await fixture.wrapper.openCodeInventory() }
+        let defaults = try await fixture.wrapper.codexDefaultModelSelection()
+        #expect(defaults.reasoningEffort == "medium")
         let caps = try await fixture.wrapper.historyCapabilities(threadID: "native-conversation")
         #expect(caps.canRead && caps.canForkHead && !caps.canForkFromTurn && !caps.canRevertBeforeTurn && caps.historyMode == .legacy)
         _ = try await fixture.wrapper.conversationSnapshot(threadID: "native-conversation")
@@ -240,7 +233,7 @@ private func ownedCodexEventually(_ predicate: @escaping @Sendable () async -> B
         try await fixture.wrapper.selectAnswers(request, selections: ["q": ["a"]], notes: ["q": "note"])
         try await fixture.wrapper.choose(request, optionID: "once")
         let calls = await fixture.peer.calls, count = await fixture.broker.acquires
-        #expect(Set(["defaults", "acp", "inventory", "history-caps", "snapshot", "page", "respond", "answer", "select", "notes", "choose"]).isSubset(of: Set(calls)))
+        #expect(Set(["defaults", "history-caps", "snapshot", "page", "respond", "answer", "select", "notes", "choose"]).isSubset(of: Set(calls)))
         #expect(!calls.contains("cli-account") && count == 1)
     } catch { await gate.release(); _ = await first.result; _ = await second.result; await fixture.close(); throw error }
     await fixture.close()
@@ -373,26 +366,6 @@ private func ownedCodexEventually(_ predicate: @escaping @Sendable () async -> B
         #expect(calls.filter { $0 == "revert" }.count == 1 && calls.filter { $0 == "fork" }.count == 1 && !calls.contains("send") && count == 2)
     } catch { await fixture.close(); throw error }
     await fixture.close()
-}
-
-@Test func codexOwnedSessionSessionRequestsAndBackgroundActivityPreventIdleReplacement() async throws {
-    let fixture = OwnedCodexFixture(), reader = fixture.record()
-    do {
-        _ = try await fixture.wrapper.models()
-        let request = ApprovalRequest(id: .string("background"), method: "test", params: .object([:]))
-        await fixture.peer.emit(.sessionApproval(request)); try await fixture.waitFor(.sessionApproval(request))
-        await #expect(throws: CoincideError.self) { try await fixture.wrapper.send(text: "held", thread: fixture.thread()) }
-        try await fixture.wrapper.respond(request, allow: true)
-        await fixture.peer.emit(.sessionApprovalDismissed(request.id)); try await fixture.waitFor(.sessionApprovalDismissed(request.id))
-        let activity = ProviderActivity(id: UUID(), state: .running)
-        await fixture.peer.emit(.activity(activity)); try await fixture.waitFor(.activity(activity))
-        await #expect(throws: CoincideError.self) { try await fixture.wrapper.send(text: "held", thread: fixture.thread()) }
-        let idle = ProviderActivity(id: activity.id, state: .idle)
-        await fixture.peer.emit(.activity(idle)); try await fixture.waitFor(.activity(idle))
-        try await fixture.wrapper.send(text: "released", thread: fixture.thread())
-        let count = await fixture.broker.acquires; #expect(count == 2)
-    } catch { await fixture.close(reader); throw error }
-    await fixture.close(reader)
 }
 
 @Test func codexOwnedSessionRejectsStaleCapturedAccountBeforeAccessAndPreservesExactInput() async throws {

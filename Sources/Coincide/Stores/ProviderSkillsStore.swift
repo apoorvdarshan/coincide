@@ -12,8 +12,6 @@ final class ProviderSkillsStore {
         let workspacePath: String
         let provider: ProviderKind
         let configuration: CodexRuntimeConfiguration
-        let openCodeConfiguration: OpenCodeConfiguration?
-        let piConfiguration: PiConfiguration?
         let claudeConfiguration: ClaudeRuntimeConfiguration?
         let claudeSkills: ClaudeSkillDiscoveryConfiguration?
         let nativeThreadID: String?
@@ -22,7 +20,6 @@ final class ProviderSkillsStore {
             threadID = thread.id; projectID = thread.projectID; workspacePath = thread.workspacePath
             provider = thread.provider
             configuration = thread.codexRuntimeConfiguration ?? .init()
-            openCodeConfiguration = thread.openCodeConfiguration; piConfiguration = thread.piConfiguration
             claudeConfiguration = thread.claudeRuntimeConfiguration
             claudeSkills = thread.claudeRuntimeConfiguration.flatMap { try? .init(runtime: $0) }
             nativeThreadID = thread.provider == .codex ? nil : thread.providerThreadID
@@ -71,7 +68,7 @@ final class ProviderSkillsStore {
             return .combined(try await skillValue, commands)
         }
     }
-    var supportsCommands: Bool { [.pi, .opencode, .claude].contains(scope.provider) }
+    var supportsCommands: Bool { scope.provider == .claude }
     var supportsSkills: Bool { true }
     var commands: [ProviderCommand] {
         var names = Set<String>()

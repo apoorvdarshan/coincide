@@ -52,7 +52,7 @@ private final class HistoryUIFixture: @unchecked Sendable {
             openTerminal: .init(allowed: true), chooseWorktree: .init(allowed: false, reason: "Conversation already has messages."))
         let rows = (0..<600).map { RemoteMessageSummary(id: "message-\($0)", role: .assistant, createdAt: Date(timeIntervalSince1970: Double(600 - $0)),
             text: .init(preview: "Message \($0)", complete: true), attachmentCount: 0) }
-        let capabilities = RemoteEnvironmentCapabilities(providers: [.codex, .claude, .opencode, .pi], supportsBoundedProjections: true, supportsRemoteHistory: true)
+        let capabilities = RemoteEnvironmentCapabilities(providers: [.codex, .claude], supportsBoundedProjections: true, supportsRemoteHistory: true)
         var state = HistoryUIFixtureState(descriptor: .init(environmentID: environment, label: "Offline projection", capabilities: capabilities), sequence: 10,
             hostID: hostID, projects: [.init(id: project.id, name: .init(preview: "Remote project", complete: true), workspacePath: project.path)],
             threads: [summary], detail: detail, messages: rows, documents: documents)
@@ -83,9 +83,8 @@ private final class HistoryUIFixture: @unchecked Sendable {
             phase: "applied", updatedAt: Date(), title: .init(preview: "Rewind before run", complete: true), acknowledged: false, cancelRequested: false,
             actions: ["recallPrompt": allowed, "dismissRecall": allowed], fingerprint: String(repeating: "b", count: 64), workspacePaths: [thread.workspacePath])
         state.historyView = .init(binding: binding(operationID), operation: op, kind: .rewindBeforeRun, provider: thread.provider,
-            filesPhase: nil, filesAcknowledged: false, needsPromptRecall: true, recalled: false, recallDismissed: false, piSessionID: nil, piRequests: nil)
-        state.historyControls = .init(claudeSelectionID: nil, claudeConsumerRunID: nil, piIntentID: nil, piConsumerRunID: nil,
-            canInspectClaudeResume: false, canInspectPiFresh: false)
+            filesPhase: nil, filesAcknowledged: false, needsPromptRecall: true, recalled: false, recallDismissed: false)
+        state.historyControls = .init(claudeSelectionID: nil, claudeConsumerRunID: nil, canInspectClaudeResume: false)
         let originalData = Data(originalPrompt.utf8), textID = UUID()
         state.documents[textID.uuidString] = originalData
         let originalRef = RemoteProjectionContentReference(id: textID, kind: .text, totalBytes: originalData.count, digest: RemoteProjectionProtocol.digest(originalData))
@@ -116,7 +115,7 @@ private final class HistoryUIFixture: @unchecked Sendable {
         value.historyView = .init(binding: .init(environmentID: old.binding.environmentID, hostID: old.binding.hostID, leaseID: UUID(),
             threadID: review.target.threadID, objectID: review.id, digest: String(repeating: "b", count: 64)), operation: summary,
             kind: .forkAfterRun, provider: review.value.provider, filesPhase: nil, filesAcknowledged: false, needsPromptRecall: false,
-            recalled: false, recallDismissed: false, piSessionID: nil, piRequests: nil)
+            recalled: false, recallDismissed: false)
         try JSONEncoder().encode(value).write(to: stateURL, options: .atomic)
     }
     func releaseRecall() { try? Data().write(to: root.appendingPathComponent("release-recall")) }
@@ -233,10 +232,7 @@ private actor HistoryUIPeer {
     private var latestFork: RemoteHistoryReview?
     func completedFork() -> RemoteHistoryReview? { latestFork }
     private var actionKeys: [RemoteOperationAction] = [.recallPrompt, .dismissRecall]
-    private var sessionID: UUID?
-    private var requests: [RuntimeRequest] = []
     private var controlsValue: RemoteHistoryThreadControls
-    private var freshState = RemoteHistoryPiFreshInspection.State.unwritten
     init(_ state: HistoryUIFixtureState) {
         self.state = state
         controlsValue = state.historyControls!
@@ -246,9 +242,7 @@ private actor HistoryUIPeer {
             discard: { await self.discard($0) }, document: { try await self.document($0, binding: $1, target: $2) })
     }
     func setGate(_ gate: HistoryUIBoundary) { reviewGate = gate }
-    func setActions(_ keys: [RemoteOperationAction], session: UUID? = nil, requests: [RuntimeRequest] = []) { actionKeys = keys; sessionID = session; self.requests = requests }
-    func setControls(_ value: RemoteHistoryThreadControls) { controlsValue = value }
-    func setFresh(_ value: RemoteHistoryPiFreshInspection.State) { freshState = value }
+    func setActions(_ keys: [RemoteOperationAction]) { actionKeys = keys }
     func rotateRoot() -> UUID { rootID = UUID(); return rootID }
     func counts() -> [Int] { [binds, reviews.count, discards.count, releases.count] }
     func releaseTargets() -> [RemoteWorkspaceTarget] { releases }
@@ -278,36 +272,25 @@ private actor HistoryUIPeer {
     func discard(_ request: RemoteHistoryDiscardRequest) -> RemoteHistoryDiscardResult {
         discards.append(request); return .init(request: request, discarded: true)
     }
-    private func operation(_ target: RemoteWorkspaceTarget, id requestedID: UUID? = nil, maintenance: Bool) throws -> RemoteHistoryOperationView {
+    private func operation(_ target: RemoteWorkspaceTarget, id requestedID: UUID? = nil) -> RemoteHistoryOperationView {
         let original = state.historyView!, old = original.operation
         let id = requestedID ?? old.id, fork = latestFork.flatMap { $0.id == id ? $0 : nil }
         let binding = RemoteHistoryBinding(environmentID: target.environmentID, hostID: state.hostID, leaseID: UUID(),
             threadID: target.threadID, objectID: id, digest: String(repeating: "b", count: 64))
         targets[binding.leaseID] = target
         let summary = RemoteOperationSummary(id: id, kind: .conversationHistory, projectID: target.projectID, threadID: target.threadID,
-            runID: old.runID, targetThreadID: fork?.value.targetThreadID, phase: actionKeys.contains(.clearMaintenance) || actionKeys.contains(.keepOriginal) ? "unconfirmed" : "applied", updatedAt: old.updatedAt,
+            runID: old.runID, targetThreadID: fork?.value.targetThreadID, phase: actionKeys.contains(.inspectProvider) ? "unconfirmed" : "applied", updatedAt: old.updatedAt,
             title: old.title, error: state.historyRecall!.text, acknowledged: false, cancelRequested: false,
             actions: Dictionary(uniqueKeysWithValues: (fork == nil ? actionKeys : [.openConversation]).map { ($0.rawValue, .init(allowed: true)) }), fingerprint: old.fingerprint,
             details: old.details, workspacePaths: old.workspacePaths)
-        let requestRef: RemoteProjectionContentReference?
-        if requests.isEmpty { requestRef = nil }
-        else {
-            let data = try RemoteHistoryProtocol.payload(requests)
-            requestRef = .init(id: UUID(), kind: .runtimeRequests, totalBytes: data.count, digest: RemoteProjectionProtocol.digest(data))
-            requestDocuments[requestRef!.id] = data
-        }
         return .init(binding: binding, operation: summary, kind: fork?.value.kind ?? original.kind, provider: target.configuration.provider,
             filesPhase: original.filesPhase, filesAcknowledged: false, needsPromptRecall: original.needsPromptRecall,
-            recalled: false, recallDismissed: false, piSessionID: sessionID, piRequests: requestRef,
-            maintenanceClaim: maintenance ? .init(id: UUID(), digest: String(repeating: "c", count: 64)) : nil)
+            recalled: false, recallDismissed: false)
     }
-    private var requestDocuments: [UUID: Data] = [:]
     func read(_ request: RemoteHistoryReadRequest) throws -> RemoteHistoryReadResult {
         switch request.query {
         case .controls: return .init(target: request.target, value: .controls(controlsValue))
-        case .operation(let id): return .init(target: request.target, value: .operation(try operation(request.target, id: id, maintenance: false)))
-        case .maintenance: return .init(target: request.target, value: .operation(try operation(request.target, maintenance: true)))
-        case .piFresh(let intent, let consumer): return .init(target: request.target, value: .piFresh(.init(intentID: intent, consumerRunID: consumer, state: freshState)))
+        case .operation(let id): return .init(target: request.target, value: .operation(operation(request.target, id: id)))
         case .release(let binding):
             if let expected = targets[binding.leaseID] { guard try RemoteHistoryProtocol.payload(expected) == RemoteHistoryProtocol.payload(request.target) else { throw RemoteHistoryFailure(.staleReview) } }
             releases.append(request.target); targets.removeValue(forKey: binding.leaseID)
@@ -321,7 +304,7 @@ private actor HistoryUIPeer {
     }
     func document(_ reference: RemoteProjectionContentReference, binding: RemoteHistoryBinding, target: RemoteWorkspaceTarget) throws -> Data {
         guard let expected = targets[binding.leaseID], try RemoteHistoryProtocol.payload(expected) == RemoteHistoryProtocol.payload(target),
-              let bytes = requestDocuments[reference.id] ?? state.documents[reference.id.uuidString], bytes.count == reference.totalBytes,
+              let bytes = state.documents[reference.id.uuidString], bytes.count == reference.totalBytes,
               RemoteProjectionProtocol.digest(bytes) == reference.digest else { throw RemoteHistoryFailure(.staleReview) }
         return bytes
     }
@@ -408,59 +391,6 @@ func remoteHistoryReadonlyLeaseKeepsOriginalRootlessTargetAfterReviewBindsAndDis
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
-func remoteHistoryMaintenanceClearRequiresExplicitExactInspectedClaimAndSurvivesUnrelatedRefresh() async throws {
-    let f = try HistoryUIFixture(provider: .opencode); defer { f.remove() }
-    let root = try await connectedHistoryRoot(f), peer = HistoryUIPeer(try f.state()), store = RemoteHistoryStore(), commands = HistoryUICommands()
-    await peer.setActions([.inspectMaintenance, .clearMaintenance])
-    await selectHistory(store, root: root, peer: peer, commands: commands)
-    let model = try #require(store.current)
-    await model.act(.clearMaintenance, operationID: f.operationID)
-    #expect(commands.values.isEmpty)
-    await model.act(.inspectMaintenance, operationID: f.operationID)
-    let inspected = try #require(model.operationViews[f.operationID]), claim = try #require(inspected.maintenanceClaim)
-    await selectHistory(store, root: root, peer: peer, commands: commands)
-    #expect(model.operationViews[f.operationID]?.maintenanceClaim == claim)
-    await model.act(.clearMaintenance, operationID: f.operationID)
-    #expect(commands.values == [.history(target: model.target,
-        action: .clearMaintenance(operationID: f.operationID, reviewID: claim.id, digest: claim.digest))])
-    await store.shutdown(); await root.shutdown()
-}
-
-@Test(.timeLimit(.minutes(1))) @MainActor
-func remoteHistoryPiWorkerAnswersFenceSessionAndExactQuestionAndFreshContextActionsKeepExactIDs() async throws {
-    let f = try HistoryUIFixture(provider: .pi); defer { f.remove() }
-    let root = try await connectedHistoryRoot(f), peer = HistoryUIPeer(try f.state()), store = RemoteHistoryStore(), commands = HistoryUICommands()
-    let session = UUID(), request = ApprovalRequest(id: .string("same-question"), method: "pi/extension", params: .object([
-        "method": .string("confirm"), "title": .string("Keep exact branch 工作?"), "message": .string("History worker input")]))
-    await peer.setActions([.respondPi, .cancelPi, .keepOriginal], session: session, requests: [.init(request: request, sessionScoped: true)])
-    let intent = UUID(), consumer = UUID()
-    await peer.setControls(.init(claudeSelectionID: nil, claudeConsumerRunID: nil, piIntentID: intent, piConsumerRunID: consumer,
-        canInspectClaudeResume: false, canInspectPiFresh: true))
-    await selectHistory(store, root: root, peer: peer, commands: commands)
-    let model = try #require(store.current)
-    await model.respondPi(operationID: f.operationID, sessionID: UUID(), request: request, response: .decision(true))
-    #expect(commands.values.isEmpty)
-    await model.respondPi(operationID: f.operationID, sessionID: session, request: request, response: .decision(true))
-    #expect(commands.values.last == .history(target: model.target, action: .respondPi(operationID: f.operationID,
-        sessionID: session, request: request, response: .decision(true))))
-    let newer = UUID()
-    await peer.setActions([.respondPi, .cancelPi, .keepOriginal], session: newer, requests: [.init(request: request, sessionScoped: true)])
-    await model.loadOperation(f.operationID)
-    let count = commands.values.count
-    await model.respondPi(operationID: f.operationID, sessionID: session, request: request, response: .decision(false))
-    #expect(commands.values.count == count)
-    await model.cancelPi(f.operationID)
-    #expect(commands.values.last == .history(target: model.target, action: .cancelPi(operationID: f.operationID)))
-    await model.act(.keepOriginal, operationID: f.operationID)
-    #expect(commands.values.last == .history(target: model.target, action: .keepPiOriginal(operationID: f.operationID)))
-    await model.inspectPiFresh(); await model.resolvePiFresh()
-    #expect(commands.values.last == .history(target: model.target, action: .acknowledgePiFreshUnwritten(intentID: intent, consumerRunID: consumer)))
-    await peer.setFresh(.persisted); await model.inspectPiFresh(); await model.resolvePiFresh()
-    #expect(commands.values.last == .history(target: model.target, action: .confirmPiFreshPersisted(intentID: intent, consumerRunID: consumer)))
-    await store.shutdown(); await root.shutdown()
-}
-
-@Test(.timeLimit(.minutes(1))) @MainActor
 func remoteHistoryRootLostRecallReceiptMergesOnceIntoLatestPrivateDraftAndKeepsNewImport() async throws {
     let f = try HistoryUIFixture(); defer { f.remove() }
     let first = try await connectedHistoryRoot(f)
@@ -505,9 +435,9 @@ func remoteHistoryRootLostRecallReceiptMergesOnceIntoLatestPrivateDraftAndKeepsN
 @Test(.timeLimit(.minutes(1))) @MainActor
 func remoteHistoryOffscreenKeepRestoreAndProviderRecoveryFitBothAppearancesWithoutRPCOrCommands() async throws {
     _ = NSApplication.shared
-    let f = try HistoryUIFixture(provider: .opencode); defer { f.remove() }
+    let f = try HistoryUIFixture(); defer { f.remove() }
     let root = try await connectedHistoryRoot(f), peer = HistoryUIPeer(try f.state()), store = RemoteHistoryStore(), commands = HistoryUICommands()
-    await peer.setActions([.inspectProvider, .inspectFiles, .acknowledgeFiles, .inspectMaintenance, .clearMaintenance])
+    await peer.setActions([.inspectProvider, .inspectFiles, .acknowledgeFiles])
     await selectHistory(store, root: root, peer: peer, commands: commands)
     let model = try #require(store.current)
     await model.prepare(runID: f.runID, kind: .rewindBeforeRun)

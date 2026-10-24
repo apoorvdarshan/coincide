@@ -153,25 +153,12 @@ extension CodingThread {
               record.configuration.provider == provider,
               record.configuration.workspacePath == workspacePath else { return false }
         if verifiedNativeRunIDs.contains(record.id) {
-            if provider == .pi {
-                guard let runtime = piConfiguration?.runtimeIdentity, let evidence = record.pi,
-                      record.configuration.piConfiguration?.runtimeIdentity == runtime, evidence.runtimeIdentity == runtime,
-                      evidence.runID == record.id, evidence.nativeSessionFile == record.providerThreadID,
-                      evidence.preparation.openingInput.clientMessageID == record.userMessageID else { return false }
-                return record.configuration.nativeThreadID == nil || record.configuration.nativeThreadID == evidence.nativeSessionFile
-            }
-            if provider == .claude {
-                guard let runtime = claudeRuntimeConfiguration, let evidence = record.claude,
-                      record.configuration.claudeRuntimeConfiguration?.runtimeIdentity == runtime.runtimeIdentity,
-                      evidence.runtimeIdentity == runtime.runtimeIdentity, evidence.nativeSessionID == record.providerThreadID,
-                      evidence.openingInputID == ClaudeInputIdentity.opening(runID: record.id),
-                      record.providerThreadID != nil else { return false }
-                return record.configuration.nativeThreadID == nil || record.configuration.nativeThreadID == record.providerThreadID
-            }
-            guard provider == .opencode, openCodeConfiguration?.generation == .v1,
-                  record.configuration.openCodeConfiguration?.runtimeIdentity == openCodeConfiguration?.runtimeIdentity,
-                  let originalID = record.providerThreadID, !originalID.isEmpty else { return false }
-            return record.configuration.nativeThreadID == nil || record.configuration.nativeThreadID == originalID
+            guard provider == .claude, let runtime = claudeRuntimeConfiguration, let evidence = record.claude,
+                  record.configuration.claudeRuntimeConfiguration?.runtimeIdentity == runtime.runtimeIdentity,
+                  evidence.runtimeIdentity == runtime.runtimeIdentity, evidence.nativeSessionID == record.providerThreadID,
+                  evidence.openingInputID == ClaudeInputIdentity.opening(runID: record.id),
+                  record.providerThreadID != nil else { return false }
+            return record.configuration.nativeThreadID == nil || record.configuration.nativeThreadID == record.providerThreadID
         }
         guard record.providerThreadID == nativeID else { return false }
         return record.configuration.nativeThreadID == nil || record.configuration.nativeThreadID == nativeID
@@ -189,17 +176,13 @@ extension CodingThread {
 }
 
 extension WorkspaceSnapshot {
-    /// Only a reviewed V1 native-copy proof may retain checkpoints whose immutable
+    /// Only a reviewed native Claude proof may retain checkpoints whose immutable
     /// run references precede adoption of the current native conversation.
     func conversationHistoryFileTarget(for review: ConversationHistoryReview,
         includingRemovedByHistoryOperationID operationID: UUID? = nil) throws -> ConversationHistoryFileTargetResolution {
         try review.validate()
         guard let thread = threads.first(where: { $0.id == review.sourceThreadID && $0.projectID == review.projectID }) else {
             return .unavailable(.missingRun)
-        }
-        if let evidence = review.pi {
-            return piConversationHistoryFileTarget(for: review, evidence: evidence, thread: thread,
-                includingRemovedByHistoryOperationID: operationID)
         }
         if let evidence = review.claude {
             guard evidence.source.matchesBinding(.init(thread: thread)) else { return .unavailable(.workspaceChanged) }
@@ -254,116 +237,6 @@ extension WorkspaceSnapshot {
             return thread.conversationHistoryFileTarget(beforeRunID: review.runID,
                 includingRemovedByHistoryOperationID: operationID, verifiedNativeRunIDs: verified)
         }
-        guard let evidence = review.openCodeV1 else {
-            return thread.conversationHistoryFileTarget(beforeRunID: review.runID, includingRemovedByHistoryOperationID: operationID)
-        }
-        guard thread.provider == .opencode, thread.openCodeConfiguration?.runtimeIdentity == evidence.source.runtimeIdentity,
-              thread.workspacePath == evidence.source.workspacePath else { return .unavailable(.workspaceChanged) }
-        if thread.providerThreadID != review.sourceReference.nativeThreadID {
-            guard operationID == review.id, let operation = conversationHistoryOperation(review.id), operation.review == review,
-                  operation.phase == .applied, operation.result?.reference.nativeThreadID == thread.providerThreadID else {
-                return .unavailable(.workspaceChanged)
-            }
-            try operation.validate()
-        }
-        var verified = Set<UUID>()
-        for input in evidence.inputs {
-            guard let record = thread.runHistory?.first(where: { $0.id == input.runID }), record.origin == .user,
-                  record.messageAttributionVersion == 1, record.configuration.provider == .opencode,
-                  record.configuration.openCodeConfiguration?.runtimeIdentity == evidence.source.runtimeIdentity,
-                  record.configuration.workspacePath == evidence.source.workspacePath,
-                  record.providerThreadID == input.originalReference.nativeThreadID,
-                  record.turnIDs == [input.originalMessageID] else { return .unavailable(.workspaceChanged) }
-            verified.insert(record.id)
-        }
-        return thread.conversationHistoryFileTarget(beforeRunID: review.runID,
-            includingRemovedByHistoryOperationID: operationID, verifiedNativeRunIDs: verified)
-    }
-
-    private func piConversationHistoryFileTarget(for review: ConversationHistoryReview, evidence: PiHistoryReviewEvidence,
-        thread: CodingThread, includingRemovedByHistoryOperationID operationID: UUID?) -> ConversationHistoryFileTargetResolution {
-        guard evidence.source.matchesBinding(.init(thread: thread)) else { return .unavailable(.workspaceChanged) }
-        do {
-            if let operationID {
-                guard operationID == review.id, let operation = conversationHistoryOperation(operationID), operation.review == review,
-                      operation.phase == .applied, let result = operation.result?.pi,
-                      thread.providerThreadID == result.reference.nativeThreadID,
-                      thread.piFreshSessionIntent == result.freshIntent, thread.piFreshConsumerRunID == nil else {
-                    return .unavailable(.workspaceChanged)
-                }
-                try operation.validate()
-            } else {
-                guard thread.providerThreadID == evidence.source.reference.nativeThreadID,
-                      thread.piFreshSessionIntent == evidence.source.freshIntent, thread.piFreshConsumerRunID == nil else {
-                    return .unavailable(.workspaceChanged)
-                }
-            }
-            var verified = Set<UUID>()
-            for input in evidence.inputs {
-                guard let record = thread.runHistory?.first(where: { $0.id == input.runID }), let proof = record.pi,
-                      record.origin == .user, record.messageAttributionVersion == 1,
-                      record.configuration.provider == .pi, evidence.source.matchesBinding(record.configuration),
-                      record.id == proof.runID, record.providerThreadID == proof.nativeSessionFile,
-                      proof.runtimeIdentity == evidence.source.runtimeIdentity,
-                      proof.preparation.openingInput.clientMessageID == record.userMessageID else { return .unavailable(.workspaceChanged) }
-                try proof.validate()
-                let original = try PiHistoryRunInput(runID: record.id, nativeSessionFile: proof.nativeSessionFile,
-                    inputs: proof.inputs, captureStatus: proof.captureStatus, baselineLeafID: proof.preparation.baseline.leafID,
-                    finalLeafID: proof.finalObservation?.leafID)
-                guard input == original else { return .unavailable(.workspaceChanged) }
-                _ = try PiHistoryProofValidation.lineage(owner: original, proof: proof, current: evidence.source,
-                    snapshot: self, threadID: thread.id)
-                verified.insert(record.id)
-            }
-
-            // A scope-zero baseline can outlive removal of its opening run.
-            // Follow only exact applied rewinds in this logical conversation;
-            // the immutable original file/input record is never rewritten.
-            if let original = thread.runHistory?.first, !verified.contains(original.id), let proof = original.pi,
-               original.origin == .user, original.messageAttributionVersion == 1, original.configuration.nativeThreadID == nil,
-               original.configuration.provider == .pi, evidence.source.matchesBinding(original.configuration),
-               original.id == proof.runID, original.providerThreadID == proof.nativeSessionFile,
-               proof.runtimeIdentity == evidence.source.runtimeIdentity,
-               proof.preparation.openingInput.clientMessageID == original.userMessageID {
-                try proof.validate()
-                let owner = try PiHistoryRunInput(runID: original.id, nativeSessionFile: proof.nativeSessionFile,
-                    inputs: proof.inputs, captureStatus: proof.captureStatus, baselineLeafID: proof.preparation.baseline.leafID,
-                    finalLeafID: proof.finalObservation?.leafID)
-                var unchangedOriginalScope = false
-                if let removingID = original.removedByHistoryOperationID, let removing = conversationHistoryOperation(removingID),
-                   removing.phase == .applied, removing.review.kind == .rewindBeforeRun,
-                   removing.review.sourceThreadID == thread.id, removing.review.removedRunIDs.contains(original.id),
-                   let captured = removing.review.pi, captured.source.runtimeIdentity == evidence.source.runtimeIdentity,
-                   captured.boundary == .head, captured.inputs.contains(owner), proof.captureStatus == .noNativeChange,
-                   removing.result?.pi?.snapshot == captured.source {
-                    try removing.validate()
-                    _ = try PiHistoryProofValidation.lineage(owner: owner, proof: proof, current: captured.source,
-                        snapshot: self, threadID: thread.id)
-                    unchangedOriginalScope = true
-                }
-                var current = proof.nativeSessionFile, seen = Set<String>(), first = true
-                while current != evidence.source.reference.nativeThreadID, seen.insert(current).inserted, seen.count <= 256 {
-                    let edges = (conversationHistoryOperations ?? []).filter { prior in
-                        prior.phase == .applied && prior.review.sourceThreadID == thread.id && prior.review.kind == .rewindBeforeRun &&
-                            prior.review.pi?.source.runtimeIdentity == evidence.source.runtimeIdentity &&
-                            prior.review.sourceReference.nativeThreadID == current && prior.result?.reference.nativeThreadID != current &&
-                            (!first || unchangedOriginalScope || prior.review.pi?.inputs.contains(owner) == true)
-                    }
-                    guard edges.count == 1, let next = edges[0].result?.pi?.snapshot.reference.nativeThreadID else { break }
-                    try edges[0].validate(); current = next; first = false
-                }
-                if current == evidence.source.reference.nativeThreadID, !first || unchangedOriginalScope {
-                    if first {
-                        _ = try PiHistoryProofValidation.lineage(owner: owner, proof: proof, current: evidence.source,
-                            snapshot: self, threadID: thread.id)
-                    }
-                    verified.insert(original.id)
-                }
-            }
-            return thread.conversationHistoryFileTarget(beforeRunID: review.runID,
-                includingRemovedByHistoryOperationID: operationID, verifiedNativeRunIDs: verified)
-        } catch {
-            return .unavailable(.workspaceChanged)
-        }
+        return thread.conversationHistoryFileTarget(beforeRunID: review.runID, includingRemovedByHistoryOperationID: operationID)
     }
 }

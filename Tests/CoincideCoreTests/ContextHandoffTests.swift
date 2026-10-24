@@ -131,15 +131,9 @@ actor ContextHandoffLegacySession: ProviderSession {
         let changed = try JSONDecoder().decode(ProviderHistoricalContext.self, from: JSONSerialization.data(withJSONObject: object))
         #expect(throws: ContextHandoffError(.invalidSource)) { try changed.validate() }
     }
-    #expect(throws: ProviderSteeringError(.invalidRequest)) {
-        _ = try PiProtocol.inputCommand(.init(text: "/compact", historicalContext: context))
-    }
-    let pi = try PiProtocol.inputCommand(input)
-    let providerText = try input.providerText()
-    #expect(pi.name == "prompt" && pi.fields["message"] == .string(providerText))
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: ["codex", "claude", "acp1", "acp2"], [false, true])
+@Test(.timeLimit(.minutes(1)), arguments: ["codex", "claude"], [false, true])
 func contextHandoffActualPrivateProvidersReceiveSeparateHistoryAndLiteralBlocks(profile: String, image: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-context-delivery-\(UUID())").resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -159,12 +153,10 @@ func contextHandoffActualPrivateProvidersReceiveSeparateHistoryAndLiteralBlocks(
     let session: any ProviderSession
     switch profile {
     case "codex": session = try CodexSession(executable: executable, cwd: root, arguments: [])
-    case "claude": session = try ClaudeSession(executable: executable, cwd: root, arguments: [])
-    case "acp1": session = try ACPSession(executable: executable, arguments: [], cwd: root)
-    default: session = try ACP2Session(executable: executable, arguments: [], cwd: root)
+    default: session = try ClaudeSession(executable: executable, cwd: root, arguments: [])
     }
     var thread = CodingThread(project: .init(path: root.path), model: "fixture")
-    thread.provider = profile == "codex" ? .codex : profile == "claude" ? .claude : .acp
+    thread.provider = profile == "codex" ? .codex : .claude
     thread.activeRun = .init(id: UUID(), configuration: .init(thread: thread), startedAt: Date())
     do {
         try await session.send(input: input, thread: thread)

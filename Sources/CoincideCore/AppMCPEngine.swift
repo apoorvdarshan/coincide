@@ -225,29 +225,6 @@ extension WorkspaceEngine {
                 let controls = try AppMCPProviderModelOptions.claude(options, model: model)
                 if !AppMCPProviderModelOptions.matches(model, id: selected.model, provider: .claude) { selected.model = model.id }
                 try selected.selectClaudeModelOptions(controls, model: model)
-            case .opencode:
-                guard options.keys.allSatisfy({ $0 == "variant" }) else { throw AppMCPError(.unsupported) }
-                try selected.selectOpenCodeModel(model)
-                let variant = options["variant"]?.string
-                guard options["variant"] == nil || variant != nil else { throw AppMCPError(.invalidRequest) }
-                try selected.selectOpenCodeVariant(model: model, variant: variant)
-            case .pi:
-                guard options.keys.allSatisfy({ $0 == "thinkingLevel" }) else { throw AppMCPError(.unsupported) }
-                try selected.selectPiModel(model)
-                let level = options["thinkingLevel"]?.string
-                guard options["thinkingLevel"] == nil || level != nil else { throw AppMCPError(.invalidRequest) }
-                try selected.selectPiThinking(model: model, level: level)
-            case .muse:
-                guard options.keys.allSatisfy({ $0 == "reasoningEffort" }) else { throw AppMCPError(.unsupported) }
-                try selected.selectMuseModel(model)
-                let effort = options["reasoningEffort"]?.string
-                guard options["reasoningEffort"] == nil || effort != nil else { throw AppMCPError(.invalidRequest) }
-                try selected.selectMuseReasoning(model: model, effort: effort)
-            default:
-                guard options.isEmpty else { throw AppMCPError(.unsupported) }
-                selected.model = model.id
-                if selected.provider == .antigravity { selected.antigravityConfiguration = selected.antigravityConfiguration?.selecting(model: model.id) }
-                if !inherits { selected.agentConfigValues = nil; selected.agentConfiguration = nil }
             }
         }
         selected.permission = permission ?? context.configuration.permission
@@ -296,7 +273,7 @@ extension WorkspaceEngine {
         let caller = try appMCPThread(context.scope.threadID, in: view)
         let sourceConfiguration = ProviderConfiguration(thread: source)
         var destination = sourceConfiguration; destination.nativeThreadID = nil
-        destination.claudeLaunchSelection = nil; destination.piFreshSessionIntent = nil
+        destination.claudeLaunchSelection = nil
         let intent: ContextTransferIntent
         if let parentID {
             let parent = try appMCPThread(parentID, in: view)
@@ -501,34 +478,6 @@ extension WorkspaceEngine {
                 let merged = AppMCPProviderModelOptions.merged(inherited, overrides: options)
                 edit(.claudeModelOptions(model: model, options: try AppMCPProviderModelOptions.claude(merged, model: model)))
             }
-        case .pi:
-            guard options?.keys.allSatisfy({ $0 == "thinkingLevel" }) ?? true else { throw AppMCPError(.unsupported) }
-            edit(.piModel(model))
-            if let options {
-                let level = options["thinkingLevel"]?.string
-                guard options.isEmpty || level != nil, level == nil || model.piThinkingLevels?.contains(level!) == true else { throw AppMCPError(.invalidRequest) }
-                edit(.piThinking(model: model, level: level))
-            }
-        case .opencode:
-            guard options?.keys.allSatisfy({ $0 == "variant" }) ?? true else { throw AppMCPError(.unsupported) }
-            edit(.openCodeModel(model))
-            if let options {
-                let variant = options["variant"]?.string
-                guard options.isEmpty || variant != nil, variant == nil || model.openCodeVariants?.contains(variant!) == true else { throw AppMCPError(.invalidRequest) }
-                edit(.openCodeVariant(model: model, variant: variant))
-            }
-        case .muse:
-            guard options?.keys.allSatisfy({ $0 == "reasoningEffort" }) ?? true else { throw AppMCPError(.unsupported) }
-            edit(.museModel(model))
-            if let options {
-                let effort = options["reasoningEffort"]?.string
-                guard options.isEmpty || effort != nil, effort == nil || model.museReasoningEfforts?.contains(where: { $0.id == effort }) == true else { throw AppMCPError(.invalidRequest) }
-                edit(.museReasoning(model: model, effort: effort))
-            }
-        default:
-            guard options?.isEmpty != false else { throw AppMCPError(.unsupported) }
-            edit(.model(model.id))
-            if options != nil, thread.provider == .acp { edit(.resetAgentOptions) }
         }
         return result
     }
@@ -538,11 +487,6 @@ extension WorkspaceEngine {
         thread.workspacePath = workspacePath; thread.provider = configuration.provider; thread.permission = configuration.permission
         thread.reasoningEffort = configuration.reasoningEffort; thread.codexRuntimeConfiguration = configuration.codexRuntimeConfiguration
         thread.claudeRuntimeConfiguration = try configuration.claudeRuntimeConfiguration?.replacingWorkspace(workspacePath)
-        thread.acpAgent = configuration.acpAgent; thread.openCodeConfiguration = configuration.openCodeConfiguration
-        if let pi = configuration.piConfiguration {
-            thread.piConfiguration = .init(instanceID: pi.instanceID, executable: pi.executable, model: pi.model, thinkingLevel: pi.thinkingLevel, runtime: try pi.runtime?.replacingWorkspace(workspacePath))
-        }
-        thread.museConfiguration = configuration.museConfiguration; thread.antigravityConfiguration = configuration.antigravityConfiguration
         thread.agentModeID = configuration.agentModeID; thread.agentConfigValues = configuration.agentConfigValues; thread.agentConfiguration = configuration.agentConfiguration
         thread.createdAt = date; thread.updatedAt = date
         return thread

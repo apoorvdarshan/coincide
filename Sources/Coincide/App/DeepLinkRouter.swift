@@ -153,7 +153,7 @@ final class DeepLinkRouter {
     /// provider and scoped advertised model in the original create command.
     private func requestedProvider(_ provider: String?, workspacePath: String) -> ProviderKind? {
         guard let provider else { return nil }
-        guard let kind = Self.providerAliases[provider], kind == .codex || kind == .claude,
+        guard let kind = Self.providerAliases[provider],
               providerAvailable?(kind) ?? store.promptLinkProviderAvailable(kind, workspacePath: workspacePath) else {
             banners.post(.info, title: String(localized: "Using your default agent"),
                          detail: String(localized: "The link asked for “\(provider)”, which is not set up on this Mac."), key: "deep-link-provider")

@@ -540,7 +540,6 @@ private func expectRemovalRejection(_ command: WorkspaceCommand, fixture f: Remo
             .cloneProgress(projectID: project.id, attemptID: plan.id, progress: .init(stage: .checkout, percent: 100, detail: nil, stalled: false)),
             .effectResult(request, .succeeded), .effectResult(request, .failed("Late failed clone")), .effectResult(request, .cancelled),
             .runtimeOpened(threadID: thread.id, runID: UUID(), runtimeID: UUID()),
-            .provider(threadID: thread.id, runtimeID: UUID(), event: .activity(.init(id: UUID(), state: .running))),
             .provider(threadID: thread.id, runtimeID: UUID(), event: .message(.init(role: .assistant, text: "Late transcript"))),
             .provider(threadID: thread.id, runtimeID: UUID(), event: .completed(.idle)),
             .effectResult(.providerStart(threadID: thread.id, runID: UUID(), configuration: .init(thread: thread), prompt: "Late start"), .failed("Late provider failure")),

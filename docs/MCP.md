@@ -1,10 +1,9 @@
 # Native app MCP
 
 Coincide now implements an app-owned MCP server, session registry, tool router
-and Engine admission path in Swift. Native **Pi**, **Codex**, captured normal
-**Claude**, and **OpenCode HTTP v1/v2** sessions register those tools through their own protocols. Other
-providers' app-MCP registration remains unfinished. Prior local protocol, Engine
-and intact Pi package checks are recorded in [VALIDATION.md](VALIDATION.md),
+and Engine admission path in Swift. Native **Codex** and captured normal
+**Claude** sessions register those tools through their own protocols. Prior local
+protocol and Engine checks are recorded in [VALIDATION.md](VALIDATION.md),
 including installed Codex/Claude model-driven acceptance. Hosted UI acceptance
 and broader provider/version verification remain open. This does not establish
 full T3 parity.
@@ -33,9 +32,8 @@ Subsequent requests must use its negotiated `MCP-Protocol-Version`.
 The listener checks the exact loopback Host and rejects a supplied foreign Origin.
 Headers are bounded to 16 KiB and bodies/responses to 1 MiB, with bounded JSON
 depth, connections and concurrent invocations. Tool listing returns the complete
-capability-filtered catalogue in one page. The Engine and Pi bridge both allow
-3,660 seconds for tool calls, making delegated tasks' bounded one-hour wait reachable;
-Pi discovery has a separate ten-second deadline.
+capability-filtered catalogue in one page. The Engine allows 3,660 seconds for
+tool calls, making delegated tasks' bounded one-hour wait reachable.
 
 `MCPSessionRegistry` issues 32 random bytes as an opaque Bearer header and retains
 only its SHA-256 hash. A credential binds the provider session, thread/project,
@@ -49,32 +47,13 @@ Revocation stops new admission, cancels exact outstanding calls and joins their
 callbacks, including callbacks already draining under another revocation.
 This private app-tool connection starts no sign-in or browser authorization flow.
 
-The header is runtime-only and redacted. Pi receives it through an app-owned
-regular 0600 sidecar in a private directory. Codex and Claude receive it only in
+The header is runtime-only and redacted. Codex and Claude receive it only in
 native stdin control/configuration frames. Coincide does not put it in URL
 queries, process arguments, environment variables, saved provider settings,
 workspace configuration, journal or audit. The stdio transport redacts both the
 exact header and bare token from inbound JSON and disconnect diagnostics before
 provider errors or notifications can reach projection; provider stderr is not
-persisted. Pi cleanup checks file ownership and identity and removes the sidecar
-only after the owned process has drained; foreign replacements are preserved.
-
-## Native Pi composition
-
-`PiProtocol.permissionExtension` composes permission handling, `PiInputBridge`
-authored-input proof and `PiMCPBridge` into **one awaited async extension factory**.
-The bridge initializes over HTTP, lists tools, and registers native Pi tools as
-`mcp__coincide__<tool-name>` before declaring readiness. Missing or invalid
-readiness refuses prompt admission. App-owned read-only tool annotations are
-trusted only for tools registered from that exact owned extension; other tools
-retain the captured Pi approval policy.
-
-Skill/template expansion and steering continue through their existing native
-input path. The nonce-bound bridge still independently checks actual native user
-entries; adding MCP does not replace input digests, invent native turn IDs or
-upgrade unavailable history evidence. Pi itself remains the vendor CLI, which
-may use Node/TypeScript. Coincide does not run a T3 Code Node server or Electron
-frontend to provide these app services.
+persisted.
 
 ## Native Codex and Claude registration
 
@@ -135,33 +114,6 @@ authentication, all thirty tools, or rendered approval interaction. Run explicit
 with `COINCIDE_LIVE_APP_MCP=1 swift test --no-parallel --filter installedProvidersUseAppMCPThroughNativeEngineAndRetainChangesAcrossRestart`.
 Successful checks delete their generated app database; provider-native test
 conversations remain in the CLI's history.
-Set `COINCIDE_LIVE_APP_MCP_PROVIDER=opencode` alongside the opt-in flag to run
-only the installed OpenCode 2 case when verifying that adapter.
-
-## Native OpenCode registration
-
-Each native HTTP adapter owns its local process. App-tool registration is
-runtime-only and happens before an authored prompt, after checking the exact
-workspace's native MCP status. V1 uses `GET/POST /mcp`; v2 uses location-scoped
-`GET /api/mcp`, `PUT /api/experimental/mcp/coincide` and `DELETE` on close. V1
-disconnects the installed server before joining its owned process. Metadata and
-history workers receive no app-tool connection.
-
-Existing `coincide` names and foreign names sharing its flattened tool prefix
-are refused before mutation. Other servers retain their settings. A bounded,
-connected catalogue is required; unavailable or contradictory registration
-refuses input. Narrow native app-tool permission rules leave final admission
-with the Engine's captured run authority and capability-filtered catalogue.
-HTTP bodies and SSE payloads are decoded and redacted before projection, including
-JSON-escaped header/token echoes; outgoing registration retains its credential.
-
-Production-Engine tests with synthetic v1/v2 children exercise actual loopback
-MCP read/rename, FIFO, Stop, durable rebuild, collision/failure refusal, redaction,
-metadata isolation and registration-close races. The installed OpenCode 2.1.3
-no-model probe separately confirms native add/list/connected/remove behavior.
-Native idle-location eviction/client recreation and broader reconnect recovery
-remain unverified. See [OpenCode boundaries](OPENCODE_HTTP.md) and
-[validation evidence](VALIDATION.md) for installed model results.
 
 ## Tools and durable authority
 
@@ -192,8 +144,7 @@ none of the earlier mutations. Supported client request IDs use durable command
 deduplication, and transport request IDs cannot be reused within the lease.
 There is no automatic resend after HTTP or native delivery uncertainty.
 
-Pi sends explicit cancellation for an aborted owned tool request. TCP disconnect
-alone does not cancel an admitted action. Cancellation is not rollback: a command
+TCP disconnect alone does not cancel an admitted action. Cancellation is not rollback: a command
 already durably admitted may finish, and loss of its response is not permission
 to repeat it. Shutdown/revocation joins accepted callbacks and owned networking.
 
@@ -242,8 +193,7 @@ The catalogue is not a promise that every upstream argument variant works.
 Unsupported cases return fixed errors and remain visible through
 `AppMCPTools.unsupportedCapabilities`:
 
-- Muse, Antigravity and ACP providers' app-MCP registration,
-  external-client authorization and remote access; shared native MCP
+- External-client authorization and remote access; shared native MCP
   configuration editing and MCP Apps/resources/HTML presentation.
 - Background-run write ownership, secret requests,
   preview/browser/device services and review guides.
@@ -264,7 +214,6 @@ Implementation: [transport](../Sources/CoincideCore/MCPHTTPServer.swift),
 [authority](../Sources/CoincideCore/AppMCPAuthority.swift),
 [tool catalogue](../Sources/CoincideCore/AppMCPTools.swift),
 [Engine facade](../Sources/CoincideCore/AppMCPEngine.swift),
-[Pi bridge](../Sources/CoincideCore/PiMCPBridge.swift),
 [Codex session](../Sources/CoincideCore/CodexSession.swift),
 [owned Codex forwarding](../Sources/CoincideCore/CodexOwnedSession.swift), and
 [Claude session](../Sources/CoincideCore/ClaudeSession.swift).

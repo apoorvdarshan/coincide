@@ -73,8 +73,7 @@ struct ContextTransferCoreFixture {
     func source() async throws -> CodingThread { try #require(await engine.current().snapshot.threads.first { $0.id == sourceID }) }
     func portable(_ point: ContextTransferSourcePoint = .latestStable) async throws -> ContextTransferReview {
         let source = try await source(); var destination = ProviderConfiguration(thread: source)
-        destination.provider = .opencode; destination.nativeThreadID = nil
-        destination.openCodeConfiguration = .init(executable: "/offline-context-peer")
+        destination.provider = .claude; destination.nativeThreadID = nil
         destination.model = ""
         return try await engine.reviewContextTransfer(.init(sourceThreadID: source.id, expectedConfiguration: .init(thread: source), sourcePoint: point, intent: .fork(destination: destination)))
     }
@@ -117,8 +116,8 @@ func contextTransferEventually(_ operation: () async throws -> Bool) async throw
         #expect(child.messages.isEmpty && child.runHistory == nil && child.activeRun == nil)
         #expect(child.contextTransferLineage?.basePoint == review.sourcePoint)
         #expect(try await f.source().draft == "Keep source composer")
-        let laterModel = OpenCodeModelSelection(providerID: "offline", id: "later")
-        _ = try await f.engine.dispatch(.editThread(child.id, .openCodeModel(.init(id: laterModel.catalogID, name: "Later chosen model", openCodeSelection: laterModel))))
+        let laterModel = ProviderModel(id: "later", name: "Later chosen model")
+        _ = try await f.engine.dispatch(.editThread(child.id, .claudeModel(laterModel)))
         let inputID = UUID(); #expect(try await f.engine.dispatch(.submit(threadID: child.id, text: "Literal next input"), id: inputID).rejection == nil)
         try await contextTransferEventually { await f.engine.current().snapshot.contextTransfer(review.id)?.status == .consumed }
         let input = try #require(await f.peer.inputs.first)
@@ -126,7 +125,7 @@ func contextTransferEventually(_ operation: () async throws -> Bool) async throw
         #expect(input.historicalContext?.selection.messages.contains { $0.text == "Source prompt 3" } == true)
         let saved = try #require(await f.engine.current().snapshot.threads.first { $0.id == child.id })
         #expect(saved.messages.first?.text == "Literal next input" && saved.runHistory?.first?.contextTransferIDs == [review.id])
-        #expect(saved.runHistory?.first?.configuration.model == laterModel.catalogID)
+        #expect(saved.runHistory?.first?.configuration.model == laterModel.id)
         _ = try await f.engine.dispatch(.submit(threadID: child.id, text: "Second explicit input"))
         try await contextTransferEventually { await f.peer.inputs.count == 2 }
         #expect(await f.peer.inputs.last?.historicalContext == nil)
@@ -159,7 +158,8 @@ func contextTransferUnknownDeliveryCannotReplayAndFreshContextPreservesAuditAndD
         let targetIndex = try #require(captured.threads.firstIndex { $0.id == review.targetThreadID })
         var affected = review.targetConfiguration; affected.nativeThreadID = "retired-uncertain-native"
         var unrelated = affected; unrelated.nativeThreadID = "keep-other-native"
-        var foreignProfile = affected; foreignProfile.openCodeConfiguration = .init(executable: "/different-owned-provider")
+        var foreignProfile = affected
+        foreignProfile.claudeRuntimeConfiguration = .init(executable: "/different-owned-provider", configurationDirectory: "/different-owned-configuration", workspacePath: affected.workspacePath)
         captured.threads[targetIndex].providerThreadID = affected.nativeThreadID
         captured.threads[targetIndex].contextProviderBindings = [affected, unrelated, foreignProfile].map { .init(configuration: $0, knownItemIDs: [], updatedAt: Date()) }
         let fresh = try WorkspaceDecision.make(.client(.abandonContextTransfer(threadID: review.targetThreadID, deliveryID: delivery.id, expectedTransferIDs: [review.id])), id: UUID(), snapshot: captured, now: Date()).snapshot
@@ -220,8 +220,7 @@ func contextTransferUnknownDeliveryCannotReplayAndFreshContextPreservesAuditAndD
         #expect(!first.messages.contains { $0.text == "Source prompt 1" || $0.text == "Source reply 3" })
         _ = try await f.engine.acceptContextTransfer(reviewID: first.id, digest: first.digest)
         var handoffDestination = ProviderConfiguration(thread: parent)
-        handoffDestination.provider = .opencode; handoffDestination.nativeThreadID = nil; handoffDestination.model = ""
-        handoffDestination.openCodeConfiguration = .init(executable: "/offline-context-peer")
+        handoffDestination.provider = .claude; handoffDestination.nativeThreadID = nil; handoffDestination.model = ""
         let capturedHandoff = try await f.engine.reviewContextTransfer(.init(sourceThreadID: parent.id, expectedConfiguration: .init(thread: parent), sourcePoint: .run(f.runs[2]), intent: .providerHandoff(destination: handoffDestination)))
         #expect(capturedHandoff.messages.contains { $0.text == "Child-owned result" })
         #expect(capturedHandoff.pendingSourceTransfers == [.init(id: first.id, digest: first.digest)])
@@ -251,7 +250,7 @@ func contextTransferUnknownDeliveryCannotReplayAndFreshContextPreservesAuditAndD
     let f = try await ContextTransferCoreFixture.make()
     do {
         let original = try await f.source(); var destination = ProviderConfiguration(thread: original)
-        destination.provider = .opencode; destination.nativeThreadID = nil; destination.openCodeConfiguration = .init(executable: "/offline-context-peer")
+        destination.provider = .claude; destination.nativeThreadID = nil
         destination.model = ""
         let review = try await f.engine.reviewContextTransfer(.init(sourceThreadID: original.id, expectedConfiguration: .init(thread: original), intent: .providerHandoff(destination: destination)))
         #expect(review.targetThreadID == original.id && review.kind == .providerHandoff)

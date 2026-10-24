@@ -20,7 +20,6 @@ extension WorkspaceDecision {
             }
             result.snapshot.threads[index].providerThreadID = nil
             result.snapshot.threads[index].claudeResumeSelection = nil; result.snapshot.threads[index].claudeResumeConsumerRunID = nil; result.snapshot.threads[index].claudeInheritedHead = nil
-            result.snapshot.threads[index].piFreshSessionIntent = nil; result.snapshot.threads[index].piFreshConsumerRunID = nil
             result.snapshot.threads[index].queuedTurns.removeAll { $0.id == delivery.runID }
             result.snapshot.threads[index].queuePaused = true; result.closeRuntimes.insert(threadID)
         case .contextTransferAccepted(let review, let title, let scratchAllocation):
@@ -163,7 +162,6 @@ extension WorkspaceDecision {
                     guard actual.agentModeID == nil || actual.agentModeID == "default" || actual.agentModeID == "plan" else { return false }
                     expected.agentModeID = actual.agentModeID
                     key = CodexServiceTier.configurationKey
-                default: key = nil
                 }
                 if let key {
                     var settings = expected.agentConfiguration ?? [:]
@@ -171,9 +169,6 @@ extension WorkspaceDecision {
                     expected.agentConfiguration = settings.isEmpty ? nil : settings
                 }
             } catch { return false }
-            if let configuration = expected.openCodeConfiguration { expected.openCodeConfiguration = configuration.selecting(model: actual.openCodeConfiguration?.model) }
-            if let configuration = expected.piConfiguration { expected.piConfiguration = configuration.selecting(model: actual.piConfiguration?.model, thinkingLevel: actual.piConfiguration?.thinkingLevel) }
-            if let configuration = expected.museConfiguration { expected.museConfiguration = configuration.selecting(model: actual.museConfiguration?.model, reasoningEffort: actual.museConfiguration?.reasoningEffort) }
             // A merge adds material to the parent's existing provider context.
             if transfer.review.kind == .mergeBack { expected.nativeThreadID = nil; actual.nativeThreadID = nil }
             if transfer.review.strategy != .nativeFork { expected.nativeThreadID = nil; actual.nativeThreadID = nil }
@@ -255,7 +250,7 @@ extension WorkspaceDecision {
         guard pending || uncertain else { return }
         switch edit {
         case .title, .draft, .pinned, .archived: return
-        case .model, .permission, .codexModel, .codexReasoning, .codexDefaultModel, .codexServiceTier, .codexInteractionMode, .claudeModel, .claudeModelOptions, .resetProviderModelOptions, .openCodeModel, .openCodeVariant, .piModel, .piThinking, .museModel, .museReasoning, .checkpointPolicy:
+        case .model, .permission, .codexModel, .codexReasoning, .codexDefaultModel, .codexServiceTier, .codexInteractionMode, .claudeModel, .claudeModelOptions, .resetProviderModelOptions, .checkpointPolicy:
             guard !uncertain else { throw ContextTransferError.uncertain }
         default: throw WorkspaceCommandError("This conversation has saved context. Keep its provider and workspace until delivery, or explicitly choose fresh context after an uncertain delivery.")
         }

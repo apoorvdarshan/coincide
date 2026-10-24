@@ -6,7 +6,7 @@ extension WorkspaceDecision {
     @inline(never)
     mutating func beginWorktreePreparation(threadID: UUID, request: GitWorktreeRequest,
         expectedSourcePath: String, previousAttemptID: UUID?, reviewSetup: Bool,
-        claudeRuntimeConfiguration: ClaudeRuntimeConfiguration?, piRuntimeConfiguration: PiRuntimeConfiguration?, now: Date) throws {
+        claudeRuntimeConfiguration: ClaudeRuntimeConfiguration?, now: Date) throws {
         guard !snapshot.pullRequestCheckoutReservedIDs.union(snapshot.promptSteeringReservedIDs).contains(request.id) else { throw WorkspaceCommandError("This workspace preparation identity is reserved by a pull request checkout.") }
         guard !snapshot.isPullRequestCheckoutLocked(threadID: threadID),
               !snapshot.isPullRequestCheckoutLocked(path: request.sourcePath),
@@ -50,16 +50,6 @@ extension WorkspaceDecision {
                   captured == (try previous.replacingWorkspace(request.destinationPath, physicalPath: captured.workspacePath)) else { throw ClaudeRuntimeConfiguration.invalid() }
             thread.claudeRuntimeConfiguration = captured
         } else if claudeRuntimeConfiguration != nil { throw ClaudeRuntimeConfiguration.invalid() }
-        if let selected = thread.piConfiguration, let previous = selected.runtime {
-            let captured: PiRuntimeConfiguration
-            do {
-                guard let value = piRuntimeConfiguration,
-                      value == (try previous.replacingWorkspace(request.destinationPath, physicalPath: value.workspacePath)) else { throw PiRuntimeConfiguration.invalid() }
-                captured = value
-            } catch { throw WorkspaceCommandError("The Pi runtime changed before worktree preparation.") }
-            thread.piConfiguration = .init(instanceID: selected.instanceID, executable: selected.executable,
-                model: selected.model, thinkingLevel: selected.thinkingLevel, runtime: captured)
-        } else if piRuntimeConfiguration != nil { throw WorkspaceCommandError("The Pi runtime changed before worktree preparation.") }
         thread.claudeResumeSelection = nil; thread.claudeResumeConsumerRunID = nil; thread.claudeInheritedHead = nil
         thread.workspacePath = request.destinationPath; if thread.codexModelSelectionSource == .cliDefault { thread.codexModelSelectionSource = .explicitModel }; thread.providerThreadID = nil; thread.runtimeID = nil
         thread.runtimeRequests = []; thread.providerMetadata = nil; thread.providerActivity = nil
@@ -67,14 +57,6 @@ extension WorkspaceDecision {
             if let previous = thread.queuedTurns[j].configuration.claudeRuntimeConfiguration {
                 guard let captured = claudeRuntimeConfiguration else { throw ClaudeRuntimeConfiguration.invalid() }
                 thread.queuedTurns[j].configuration.claudeRuntimeConfiguration = try previous.replacingWorkspace(request.destinationPath, physicalPath: captured.workspacePath)
-            }
-            if let selected = thread.queuedTurns[j].configuration.piConfiguration, let previous = selected.runtime {
-                guard let captured = piRuntimeConfiguration else { throw WorkspaceCommandError("The queued Pi runtime changed before worktree preparation.") }
-                let replaced: PiRuntimeConfiguration
-                do { replaced = try previous.replacingWorkspace(request.destinationPath, physicalPath: captured.workspacePath) }
-                catch { throw WorkspaceCommandError("The queued Pi runtime changed before worktree preparation.") }
-                thread.queuedTurns[j].configuration.piConfiguration = .init(instanceID: selected.instanceID, executable: selected.executable,
-                    model: selected.model, thinkingLevel: selected.thinkingLevel, runtime: replaced)
             }
             thread.queuedTurns[j].configuration.claudeLaunchSelection = nil
             thread.queuedTurns[j].configuration.workspacePath = request.destinationPath
@@ -85,10 +67,10 @@ extension WorkspaceDecision {
     }
     @inline(never)
     static func reduceWorktreePreparation(_ command: EngineCommand, snapshot: WorkspaceSnapshot, now: Date) throws -> Self {
-        guard case .beginWorktreePreparation(let threadID, let request, let source, let previous, _, let reviewSetup, let claude, let pi) = command else { throw WorkspaceCommandError("This workspace command was routed incorrectly.") }
+        guard case .beginWorktreePreparation(let threadID, let request, let source, let previous, _, let reviewSetup, let claude) = command else { throw WorkspaceCommandError("This workspace command was routed incorrectly.") }
         var decision = Self(snapshot: snapshot)
         try decision.beginWorktreePreparation(threadID: threadID, request: request, expectedSourcePath: source,
-            previousAttemptID: previous, reviewSetup: reviewSetup, claudeRuntimeConfiguration: claude, piRuntimeConfiguration: pi, now: now)
+            previousAttemptID: previous, reviewSetup: reviewSetup, claudeRuntimeConfiguration: claude, now: now)
         return decision
     }
 }

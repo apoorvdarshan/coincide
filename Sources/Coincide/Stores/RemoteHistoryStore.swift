@@ -57,15 +57,10 @@ final class RemoteHistoryWorkspace {
     private(set) var keepReview: RemoteHistoryReview?
     private(set) var filesReview: RemoteHistoryReview?
     private(set) var controls: RemoteHistoryThreadControls?
-    private(set) var piFresh: RemoteHistoryPiFreshInspection?
     private(set) var operationViews: [UUID: RemoteHistoryOperationView] = [:]
-    private(set) var piRequests: [UUID: [RuntimeRequest]] = [:]
     private(set) var isReviewing = false
     private(set) var isReviewingFiles = false
     private(set) var isActing = false
-    private(set) var isInspectingPiFresh = false
-    private(set) var responding: Set<UUID> = []
-    private(set) var cancelling: Set<UUID> = []
     private(set) var errorMessage: String?
     private(set) var filesError: String?
     private(set) var connected = false
@@ -80,7 +75,6 @@ final class RemoteHistoryWorkspace {
     @ObservationIgnored private var reviewRead = UUID()
     @ObservationIgnored private var filesRead = UUID()
     @ObservationIgnored private var controlsRead = UUID()
-    @ObservationIgnored private var piFreshRead = UUID()
     @ObservationIgnored private var operationReads: [UUID: UUID] = [:]
     @ObservationIgnored private var operationVersions: [UUID: String] = [:]
     @ObservationIgnored private var leaseTargets: [UUID: RemoteWorkspaceTarget] = [:]
@@ -140,7 +134,6 @@ final class RemoteHistoryWorkspace {
             let result = try await read { try await transport.read(.init(target: captured, query: .controls)) }
             guard owner == generation, controlsRead == token, Self.sameCapture(result.target, captured), case .controls(let controls) = result.value else { return false }
             self.controls = controls
-            if piFresh?.intentID != controls.piIntentID || piFresh?.consumerRunID != controls.piConsumerRunID { piFresh = nil }
             let heads = Array(summaries.prefix(4))
             for summary in heads {
                 guard owner == generation, controlsRead == token else { return false }
@@ -245,15 +238,10 @@ final class RemoteHistoryWorkspace {
             guard owner == generation, operationReads[id] == token, Self.sameCapture(result.target, captured),
                   value.operation.id == id, value.binding.objectID == id, value.binding.threadID == captured.threadID,
                   value.binding.environmentID == captured.environmentID else { throw CancellationError() }
-            let requests: [RuntimeRequest]
-            if let reference = value.piRequests {
-                requests = try JSONDecoder().decode([RuntimeRequest].self, from: await transport.document(reference, value.binding, captured))
-                guard value.piSessionID != nil, requests.count <= 256, Set(requests.map(\.id)).count == requests.count else { throw RemoteHistoryFailure(.invalidRequest) }
-            } else { requests = [] }
             guard owner == generation, operationReads[id] == token, !Task.isCancelled else { throw CancellationError() }
             if let previous = operationViews[id], previous.binding != value.binding { await release(previous.binding, target: captured, transport: transport) }
             guard owner == generation, operationReads[id] == token else { throw CancellationError() }
-            operationViews[id] = value; piRequests[id] = requests; unused = nil
+            operationViews[id] = value; unused = nil
             leaseTargets[value.binding.leaseID] = captured; operationVersions[id] = version
             openAppliedFork()
         } catch is CancellationError { }
@@ -268,80 +256,13 @@ final class RemoteHistoryWorkspace {
         case .acknowledgeFiles: _ = await execute(.acknowledgeFiles(operationID: operationID))
         case .recallPrompt: _ = await execute(.recallPrompt(operationID: operationID))
         case .dismissRecall: _ = await execute(.dismissRecall(operationID: operationID))
-        case .keepOriginal:
-            _ = await execute(value.provider == .pi ? .keepPiOriginal(operationID: operationID) : .keepOpenCodeV1Original(operationID: operationID))
-        case .clearMaintenance:
-            guard let claim = value.maintenanceClaim else { return }
-            _ = await execute(.clearMaintenance(operationID: operationID, reviewID: claim.id, digest: claim.digest))
-        case .inspectMaintenance: await inspectMaintenance(operationID)
-        case .cancelPi: await cancelPi(operationID)
         case .openConversation: if let id = value.operation.targetThreadID { open?(id) }
         default: break
         }
     }
-    func respondPi(operationID: UUID, sessionID: UUID, request: ApprovalRequest, response: ProviderApprovalResponse) async {
-        guard let value = operationViews[operationID], value.piSessionID == sessionID,
-              value.operation.actions[RemoteOperationAction.respondPi.rawValue]?.allowed == true,
-              piRequests[operationID]?.contains(where: { $0.request == request && !$0.responding }) == true,
-              responding.insert(operationID).inserted else { return }
-        let owner = generation
-        defer { if generation == owner { responding.remove(operationID) } }
-        _ = await execute(.respondPi(operationID: operationID, sessionID: sessionID, request: request, response: response))
-    }
-    func cancelPi(_ id: UUID) async {
-        guard operationViews[id]?.operation.actions[RemoteOperationAction.cancelPi.rawValue]?.allowed == true,
-              cancelling.insert(id).inserted else { return }
-        let owner = generation
-        defer { if generation == owner { cancelling.remove(id) } }
-        _ = await execute(.cancelPi(operationID: id))
-    }
     func inspectClaude() async {
         guard let controls, controls.canInspectClaudeResume, let selection = controls.claudeSelectionID, let consumer = controls.claudeConsumerRunID else { return }
         _ = await execute(.inspectClaudeResume(selectionID: selection, consumerRunID: consumer))
-    }
-    func inspectPiFresh() async {
-        guard canRead, let transport, let controls, controls.canInspectPiFresh,
-              let intent = controls.piIntentID, let consumer = controls.piConsumerRunID else { return }
-        let owner = generation, token = UUID(), captured = target; piFreshRead = token; isInspectingPiFresh = true
-        defer { if generation == owner, piFreshRead == token { isInspectingPiFresh = false } }
-        do {
-            let bound = captured.rootID == nil ? try await read { try await transport.bind(captured) } : captured
-            guard owner == generation, piFreshRead == token, !Task.isCancelled else { return }
-            let result = try await read { try await transport.read(.init(target: bound, query: .piFresh(intentID: intent, consumerRunID: consumer))) }
-            guard owner == generation, piFreshRead == token, !Task.isCancelled, self.controls?.piIntentID == intent, self.controls?.piConsumerRunID == consumer,
-                  Self.sameCapture(result.target, captured), case .piFresh(let inspection) = result.value,
-                  inspection.intentID == intent, inspection.consumerRunID == consumer else { return }
-            target = bound; piFresh = inspection
-        } catch { if owner == generation { errorMessage = Self.message(error) } }
-    }
-    func resolvePiFresh() async {
-        guard let piFresh, controls?.piIntentID == piFresh.intentID, controls?.piConsumerRunID == piFresh.consumerRunID else { return }
-        switch piFresh.state {
-        case .unwritten: _ = await execute(.acknowledgePiFreshUnwritten(intentID: piFresh.intentID, consumerRunID: piFresh.consumerRunID))
-        case .persisted: _ = await execute(.confirmPiFreshPersisted(intentID: piFresh.intentID, consumerRunID: piFresh.consumerRunID))
-        case .unavailable: break
-        }
-    }
-    private func inspectMaintenance(_ id: UUID) async {
-        guard canRead, let transport else { return }
-        let owner = generation, token = UUID(), captured = target; operationReads[id] = token
-        var unused: RemoteHistoryBinding?
-        var unusedTarget = captured
-        do {
-            let bound = captured.rootID == nil ? try await read { try await transport.bind(captured) } : captured
-            guard owner == generation, operationReads[id] == token, !Task.isCancelled else { return }
-            let result = try await read { try await transport.read(.init(target: bound, query: .maintenance(operationID: id))) }
-            guard case .operation(let value) = result.value else { throw RemoteHistoryFailure(.invalidRequest) }
-            unused = value.binding; unusedTarget = bound
-            guard owner == generation, operationReads[id] == token, !Task.isCancelled,
-                  Self.sameCapture(result.target, captured), value.operation.id == id else { throw CancellationError() }
-            if let prior = operationViews[id], prior.binding != value.binding { await release(prior.binding, target: captured, transport: transport) }
-            guard owner == generation, operationReads[id] == token else { throw CancellationError() }
-            target = bound; operationViews[id] = value; unused = nil
-            leaseTargets[value.binding.leaseID] = bound; operationVersions[id] = summaries.first(where: { $0.id == id })?.fingerprint
-        } catch is CancellationError { }
-        catch { if owner == generation, operationReads[id] == token { errorMessage = Self.message(error) } }
-        if let unused { await release(unused, target: unusedTarget, transport: transport) }
     }
     private func execute(_ action: RemoteHistoryAction, target explicit: RemoteWorkspaceTarget? = nil) async -> Bool {
         guard canRead, writesAllowed, !isActing, let transport, let perform else { return false }
@@ -417,11 +338,11 @@ final class RemoteHistoryWorkspace {
                 }
             }
         }
-        generation = UUID(); reviewRead = UUID(); filesRead = UUID(); controlsRead = UUID(); piFreshRead = UUID(); syncSequence = nil
+        generation = UUID(); reviewRead = UUID(); filesRead = UUID(); controlsRead = UUID(); syncSequence = nil
         connected = false; writesAllowed = false; transport = nil; perform = nil; open = nil; pendingForkNavigation = nil
-        isReviewing = false; isReviewingFiles = false; isActing = false; isInspectingPiFresh = false
-        operationReads = [:]; operationVersions = [:]; responding = []; cancelling = []
-        operationViews = [:]; piRequests = [:]; controls = nil; piFresh = nil; leaseTargets = [:]
+        isReviewing = false; isReviewingFiles = false; isActing = false
+        operationReads = [:]; operationVersions = [:]
+        operationViews = [:]; controls = nil; leaseTargets = [:]
         target = .init(environmentID: target.environmentID, projectID: target.projectID, threadID: target.threadID, configuration: target.configuration)
         for value in reads.values { value.cancel() }
     }

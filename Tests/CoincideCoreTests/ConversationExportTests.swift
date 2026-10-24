@@ -18,10 +18,8 @@ import Testing
         fields: .object(["_meta": .object(["credential": .string("private-entity-token")])]))
     var removed = ChatMessage(role: .assistant, text: "private-rewound-answer")
     removed.removedByHistoryOperationID = UUID()
-    var mismatchedThought = ChatMessage(role: .tool, text: "private-old-import-reasoning")
-    mismatchedThought.providerEntity = ProviderEntity(key: .init(sessionID: "native", type: "agent_thought", id: "thought"))
     thread.messages = [user, ChatMessage(role: .reasoning, text: "private-reasoning"),
-                       ChatMessage(role: .assistant, text: "Visible answer"), removed, mismatchedThought,
+                       ChatMessage(role: .assistant, text: "Visible answer"), removed,
                        ChatMessage(role: .system, text: "Visible notice")]
     for format in ConversationExportFormat.allCases {
         let artifact = try ConversationExport.make(thread: thread, format: format)

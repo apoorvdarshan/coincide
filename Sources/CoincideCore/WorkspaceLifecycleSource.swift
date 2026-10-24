@@ -140,7 +140,7 @@ extension WorkspaceDecision {
         case .editThread(_, .pinned(true)):
             if value.snoozedUntil != nil { value.lastSnoozeWakeAt = now }
             value.snoozedUntil = nil; value.snoozedAt = nil
-        case .submit, .submitFromAppMCP, .submitCapturedClaude, .submitCapturedPi:
+        case .submit, .submitFromAppMCP, .submitCapturedClaude:
             value.snoozedUntil = nil; value.snoozedAt = nil
         default: return
         }

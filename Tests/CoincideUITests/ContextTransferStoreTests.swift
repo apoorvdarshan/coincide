@@ -60,7 +60,7 @@ private actor ContextNativeUIPeer {
     func update() {
         store.update(sourceThreadID: source.id, snapshot: snapshot,
             transport: .init(review: { [peer] in try await peer.review($0) }, discard: { [peer] id, _ in await peer.discard(id) }, accept: { [peer] id, _, _ in await peer.accept(id) }),
-            destination: { _, provider, path, model, permission, _ in var value = ProviderConfiguration(thread: source); value.provider = provider; value.workspacePath = path; value.model = model; value.permission = permission; value.nativeThreadID = nil; return value },
+            destination: { _, provider, path, model, permission in var value = ProviderConfiguration(thread: source); value.provider = provider; value.workspacePath = path; value.model = model; value.permission = permission; value.nativeThreadID = nil; return value },
             canReview: { true }, canAccept: { _ in true }, open: { _ in })
     }
 }

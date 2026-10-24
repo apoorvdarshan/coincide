@@ -315,7 +315,7 @@ private struct RemoteHistoryTextBlockContent: View {
 }
 
 private enum RemoteHistoryConfirmation: String, Identifiable {
-    case files, original, maintenance, emptyPi
+    case files
     var id: Self { self }
 }
 struct RemoteHistoryOperationContent: View {
@@ -346,15 +346,6 @@ struct RemoteHistoryOperationContent: View {
                 }
             }
             ViewThatFits(in: .horizontal) { HStack { actions }; VStack(alignment: .leading, spacing: 6) { actions } }.controlSize(.small)
-            if let session = value.piSessionID {
-                ForEach(model.piRequests[operation.id] ?? []) { request in
-                    ApprovalView(request: request.request, isResponding: request.responding || model.responding.contains(operation.id) || !enabled,
-                        onDecision: { respond(session, request.request, .decision($0)) }, onAnswer: { respond(session, request.request, .answers($0)) },
-                        onOption: { respond(session, request.request, .option($0)) }, onSelections: { respond(session, request.request, .selections($0)) },
-                        onSelectionsWithNotes: { respond(session, request.request, .selectionsWithNotes(selections: $0, notes: $1)) }).id(request.id)
-                }
-                Text("These questions belong to the Pi history worker. Your composer draft is never submitted as its answer.").font(.caption).foregroundStyle(.secondary)
-            }
             if value.needsPromptRecall { Text("The original input is waiting to be appended to your latest private local draft. Recall never submits a message.").font(.caption).foregroundStyle(.secondary) }
             if value.recalled { Text("The host recorded recall. The saved local request receipt completes its merge into the latest draft; inspect any unconfirmed request before continuing.").font(.caption).foregroundStyle(.secondary) }
             if value.recallDismissed { Text("The latest draft was kept; the original input was not recalled.").font(.caption).foregroundStyle(.secondary) }
@@ -365,9 +356,6 @@ struct RemoteHistoryOperationContent: View {
                     self.confirmation = nil
                     switch confirmation {
                     case .files: act(.acknowledgeFiles)
-                    case .original: act(.keepOriginal)
-                    case .maintenance: act(.clearMaintenance)
-                    case .emptyPi: break
                     }
                 }
             }
@@ -378,33 +366,24 @@ struct RemoteHistoryOperationContent: View {
         if present(.inspectProvider) { Button(value.provider == .claude && value.kind == .forkAfterRun ? "Inspect Reserved Fork" : "Inspect Provider State") { act(.inspectProvider) }.disabled(!allowed(.inspectProvider)) }
         if present(.inspectFiles) { Button("Inspect Restoration Evidence") { act(.inspectFiles) }.disabled(!allowed(.inspectFiles)) }
         if present(.acknowledgeFiles) { Button("Keep Current Files…") { confirmation = .files }.disabled(!allowed(.acknowledgeFiles)) }
-        if present(.inspectMaintenance) { Button("Inspect Pending Revert") { act(.inspectMaintenance) }.disabled(!allowed(.inspectMaintenance)) }
-        if present(.clearMaintenance) { Button("Clear Pending Revert…") { confirmation = .maintenance }.disabled(!allowed(.clearMaintenance)).help("Inspect the exact pending revert before confirming its cleanup.") }
-        if present(.keepOriginal) { Button("Keep Original \(value.provider == .pi ? "Pi " : "")Conversation…") { confirmation = .original }.disabled(!allowed(.keepOriginal)) }
         if present(.recallPrompt) { Button("Recall Prompt") { act(.recallPrompt) }.disabled(!allowed(.recallPrompt)) }
         if present(.dismissRecall) { Button("Keep Current Draft") { act(.dismissRecall) }.disabled(!allowed(.dismissRecall)) }
-        if present(.cancelPi) { Button(model.cancelling.contains(operation.id) ? "Cancelling History Action…" : "Cancel History Action") { act(.cancelPi) }.disabled(!allowed(.cancelPi) || model.cancelling.contains(operation.id)) }
         if present(.openConversation) { Button("Open Fork") { act(.openConversation) }.disabled(!allowed(.openConversation)) }
     }
     private func present(_ action: RemoteOperationAction) -> Bool { operation.actions[action.rawValue]?.allowed == true }
     private func allowed(_ action: RemoteOperationAction) -> Bool {
-        enabled && operation.actions[action.rawValue]?.allowed == true && (action != .clearMaintenance || value.maintenanceClaim != nil)
+        enabled && operation.actions[action.rawValue]?.allowed == true
     }
     private func act(_ action: RemoteOperationAction) { Task { await model.act(action, operationID: operation.id) } }
-    private func respond(_ session: UUID, _ request: ApprovalRequest, _ response: ProviderApprovalResponse) {
-        Task { await model.respondPi(operationID: operation.id, sessionID: session, request: request, response: response) }
-    }
     private var confirmationTitle: String {
-        switch confirmation { case .files: "Keep the current remote files?"; case .original: "Keep the original native conversation?"; case .maintenance: "Clear the exact pending OpenCode revert?"; default: "Confirm remote recovery" }
+        switch confirmation { case .files: "Keep the current remote files?"; default: "Confirm remote recovery" }
     }
     private func confirmLabel(_ value: RemoteHistoryConfirmation) -> String {
-        switch value { case .files: "Keep Current Files"; case .original: "Keep Original Conversation"; case .maintenance: "Clear Pending Revert"; case .emptyPi: "Keep Empty Context" }
+        switch value { case .files: "Keep Current Files" }
     }
     private var confirmationMessage: String {
         switch confirmation {
         case .files: "The conversation change remains applied. Current files and staging may contain a partial restore. This keeps those bytes, releases the file hold, and leaves the latest draft unchanged. Restoration is not repeated."
-        case .original: "The host verifies the exact original native conversation before releasing the hold. Drafts, settings and files stay unchanged. Separate provider copies may remain; none are deleted and the history action is not repeated."
-        case .maintenance: "The host verifies the exact staged boundary before clearing it and waits for OpenCode's cleanup execution. This does not repeat the rewind, restore files, or send the draft."
         default: "Inspect the exact saved state before continuing. No earlier action is repeated."
         }
     }
@@ -439,7 +418,6 @@ struct RemoteHistoryBanner: View {
 }
 struct RemoteHistoryThreadControlsContent: View {
     var model: RemoteHistoryWorkspace
-    @State private var keepingEmpty = false
     var body: some View {
         if let controls = model.controls {
             VStack(alignment: .leading, spacing: 7) {
@@ -449,24 +427,7 @@ struct RemoteHistoryThreadControlsContent: View {
                         Button("Inspect Claude Context") { Task { await model.inspectClaude() } }.disabled(!model.canRead || !model.writesAllowed || model.isActing)
                     }
                 }
-                if controls.piIntentID != nil {
-                    Text(controls.piConsumerRunID == nil ? "Empty Pi context is selected for the next explicit input. No persisted fork is claimed until Pi creates and verifies its native session file." : "Pi's use of the empty context must be checked against the exact reserved native session file. A missing file does not prove the earlier input was never processed.").font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        if controls.canInspectPiFresh { Button("Inspect Pi Context") { Task { await model.inspectPiFresh() } }.disabled(!model.canRead || model.isActing || model.isInspectingPiFresh) }
-                        if let observed = model.piFresh {
-                            switch observed.state {
-                            case .unwritten: Button("Keep Empty Context…") { keepingEmpty = true }.disabled(!model.canRead || !model.writesAllowed || model.isActing)
-                            case .persisted: Button("Confirm Persisted Pi Context") { Task { await model.resolvePiFresh() } }.disabled(!model.canRead || !model.writesAllowed || model.isActing)
-                            case .unavailable: Text("The exact native context could not be verified.").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }.padding(controls.claudeSelectionID == nil && controls.piIntentID == nil ? 0 : 12)
-            .confirmationDialog("Keep empty Pi context?", isPresented: $keepingEmpty) {
-                Button("Keep Empty Context") { Task { await model.resolvePiFresh() } }
-                Button("Cancel", role: .cancel) { }
-            } message: { Text("The earlier input may have been processed even though no session file remains. This keeps empty context for a new explicit input, preserves the unknown outcome and keeps queued work paused. Nothing is replayed or sent.") }
+            }.padding(controls.claudeSelectionID == nil ? 0 : 12)
         }
     }
 }

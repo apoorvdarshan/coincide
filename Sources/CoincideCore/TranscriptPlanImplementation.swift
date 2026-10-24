@@ -15,22 +15,21 @@ public struct TranscriptPlanImplementation: Codable, Sendable, Equatable {
         let runtimeID: UUID?
         let preparationID: UUID?
         let legacyClaudeConfiguration: ClaudeRuntimeConfiguration?
-        let piConfiguration: PiRuntimeConfiguration?
         let destination: TranscriptPlanDestination?
         let scratchSource: ScratchWorkspaceReceipt?
         let scratchAllocation: ScratchWorkspaceAllocation?
-        init(thread: CodingThread, message: ChatMessage, legacyClaudeConfiguration: ClaudeRuntimeConfiguration?, piConfiguration: PiRuntimeConfiguration?, destination: TranscriptPlanDestination?) {
+        init(thread: CodingThread, message: ChatMessage, legacyClaudeConfiguration: ClaudeRuntimeConfiguration?, destination: TranscriptPlanDestination?) {
             threadID = thread.id; birth = thread.createdAt; projectID = thread.projectID; workspacePath = thread.workspacePath
             self.message = message; configuration = .init(thread: thread); draft = thread.draft; attachments = thread.draftAttachments
             runtimeID = thread.runtimeID; preparationID = thread.workspacePreparation?.id
-            self.legacyClaudeConfiguration = legacyClaudeConfiguration; self.piConfiguration = piConfiguration; self.destination = destination
+            self.legacyClaudeConfiguration = legacyClaudeConfiguration; self.destination = destination
             scratchSource = thread.scratchWorkspace; scratchAllocation = nil
         }
         init(copy: Storage, scratchAllocation: ScratchWorkspaceAllocation?) {
             threadID = copy.threadID; birth = copy.birth; projectID = copy.projectID; workspacePath = copy.workspacePath
             message = copy.message; configuration = copy.configuration; draft = copy.draft; attachments = copy.attachments
             runtimeID = copy.runtimeID; preparationID = copy.preparationID; legacyClaudeConfiguration = copy.legacyClaudeConfiguration
-            piConfiguration = copy.piConfiguration; destination = copy.destination; scratchSource = copy.scratchSource
+            destination = copy.destination; scratchSource = copy.scratchSource
             self.scratchAllocation = scratchAllocation
         }
     }
@@ -49,8 +48,8 @@ public struct TranscriptPlanImplementation: Codable, Sendable, Equatable {
         Self.exact(usingScratchAllocation(nil), other.usingScratchAllocation(nil))
     }
     public init(thread: CodingThread, message: ChatMessage, legacyClaudeConfiguration: ClaudeRuntimeConfiguration? = nil,
-                piConfiguration: PiRuntimeConfiguration? = nil, destination: TranscriptPlanDestination? = nil) {
-        storage = .init(thread: thread, message: message, legacyClaudeConfiguration: legacyClaudeConfiguration, piConfiguration: piConfiguration, destination: destination)
+                destination: TranscriptPlanDestination? = nil) {
+        storage = .init(thread: thread, message: message, legacyClaudeConfiguration: legacyClaudeConfiguration, destination: destination)
     }
     public init(from decoder: any Decoder) throws { storage = try Storage(from: decoder) }
     public func encode(to encoder: any Encoder) throws { try storage.encode(to: encoder) }
@@ -89,8 +88,7 @@ public struct TranscriptPlanImplementation: Codable, Sendable, Equatable {
             do { _ = try CodexInteractionMode.selected(in: expected.configuration) }
             catch { throw WorkspaceCommandError("Choose a supported Codex interaction mode before implementing this plan.") }
         }
-        guard thread.provider == .codex || thread.agentModeID?.lowercased() != "plan",
-              thread.provider != .opencode || thread.openCodeConfiguration?.agentID.lowercased() != "plan" else {
+        guard thread.provider == .codex || thread.agentModeID?.lowercased() != "plan" else {
             throw WorkspaceCommandError("Choose an implementation agent or mode before implementing this plan.")
         }
         let sourceRun = source.runReference.flatMap { reference in
@@ -129,10 +127,6 @@ public struct TranscriptPlanImplementation: Codable, Sendable, Equatable {
             guard let captured = expected.legacyClaudeConfiguration else { throw WorkspaceCommandError("Capture the original Claude runtime before implementing this plan.") }
             return .submitCapturedClaude(threadID: destinationID, text: text, configuration: captured)
         }
-        if thread.provider == .pi, thread.piConfiguration?.runtime == nil {
-            guard let captured = expected.piConfiguration else { throw WorkspaceCommandError("Capture the original Pi runtime before implementing this plan.") }
-            return .submitCapturedPi(threadID: destinationID, text: text, configuration: captured)
-        }
         return .submit(threadID: destinationID, text: text)
     }
     /// Only the source proven above authorizes a destination. Nothing from its
@@ -145,7 +139,7 @@ public struct TranscriptPlanImplementation: Codable, Sendable, Equatable {
             throw WorkspaceCommandError("The original plan conversation no longer exists.")
         }
         var configuration = storage.configuration
-        configuration.nativeThreadID = nil; configuration.claudeLaunchSelection = nil; configuration.piFreshSessionIntent = nil
+        configuration.nativeThreadID = nil; configuration.claudeLaunchSelection = nil
         if configuration.provider == .codex { configuration.agentModeID = CodexInteractionMode.default.rawValue }
         var thread = CodingThread(project: project, model: configuration.model)
         thread.id = destination.threadID; thread.createdAt = storage.scratchAllocation?.receipt.createdAt ?? now; thread.updatedAt = now

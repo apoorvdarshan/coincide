@@ -3,7 +3,7 @@ import CoincideCore
 import CoincideMarkdown
 import SwiftUI
 
-/// A proposed plan (Claude ExitPlanMode, Grok exit-plan, ACP plan content)
+/// A proposed plan (Claude ExitPlanMode)
 /// rendered as Markdown with T3's collapsed preview, Copy, Save to Workspace
 /// and an explicit Implement action admitted by the owning conversation.
 struct PlanCardView: View {

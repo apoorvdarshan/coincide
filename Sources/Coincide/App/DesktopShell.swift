@@ -214,7 +214,7 @@ final class DesktopShell {
            identity.provider == "github", identity.canonicalKey.hasPrefix("github.com/"), let owner = identity.owner {
             repository = PromptLink.repository("\(owner)/\(identity.name)")
         }
-        let provider = includeContext && thread.provider != .acp ? thread.provider.rawValue : nil
+        let provider = includeContext ? thread.provider.rawValue : nil
         let model = includeContext && !thread.model.isEmpty ? thread.model : nil
         guard let url = PromptLink.newThreadURL(prompt: draft, repository: repository, provider: provider, model: model) else { return }
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string)

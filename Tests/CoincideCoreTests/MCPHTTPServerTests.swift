@@ -73,7 +73,7 @@ private actor MCPHTTPGate {
     func release() { released = true; let pending = waiters; waiters = []; for waiter in pending { waiter.resume() } }
 }
 private func httpScope(capabilities: Set<MCPCapability> = [.orchestration]) -> MCPInvocationScope {
-    .init(threadID: UUID(), projectID: UUID(), provider: .pi, runtimeID: UUID(), incarnation: UUID(), providerInstanceID: UUID(),
+    .init(threadID: UUID(), projectID: UUID(), provider: .codex, runtimeID: UUID(), incarnation: UUID(), providerInstanceID: UUID(),
           workspacePath: "/private/tmp/synthetic-mcp-workspace", permission: .supervised, capabilities: capabilities)
 }
 private let httpTools: [MCPToolDefinition] = [

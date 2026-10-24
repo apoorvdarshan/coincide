@@ -90,11 +90,6 @@ enum CodexReasoningValidation {
               !value.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw WorkspaceCommandError("The model or reasoning selection is invalid. Refresh models and try again.") }
     }
     static func configuration(_ configuration: ProviderConfiguration) throws {
-        try OpenCodeConfigurationValidation.configuration(configuration)
-        try GrokConfigurationValidation.configuration(configuration)
-        try PiConfigurationValidation.configuration(configuration)
-        try MuseConfigurationValidation.configuration(configuration)
-        try AntigravityConfigurationValidation.configuration(configuration)
         try CodexRuntimeConfigurationValidation.configuration(configuration)
         try configuration.validateClaudeConfiguration()
         if let effort = configuration.reasoningEffort {
@@ -103,11 +98,6 @@ enum CodexReasoningValidation {
         }
     }
     static func thread(_ thread: CodingThread) throws {
-        try OpenCodeConfigurationValidation.thread(thread)
-        try GrokConfigurationValidation.configuration(.init(thread: thread))
-        try PiConfigurationValidation.configuration(.init(thread: thread))
-        try MuseConfigurationValidation.configuration(.init(thread: thread))
-        try AntigravityConfigurationValidation.configuration(.init(thread: thread))
         try CodexRuntimeConfigurationValidation.configuration(.init(thread: thread))
         try ProviderConfiguration(thread: thread).validateClaudeConfiguration()
         if let run = thread.activeRun { try run.configuration.validateClaudeConfiguration() }

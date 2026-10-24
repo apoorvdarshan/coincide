@@ -29,7 +29,7 @@ extension WorkspaceSnapshot {
                   task.isFollowup == true || !task.request.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   task.request.task.utf16.count <= 120_000, !task.request.task.contains("\0"),
                   task.request.title.map({ $0.utf16.count <= 512 && !$0.contains("\0") }) ?? true,
-                  task.isFollowup == true || (task.request.configuration.nativeThreadID == nil && task.request.configuration.claudeLaunchSelection == nil && task.request.configuration.piFreshSessionIntent == nil),
+                  task.isFollowup == true || (task.request.configuration.nativeThreadID == nil && task.request.configuration.claudeLaunchSelection == nil),
                   task.result == nil || (task.status.isTerminal && task.workState == .resultAvailable && task.completedAt != nil),
                   task.parentTaskID == nil || tasks.contains(where: { $0.id == task.parentTaskID && $0.childThreadID == task.parentThreadID }) else { throw DelegatedTaskError.invalidRequest }
             if task.isFollowup != true {

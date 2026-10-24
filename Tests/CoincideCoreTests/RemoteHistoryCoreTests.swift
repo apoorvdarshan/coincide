@@ -58,9 +58,7 @@ private struct RemoteHistoryCoreFixture {
         if let existing = try await engine.remoteEnvironmentReceipt(request) { return existing }
         let captured = try await service.prepare(request.command)
         if case .history(let value) = captured { try await workspace.admitHistoryScope(value.scope) }
-        let receipt = try await engine.dispatchRemoteEnvironment(request, preparation: captured)
-        if receipt.rejection == nil { await engine.awaitRemoteHistoryCompletion(request) }
-        return receipt
+        return try await engine.dispatchRemoteEnvironment(request, preparation: captured)
     }
     func close() async { await files.release(); await service.close(); await workspace.close(); await engine.shutdown(); try? FileManager.default.removeItem(at: root) }
 }
@@ -282,102 +280,4 @@ func remoteHistoryRecallPayloadRemainsReadableAfterExactOriginalCommandMergesHos
         #expect(await f.peer.sends.isEmpty)
     } catch { await f.close(); throw error }
     await f.close()
-}
-
-private actor RemoteHistoryMaintenancePeer: ProviderSession {
-    nonisolated let events = AsyncStream<ProviderEvent> { $0.finish() }
-    private var observed: OpenCodeV2HistorySnapshot
-    private(set) var clears = 0
-    init(_ snapshot: OpenCodeV2HistorySnapshot) { observed = snapshot }
-    func models() async throws -> [ProviderModel] { [] }
-    func send(text: String, thread: CodingThread) async throws { throw CoincideError("History inspection must not submit input") }
-    func interrupt() async throws {}
-    func respond(_ request: ApprovalRequest, allow: Bool) async throws {}
-    func answer(_ request: ApprovalRequest, answers: [String: String]) async throws {}
-    func close() async {}
-    func openCodeV2HistorySnapshot(threadID: String) async throws -> OpenCodeV2HistorySnapshot {
-        guard threadID == observed.reference.nativeThreadID else { throw ProviderHistoryError(.invalidRequest) }; return observed
-    }
-    func changeStageSnapshot() throws {
-        let stage = try #require(observed.stage)
-        observed = try .init(reference: observed.reference, runtimeIdentity: observed.runtimeIdentity, workspacePath: observed.workspacePath,
-            messages: observed.messages, stage: .init(messageID: stage.messageID, snapshot: "changed-native-snapshot", files: .empty))
-    }
-    func clearOpenCodeV2HistoryStage(expected: OpenCodeV2HistorySnapshot) async throws -> OpenCodeV2HistorySnapshot {
-        guard expected == observed else { throw ProviderHistoryError(.historyChanged) }; clears += 1
-        let receipt = try OpenCodeV2HistoryMaintenanceReceipt(priorInventoryDigest: expected.inventoryDigest,
-            startEventID: "evt_remote_clear_start", terminalEventID: "evt_remote_clear_terminal", idleMessageID: "msg_remote_clear_terminal")
-        observed = try .init(reference: expected.reference, runtimeIdentity: expected.runtimeIdentity, workspacePath: expected.workspacePath,
-            messages: expected.messages + [.init(id: "msg_remote_clear_terminal", kind: .idle, contentDigest: String(repeating: "a", count: 64), idleOutcome: "succeeded")], maintenance: receipt)
-        return observed
-    }
-}
-
-@Test(.timeLimit(.minutes(1)), arguments: ["valid", "changed-proof", "released-claim"])
-func remoteHistoryMaintenanceClearUsesOnlyTheExplicitlyReviewedNativeProof(mode: String) async throws {
-    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("coincide-remote-history-maintenance-\(UUID().uuidString)")
-    var owned: WorkspaceEngine?, service: RemoteHistoryService?, workspace: RemoteWorkspaceService?
-    do {
-        for name in ["Workspace", "Host"] { try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true) }
-        let project = WorkspaceProject(path: root.appendingPathComponent("Workspace").path)
-        var thread = CodingThread(project: project); thread.provider = .opencode; thread.checkpointPolicy = .disabled
-        thread.openCodeConfiguration = .init(executable: "/fixture/opencode"); thread.providerThreadID = "ses_remote_history_source"
-        let identity = try #require(thread.openCodeConfiguration).runtimeIdentity, incarnation = UUID()
-        var runs: [UUID] = [], messages: [OpenCodeV2HistoryMessage] = []
-        for index in 0..<3 {
-            let id = UUID(); runs.append(id)
-            let opening = OpenCodeV2HistoryRunInput.openingMessageID(instanceID: identity.instanceID, runID: id)
-            var record = ThreadRunRecord(run: .init(id: id, configuration: .init(thread: thread), startedAt: Date(), nativeTurnID: opening), origin: .user, userMessageID: "user-\(index)")
-            record.status = .completed; record.endReason = .providerCompleted; record.endedAt = Date(); record.messageAttributionVersion = 1
-            var user = ChatMessage(id: "user-\(index)", role: .user, text: "Original input \(index)")
-            var reply = ChatMessage(id: "reply-\(index)", role: .assistant, text: "Original reply \(index)")
-            user.runReference = .init(threadID: thread.id, runID: id); reply.runReference = user.runReference
-            thread.messages += [user, reply]; thread.runHistory = (thread.runHistory ?? []) + [record]
-            messages += [try .init(id: opening, kind: .user, contentDigest: String(repeating: "1", count: 64)),
-                try .init(id: "msg_remote_reply_\(index)", kind: .assistant, contentDigest: String(repeating: "2", count: 64))]
-        }
-        var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
-        let native = try OpenCodeV2HistorySnapshot(reference: .init(provider: .opencode, nativeThreadID: try #require(thread.providerThreadID)), runtimeIdentity: identity, workspacePath: thread.workspacePath, messages: messages)
-        let evidence = try OpenCodeV2HistoryReviewEvidence.make(source: native, snapshot: snapshot, thread: thread, runID: runs[1], kind: .rewindBeforeRun)
-        let prefix = try thread.transcriptPrefix(runID: runs[1], boundary: .beforeRun)
-        let review = try ConversationHistoryReview(kind: .rewindBeforeRun, sourceThreadID: thread.id, projectID: project.id, runID: runs[1], sourceIncarnation: incarnation,
-            sourceConfiguration: .init(thread: thread), targetConfiguration: thread.runHistory![1].configuration, sourceReference: native.reference,
-            reviewedHeadTurnID: nil, boundary: evidence.boundary, expectedResultHeadTurnID: nil, prefix: prefix, removedRunIDs: Array(runs[1...]),
-            removedMessageIDs: thread.messages.dropFirst(prefix.count).map(\.id), sourceFingerprint: snapshot.historySourceFingerprint(threadID: thread.id), targetThreadID: nil,
-            suggestedTitle: "Reviewed remote rewind", openCodeV2: evidence)
-        for command in [EngineCommand.conversationHistoryAccepted(review: review, title: nil),
-            .conversationHistoryDispatching(threadID: thread.id, operationID: review.id, incarnation: incarnation),
-            .conversationHistoryEffectResult(.conversationHistory(threadID: thread.id, operationID: review.id), .conversationHistoryUnconfirmed, incarnation: incarnation)] {
-            snapshot = try WorkspaceDecision.make(command, id: UUID(), snapshot: snapshot, now: Date()).snapshot
-        }
-        guard case .beforeMessage(let cut) = evidence.boundary else { throw CoincideError("Fixture lacks exact native boundary") }
-        let staged = try OpenCodeV2HistorySnapshot(reference: native.reference, runtimeIdentity: native.runtimeIdentity, workspacePath: native.workspacePath,
-            messages: native.messages, stage: .init(messageID: cut, snapshot: "reviewed-native-snapshot", files: .empty))
-        let peer = RemoteHistoryMaintenancePeer(staged), database = root.appendingPathComponent("workspace.sqlite")
-        try await WorkspaceDatabase(url: database).save(snapshot, event: "fixture")
-        let engine = try WorkspaceEngine(url: database, providerFactory: { _ in peer }, identityResolver: { _ in nil }); owned = engine; _ = try await engine.load()
-        let id = UUID(), files = try RemoteWorkspaceService(environmentID: id, engine: engine, dataDirectory: root.appendingPathComponent("Host")); workspace = files
-        let target = try await files.bindHistoryTarget(.init(environmentID: id, projectID: project.id, threadID: thread.id, configuration: .init(thread: thread)))
-        let host = RemoteHistoryService(environmentID: id, engine: engine, workspace: files); service = host
-        let read = try await host.read(.init(target: target, query: .maintenance(operationID: review.id)))
-        guard case .operation(let display) = read.value else { throw CoincideError("Missing reviewed maintenance display") }
-        let claim = try #require(display.maintenanceClaim)
-        let request = RemoteEnvironmentCommandRequest(environmentID: id, command: .history(target: target, action: .clearMaintenance(operationID: review.id, reviewID: claim.id, digest: claim.digest)))
-        if mode == "changed-proof" { try await peer.changeStageSnapshot() }
-        if mode == "released-claim" {
-            _ = try await host.read(.init(target: target, query: .release(binding: display.binding)))
-        }
-        if mode == "valid" {
-            let prepared = try await host.prepare(request.command), receipt = try await engine.dispatchRemoteEnvironment(request, preparation: prepared)
-            #expect(receipt.commandID == request.id && receipt.rejection == nil)
-            try await historyEngineEventually { await engine.current().snapshot.conversationHistoryOperation(review.id)?.maintenance?.phase == .applied }
-            #expect(await peer.clears == 1)
-            #expect(try await engine.remoteEnvironmentReceipt(request) == receipt)
-        } else {
-            await #expect(throws: RemoteHistoryFailure(.staleReview)) { _ = try await host.prepare(request.command) }
-            #expect(await peer.clears == 0)
-        }
-        await host.close(); await files.close(); await engine.shutdown()
-    } catch { await service?.close(); await workspace?.close(); await owned?.shutdown(); try? FileManager.default.removeItem(at: root); throw error }
-    try FileManager.default.removeItem(at: root)
 }

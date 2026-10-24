@@ -258,7 +258,7 @@ private actor LiveHistoryObservedSession: ProviderSession {
                 while case .context(_, let nested) = item { item = nested }
                 switch item {
                 case .thread(let id): try? await audit.native(id)
-                case .approval(let request), .sessionApproval(let request):
+                case .approval(let request):
                     try? await audit.unexpected(tool: false)
                     if request.isQuestion { try? await inner.answer(request, answers: [:]) }
                     else { try? await inner.respond(request, allow: false) }

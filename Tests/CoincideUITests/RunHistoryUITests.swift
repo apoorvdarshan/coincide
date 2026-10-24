@@ -16,10 +16,8 @@ private func runHistoryFixture() -> CodingThread {
     var completed = ThreadRunRecord(run: first, origin: .user, userMessageID: "history-user")
     completed.status = .completed; completed.endedAt = start.addingTimeInterval(4); completed.endReason = .providerCompleted
     completed.providerThreadID = "synthetic-provider-session"; completed.providerStopReason = "end_turn"
-    thread.provider = .acp
-    thread.acpAgent = .init(name: "Captured fixture agent", executable: "/usr/bin/true")
+    thread.provider = .claude
     thread.model = "captured-agent-model"; thread.workspacePath = "/tmp/coincide-history-other-checkout"
-    thread.agentConfigValues = ["model": "synthetic-agent-override"]
     let second = ActiveRun(id: UUID(), configuration: .init(thread: thread), startedAt: start.addingTimeInterval(6),
                            stopRequested: true, nativeTurnID: nil)
     var waiting = ThreadRunRecord(run: second, origin: .agent); waiting.status = .awaitingApproval
@@ -39,16 +37,15 @@ private func runHistoryFixture() -> CodingThread {
     #expect(RunHistoryPresentation.model(completed.configuration) == "captured-model")
     #expect(completed.configuration.permission == .supervised)
     #expect(completed.configuration.workspacePath == "/tmp/coincide-history-source")
-    #expect(RunHistoryPresentation.provider(waiting.configuration) == "Captured fixture agent")
+    #expect(RunHistoryPresentation.provider(waiting.configuration) == "Claude")
     #expect(RunHistoryPresentation.prompt(waiting, in: thread) == "Agent-initiated run")
     #expect(waiting.stopRequested && waiting.status == .awaitingApproval)
     var legacy = waiting; legacy.origin = .legacy; legacy.userMessageID = "history-user"
     #expect(RunHistoryPresentation.prompt(legacy, in: thread).contains("not recorded"))
     var missing = completed; missing.userMessageID = "missing-user-message"
     #expect(RunHistoryPresentation.prompt(missing, in: thread) == "User message unavailable")
-    var agentManaged = waiting.configuration; agentManaged.model = ""
-    #expect(RunHistoryPresentation.hasSavedAgentOptions(agentManaged))
-    #expect(RunHistoryPresentation.model(agentManaged) == "Agent-managed model")
+    var defaultModel = waiting.configuration; defaultModel.model = ""
+    #expect(RunHistoryPresentation.model(defaultModel) == "Default model")
     #expect(RunHistoryPresentation.status(.unknown) == "Outcome unknown")
     #expect(thread == before)
 }

@@ -168,9 +168,6 @@ private struct RunHistoryRow: View {
                 .font(.callout).lineLimit(3).textSelection(.enabled)
             Text("\(RunHistoryPresentation.provider(record.configuration)) · \(RunHistoryPresentation.model(record.configuration))")
                 .font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
-            if RunHistoryPresentation.hasSavedAgentOptions(record.configuration) {
-                Text("Saved agent options").font(.caption).foregroundStyle(.secondary)
-            }
             Text(record.configuration.workspacePath).font(.caption.monospaced()).foregroundStyle(.secondary)
                 .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 .accessibilityIdentifier("run-history-workspace-\(record.id)")
@@ -215,13 +212,10 @@ private struct RunHistoryRow: View {
                     LabeledContent("Origin", value: RunHistoryPresentation.origin(record.origin))
                     LabeledContent("Provider", value: RunHistoryPresentation.provider(record.configuration))
                     LabeledContent("Model", value: RunHistoryPresentation.model(record.configuration))
-                    if let account = record.configuration.antigravityConfiguration {
-                        LabeledContent("Account method", value: account.authMethod.name)
-                    }
                     if record.configuration.provider == .codex, let effort = record.configuration.reasoningEffort {
                         LabeledContent("Reasoning", value: ReasoningEffortPresentation.title(effort))
                     }
-                    LabeledContent("Permissions") { Text(LocalizedStringKey(record.configuration.permissionSummary)) }
+                    LabeledContent("Permissions") { Text(LocalizedStringKey(record.configuration.permission.title)) }
                     if let mode = record.configuration.agentModeID, !mode.isEmpty {
                         LabeledContent("Agent mode", value: mode)
                     }
@@ -323,8 +317,6 @@ private struct RunHistoryRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(record.configuration.provider == .claude
                      ? String(localized: "Adapter input references are separate from Claude transcript-entry UUIDs. A history review verifies the complete native boundary before it can be used.")
-                     : record.configuration.provider == .pi
-                     ? String(localized: "Pi session-file and entry references identify a parent-linked native branch. Pi does not supply native turn IDs; file append order alone does not identify the live branch.")
                      : String(localized: "Session and turn references may be supplied by an adapter."))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 LabeledContent("Run", value: record.id.uuidString)
@@ -341,13 +333,6 @@ private struct RunHistoryRow: View {
                     if let cursor = claude.finalRootAssistantMessageID {
                         LabeledContent("Last observed root assistant UUID", value: cursor)
                     }
-                }
-                if let pi = record.pi {
-                    LabeledContent("Native input proof", value: PiHistoryPresentation.captureStatus(pi.captureStatus))
-                    LabeledContent("Registered inputs", value: pi.inputs.count.formatted())
-                    LabeledContent("Proven native user entries", value: pi.nativeUserEntryIDs.count.formatted())
-                    if let opening = pi.openingUserEntryID { LabeledContent("Native opening user entry", value: opening) }
-                    if let leaf = pi.finalObservation?.leafID { LabeledContent("Final observed live leaf", value: leaf) }
                 }
             }.textSelection(.enabled).padding(.top, 5)
         }
@@ -388,32 +373,11 @@ enum RunHistoryPresentation {
     }
 
     static func provider(_ configuration: ProviderConfiguration) -> String {
-        configuration.provider == .acp ? configuration.acpAgent?.name ?? configuration.provider.name : configuration.provider.name
+        configuration.provider.name
     }
     static func model(_ configuration: ProviderConfiguration) -> String {
-        if configuration.provider == .muse, let native = configuration.museConfiguration {
-            var parts = [native.model?.modelID ?? String(localized: "Muse default model")]
-            if let effort = native.reasoningEffort { parts.append("Reasoning: \(effort)") }
-            return parts.joined(separator: " · ")
-        }
-        if configuration.provider == .pi, let native = configuration.piConfiguration {
-            var parts = [native.model.map { $0.provider + " / " + $0.modelID } ?? String(localized: "Pi default model")]
-            if let level = native.thinkingLevel { parts.append("Thinking: \(level)") }
-            return parts.joined(separator: " · ")
-        }
-        if configuration.provider == .opencode, let native = configuration.openCodeConfiguration {
-            var parts = [native.model.map { $0.providerID + " / " + $0.id } ?? String(localized: "Default model")]
-            if let variant = native.model?.variant { parts.append(variant) }
-            parts.append(String(localized: "Agent: \(native.agentID)"))
-            return parts.joined(separator: " · ")
-        }
         guard configuration.model.isEmpty else { return configuration.model }
-        return hasSavedAgentOptions(configuration)
-            ? String(localized: "Agent-managed model") : String(localized: "Default model")
-    }
-    static func hasSavedAgentOptions(_ configuration: ProviderConfiguration) -> Bool {
-        configuration.provider == .acp &&
-            (configuration.agentConfiguration?.isEmpty == false || configuration.agentConfigValues?.isEmpty == false)
+        return String(localized: "Default model")
     }
     static func origin(_ origin: ThreadRunOrigin) -> String {
         switch origin {

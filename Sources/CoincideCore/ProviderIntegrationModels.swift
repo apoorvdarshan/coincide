@@ -58,7 +58,7 @@ public struct ProviderIntegrationItem: Codable, Identifiable, Sendable, Equatabl
     }
 
     func validate() throws {
-        guard provider.isSupported, id == Self.identity(provider: provider, kind: kind, name: name, sourcePath: sourcePath, scope: scope),
+        guard id == Self.identity(provider: provider, kind: kind, name: name, sourcePath: sourcePath, scope: scope),
               sourcePath.hasPrefix("/"), name.utf8.count <= 512, !name.isEmpty, summary.utf8.count <= 16_384,
               scope.utf8.count <= 128, sourcePath.utf8.count <= 4_096,
               ![name, sourcePath, scope].contains(where: { $0.unicodeScalars.contains { $0.value < 32 || $0.value == 127 } }),

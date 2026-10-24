@@ -11,7 +11,6 @@ private struct UsageEventFixture {
         let project = WorkspaceProject(path: "/tmp/coincide-usage-events")
         var thread = CodingThread(project: project)
         thread.provider = provider; thread.checkpointPolicy = .disabled
-        if provider == .opencode { thread.openCodeConfiguration = .init(executable: "/fixture/unused-opencode") }
         var initial = WorkspaceSnapshot(); initial.projects = [project]; initial.threads = [thread]
         let started = try WorkspaceDecision.make(.client(.submit(threadID: thread.id, text: "Controlled usage input")), id: UUID(), snapshot: initial, now: now)
         snapshot = started.snapshot; snapshot.threads[0].runtimeID = runtimeID
@@ -49,10 +48,9 @@ private struct UsageEventFixture {
 
 @Test(arguments: ["unscoped", "wrongRun", "wrongRuntime", "wrongProvider", "wrongSnapshotRun"])
 func providerUsageCannotAttributeForeignOrUnscopedAccountingToTheCurrentRun(scenario: String) throws {
-    var f = try UsageEventFixture(), event: ProviderEvent
+    var f = try UsageEventFixture(provider: scenario == "wrongProvider" ? .codex : .claude), event: ProviderEvent
     let originalState = f.snapshot.threads[0].state
-    let update = scenario == "wrongProvider" ? ProviderUsageUpdate.openCode(try .init(usageStatus: .unavailable)) :
-        try f.claude(revision: 1, run: scenario == "wrongSnapshotRun" ? UUID() : nil, cost: 0)
+    let update = try f.claude(revision: 1, run: scenario == "wrongSnapshotRun" ? UUID() : nil, cost: 0)
     if scenario == "unscoped" { event = .usage(update) }
     else { event = .context(runID: scenario == "wrongRun" ? UUID() : f.runID, event: .usage(update)) }
     try f.receive(event, runtime: scenario == "wrongRuntime" ? UUID() : nil)

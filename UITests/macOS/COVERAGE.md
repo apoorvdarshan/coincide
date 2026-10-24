@@ -2,7 +2,7 @@
 
 The app now uses one native window, embedded Settings, a combined model popover,
 and Codex/Claude conversations. This migration does not reintroduce the removed
-remote workspace, Git inspector, project script, worktree preparation, Pi, or
+remote workspace, Git inspector, project script, worktree preparation or
 run-history launch surfaces. Existing Core and SwiftUI contract suites remain in
 the full Swift test job. The desktop suite discovers every test and requires each
 one to pass exactly once across the four isolated runners; there are no skips.
@@ -57,9 +57,6 @@ Every old test not listed above is mapped below. Paths in this table are under
 | `testReviewedBlockingSetupKeepsDraftUntilExplicitContinue` | Retired setup launch surface; `CoincideCoreTests/ProjectScriptSetupEngineTests.swift` and `CoincideUITests/WorktreePreparationUITests.swift` retain blocked setup, explicit continuation and draft ownership contracts. |
 | `testSettleScriptReviewAndExplicitResumeKeepDraftAndCheckout` | Retired settle action; `CoincideCoreTests/ThreadSettlementEngineTests.swift`, `ProjectScriptExecutionTests.swift` and `CoincideUITests/ThreadSettlementUITests.swift` retain settlement/review/resume contracts. |
 | `testWorktreePreparationKeepsExplicitBaseDraftAndSourceFiles` | Retired preparation controls; `CoincideCoreTests/WorktreeEngineTests.swift`, `GitWorktreeTests.swift` and `CoincideUITests/WorktreePreparationUITests.swift` retain base choice, worktree and file/draft preservation checks. |
-| `testNativePiHistoryQuestionsUseExactWorkerAndCancellationNeverSendsDraft` | Pi is no longer offered in current UI; `CoincideCoreTests/PiHistoryEngineTests.swift`, `PiHistoryNativeEngineTests.swift` and `CoincideUITests/PiHistoryUITests.swift` retain original-worker and cancellation behavior for saved legacy data. |
-| `testNativePiUnknownHistoryKeepsOriginalAcrossRestartWithoutRepeatingNativeFork` | `CoincideCoreTests/PiHistoryEngineIntegrationTests.swift`, `PiHistoryOriginalSourceOracleTests.swift` and `CoincideUITests/PiHistoryCaptureUITests.swift` retain unknown outcomes, original source and no-replay behavior. |
-| `testNativePiEmptyContextRecoveryRequiresExplicitAcknowledgementAndNeverReplaysUnknownInput` | `CoincideCoreTests/PiFreshSessionReducerTests.swift`, `PiHistoryEngineIntegrationTests.swift` and `CoincideUITests/PiHistoryUITests.swift` retain explicit acknowledgement and empty-context recovery. |
 | `testNativeClaudeForkAndDeferredRewindPreserveSourceWithoutSendingAcrossRestart` | Run-history creation is no longer offered; `CoincideCoreTests/ClaudeHistoryEngineTests.swift`, `ClaudeHistoryReducerTests.swift` and `CoincideUITests/ClaudeHistoryUITests.swift` retain deferred rewind, exact reserved forks and source bytes. |
 | `testNativeClaudeSelectedContextIsConsumedOnceBeforeQueuedSuccessor` | `CoincideCoreTests/ClaudeRuntimeHistoryTests.swift`, `ClaudeHistoryEngineTests.swift` and `CoincideUITests/ClaudeHistoryUITests.swift` retain once-only selected-context consumption and queue ordering. |
 | `testNativeClaudeContextInspectionIsReadOnlyAndNeverReplaysConsumedOrUnwrittenInput` | `CoincideCoreTests/ClaudeHistoryReducerTests.swift`, `ClaudeRuntimeHistoryTests.swift` and `CoincideUITests/ClaudeHistoryUITests.swift` retain read-only reconciliation and consumed/unwritten input behavior. |
@@ -88,17 +85,3 @@ Every old test not listed above is mapped below. Paths in this table are under
 SwiftUI host-layout tests now exercise embedded Settings instead of the deleted
 inspector and source-control Settings view. Source-control token-store tests
 remain unchanged. Full native desktop verification runs on GitHub Actions.
-
-## Saved legacy provider data
-
-Retained ACP, Antigravity, Muse, OpenCode and Pi protocol/queue/history suites
-seed validated historical snapshots before loading the engine. Tests that need
-wire traffic inject private synthetic adapters; the production factory still
-rejects these providers. New admission regressions verify that neither thread
-creation, provider selection nor saved ACP metadata can enable a removed
-provider. Managed-project rejection preserves prepared files and does not start
-effects. Import tests verify independent Coincide-owned context, with no binding
-to the original provider session.
-
-This keeps the legacy data and protocol assertions runnable without restoring
-retired app controls or weakening the Codex/Claude-only admission boundary.

@@ -18,14 +18,13 @@ private struct RemoteContextCoreFixture {
             threadID: source.id, configuration: .init(thread: source)))
         let service = RemoteContextService(environmentID: environment, engine: core.engine, workspace: workspace) { _, source in
             var configuration = source.configuration
-            configuration.provider = .opencode; configuration.nativeThreadID = nil; configuration.model = ""
-            configuration.openCodeConfiguration = .init(executable: "/offline-context-peer")
+            configuration.provider = .claude; configuration.nativeThreadID = nil; configuration.model = ""
             return configuration
         }
         return .init(core: core, workspace: workspace, service: service, target: target)
     }
     func review() async throws -> RemoteContextReview {
-        try await service.review(.init(target: target, intent: .fork(.init(provider: .opencode))))
+        try await service.review(.init(target: target, intent: .fork(.init(provider: .claude))))
     }
     func command(_ review: RemoteContextReview, id: UUID = UUID()) -> RemoteEnvironmentCommandRequest {
         .init(environmentID: target.environmentID, id: id,
@@ -97,7 +96,7 @@ func remoteContextPreparedAcceptanceCannotOutliveExactReviewConfigurationOrPhysi
 func remoteContextLeaseUsesFullTargetExactQueryAndArchivesOnlySelectedPrefixWithoutSending() async throws {
     let f = try await RemoteContextCoreFixture.make()
     do {
-        let review = try await f.service.review(.init(target: f.target, sourcePoint: .run(f.core.runs[0]), intent: .fork(.init(provider: .opencode))))
+        let review = try await f.service.review(.init(target: f.target, sourcePoint: .run(f.core.runs[0]), intent: .fork(.init(provider: .claude))))
         let request = RemoteContextReadRequest(target: f.target, query: .messages(binding: review.binding, cursor: nil))
         let result = try await f.service.read(request)
         #expect(try await f.service.read(request) == result)
@@ -141,14 +140,14 @@ func remoteContextHandoffKeepsSameAppThreadAndMergeBackRequiresActualBoundParent
         let archived = try #require(await f.core.engine.current().snapshot.contextTransfer(merge.id))
         #expect(archived.review.messages.contains { $0.text == "Only this child delta merges back" })
         #expect(!archived.review.messages.contains { $0.text == "Source prompt 1" })
-        let handoff = try await f.service.review(.init(target: f.target, sourcePoint: .run(f.core.runs[2]), intent: .providerHandoff(.init(provider: .opencode))))
+        let handoff = try await f.service.review(.init(target: f.target, sourcePoint: .run(f.core.runs[2]), intent: .providerHandoff(.init(provider: .claude))))
         #expect(handoff.value.kind == .providerHandoff && handoff.value.targetThreadID == f.target.threadID)
         let handoffCommand = f.command(handoff)
         #expect(try await f.core.engine.dispatchRemoteEnvironment(handoffCommand, preparation: f.service.prepare(handoffCommand.command)).rejection == nil)
         #expect(await f.core.engine.current().snapshot.threads.count == 2)
         #expect(await f.core.peer.inputs.count == 1)
         #expect(await f.core.engine.current().snapshot.contextTransfer(handoff.id)?.review.messages.contains { $0.text == "Only this child delta merges back" } == true)
-        #expect(await f.core.engine.current().snapshot.threads.first { $0.id == f.target.threadID }?.provider == .opencode)
+        #expect(await f.core.engine.current().snapshot.threads.first { $0.id == f.target.threadID }?.provider == .claude)
         #expect(await f.core.engine.current().snapshot.threads.first { $0.id == f.target.threadID }?.draft == "Keep source composer")
     } catch { await f.close(); throw error }; await f.close()
 }

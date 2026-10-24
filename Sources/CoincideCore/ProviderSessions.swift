@@ -15,7 +15,7 @@ public struct ProviderSessionsScope: Hashable, Sendable {
     }
 
     func validate() throws {
-        guard provider.isSupported, !executable.isEmpty, executable.utf8.count <= 4_096,
+        guard !executable.isEmpty, executable.utf8.count <= 4_096,
               !executable.contains("\0"), [configurationDirectory, workspacePath].compactMap({ $0 }).allSatisfy({
                   $0.hasPrefix("/") && !$0.contains("\0") && $0.utf8.count <= 4_096
               }) else { throw CoincideError("Choose a valid local Codex or Claude configuration.") }

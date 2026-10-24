@@ -26,7 +26,7 @@ struct ContextTransferNativeTransport: Sendable {
 /// and never writes composer text or attachments to prepare a transfer.
 @MainActor @Observable
 final class ContextTransferStore {
-    typealias Destination = @MainActor (ContextTransferFormKind, ProviderKind, String, String, PermissionMode, UUID?) throws -> ProviderConfiguration
+    typealias Destination = @MainActor (ContextTransferFormKind, ProviderKind, String, String, PermissionMode) throws -> ProviderConfiguration
     private(set) var sourceThread: CodingThread?
     private(set) var snapshot = WorkspaceSnapshot()
     private(set) var review: ContextTransferReview?
@@ -38,7 +38,6 @@ final class ContextTransferStore {
     var sourceID = "latest" { didSet { if sourceID != oldValue { invalidate() } } }
     var workspaceID = "" { didSet { if workspaceID != oldValue { invalidate() } } }
     var provider = ProviderKind.codex { didSet { if provider != oldValue { model = ""; invalidate() } } }
-    var agentID: UUID? { didSet { if agentID != oldValue { invalidate() } } }
     var model = "" { didSet { if !model.utf8.elementsEqual(oldValue.utf8) { invalidate() } } }
     var permission = PermissionMode.supervised { didSet { if permission != oldValue { invalidate() } } }
     var title = ""
@@ -97,7 +96,7 @@ final class ContextTransferStore {
         self.snapshot = snapshot; sourceThread = source; sourceKey = key; self.transport = transport; self.destination = destination
         self.canReview = canReview; self.canAccept = canAccept; self.open = open
         if !configured, let source {
-            configured = true; provider = source.provider; agentID = source.acpAgent?.id; model = source.model; permission = source.permission
+            configured = true; provider = source.provider; model = source.model; permission = source.permission
             workspaceID = Data(source.workspacePath.utf8).base64EncodedString()
         }
     }
@@ -127,9 +126,9 @@ final class ContextTransferStore {
                 intent = .mergeBack(targetConfiguration: .init(thread: parent))
             case .fork:
                 guard let workspace = workspaceOptions.first(where: { $0.id == workspaceID }) else { throw ContextTransferError.invalidSource }
-                intent = .fork(destination: try destination(kind, provider, workspace.path, model, permission, agentID))
+                intent = .fork(destination: try destination(kind, provider, workspace.path, model, permission))
             case .providerHandoff:
-                intent = .providerHandoff(destination: try destination(kind, provider, source.workspacePath, model, permission, agentID))
+                intent = .providerHandoff(destination: try destination(kind, provider, source.workspacePath, model, permission))
             }
             let request = ContextTransferReviewRequest(sourceThreadID: source.id, expectedConfiguration: .init(thread: source), sourcePoint: point, intent: intent)
             let task = Task { try await transport.review(request) }; reads[token] = task

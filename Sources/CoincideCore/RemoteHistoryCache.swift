@@ -6,7 +6,6 @@ final class RemoteHistoryLease {
     let target: RemoteWorkspaceTarget
     let binding: RemoteHistoryBinding
     var reviewID: UUID?
-    var maintenanceClaim: RemoteHistoryMaintenanceClaim?
     var messages: [RemoteMessageSummary] = []
     var paths: [String] = []
     var contents: [UUID: Data] = [:]

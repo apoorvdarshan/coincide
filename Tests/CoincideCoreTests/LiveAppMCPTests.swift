@@ -22,7 +22,7 @@ private let liveAppMCPProviders: [ProviderKind] =
     #expect(try selectedLiveAppMCPProviders(nil) == [.codex, .claude])
     #expect(try selectedLiveAppMCPProviders("codex") == [.codex])
     #expect(try selectedLiveAppMCPProviders("claude") == [.claude])
-    for value in ProviderKind.allCases.filter({ !$0.isSupported }).map(\.rawValue) + ["", "unknown", "CLAUDE"] {
+    for value in ["opencode", "pi", "muse", "antigravity", "acp", "", "unknown", "CLAUDE"] {
         #expect(throws: LiveAppMCPFailure.self) { try selectedLiveAppMCPProviders(value) }
     }
 }

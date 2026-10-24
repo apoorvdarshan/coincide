@@ -114,7 +114,7 @@ extension WorkspaceSnapshot {
               try contextTransferFingerprint(source, point: review.sourcePoint) == review.sourceFingerprint,
               !((contextTransfers ?? []).contains { $0.id == review.id }),
               review.targetConfiguration.nativeThreadID == review.targetProviderBinding?.configuration.nativeThreadID,
-              review.targetConfiguration.claudeLaunchSelection == nil, review.targetConfiguration.piFreshSessionIntent == nil else { throw ContextTransferError.staleReview }
+              review.targetConfiguration.claudeLaunchSelection == nil else { throw ContextTransferError.staleReview }
         try CodexReasoningValidation.configuration(review.targetConfiguration)
         try review.targetConfiguration.validateClaudeConfiguration()
         try ProviderHistoryValidation.path(review.targetConfiguration.workspacePath)
@@ -172,10 +172,7 @@ extension WorkspaceSnapshot {
     static func sameContextProvider(_ lhs: ProviderConfiguration, _ rhs: ProviderConfiguration) -> Bool {
         func identity(_ value: ProviderConfiguration) -> ProviderConfiguration {
             var value = value; value.nativeThreadID = nil; value.model = ""; value.reasoningEffort = nil; value.permission = .supervised
-            value.claudeLaunchSelection = nil; value.piFreshSessionIntent = nil
-            value.openCodeConfiguration = value.openCodeConfiguration?.selecting(model: nil)
-            value.piConfiguration = value.piConfiguration?.selecting(model: nil, thinkingLevel: nil)
-            value.museConfiguration = value.museConfiguration?.selecting(model: nil, reasoningEffort: nil)
+            value.claudeLaunchSelection = nil
             return value
         }
         return ContextTransferProtocol.same(identity(lhs), identity(rhs))
@@ -278,12 +275,9 @@ extension CodingThread {
         provider = configuration.provider; workspacePath = configuration.workspacePath; providerThreadID = configuration.nativeThreadID
         model = configuration.model; reasoningEffort = configuration.reasoningEffort; permission = configuration.permission
         codexModelSelectionSource = configuration.provider == .codex && !configuration.model.isEmpty ? .explicitModel : nil
-        acpAgent = configuration.acpAgent; openCodeConfiguration = configuration.openCodeConfiguration; piConfiguration = configuration.piConfiguration
-        museConfiguration = configuration.museConfiguration; antigravityConfiguration = configuration.antigravityConfiguration
         codexRuntimeConfiguration = configuration.codexRuntimeConfiguration; claudeRuntimeConfiguration = configuration.claudeRuntimeConfiguration
         agentModeID = configuration.agentModeID; agentConfigValues = configuration.agentConfigValues; agentConfiguration = configuration.agentConfiguration
         claudeResumeSelection = nil; claudeResumeConsumerRunID = nil; claudeInheritedHead = nil
-        piFreshSessionIntent = nil; piFreshConsumerRunID = nil
         // Passive metadata belongs to the retired native session/profile. Keep
         // immutable run accounting in runHistory, but never relabel its live
         // context, rate limits or model controls as the destination's state.

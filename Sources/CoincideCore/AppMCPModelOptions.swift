@@ -19,10 +19,6 @@ enum AppMCPProviderModelOptions {
         case .claude:
             _ = try ClaudeModelControl.options(in: configuration)
             return configuration.agentConfiguration?[ClaudeModelControl.configurationKey]?.object ?? [:]
-        case .opencode: return configuration.openCodeConfiguration?.model?.variant.map { ["variant": .string($0)] } ?? [:]
-        case .pi: return configuration.piConfiguration?.thinkingLevel.map { ["thinkingLevel": .string($0)] } ?? [:]
-        case .muse: return configuration.museConfiguration?.reasoningEffort.map { ["reasoningEffort": .string($0)] } ?? [:]
-        default: return [:]
         }
     }
     static func merged(_ inherited: [String: JSONValue], overrides: [String: JSONValue]?) -> [String: JSONValue] {
@@ -70,10 +66,6 @@ enum AppMCPProviderModelOptions {
                 if capabilities.supportsThinking { result.append(flag("thinking")) }
                 if !capabilities.contextWindows.isEmpty { result.append(select("contextWindow", values: capabilities.contextWindows)) }
             }
-        case .pi: if let levels = model.piThinkingLevels, !levels.isEmpty { result.append(select("thinkingLevel", values: levels)) }
-        case .opencode: if let values = model.openCodeVariants, !values.isEmpty { result.append(select("variant", values: values)) }
-        case .muse: if let values = model.museReasoningEfforts, !values.isEmpty { result.append(select("reasoningEffort", values: values.map(\.id), default: model.museDefaultReasoningEffort)) }
-        default: break
         }
         return result
     }

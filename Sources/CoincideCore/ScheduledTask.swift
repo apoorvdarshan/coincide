@@ -81,7 +81,7 @@ public struct ScheduledTaskSource: Codable, Sendable, Equatable {
     let projectDirectory: ScheduledTaskDirectory
     let workspaceDirectory: ScheduledTaskDirectory
     static func normalized(_ value: ProviderConfiguration) -> ProviderConfiguration {
-        var value = value; value.nativeThreadID = nil; value.claudeLaunchSelection = nil; value.piFreshSessionIntent = nil; return value
+        var value = value; value.nativeThreadID = nil; value.claudeLaunchSelection = nil; return value
     }
     public init(thread: CodingThread, project: WorkspaceProject) throws {
         guard thread.projectID == project.id else { throw ScheduledTaskError.sourceChanged }

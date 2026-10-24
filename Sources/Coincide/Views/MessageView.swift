@@ -39,11 +39,10 @@ struct MessageView: View {
                                      workspace: URL(fileURLWithPath: workspacePath), openFile: openFile)
                 } else {
                     ToolCardView(card: TranscriptToolPresentation.card(for: message, context: .init(workspacePath: workspacePath)), entity: message.providerEntity,
-                                 workspacePath: workspacePath, caption: TranscriptEntryCaption.copilot(message), expanded: $toolExpanded, openFile: openFile)
+                                 workspacePath: workspacePath, expanded: $toolExpanded, openFile: openFile)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let caption = TranscriptEntryCaption.copilot(message) { Label(caption, systemImage: "person.crop.square.badge.ellipsis").font(.caption).foregroundStyle(.secondary) }
                     if message.role == .system { Label("Notice", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
                     MarkdownView(message.text, workspace: URL(fileURLWithPath: workspacePath), mathEnabled: renderMathInMarkdown, openFile: openFile)
                     if message.role == .assistant {

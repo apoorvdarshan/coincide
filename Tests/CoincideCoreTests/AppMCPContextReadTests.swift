@@ -43,10 +43,8 @@ private struct ContextArchiveFixture: Sendable {
         let project = WorkspaceProject(path: workspace.path)
         let body = String(repeating: "😀\"\\\0工作\n", count: 3_000)
         func source(_ marker: String, text: String) -> CodingThread {
-            var thread = CodingThread(project: project, model: "offline-source"); thread.provider = .muse; thread.checkpointPolicy = .disabled
-            let native = MuseConfiguration(executable: root.appendingPathComponent("offline-source-never-launched").path,
-                model: .init(modelID: "offline-source"))
-            thread.museConfiguration = native; thread.model = native.model!.catalogID
+            var thread = CodingThread(project: project, model: "offline-source"); thread.provider = .codex; thread.checkpointPolicy = .disabled
+            thread.codexRuntimeConfiguration = .init(selection: .custom, executable: root.appendingPathComponent("offline-source-never-launched").path)
             thread.draft = "UNRELATED-DRAFT-CANARY"
             let run = ActiveRun(id: UUID(), configuration: .init(thread: thread), startedAt: Date(timeIntervalSince1970: 1_700_000_000))
             var record = ThreadRunRecord(run: run, origin: .user, userMessageID: marker + "-user")
@@ -69,7 +67,7 @@ private struct ContextArchiveFixture: Sendable {
             _ = try await engine.load()
             func request(_ source: CodingThread) -> ContextTransferReviewRequest {
                 var destination = ProviderConfiguration(thread: source); destination.provider = .claude
-                destination.model = "context-target"; destination.nativeThreadID = nil; destination.museConfiguration = nil
+                destination.model = "context-target"; destination.nativeThreadID = nil; destination.codexRuntimeConfiguration = nil
                 return .init(sourceThreadID: source.id, expectedConfiguration: .init(thread: source),
                     sourcePoint: .run(source.runHistory![0].id), intent: .fork(destination: destination))
             }

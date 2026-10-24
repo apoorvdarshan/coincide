@@ -98,7 +98,6 @@ extension WorkspaceDecision {
             guard !snapshot.threads.contains(where: { $0.id == threadID }),
                   !snapshot.projects.contains(where: { $0.id == threadID }),
                   !snapshot.pullRequestCheckoutReservedIDs.contains(threadID), !snapshot.promptSteeringReservedIDs.contains(threadID),
-                  !snapshot.conversationHistoryMaintenanceReservedIDs.contains(threadID),
                   !(snapshot.conversationHistoryOperations ?? []).contains(where: { $0.review.targetThreadID == threadID }) else { throw Self.importRefusal() }
         }
         guard !records.contains(where: { $0.threadID != threadID && AgentSessionImportOwnership.matches($0, admission: admission) }),
@@ -164,7 +163,7 @@ extension WorkspaceDecision {
         let point = try sourceSnapshot.contextTransferSource(threadID: thread.id, point: .conversation)
         let messages = try sourceSnapshot.contextTransferMessages(thread: thread, through: point, ownRunsOnly: false)
         var destination = source
-        destination.nativeThreadID = nil; destination.claudeLaunchSelection = nil; destination.piFreshSessionIntent = nil
+        destination.nativeThreadID = nil; destination.claudeLaunchSelection = nil
         let transferID = TaskOrchestration.derivedID(commandID, "agent-session-import:context")
         var review = ContextTransferReview(id: transferID, digest: "",
             request: .init(sourceThreadID: thread.id, expectedConfiguration: source, sourcePoint: .conversation,

@@ -213,9 +213,6 @@ private struct PullRequestCheckoutReviewContent: View {
                 LabeledContent("Reasoning", value: ReasoningEffortPresentation.title(effort))
             }
             LabeledContent("Permissions") { Text(LocalizedStringKey(review.targetConfiguration.permission.title)) }
-            if RunHistoryPresentation.hasSavedAgentOptions(review.targetConfiguration) {
-                Text("Saved agent options").font(.caption).foregroundStyle(.secondary)
-            }
             LabeledContent("Run checkpoints", value: review.checkpointPolicy == .disabled ? String(localized: "Disabled") : String(localized: "Automatic"))
             if plan.request.mode == .worktree {
                 LabeledContent("Submodules", value: plan.isReadOnly ? String(localized: "Unchanged") : PullRequestCheckoutPresentation.submodules(plan.request.submodules))

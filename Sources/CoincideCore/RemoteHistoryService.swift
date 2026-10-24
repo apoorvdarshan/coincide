@@ -38,13 +38,6 @@ actor RemoteHistoryService {
                 self.cleanup.removeValue(forKey: token)
             }
         }
-        if let claim = lease.maintenanceClaim {
-            let token = UUID(), engine = engine, target = lease.target
-            cleanup[token] = Task {
-                await engine.discardRemoteHistoryMaintenance(target: target, claim: claim)
-                self.cleanup.removeValue(forKey: token)
-            }
-        }
     }
     private func publish(_ lease: RemoteHistoryLease) throws {
         guard !closing, lease.bytes <= RemoteHistoryProtocol.maximumCacheBytes else { throw RemoteHistoryFailure(.limitExceeded) }
@@ -115,7 +108,6 @@ actor RemoteHistoryService {
     }
     func read(_ request: RemoteHistoryReadRequest) async throws -> RemoteHistoryReadResult {
         try begin(); defer { finish() }
-        var unusedMaintenance: RemoteHistoryMaintenanceReview?
         do {
             guard request.target.environmentID == environmentID else { throw RemoteHistoryFailure(.invalidTarget) }
             let result: RemoteHistoryReadResult
@@ -146,20 +138,15 @@ actor RemoteHistoryService {
                 try await validate(request.target, locked: true, requireRoot: false)
                 let update = try await engine.captureRemoteHistory(request.target), thread = try Self.thread(update.snapshot, target: request.target)
                 result = .init(target: request.target, value: .controls(.init(claudeSelectionID: thread.claudeResumeSelection?.id,
-                    claudeConsumerRunID: thread.claudeResumeConsumerRunID, piIntentID: thread.piFreshSessionIntent?.id,
-                    piConsumerRunID: thread.piFreshConsumerRunID,
-                    canInspectClaudeResume: update.snapshot.claudeResumeSelectionNeedsInspection(threadID: thread.id),
-                    canInspectPiFresh: update.snapshot.piFreshSessionNeedsInspection(threadID: thread.id))))
-            case .operation(let id), .recall(let id), .maintenance(let id):
-                let maintenance: Bool; if case .maintenance = request.query { maintenance = true } else { maintenance = false }
-                try await validate(request.target, locked: true, requireRoot: maintenance)
-                if maintenance { unusedMaintenance = try await engine.reviewRemoteHistoryMaintenance(target: request.target, operationID: id) }
+                    claudeConsumerRunID: thread.claudeResumeConsumerRunID,
+                    canInspectClaudeResume: update.snapshot.claudeResumeSelectionNeedsInspection(threadID: thread.id))))
+            case .operation(let id), .recall(let id):
+                try await validate(request.target, locked: true, requireRoot: false)
                 let update = try await engine.captureRemoteHistory(request.target), thread = try Self.thread(update.snapshot, target: request.target)
                 guard let operation = update.snapshot.conversationHistoryOperation(id), operation.review.sourceThreadID == thread.id,
                       operation.review.projectID == thread.projectID else { throw RemoteHistoryFailure(.invalidTarget) }
                 let value = try RemoteHistoryLease(target: request.target, binding: binding(request.target, objectID: id, digest: RemoteHistoryProtocol.digest(operation)),
-                    proofBytes: unusedMaintenance.map { try RemoteHistoryProtocol.payload($0).count } ?? 0)
-                if let claim = unusedMaintenance { value.maintenanceClaim = .init(id: claim.id, digest: claim.digest) }
+                    proofBytes: 0)
                 if case .recall = request.query {
                     guard operation.review.kind == .rewindBeforeRun, let run = thread.runHistory?.first(where: { $0.id == operation.review.runID }), run.origin == .user,
                           let message = thread.messages.first(where: { $0.id == run.userMessageID && $0.role == .user && $0.runReference == .init(threadID: thread.id, runID: run.id) }) else { throw RemoteHistoryFailure(.invalidTarget) }
@@ -168,25 +155,11 @@ actor RemoteHistoryService {
                 } else {
                     result = .init(target: request.target, value: .operation(try Self.operation(operation, snapshot: update.snapshot, lease: value)))
                 }
-                guard !closing else { throw RemoteHistoryFailure(.unavailable) }; try publish(value); unusedMaintenance = nil
-            case .piFresh(let intent, let consumer):
-                try await validate(request.target, locked: true, requireRoot: true)
-                let update = try await engine.captureRemoteHistory(request.target), thread = try Self.thread(update.snapshot, target: request.target)
-                guard thread.piFreshSessionIntent?.id == intent, thread.piFreshConsumerRunID == consumer else { throw RemoteHistoryFailure(.invalidTarget) }
-                let observed = try await engine.inspectPiFreshSession(threadID: thread.id)
-                try await validate(request.target, locked: true, requireRoot: true)
-                let current = try Self.thread((try await engine.captureRemoteHistory(request.target)).snapshot, target: request.target)
-                guard current.piFreshSessionIntent?.id == intent, current.piFreshConsumerRunID == consumer else { throw RemoteHistoryFailure(.invalidTarget) }
-                let state: RemoteHistoryPiFreshInspection.State
-                switch observed { case .unwritten: state = .unwritten; case .persisted: state = .persisted; case .unavailable: state = .unavailable }
-                result = .init(target: request.target, value: .piFresh(.init(intentID: intent, consumerRunID: consumer, state: state)))
+                guard !closing else { throw RemoteHistoryFailure(.unavailable) }; try publish(value)
             }
             guard !closing, try RemoteHistoryProtocol.payload(result).count <= RemoteHistoryProtocol.maximumResultBytes else { throw RemoteHistoryFailure(.limitExceeded) }
             return result
-        } catch {
-            if let claim = unusedMaintenance { await engine.discardRemoteHistoryMaintenance(target: claim.target, claim: .init(id: claim.id, digest: claim.digest)) }
-            throw Self.safe(error)
-        }
+        } catch { throw Self.safe(error) }
     }
     func discard(_ request: RemoteHistoryDiscardRequest) async throws -> RemoteHistoryDiscardResult {
         try begin(); defer { finish() }
@@ -230,7 +203,6 @@ actor RemoteHistoryService {
             switch claude.boundary { case .freshSession: return "Empty Claude context for the next explicit input; original native transcript retained."
             case .throughMessage: return review.kind == .forkAfterRun ? "Verified Claude transcript copy through the selected message." : "Saved Claude resume point; original native transcript retained." }
         }
-        if let pi = review.pi, case .freshSession = pi.boundary { return "Empty Pi context for the next explicit input; original native session retained." }
         return review.kind == .forkAfterRun ? "Through the end of the selected completed run." : "Before the selected run's opening input."
     }
     private static func operation(_ value: ConversationHistoryOperation, snapshot: WorkspaceSnapshot, lease: RemoteHistoryLease) throws -> RemoteHistoryOperationView {
@@ -241,10 +213,6 @@ actor RemoteHistoryService {
         let actions: [String: RemoteProjectionAvailability] = [
             "inspectProvider": availability(inspect), "inspectFiles": availability(filePending && value.files?.phase == .unconfirmed),
             "acknowledgeFiles": availability(filePending), "recallPrompt": availability(canRecall), "dismissRecall": availability(value.needsPromptRecall),
-            "keepOriginal": availability(value.phase == .unconfirmed && (value.review.openCodeV1 != nil || value.review.pi != nil)),
-            "inspectMaintenance": availability(value.phase == .unconfirmed && value.review.openCodeV2 != nil && value.maintenance?.phase.isWorking != true),
-            "clearMaintenance": availability(value.phase == .unconfirmed && value.review.openCodeV2 != nil && value.maintenance?.phase.isWorking != true && value.maintenance?.phase != .applied),
-            "cancelPi": availability(value.review.pi != nil && value.isPending), "respondPi": availability(value.piControls?.requests.contains(where: { !$0.responding }) == true),
             "openConversation": availability(value.phase == .applied && value.review.targetThreadID != nil)]
         let summary = try RemoteOperationSummary(id: value.id, kind: .conversationHistory, projectID: value.review.projectID, threadID: value.review.sourceThreadID,
             runID: value.review.runID, targetThreadID: value.review.targetThreadID, phase: value.phase.rawValue, updatedAt: value.updatedAt,
@@ -252,10 +220,9 @@ actor RemoteHistoryService {
             cancelRequested: false,
             actions: actions, fingerprint: lease.binding.digest, details: [.init(label: "Provider", value: lease.text(value.review.sourceConfiguration.provider.name)),
                 .init(label: "Files", value: lease.text(value.files?.phase.rawValue ?? "Kept"))], workspacePaths: [value.review.sourceConfiguration.workspacePath])
-        return try .init(binding: lease.binding, operation: summary, kind: value.review.kind, provider: value.review.sourceConfiguration.provider,
+        return .init(binding: lease.binding, operation: summary, kind: value.review.kind, provider: value.review.sourceConfiguration.provider,
             filesPhase: value.files?.phase, filesAcknowledged: value.files?.acknowledgedAt != nil, needsPromptRecall: value.needsPromptRecall,
-            recalled: value.recalledAt != nil, recallDismissed: value.recallDismissedAt != nil, piSessionID: value.piControls?.sessionID,
-            piRequests: value.piControls.map { try lease.json($0.requests, kind: .runtimeRequests) }, maintenanceClaim: lease.maintenanceClaim)
+            recalled: value.recalledAt != nil, recallDismissed: value.recallDismissedAt != nil)
     }
     private static func safe(_ error: Error) -> RemoteHistoryFailure {
         if let value = error as? RemoteHistoryFailure { return value }

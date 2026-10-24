@@ -29,9 +29,6 @@ public struct ThreadRunRecord: Codable, Sendable, Equatable, Identifiable {
     public var messageAttributionVersion: Int?
     /// Nil on legacy records. Never inferred from today's ambient CLI or text.
     public var claude: ClaudeRunHistoryEvidence?
-    /// Prospective native entry evidence. Nil legacy records are never upgraded
-    /// from a file tail, timestamp window or local run UUID.
-    public var pi: PiRunHistoryEvidence?
     public var removedByHistoryOperationID: UUID?
     public var delegatedTaskID: UUID?
     public var delegatedCompletion: DelegatedTaskCompletionReference?
@@ -119,13 +116,6 @@ extension CodingThread {
         for record in records {
             try record.providerUsage?.validate(provider: record.configuration.provider, runID: record.id)
             try CodexReasoningValidation.configuration(record.configuration)
-            if let pi = record.pi {
-                try pi.validate()
-                guard record.origin == .user, record.configuration.provider == .pi,
-                      pi.runID == record.id, pi.runtimeIdentity == record.configuration.piConfiguration?.runtimeIdentity,
-                      pi.preparation.openingInput.clientMessageID == record.userMessageID,
-                      pi.nativeSessionFile == record.providerThreadID else { throw PiHistoryGraphError(.invalidWindow) }
-            }
             try record.configuration.claudeRuntimeConfiguration?.validate()
             if let selection = record.configuration.claudeLaunchSelection {
                 guard record.configuration.provider == .claude, let runtime = record.configuration.claudeRuntimeConfiguration else { throw ClaudeRuntimeConfiguration.invalid() }

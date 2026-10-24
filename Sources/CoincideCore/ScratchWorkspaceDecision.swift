@@ -26,7 +26,6 @@ extension WorkspaceDecision {
             switch edit {
             case .workspacePath(let value): path = value
             case .claudeWorkspace(let value): path = value.registeredWorkspacePath
-            case .piWorkspace(let value): path = value.registeredWorkspacePath
             default: path = nil
             }
             if let path {

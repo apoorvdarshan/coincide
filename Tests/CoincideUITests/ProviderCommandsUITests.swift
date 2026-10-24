@@ -75,19 +75,18 @@ private final class CommandUIFactory: @unchecked Sendable {
     let factory: CommandUIFactory
     let engine: WorkspaceEngine
     let store: WorkspaceStore
-    static func make(provider: ProviderKind, held: Bool = false) async throws -> Self {
+    static func make(held: Bool = false) async throws -> Self {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-command-ui-" + UUID().uuidString)
-        let checkout = root.appendingPathComponent("Workspace")
+        let checkout = root.appendingPathComponent("Workspace"), configuration = root.appendingPathComponent("Private Configuration")
         try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+        // Claude skills come from filesystem discovery; native commands come from the metadata actor.
+        let skill = configuration.appendingPathComponent("skills/review")
+        try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+        try Data("---\ndescription: Review changes\n---\nReview the workspace.".utf8).write(to: skill.appendingPathComponent("SKILL.md"))
         let project = WorkspaceProject(path: checkout.path), database = root.appendingPathComponent("workspace.sqlite")
-        var thread = CodingThread(project: project); thread.provider = provider; thread.model = ""; thread.checkpointPolicy = .disabled
-        if provider == .pi {
-            let instance = UUID(), agent = root.appendingPathComponent("Private Agent").path
-            let runtime = try PiRuntimeConfiguration(instanceID: instance, executable: "/offline/pi", workspacePath: thread.workspacePath,
-                homeDirectory: root.appendingPathComponent("Private Home").path, agentDirectory: agent,
-                agentDirectorySelection: .explicitDirectory(environmentPath: agent))
-            thread.piConfiguration = .init(instanceID: instance, executable: runtime.requestedExecutable, runtime: runtime)
-        } else { thread.openCodeConfiguration = .init(executable: "/offline/opencode") }
+        var thread = CodingThread(project: project); thread.provider = .claude; thread.model = ""; thread.checkpointPolicy = .disabled
+        thread.claudeRuntimeConfiguration = ClaudeRuntimeConfiguration(executable: "/offline/claude", configurationDirectory: configuration.path,
+            workspacePath: thread.workspacePath)
         var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
         try await WorkspaceDatabase(url: database).save(snapshot, event: "native.commands.fixture")
         let factory = CommandUIFactory(held: held)
@@ -128,9 +127,9 @@ private final class CommandUIFactory: @unchecked Sendable {
     #expect(ProviderCommandPicker.matching(commands: commandUIRows, skills: commandUISkills.filter(\.canInvokeFromComposer), query: "review", showSkills: false).map(\.token) == ["/review"])
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: [ProviderKind.pi, .opencode]) @MainActor
-func nativeCommandScopeChangeRetiresAndJoinsItsLateInventoryWhileDraftAndPinRemainEditable(provider: ProviderKind) async throws {
-    let fixture = try await CommandUIFixture.make(provider: provider, held: true)
+@Test(.timeLimit(.minutes(1))) @MainActor
+func nativeCommandScopeChangeRetiresAndJoinsItsLateInventoryWhileDraftAndPinRemainEditable() async throws {
+    let fixture = try await CommandUIFixture.make(held: true)
     let model = try #require(fixture.store.skillsStore(threadID: fixture.thread.id))
     let refresh = Task { await model.refresh() }
     var shutdown: Task<Void, Never>?
@@ -157,8 +156,8 @@ func nativeCommandScopeChangeRetiresAndJoinsItsLateInventoryWhileDraftAndPinRema
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
-func nativeCommandDiscoveryKeepsActiveOpenCodeActorAndQueueCapturedAcrossFutureChoiceAndRestart() async throws {
-    let fixture = try await CommandUIFixture.make(provider: .opencode)
+func nativeCommandDiscoveryKeepsActiveClaudeActorAndQueueCapturedAcrossFutureChoiceAndRestart() async throws {
+    let fixture = try await CommandUIFixture.make()
     do {
         _ = try await fixture.engine.dispatch(.submit(threadID: fixture.thread.id, text: "Owned active input"))
         try await commandUIEventually { await fixture.factory.runtime.inputs == ["Owned active input"] }
@@ -167,7 +166,7 @@ func nativeCommandDiscoveryKeepsActiveOpenCodeActorAndQueueCapturedAcrossFutureC
         #expect(model.commandInventory?.isPartial == true)
         let metadata = try #require(fixture.factory.metadataLaunches.last)
         #expect(metadata.activeRun == nil && metadata.providerThreadID == nil && metadata.runtimeID == nil && metadata.queuedTurns.isEmpty)
-        #expect(metadata.openCodeConfiguration == fixture.thread.openCodeConfiguration)
+        #expect(metadata.claudeRuntimeConfiguration == fixture.thread.claudeRuntimeConfiguration)
         #expect(await fixture.factory.runtime.closed == 0)
         #expect(await fixture.factory.runtime.inputs == ["Owned active input"], "Discovery and row selection never send a command.")
         let latest = "/ins notes 工作", caret = NSRange(location: 4, length: 0)
@@ -177,7 +176,7 @@ func nativeCommandDiscoveryKeepsActiveOpenCodeActorAndQueueCapturedAcrossFutureC
         _ = try await fixture.engine.dispatch(.submit(threadID: fixture.thread.id, text: inserted.text))
         let saved = try #require((await fixture.engine.current()).snapshot.threads.first { $0.id == fixture.thread.id })
         #expect(saved.queuedTurns.count == 1 && saved.queuedTurns[0].text == "/inspect notes 工作\nLatest additional notes")
-        #expect(saved.queuedTurns[0].configuration.openCodeConfiguration == fixture.thread.openCodeConfiguration)
+        #expect(saved.queuedTurns[0].configuration.claudeRuntimeConfiguration == fixture.thread.claudeRuntimeConfiguration)
         _ = try await fixture.engine.dispatch(.editThread(fixture.thread.id, .permission(.fullAccess)))
         try await commandUIEventually { model.isClosed }
         #expect((await fixture.engine.current()).snapshot.threads.first { $0.id == fixture.thread.id }?.queuedTurns == saved.queuedTurns)
@@ -194,8 +193,7 @@ func nativeCommandDiscoveryKeepsActiveOpenCodeActorAndQueueCapturedAcrossFutureC
 
 @Test(.timeLimit(.minutes(1))) @MainActor
 func nativeCommandInventoryRefusalsStayDistinctFromAnEmptyCatalogAndTypingCannotDropOwnedResults() async throws {
-    var thread = CodingThread(project: WorkspaceProject(path: "/offline/workspace")); thread.provider = .opencode
-    thread.openCodeConfiguration = .init(executable: "/offline/opencode")
+    var thread = CodingThread(project: WorkspaceProject(path: "/offline/workspace")); thread.provider = .claude
     let path = thread.workspacePath
     let unavailable = ProviderSkillsStore(scope: .init(thread), commandRead: { _ in throw ProviderCommandError(.unsupported) })
     await unavailable.refresh()
@@ -229,8 +227,7 @@ func nativeCommandInventoryRefusalsStayDistinctFromAnEmptyCatalogAndTypingCannot
 @Test(.timeLimit(.minutes(1))) @MainActor
 func nativeCommandPickerAndTypedComposerFitNarrowLongRowsInBothDirectionsWithoutInvokingAnything() async throws {
     _ = NSApplication.shared
-    var thread = CodingThread(project: WorkspaceProject(path: "/offline/workspace")); thread.provider = .opencode
-    thread.openCodeConfiguration = .init(executable: "/offline/opencode")
+    var thread = CodingThread(project: WorkspaceProject(path: "/offline/workspace")); thread.provider = .claude
     let path = thread.workspacePath
     let command = ProviderCommand(name: "review-long-workspace", description: String(repeating: "Review all changes 工作 ومراجعة التغييرات. ", count: 5),
                                   source: "workspace", hints: ["Optional instructions"])
@@ -251,7 +248,7 @@ func nativeCommandPickerAndTypedComposerFitNarrowLongRowsInBothDirectionsWithout
                     reportGeometry: { geometry.frames[$0] = $1 })
                 try await captureCommandUI(picker, geometry: geometry, width: width, dark: dark, rtl: rtl, name: "picker")
                 let composerGeometry = CommandUIGeometry()
-                let composer = ComposerView(text: .constant("/rev"), provider: .opencode, permission: .supervised, busy: true,
+                let composer = ComposerView(text: .constant("/rev"), provider: .claude, permission: .supervised, busy: true,
                     submitting: false, hasAttachments: false, attach: {}, importProviders: { _ in }, setPermission: { _ in },
                     send: { invoked += 1 }, stop: {}, reportGeometry: { composerGeometry.frames[$0] = $1 }, skills: model)
                 try await captureCommandUI(composer, geometry: composerGeometry, width: width, dark: dark, rtl: rtl, name: "composer")

@@ -148,7 +148,7 @@ public actor RemoteEnvironmentService {
         try require(request.environmentID)
         do {
             let engine = try await workspace(), receipt = try await engine.remoteEnvironmentReceipt(request)
-            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
+            if receipt?.rejection == nil, receipt != nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
             return .init(environmentID: environmentID, receipt: receipt)
         } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
     }
@@ -160,7 +160,7 @@ public actor RemoteEnvironmentService {
         if request.undoOwner != nil || request.command.isThreadActionCommand || request.command.isSteeringCommand || request.command.inspectsWorktreeCompletion || request.command.preparesAttachments || request.command.isPullRequestCommand || request.command.isCheckpointCommand || request.command.isHistoryCommand || request.command.isContextTransferCommand || request.command.isLifecycleCommand || request.command.isProjectScriptCommand {
             do {
                 if let receipt = try await engine.remoteEnvironmentReceipt(request) {
-                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
+                    if receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
                     return .init(environmentID: environmentID, receipt: receipt)
                 }
             } catch WorkspaceCommitError.commandIDCollision { throw RemoteEnvironmentError(.commandCollision) }
@@ -171,7 +171,7 @@ public actor RemoteEnvironmentService {
             catch { inspected = .refused }
         }
         let result = try await commitCommand(request, engine: engine, inspected: inspected)
-        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteHistoryCompletion(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
+        if result.receipt.rejection == nil { await engine.awaitRemotePullRequestCancellation(request); await engine.awaitRemoteContextCompletion(request); await engine.awaitRemoteProjectScriptCompletion(request); await engine.awaitRemoteThreadActionsCompletion(request) }
         return result
     }
     private func commitCommand(_ request: RemoteEnvironmentCommandRequest, engine: WorkspaceEngine,
@@ -419,16 +419,12 @@ public actor RemoteEnvironmentService {
         var configuration: ProviderConfiguration
         if provider == source.configuration.provider {
             configuration = source.configuration; configuration.nativeThreadID = nil
-            configuration.claudeLaunchSelection = nil; configuration.piFreshSessionIntent = nil
+            configuration.claudeLaunchSelection = nil
             if let claude = configuration.claudeRuntimeConfiguration {
                 configuration.claudeRuntimeConfiguration = try claude.replacingWorkspace(path, physicalPath: ClaudeRuntimeValidation.physical(path, allowMissing: false))
             }
-            if let pi = configuration.piConfiguration, let runtime = pi.runtime {
-                configuration.piConfiguration = .init(instanceID: pi.instanceID, executable: pi.executable, model: pi.model,
-                    thinkingLevel: pi.thinkingLevel, runtime: try runtime.replacingWorkspace(path))
-            }
         } else {
-            guard [.codex, .claude].contains(provider), let project = snapshot.projects.first(where: { $0.id == source.projectID }) else { throw RemoteContextFailure(.unavailable) }
+            guard let project = snapshot.projects.first(where: { $0.id == source.projectID }) else { throw RemoteContextFailure(.unavailable) }
             var thread = CodingThread(project: project, model: destination.model ?? "")
             thread.provider = provider; thread.workspacePath = path; thread.permission = destination.permission ?? source.configuration.permission
             if provider == .claude {
@@ -443,15 +439,6 @@ public actor RemoteEnvironmentService {
             configuration = .init(thread: thread)
         }
         if let model = destination.model, model != configuration.model {
-            // Imported provider profiles carry opaque native model selections.
-            // A display string cannot manufacture a different native selection.
-            if [.opencode, .pi, .muse].contains(provider), !model.isEmpty { throw RemoteContextFailure(.invalidRequest) }
-            if model.isEmpty {
-                configuration.openCodeConfiguration = configuration.openCodeConfiguration?.selecting(model: nil)
-                configuration.piConfiguration = configuration.piConfiguration?.selecting(model: nil)
-                configuration.museConfiguration = configuration.museConfiguration?.selecting(model: nil)
-            }
-            configuration.antigravityConfiguration = configuration.antigravityConfiguration?.selecting(model: model.isEmpty ? nil : model)
             configuration.reasoningEffort = nil
         }
         configuration.workspacePath = path; configuration.model = destination.model ?? configuration.model
@@ -770,7 +757,6 @@ public actor RemoteEnvironmentService {
             guard target.environmentID == environmentID, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteEnvironmentError(.invalidRequest) }
             try ProviderHistoryValidation.path(target.workspacePath)
             if case .begin(_, let digest, _) = action, !CheckpointValidation.digest(digest) { throw RemoteEnvironmentError(.invalidRequest) }
-            if case .clearMaintenance(_, _, let digest) = action, !CheckpointValidation.digest(digest) { throw RemoteEnvironmentError(.invalidRequest) }
         case .checkpoint(let target, let action):
             guard target.environmentID == environmentID, target.rootID != nil || !action.requiresBoundRoot else { throw RemoteEnvironmentError(.invalidRequest) }
             try ProviderHistoryValidation.path(target.workspacePath)

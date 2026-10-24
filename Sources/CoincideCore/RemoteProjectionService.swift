@@ -65,7 +65,6 @@ actor RemoteProjectionService {
         // Legacy rows without captured launch profiles need a separate native
         // capture review; this display document cannot invent that authority.
         if thread.provider == .claude, thread.claudeRuntimeConfiguration == nil { throw RemoteProjectionFailure(.unavailable) }
-        if thread.provider == .pi, thread.piConfiguration?.runtime == nil { throw RemoteProjectionFailure(.unavailable) }
         let request = TranscriptPlanImplementation(thread: thread, message: message, destination: destination)
         guard thread.scratchWorkspace != nil, destination != nil else { return request }
         guard let commandID, let originalPayload else { throw ScratchWorkspaceError() }

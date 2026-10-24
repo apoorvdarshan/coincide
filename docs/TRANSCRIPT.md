@@ -1,8 +1,7 @@
 # Conversation transcript
 
 The conversation shows each provider's work as compact, expandable rows derived
-from the transcript Coincide stores. Validated Grok exit-plan requests now carry
-an explicit plan entity; arbitrary legacy tool text stays inert. Cards show only
+from the transcript Coincide stores. Arbitrary legacy tool text stays inert. Cards show only
 facts present in the authored text, typed entities and recorded run ownership.
 
 ## Tool calls and the work log
@@ -29,9 +28,8 @@ facts present in the authored text, typed entities and recorded run ownership.
   - A Claude `<tool_use_error>` result shows as failed.
   - An entity that was still pending when its run ended shows no status.
 
-Sources: Codex `$ command` and `File changes` rows, Claude `tool_use` rows paired
-with their `result-<id>` rows, and ACP, Cursor, Copilot, Grok, OpenCode, Pi, Muse
-and Antigravity `tool_call` entities.
+Sources: Codex `$ command` and `File changes` rows, and Claude `tool_use` rows
+paired with their `result-<id>` rows.
 
 ## Reasoning
 
@@ -82,7 +80,7 @@ Settings → General → Timestamp format chooses System, 12-hour or 24-hour.
 
 ## Proposed plans
 
-Plans from Claude ExitPlanMode, Grok plan mode and ACP plan content render as
+Plans from Claude ExitPlanMode render as
 Markdown cards. A plan longer than 20 lines or 900 characters shows a preview
 until you choose Expand Plan. The card's menu offers:
 
@@ -115,6 +113,6 @@ again. Older helpers retain plain message rendering; Copy requires complete sour
 ## Remaining parity
 
 Codex-native proposed-plan items, typed Codex Plan/Default interaction controls,
-and Implement in a New Conversation remain separate implementation work. Generic
-ACP text is not treated as a plan. Remote folding covers the currently loaded,
+and Implement in a New Conversation remain separate implementation work.
+Remote folding covers the currently loaded,
 verified window; it does not claim a complete native history boundary or timing.

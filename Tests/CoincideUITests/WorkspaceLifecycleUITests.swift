@@ -16,16 +16,15 @@ import Testing
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-lifecycle-ui-" + UUID().uuidString).resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let project = WorkspaceProject(path: root.path), database = root.appendingPathComponent("workspace.sqlite")
-        let agent = ACPAgentConfiguration(name: "Lifecycle fixture", executable: "/usr/bin/true")
         var thread = CodingThread(project: project)
-        thread.provider = .acp; thread.acpAgent = agent; thread.checkpointPolicy = .disabled
+        thread.provider = .codex; thread.checkpointPolicy = .disabled
         thread.createdAt = Date().addingTimeInterval(-10 * 86_400); thread.updatedAt = thread.createdAt
         thread.draft = "Keep my unsent draft 😀"
-        var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]; snapshot.acpAgents = [agent]
+        var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [thread]
         try await WorkspaceDatabase(url: database).save(snapshot, event: "lifecycle.ui.fixture")
         let provider = NativeSetupProvider()
         let engine = try WorkspaceEngine(url: database, providerFactory: { _ in provider }, identityResolver: { _ in nil })
-        let store = WorkspaceStore(engine: engine); await store.load()
+        let store = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: root)); await store.load()
         return .init(root: root, database: database, project: project, threadID: thread.id, provider: provider, engine: engine, store: store)
     }
     func cleanup() async { await store.shutdown(); try? FileManager.default.removeItem(at: root) }
@@ -66,7 +65,7 @@ import Testing
         try await waitNativeSetup { f.store.thread(f.threadID)?.workspaceLifecycle?.autoSettleDisabledAt != nil }
         await f.store.shutdown()
         let engine = try WorkspaceEngine(url: f.database, providerFactory: { _ in Issue.record("Restoring lifecycle settings cannot start a provider"); return f.provider }, identityResolver: { _ in nil })
-        let reopened = WorkspaceStore(engine: engine); await reopened.load()
+        let reopened = WorkspaceStore(engine: engine, codexInstallation: fixtureCodexInstallation(root: f.root)); await reopened.load()
         #expect(reopened.workspaceLifecyclePolicy == .init(afterDays: 9, onMerge: false, keepPullRequests: true))
         #expect(reopened.thread(f.threadID)?.workspaceLifecycle?.snoozedUntil == until)
         #expect(reopened.thread(f.threadID)?.draft == "Keep my unsent draft 😀")

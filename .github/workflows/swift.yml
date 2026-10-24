@@ -30,7 +30,8 @@ jobs:
   build:
     runs-on: macos-26
     # Cold compilation has its own existing-sized budget. Listing tests builds
-    # every test executable without running or substituting for any test.
+    # every test executable without running or substituting for any test. The
+    # packaged app is uploaded here so desktop UI shards run alongside the tests.
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,6 +49,20 @@ jobs:
           swift test list > "$RUNNER_TEMP/coincide-swift-test-list.txt"
           test -s "$RUNNER_TEMP/coincide-swift-test-list.txt"
           swift --version > .build/coincide-swift-toolchain.txt
+      - name: Package the native app
+        run: ./script/build_and_run.sh --build-only
+      - name: Verify app signature
+        run: codesign --verify --strict dist/Coincide.app
+      - name: Verify native resource loading
+        run: dist/Coincide.app/Contents/MacOS/Coincide --verify-resources
+      - name: Archive the verified SwiftPM app for native UI testing
+        run: tar -czf "$RUNNER_TEMP/coincide-native-app.tgz" -C dist Coincide.app
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coincide-native-app-${{ github.sha }}
+          path: ${{ runner.temp }}/coincide-native-app.tgz
+          if-no-files-found: error
+          retention-days: 1
   test:
     needs: [build]
     runs-on: macos-26
@@ -68,27 +83,6 @@ jobs:
       - name: Begin Swift test diagnostic window
         run: |
           python3 -c 'import os, pathlib, time; pathlib.Path(os.environ["RUNNER_TEMP"], "coincide-swift-tests-started").write_text(str(time.time()))'
-      - name: Inspect the Codex executable directly
-        id: codex_direct_inspection
-        shell: bash
-        continue-on-error: true
-        # Compare the public verifier without the installer's default async
-        # Inspector closure. A separate helper keeps the observations independent.
-        run: |
-          swift test --skip-build --no-parallel --filter codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstallationClosure 2>&1 | tee "$RUNNER_TEMP/coincide-codex-direct-inspection.log"
-          grep -F '✔ Test codexDirectExecutableInspectionChecksPrivateHomeVersionAndHelpWithoutInstallationClosure() passed' "$RUNNER_TEMP/coincide-codex-direct-inspection.log"
-          grep -E 'Test run with 1 tests? in ' "$RUNNER_TEMP/coincide-codex-direct-inspection.log"
-      - name: Isolate the Codex executable inspection crash
-        id: codex_inspection
-        shell: bash
-        # A separate helper process distinguishes this test's own failure from
-        # corruption by an earlier case. Its outcome is enforced after the full
-        # suite, so neither failure nor success can replace normal coverage.
-        continue-on-error: true
-        run: |
-          swift test --skip-build --no-parallel --filter codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp 2>&1 | tee "$RUNNER_TEMP/coincide-codex-inspection.log"
-          grep -F '✔ Test codexManagedInstallKeepsWholeResourceTreeAndChecksOnlyPrivateHomeVersionAndHelp() passed' "$RUNNER_TEMP/coincide-codex-inspection.log"
-          grep -E 'Test run with 1 tests? in ' "$RUNNER_TEMP/coincide-codex-inspection.log"
       - name: Build and test
         id: swift_tests
         # Process/PTY and deadline regressions share a small hosted runner. Keep
@@ -101,13 +95,13 @@ jobs:
         # default closure can have incompatible library/client frame records.
         run: python3 script/check_async_default_contexts.py .build
       - name: Collect sanitized Swift test crash stacks
-        if: always() && (steps.swift_tests.outcome == 'failure' || steps.codex_inspection.outcome == 'failure' || steps.codex_direct_inspection.outcome == 'failure')
+        if: always() && steps.swift_tests.outcome == 'failure'
         continue-on-error: true
         # ReportCrash may finish after the test helper exits. Poll diagnostics
         # only; the failed test suite is never repeated or changed to success.
         run: python3 script/collect_test_crashes.py --since-file "$RUNNER_TEMP/coincide-swift-tests-started" --output "$RUNNER_TEMP/coincide-test-crashes" --wait-seconds 30
       - name: Keep sanitized Swift test crash stacks
-        if: always() && (steps.swift_tests.outcome == 'failure' || steps.codex_inspection.outcome == 'failure' || steps.codex_direct_inspection.outcome == 'failure')
+        if: always() && steps.swift_tests.outcome == 'failure'
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -115,27 +109,9 @@ jobs:
           path: ${{ runner.temp }}/coincide-test-crashes/*.json
           if-no-files-found: ignore
           retention-days: 7
-      - name: Enforce the isolated Codex inspection result
-        if: always() && (steps.codex_inspection.outcome == 'failure' || steps.codex_direct_inspection.outcome == 'failure')
-        run: |
-          echo "A separate Codex inspection failed. The complete suite still ran and its result is retained."
-          exit 1
-      - name: Package the native app
-        run: ./script/build_and_run.sh --build-only
-      - name: Verify app signature
-        run: codesign --verify --strict dist/Coincide.app
-      - name: Verify native resource loading
-        run: dist/Coincide.app/Contents/MacOS/Coincide --verify-resources
-      - name: Archive the verified SwiftPM app for native UI testing
-        run: tar -czf "$RUNNER_TEMP/coincide-native-app.tgz" -C dist Coincide.app
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coincide-native-app-${{ github.sha }}
-          path: ${{ runner.temp }}/coincide-native-app.tgz
-          if-no-files-found: error
-          retention-days: 1
   native-ui-shard:
-    needs: [test, changes]
+    # Starts with the Swift tests: both need only the build job's verified app/cache.
+    needs: [build, changes]
     if: needs.changes.outputs.macos_ui == 'true'
     runs-on: macos-26
     # Each host runs one disjoint selection serially; native windows never compete

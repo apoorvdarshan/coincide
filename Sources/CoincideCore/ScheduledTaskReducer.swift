@@ -115,10 +115,6 @@ extension WorkspaceDecision {
             }
             do {
                 if let runtime = thread.claudeRuntimeConfiguration { thread.claudeRuntimeConfiguration = try runtime.replacingWorkspace(thread.workspacePath) }
-                if let pi = thread.piConfiguration, let runtime = pi.runtime {
-                    thread.piConfiguration = .init(instanceID: pi.instanceID, executable: pi.executable, model: pi.model, thinkingLevel: pi.thinkingLevel,
-                        runtime: try runtime.replacingWorkspace(thread.workspacePath))
-                }
             } catch is CoincideError { throw ScheduledTaskError.sourceChanged }
             let created = try Self.make(.client(.createThread(thread)), id: id, snapshot: decision.snapshot, now: now, validatingLedger: false)
             decision = created
@@ -127,8 +123,7 @@ extension WorkspaceDecision {
                 do {
                     preparation = try Self.reduceWorktreePreparation(.beginWorktreePreparation(threadID: thread.id, request: request,
                         expectedSourcePath: thread.workspacePath, previousAttemptID: nil, incarnation: id, reviewSetup: true,
-                        claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true)),
-                        piRuntimeConfiguration: try thread.piConfiguration?.runtime?.replacingWorkspace(request.destinationPath, physicalPath: PiRuntimeConfiguration.physical(request.destinationPath, allowMissing: true))),
+                        claudeRuntimeConfiguration: try thread.claudeRuntimeConfiguration?.replacingWorkspace(request.destinationPath, physicalPath: ClaudeRuntimeValidation.physical(request.destinationPath, allowMissing: true))),
                         snapshot: decision.snapshot, now: now)
                 } catch is CoincideError { throw ScheduledTaskError.sourceChanged }
                 decision.snapshot = preparation.snapshot; decision.effects += preparation.effects

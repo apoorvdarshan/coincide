@@ -90,7 +90,7 @@ struct DelegatedTaskCoreFixture {
     func thread(_ id: UUID? = nil) async throws -> CodingThread { try #require(await engine.current().snapshot.threads.first { $0.id == (id ?? parentID) }) }
     func request(task: String = "Inspect only this self-contained brief", mode: DelegatedTaskMode = .async, parentID: UUID? = nil) async throws -> DelegatedTaskRequest {
         let parent = try await thread(parentID); var configuration = ProviderConfiguration(thread: parent)
-        configuration.nativeThreadID = nil; configuration.claudeLaunchSelection = nil; configuration.piFreshSessionIntent = nil
+        configuration.nativeThreadID = nil; configuration.claudeLaunchSelection = nil
         return .init(parentThreadID: parent.id, parentRunID: try #require(parent.activeRun?.id), expectedConfiguration: .init(thread: parent), configuration: configuration,
             task: task, title: "Captured task", role: .review, mode: mode)
     }
@@ -289,8 +289,7 @@ func taskEventually(_ predicate: () async throws -> Bool) async throws {
         try await f.peer.complete(f.parentID, text: "Completed parent boundary")
         try await taskEventually { try await f.thread().activeRun == nil }
         let parent = try await f.thread(); var destination = ProviderConfiguration(thread: parent)
-        destination.provider = .opencode; destination.model = ""; destination.nativeThreadID = nil
-        destination.openCodeConfiguration = .init(executable: "/offline-task-context-peer")
+        destination.provider = .claude; destination.model = ""; destination.nativeThreadID = nil
         let review = try await f.engine.reviewContextTransfer(.init(sourceThreadID: parent.id, expectedConfiguration: .init(thread: parent), sourcePoint: .run(parentRunID), intent: .providerHandoff(destination: destination)))
         _ = try await f.engine.acceptContextTransfer(reviewID: review.id, digest: review.digest)
         try await f.peer.complete(accepted.childThreadID, text: "Task while context waits")
