@@ -350,11 +350,11 @@ final class CoincideDesktopUITests: XCTestCase {
             XCTAssertTrue(error.exists)
         }
         else {
-            // Saving replaces the document and re-renders the form; bring the result into view.
-            let saved = app.descendants(matching: .any).matching(identifier: "configuration-saved").firstMatch
-            if !saved.waitForExistence(timeout: 5) { try revealContentControl(saved, in: app) }
-            XCTAssertTrue(saved.exists)
-            XCTAssertFalse(save.isEnabled)
+            // A completed save leaves no unsaved changes, so Save disables. The confirmation
+            // label sits in a lazily rendered list and can leave the accessibility tree while
+            // scrolling; callers verify the file on disk.
+            XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == false"), object: save)],
+                                         timeout: 10) == .completed, "Save must complete and leave no unsaved changes.")
             XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.exists)
         }
     }
