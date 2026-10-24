@@ -6,7 +6,17 @@ struct ProviderMenu: View {
     let thread: CodingThread
     @State private var query = ""
     @State private var showAll = false
+    @FocusState private var searchFocused: Bool
     @AppStorage(ModelPickerPreferences.key) private var hiddenModels = "[]"
+    private var search: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var availableProviders: [ProviderKind] { ProviderKind.builtIn.filter { store.pickerProviderAvailable($0) } }
+    private var matchingProviders: [ProviderKind] {
+        availableProviders.filter { provider in
+            search.isEmpty || !visibleModels(provider).isEmpty ||
+                (store.models(for: provider).isEmpty &&
+                    (provider.name.localizedCaseInsensitiveContains(search) || "CLI default".localizedCaseInsensitiveContains(search)))
+        }
+    }
     private var controls: ProviderModelControlsPresentation { .init(thread: thread, models: store.models(for: thread)) }
     private var summary: String {
         guard !thread.model.isEmpty else { return "\(thread.provider.name) default" }
@@ -24,55 +34,71 @@ struct ProviderMenu: View {
                 Text(summary).lineLimit(1).truncationMode(.middle)
                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
             }.font(.system(size: 13)).frame(maxWidth: 270, alignment: .trailing).fixedSize(horizontal: false, vertical: true)
+                .frame(height: 30).padding(.horizontal, 6)
         }
-        .buttonStyle(.plain).accessibilityLabel("Choose model").accessibilityValue(summary)
+        .buttonStyle(.plain).modifier(ChatControlHover(selected: store.modelPickerPresented))
+        .accessibilityLabel("Choose model").accessibilityValue(summary)
         .accessibilityIdentifier("provider-model-menu").help(([summary] + controls.summaryComponents).joined(separator: " · "))
         .popover(isPresented: $store.modelPickerPresented, arrowEdge: .bottom) { picker }
     }
     private var picker: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
                 Text("Models").font(.system(size: 14, weight: .medium))
-                Spacer()
+                Spacer(minLength: 8)
                 if store.modelPickerLoading { ProgressView().controlSize(.small) }
-                Button { Task { await store.refreshPickerModels(force: true) } } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.plain).disabled(store.modelPickerLoading).help("Refresh models")
-                Button { store.showSettings(.models) } label: { Image(systemName: "slider.horizontal.3") }
-                    .buttonStyle(.plain).help("Choose models to show").accessibilityLabel("Model picker settings")
+                Button { Task { await store.refreshPickerModels(force: true) } } label: {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .modifier(ProviderPickerIconAppearance())
+                .disabled(store.modelPickerLoading)
+                .help("Refresh models").accessibilityLabel("Refresh models")
             }
-            TextField("Search models", text: $query).textFieldStyle(.roundedBorder)
+            searchField
             ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(ProviderKind.builtIn.filter { store.pickerProviderAvailable($0) }) { provider in
-                        HStack(spacing: 8) { ProviderLogo(provider: provider); Text(provider.name) }
-                            .font(.system(size: 12)).foregroundStyle(.secondary).padding(.top, 6)
-                        let models = visibleModels(provider)
-                        ForEach(models) { model in modelRow(provider, model: model) }
-                        if store.models(for: provider).isEmpty {
-                            Button("Use \(provider.name) CLI default") { choose(provider, modelID: "") }
-                                .buttonStyle(.plain).padding(.vertical, 7).disabled(!canChoose(provider))
-                            Text(store.modelCatalogErrors[provider] == nil ? "Loading available models…" : "Models unavailable. Check agent setup or refresh.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        } else if models.isEmpty {
-                            Text(query.isEmpty ? "No models shown. Use All models or change Settings." : "No matching models")
-                                .font(.caption).foregroundStyle(.secondary).padding(.vertical, 7)
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(matchingProviders) { provider in
+                        providerSection(provider)
+                    }
+                    if availableProviders.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("No agents available").font(.system(size: 13))
+                            Text("Connect Codex or Claude in Settings to load models.")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
                         }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10).padding(.vertical, 18)
+                    } else if matchingProviders.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("No matching models").font(.system(size: 13))
+                            Text("Try another model or agent name.")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10).padding(.vertical, 18)
                     }
-                    if !ProviderKind.builtIn.contains(where: store.pickerProviderAvailable) {
-                        Text("Connect Codex or Claude in Settings to load models.").foregroundStyle(.secondary)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(height: 270)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.hidden)
+            .frame(height: 270)
             if !ModelPickerPreferences.hidden(hiddenModels).isEmpty {
-                Toggle("All models", isOn: $showAll).toggleStyle(.switch).controlSize(.small)
+                Toggle("All models", isOn: $showAll)
+                    .font(.system(size: 12)).toggleStyle(.switch).controlSize(.mini)
+                    .padding(.horizontal, 2)
             }
             if !thread.messages.isEmpty {
-                Text("Switch models and agents in this conversation. Saved history goes with you.").font(.caption).foregroundStyle(.secondary)
+                Text("Switch models and agents in this conversation. Saved history goes with you.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 2)
             }
-            Divider()
-            HStack {
-                Text(thread.provider.name).font(.caption).foregroundStyle(.secondary)
-                Spacer()
+            Rectangle().fill(ChatChrome.separator).frame(height: 1)
+            HStack(spacing: 8) {
+                ProviderLogo(provider: thread.provider, size: 12)
+                Text(thread.provider.name).font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer(minLength: 6)
                 Menu("Model options") {
                     if thread.provider == .codex {
                         Button("CLI default model") { _ = store.useCodexDefaultModel(thread.id) }
@@ -84,16 +110,84 @@ struct ProviderMenu: View {
                         Button("CLI default model") { store.setModel("", id: thread.id) }
                         claudeOptions
                     }
-                }.menuStyle(.borderlessButton).fixedSize()
+                }
+                .font(.system(size: 12))
+                .menuStyle(.borderlessButton).fixedSize()
+                Button { store.showSettings(.models) } label: {
+                    Image(systemName: "slider.horizontal.3").font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .modifier(ProviderPickerIconAppearance())
+                .help("Choose models to show").accessibilityLabel("Model picker settings")
             }
         }
-        .padding(12).frame(width: 310).background(ChatChrome.sidebar)
+        .padding(12).frame(width: 330).background(ChatChrome.sidebar)
+        .onAppear { searchFocused = true }
         .task { await store.refreshPickerModels() }
     }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .frame(width: 14)
+            TextField("Search models", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused($searchFocused)
+                .accessibilityLabel("Search models")
+            Button { query = ""; searchFocused = true } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .frame(width: 22, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(query.isEmpty ? 0 : 1)
+            .disabled(query.isEmpty)
+            .accessibilityHidden(query.isEmpty)
+            .help("Clear search").accessibilityLabel("Clear model search")
+        }
+        .padding(.leading, 10).padding(.trailing, 4)
+        .frame(height: 34)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(searchFocused ? 0.16 : 0.06)) }
+    }
+
+    @ViewBuilder private func providerSection(_ provider: ProviderKind) -> some View {
+        let models = visibleModels(provider)
+        HStack(spacing: 7) {
+            ProviderLogo(provider: provider, size: 12)
+            Text(provider.name).font(.system(size: 12))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 5)
+        ForEach(models) { model in modelRow(provider, model: model) }
+        if store.models(for: provider).isEmpty {
+            modelChoice(provider, title: "Use \(provider.name) CLI default", modelID: "")
+            if store.modelPickerLoading {
+                pickerMessage("Loading available models…")
+            } else if store.modelCatalogErrors[provider] != nil {
+                pickerMessage("Models unavailable. Refresh or review agent setup in Settings.")
+            } else {
+                pickerMessage("The CLI did not report any models. You can use its default.")
+            }
+        } else if models.isEmpty {
+            pickerMessage(query.isEmpty ? "No models shown. Use All models or change Settings." : "No matching models")
+        }
+    }
+
+    private func pickerMessage(_ text: LocalizedStringKey) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10).padding(.vertical, 8)
+    }
     private func visibleModels(_ provider: ProviderKind) -> [ProviderModel] {
-        store.models(for: provider).filter { model in
+        return store.models(for: provider).filter { model in
             (showAll || !ModelPickerPreferences.hidden(hiddenModels).contains(ModelPickerPreferences.id(provider, model.id))) &&
-                (query.isEmpty || model.name.localizedCaseInsensitiveContains(query) || model.id.localizedCaseInsensitiveContains(query))
+                (search.isEmpty || provider.name.localizedCaseInsensitiveContains(search) ||
+                 model.name.localizedCaseInsensitiveContains(search) || model.id.localizedCaseInsensitiveContains(search))
         }
     }
     private func canChoose(_ provider: ProviderKind) -> Bool {
@@ -101,15 +195,28 @@ struct ProviderMenu: View {
         (provider == thread.provider || (!thread.isBusy && thread.queuedTurns.isEmpty && thread.runtimeRequests.isEmpty))
     }
     private func modelRow(_ provider: ProviderKind, model: ProviderModel) -> some View {
-        Button { choose(provider, modelID: model.id) } label: {
-            HStack(spacing: 10) {
-                Text(model.name).lineLimit(2).multilineTextAlignment(.leading)
-                Spacer(minLength: 8)
-                if provider == thread.provider && model.id == thread.model { Image(systemName: "checkmark") }
-            }.font(.system(size: 13)).padding(.horizontal, 10).padding(.vertical, 8).contentShape(Rectangle())
-                .background(provider == thread.provider && model.id == thread.model ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
-        }.buttonStyle(.plain).disabled(!canChoose(provider))
+        modelChoice(provider, title: model.name, modelID: model.id)
             .accessibilityIdentifier("provider-model-" + ModelPickerPreferences.id(provider, model.id))
+    }
+    private func modelChoice(_ provider: ProviderKind, title: String, modelID: String) -> some View {
+        let selected = provider == thread.provider && modelID == thread.model
+        return Button { choose(provider, modelID: modelID) } label: {
+            HStack(alignment: .center, spacing: 10) {
+                Text(verbatim: title).font(.system(size: 13))
+                    .lineLimit(2).multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 16, height: 16)
+                    .opacity(selected ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .modifier(ProviderPickerRowAppearance(selected: selected))
+        .disabled(!canChoose(provider))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
     private func choose(_ provider: ProviderKind, modelID: String) {
         Task {
@@ -336,4 +443,34 @@ struct ProviderModelControlsPresentation {
         return []
     }
     static func contextTitle(_ value: String) -> String { value == "1m" ? "1M" : value }
+}
+
+private struct ProviderPickerRowAppearance: ViewModifier {
+    let selected: Bool
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .background(Color.primary.opacity(selected ? 0.08 : hovered && enabled ? 0.045 : 0), in: RoundedRectangle(cornerRadius: 7))
+            .opacity(enabled ? 1 : 0.45)
+            .onHover { hovered = $0 }
+    }
+}
+
+private struct ProviderPickerIconAppearance: ViewModifier {
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(.secondary)
+            .frame(width: 28, height: 28)
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .background(Color.primary.opacity(hovered && enabled ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .opacity(enabled ? 1 : 0.4)
+            .onHover { hovered = $0 }
+    }
 }

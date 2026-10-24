@@ -14,6 +14,7 @@ struct ComposerSelectionBridge: NSViewRepresentable {
     let request: ComposerSelectionRequest?
     let selectionChanged: @MainActor (String, NSRange) -> Void
     let keyDown: @MainActor (NSEvent) -> Bool
+    var placeholder: String? = nil
     var heightChanged: (@MainActor (CGFloat) -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> Anchor {
@@ -39,6 +40,7 @@ struct ComposerSelectionBridge: NSViewRepresentable {
         private var scheduled = false
         private var detached = false
         private var appliedRequest: UUID?
+        private var placeholderView: ComposerPlaceholderView?
         init(_ parent: ComposerSelectionBridge) { self.parent = parent }
         func scheduleAttach() {
             guard !detached, !scheduled else { return }; scheduled = true
@@ -58,6 +60,14 @@ struct ComposerSelectionBridge: NSViewRepresentable {
                     ancestor = view.superview
                 }
                 if let editor {
+                    if parent.placeholder != nil {
+                        let hint = ComposerPlaceholderView(frame: editor.bounds)
+                        hint.editor = editor
+                        hint.autoresizingMask = [.width, .height]
+                        hint.setAccessibilityElement(false)
+                        editor.addSubview(hint)
+                        placeholderView = hint
+                    }
                     ComposerEditorRegistry.register(editor)
                     for name in [NSTextView.didChangeSelectionNotification, NSText.didChangeNotification] {
                         observations.append(NotificationCenter.default.addObserver(forName: name, object: editor, queue: .main) { [weak self] _ in
@@ -90,6 +100,9 @@ struct ComposerSelectionBridge: NSViewRepresentable {
         private func publish() {
             guard let editor else { return }
             parent.selectionChanged(editor.string, editor.selectedRange())
+            placeholderView?.text = parent.placeholder ?? ""
+            placeholderView?.isHidden = parent.placeholder == nil || !editor.string.isEmpty || editor.hasMarkedText()
+            placeholderView?.needsDisplay = true
             guard let heightChanged = parent.heightChanged, let container = editor.textContainer,
                   container.containerSize.width > 0 else { return }
             // Measure native wrapping at the actual editor width. Stop once the
@@ -107,6 +120,7 @@ struct ComposerSelectionBridge: NSViewRepresentable {
             heightChanged(contentHeight + editor.textContainerInset.height * 2)
         }
         private func stopObserving() {
+            placeholderView?.removeFromSuperview(); placeholderView = nil
             for token in observations { NotificationCenter.default.removeObserver(token) }; observations.removeAll()
             if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         }

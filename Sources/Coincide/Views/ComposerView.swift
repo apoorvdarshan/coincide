@@ -76,13 +76,13 @@ struct ComposerView: View {
             }
             if let draftTools, let draftThreadID { ComposerDraftToolsFeedback(store: draftTools, threadID: draftThreadID) }
             ZStack(alignment: .topLeading) {
-                if text.isEmpty { Text("Work with \(providerName ?? provider.name)").font(.system(size: 14)).foregroundStyle(.secondary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
                 TextEditor(text: $text).font(.system(size: 14)).frame(height: editorHeight)
                     .accessibilityIdentifier("composer-input")
                     .focused($editorFocused)
                     .onAppear { editorFocused = true }
                     .scrollContentBackground(.hidden).accessibilityLabel(Text(inputAccessibilityLabel ?? "Message to \(providerName ?? provider.name)"))
                     .background(ComposerSelectionBridge(request: selectionRequest, selectionChanged: observeSelection, keyDown: handleSkillKey,
+                        placeholder: String(localized: "Work with \(providerName ?? provider.name)"),
                         heightChanged: { measured in
                             let height = min(150, max(42, ceil(measured)))
                             if editorHeight != height { editorHeight = height }
@@ -115,9 +115,9 @@ struct ComposerView: View {
                     .accessibilityIdentifier("composer-steering-explanation")
             }
         }
-        .padding(14)
+        .padding(16)
         .background(ChatChrome.composer, in: RoundedRectangle(cornerRadius: 22))
-        .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(Color.primary.opacity(0.04), lineWidth: 1).allowsHitTesting(false) }
+        .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(Color.primary.opacity(editorFocused ? 0.12 : 0.065), lineWidth: 1).allowsHitTesting(false) }
         .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $dropTargeted) { providers in importProviders(providers); return true }
         .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false) } }
         .background { geometry("bounds") }
@@ -135,8 +135,9 @@ struct ComposerView: View {
             if let referenceFile { Button("Reference a workspace file…", action: referenceFile).accessibilityIdentifier("composer-reference-file") }
             if skills?.supportsSkills == true { Button("Skills…", action: openSkills).accessibilityIdentifier("composer-skills") }
             if skills?.supportsCommands == true { Button("Commands…", action: openCommands).accessibilityIdentifier("composer-commands") }
-        } label: { Image(systemName: "plus").font(.system(size: 19)).frame(width: 26, height: 26) }
+        } label: { Image(systemName: "plus").font(.system(size: 18)).frame(width: 30, height: 30) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(submitting)
+        .modifier(ChatControlHover())
         .help("Add files, skills or commands").accessibilityLabel("Add files and tools")
     }
     private var permissionControl: some View {
@@ -147,8 +148,9 @@ struct ComposerView: View {
                     else { Text(mode.nativeTitle(for: provider)) }
                 }
             }
-        } label: { Label(permission.nativeTitle(for: provider), systemImage: "slider.horizontal.3").font(.system(size: 12)) }
-        .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
+        } label: { Label(permission.nativeTitle(for: provider), systemImage: "slider.horizontal.3").font(.system(size: 13)) }
+        .menuStyle(.borderlessButton).fixedSize().frame(height: 30).padding(.horizontal, 5).disabled(historyLocked)
+        .modifier(ChatControlHover())
         .accessibilityLabel("\(provider.name) permissions")
         .help(provider == .codex ? "Codex sandbox and approval policy for future turns." : "Claude Code permission mode for future turns.")
     }

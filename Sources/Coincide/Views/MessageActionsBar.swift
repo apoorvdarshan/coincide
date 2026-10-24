@@ -29,9 +29,10 @@ struct MessageActionsBar: View {
     @State private var copyReset: Task<Void, Never>?
     @FocusState private var focused: String?
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 4) {
             if role == .user {
                 timestamp
                 if steered {
@@ -57,16 +58,18 @@ struct MessageActionsBar: View {
                 timestamp
             }
         }
-        .font(.caption).foregroundStyle(.secondary).buttonStyle(.plain).labelStyle(.iconOnly)
+        .font(.system(size: 12)).foregroundStyle(.secondary)
+        .buttonStyle(ChatIconButtonStyle(size: 28)).labelStyle(.iconOnly)
         .opacity(visible || voiceOver || focused != nil ? 1 : 0)
-        .animation(.easeOut(duration: 0.12), value: visible)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: visible)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("message-actions-\(message.id)")
         .onDisappear { copyReset?.cancel(); copyReset = nil; copied = false }
     }
 
     private var timestamp: some View {
-        Text(actions.timestamps.dayAware(message.createdAt)).monospacedDigit().foregroundStyle(.tertiary)
+        Text(actions.timestamps.dayAware(message.createdAt)).font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+            .padding(.horizontal, 5)
             .help(actions.timestamps.tooltip(message.createdAt))
             .accessibilityLabel(String(localized: "Sent \(actions.timestamps.tooltip(message.createdAt))"))
             .accessibilityIdentifier("message-timestamp-\(message.id)")

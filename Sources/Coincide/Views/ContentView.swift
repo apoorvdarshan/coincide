@@ -56,7 +56,7 @@ struct ContentView: View {
         } else {
             VStack(spacing: 24) {
                 Spacer()
-                Text("What should we work on?").font(.system(size: 25))
+                Text("What should we work on?").font(.system(size: 25)).multilineTextAlignment(.center)
                 Button { store.newThread() } label: {
                     HStack {
                         Text("Start a conversation").foregroundStyle(.secondary)

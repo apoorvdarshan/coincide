@@ -19,11 +19,15 @@ struct SidebarView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     sectionTitle("Projects")
-                    ForEach(store.orderedProjects.filter { $0.scratch == nil }) { project in
+                    let projects = store.orderedProjects.filter { $0.scratch == nil }
+                    ForEach(projects) { project in
                         projectRow(project)
                         if store.isProjectExpanded(project.id) {
                             projectChats(project)
                         }
+                    }
+                    if projects.isEmpty {
+                        emptyState("No projects yet", detail: "Add a folder to keep related chats together.")
                     }
                     HStack {
                         sectionTitle(store.showArchived ? "Archived chats" : "Recents")
@@ -34,10 +38,8 @@ struct SidebarView: View {
                             Image(systemName: "archivebox")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 28, height: 28)
-                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(SidebarIconButtonStyle(size: 26))
                         .help(store.showArchived ? "Show recent chats" : "Show archived chats")
                         .accessibilityLabel(store.showArchived ? "Show recent chats" : "Show archived chats")
                     }
@@ -46,15 +48,17 @@ struct SidebarView: View {
                         threadRow(entry.thread)
                     }
                     if store.visibleThreads.isEmpty {
-                        Text(store.search.isEmpty ? "No conversations yet" : "No matching conversations")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 8)
+                        if !store.search.isEmpty {
+                            emptyState("No matching conversations", detail: "Try another chat title or message.")
+                        } else if store.showArchived {
+                            emptyState("No archived chats", detail: "Conversations you archive appear here.")
+                        } else {
+                            emptyState("No conversations yet", detail: "Start a new chat above.")
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
-                .padding(.bottom, 12)
+                .padding(.bottom, 16)
             }
             .scrollIndicators(.hidden)
             bottomMenu
@@ -95,53 +99,67 @@ struct SidebarView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 14) {
-                Text("Coincide").font(.system(size: 16, weight: .medium)).foregroundStyle(.primary)
+        VStack(spacing: 9) {
+            HStack(spacing: 3) {
+                Text("Coincide").font(.system(size: 15, weight: .medium)).foregroundStyle(.primary)
                 Spacer(minLength: 4)
                 Button {
                     searchVisible.toggle()
                     if searchVisible { searchFocused = true }
                     else { store.search = ""; searchFocused = false }
                 } label: {
-                    Image(systemName: "magnifyingglass").frame(width: 20, height: 24)
+                    Image(systemName: "magnifyingglass")
                 }
+                .buttonStyle(SidebarIconButtonStyle())
                 .help("Search chats").accessibilityLabel("Search chats")
                 Button { store.sidebarVisible = false } label: {
-                    Image(systemName: "sidebar.left").frame(width: 20, height: 24)
+                    Image(systemName: "sidebar.left")
                 }
+                .buttonStyle(SidebarIconButtonStyle())
                 .help("Hide sidebar").accessibilityLabel("Hide sidebar")
             }
             .font(.system(size: 14))
-            .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             Button { store.newThread() } label: {
-                Label("New chat", systemImage: "square.and.pencil")
-                    .font(.system(size: 13))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                HStack(spacing: 9) {
+                    Image(systemName: "square.and.pencil").font(.system(size: 15)).frame(width: 16)
+                    Text("New chat").font(.system(size: 13, weight: .medium))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .modifier(SidebarRowAppearance())
+            .buttonStyle(SidebarRowStyle())
             .padding(.horizontal, -8)
             if searchVisible || !store.search.isEmpty {
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     TextField("Search chats", text: $store.search)
                         .textFieldStyle(.plain)
                         .focused($searchFocused)
                         .accessibilityLabel("Search conversations")
+                    if !store.search.isEmpty {
+                        Button {
+                            store.search = ""
+                            searchFocused = true
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(SidebarIconButtonStyle(size: 22))
+                        .help("Clear search").accessibilityLabel("Clear search")
+                    }
                 }
                 .font(.system(size: 13))
-                .padding(.horizontal, 8)
-                .frame(height: 32)
+                .padding(.leading, 10).padding(.trailing, 5)
+                .frame(height: 34)
                 .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
                 .padding(.horizontal, -8)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
     }
 
     private var bottomMenu: some View {
@@ -156,22 +174,36 @@ struct SidebarView: View {
                 Label("Add project", systemImage: "folder.badge.plus")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
                     .frame(height: 32)
+                    .modifier(SidebarControlHover())
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 10)
+        .background(ChatChrome.sidebar)
+        .overlay(alignment: .top) { Rectangle().fill(ChatChrome.separator).frame(height: 1) }
     }
 
     private func sectionTitle(_ text: LocalizedStringKey) -> some View {
         Text(text)
-            .font(.system(size: 12))
+            .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
-            .frame(height: 28, alignment: .leading)
+            .frame(height: 26, alignment: .leading)
+    }
+
+    private func emptyState(_ title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 12))
+            Text(detail).font(.system(size: 12)).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8).padding(.vertical, 8)
     }
 
     private func projectRow(_ project: WorkspaceProject) -> some View {
@@ -181,17 +213,20 @@ struct SidebarView: View {
             store.selectedProjectID = project.id
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "folder").font(.system(size: 14)).foregroundStyle(.secondary)
-                Text(project.name).font(.system(size: 13)).lineLimit(1)
+                Image(systemName: "folder")
+                    .font(.system(size: 14)).foregroundStyle(.secondary).frame(width: 16)
+                Text(project.name).font(.system(size: 13, weight: .medium))
+                    .lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9)).foregroundStyle(.secondary)
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                    .frame(width: 12)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .modifier(SidebarRowAppearance())
+        .buttonStyle(SidebarRowStyle())
+        .help(project.name + "\n" + project.path)
         .accessibilityLabel(Text("Chats in \(project.name)"))
         .accessibilityValue(expanded ? Text("Expanded") : Text("Collapsed"))
         .contextMenu {
@@ -211,11 +246,10 @@ struct SidebarView: View {
             Button(expandedChatLists.contains(project.id) ? "Show less" : "Show all \(chats.count) chats") {
                 if !expandedChatLists.insert(project.id).inserted { expandedChatLists.remove(project.id) }
             }
-            .buttonStyle(.plain)
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .modifier(SidebarRowAppearance())
+            .buttonStyle(SidebarRowStyle(height: 28))
             .padding(.leading, 22)
         }
     }
@@ -228,22 +262,25 @@ struct SidebarView: View {
         return Button { store.selectThread(thread.id) } label: {
             HStack(spacing: 6) {
                 if thread.isPinned {
-                    Image(systemName: "pin").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Image(systemName: "pin").font(.system(size: 10)).foregroundStyle(.secondary)
                 }
-                Text(thread.title).font(.system(size: 13)).lineLimit(1)
+                Text(thread.title).font(.system(size: 13, weight: selected ? .medium : .regular))
+                    .lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
                 if let status = status(thread) {
                     Text(status).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .modifier(SidebarRowAppearance(selected: selected))
+        .buttonStyle(SidebarRowStyle(selected: selected))
         .padding(.leading, nested ? 22 : 0)
+        .help(thread.title)
         .accessibilityIdentifier((nested ? "project-thread-" : "thread-") + thread.id.uuidString)
         .accessibilityValue(selected ? Text("Selected") : Text(""))
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .contextMenu {
             Button(thread.isPinned ? "Unpin" : "Pin") { store.togglePin(thread.id) }
             Button("Rename…") { title = thread.title; renaming = .thread(thread.id) }
@@ -280,15 +317,41 @@ private struct SidebarChatEntry: Identifiable {
     var id: String { (projectID?.uuidString ?? "recent") + "/" + thread.id.uuidString }
 }
 
-private struct SidebarRowAppearance: ViewModifier {
+private struct SidebarRowStyle: ButtonStyle {
     var selected = false
+    var height: CGFloat = 32
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 8)
+            .frame(height: height)
+            .background(Color.primary.opacity(configuration.isPressed ? 0.12 : selected ? 0.085 : hovered ? 0.045 : 0), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .onHover { hovered = $0 }
+    }
+}
+
+private struct SidebarIconButtonStyle: ButtonStyle {
+    var size: CGFloat = 28
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(width: size, height: size)
+            .background(Color.primary.opacity(configuration.isPressed ? 0.10 : hovered ? 0.055 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .onHover { hovered = $0 }
+    }
+}
+
+private struct SidebarControlHover: ViewModifier {
     @State private var hovered = false
 
     func body(content: Content) -> some View {
         content
-            .padding(.horizontal, 8)
-            .frame(height: 32)
-            .background(Color.primary.opacity(selected ? 0.09 : hovered ? 0.045 : 0), in: RoundedRectangle(cornerRadius: 7))
+            .background(Color.primary.opacity(hovered ? 0.045 : 0), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(RoundedRectangle(cornerRadius: 7))
             .onHover { hovered = $0 }
     }
 }

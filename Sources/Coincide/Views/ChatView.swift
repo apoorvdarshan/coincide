@@ -43,9 +43,10 @@ struct ChatView: View {
             }.disabled(!store.workspaceReady(for: thread))
         } label: {
             Label(store.snapshot.projects.first { $0.id == thread.projectID }?.name ?? "Choose project", systemImage: "folder")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
         }
-        .menuStyle(.borderlessButton).fixedSize()
+        .menuStyle(.borderlessButton).fixedSize().frame(height: 28).padding(.horizontal, 6)
+        .modifier(ChatControlHover()).help(thread.workspacePath)
         .accessibilityIdentifier("conversation-workspace")
         .accessibilityLabel("Conversation project").accessibilityValue(thread.workspacePath)
     }
@@ -60,15 +61,16 @@ struct ChatView: View {
             VStack(spacing: 0) {
                 if !thread.visibleMessages.isEmpty {
                 HStack(spacing: 12) {
-                    Text(thread.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                    Text(thread.title).font(.system(size: 14, weight: .medium)).lineLimit(1).help(thread.title)
                     Spacer()
                     workspaceMenu(thread)
                 }.padding(.horizontal, 24).frame(height: 52)
+                    .overlay(alignment: .bottom) { Rectangle().fill(ChatChrome.separator).frame(height: 1) }
                 }
                 if thread.visibleMessages.isEmpty {
                     Spacer(minLength: 32)
                     Text("What should we work on?").font(.system(size: 25, weight: .regular))
-                        .padding(.bottom, 24)
+                        .multilineTextAlignment(.center).padding(.horizontal, 28).padding(.bottom, 26)
                 } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -131,13 +133,15 @@ struct ChatView: View {
                                  modelControl: AnyView(ProviderMenu(store: store, thread: thread).disabled(actionsLocked)))
                         .disabled(store.choosingModelThreads.contains(threadID))
                     if thread.visibleMessages.isEmpty {
-                        HStack(spacing: 22) {
+                        HStack(spacing: 12) {
                             workspaceMenu(thread)
-                            Button { store.chooseAttachments(threadID: threadID) } label: { Label("Add files", systemImage: "paperclip") }
+                            Button { store.chooseAttachments(threadID: threadID) } label: {
+                                Label("Add files", systemImage: "paperclip").frame(height: 28).padding(.horizontal, 6)
+                            }.modifier(ChatControlHover()).help("Attach files to this chat")
                             Spacer()
                         }
                         .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
                         .background(ChatChrome.footer, in: RoundedRectangle(cornerRadius: 16))
                         .padding(.horizontal, 10).padding(.top, -10)
                     }

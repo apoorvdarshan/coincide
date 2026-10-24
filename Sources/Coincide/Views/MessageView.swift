@@ -27,8 +27,8 @@ struct MessageView: View {
                             }
                             if let error = message.submissionError { Label(error, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                         }.padding(.horizontal, 18).padding(.vertical, 12)
-                            .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 22))
-                    }.coincideGlassGroup()
+                            .background(ChatChrome.composer, in: RoundedRectangle(cornerRadius: 20))
+                    }
                     MessageActionsBar(message: message, role: .user, actions: actions, steered: message.promptSteeringID != nil, visible: hovering)
                 }
             } else if message.role == .tool || message.role == .reasoning {
@@ -53,7 +53,7 @@ struct MessageView: View {
                         Button {
                             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string)
                         } label: { Image(systemName: "doc.on.doc").font(.caption).foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).help("Copy notice").accessibilityLabel("Copy notice")
+                        .buttonStyle(ChatIconButtonStyle(size: 28)).help("Copy notice").accessibilityLabel("Copy notice")
                     }
                 }
             }

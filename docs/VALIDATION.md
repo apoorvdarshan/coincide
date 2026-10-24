@@ -1,5 +1,28 @@
 # Validation record
 
+## 2026-10-24 — Native UI polish and composer alignment
+
+- Replaced the separately padded SwiftUI composer placeholder with a small
+  AppKit overlay drawn using the existing editor's font, text-container origin
+  and line padding. The existing text view, selection, input methods and undo
+  handling remain in place. Compared an unsent draft with the placeholder and
+  visually checked the empty editor's insertion point; cleared the draft.
+- Refined sidebar row spacing, selected states, tooltips and search clearing;
+  unified chat control hit areas and hover feedback; adjusted flat light/dark
+  surfaces and message bubbles. Model search matches agent names and hides
+  unrelated empty sections. Settings rows now adapt to available width without
+  replacing the mounted controls.
+- Inspected the home screen, populated chat, model picker, sidebar search, and
+  all eight embedded Settings pages using native app controls and the local CLI.
+  Checked light/dark appearances and window widths of 1438, 1050 and 900 points.
+  Restored System appearance, the original empty conversation and cleared search
+  fields. All window checks stayed on the built-in Retina display; no provider
+  message was submitted and the existing nine chats were preserved.
+- Final incremental build passed in 11.74 seconds; development packaging and
+  `codesign --verify --deep --strict` passed. Automated tests, provider execution
+  checks and CI remain deferred by user direction; this visual pass is not
+  exhaustive validation of every conversation or provider state.
+
 ## 2026-10-24 — Native chat-first UI and workspace UI removal
 
 - Installed the official ChatGPT desktop app (26.1021.22027, build 21747,

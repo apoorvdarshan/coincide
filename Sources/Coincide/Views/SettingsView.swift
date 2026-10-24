@@ -60,23 +60,30 @@ struct SettingsView: View {
     @State private var provider = ProviderKind.codex
     @State private var search = ""
     @State private var showingImport = false
+    @State private var hoveredPage: SettingsPage?
+    @State private var hoveredProvider: ProviderKind?
+    @FocusState private var searchIsFocused: Bool
     @Environment(KeybindingsStore.self) private var keybindings: KeybindingsStore?
 
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-            ScrollView {
-                VStack(alignment: .leading, spacing: 38) {
-                    Text(store.settingsPage.title)
-                        .font(.system(size: 26, weight: .regular))
-                        .accessibilityAddTraits(.isHeader)
-                    page
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 32) {
+                        Text(store.settingsPage.title)
+                            .font(.system(size: 26, weight: .regular))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        page
+                    }
+                    .frame(maxWidth: 720, alignment: .leading)
+                    .padding(.horizontal, geometry.size.width < 620 ? 24 : 40)
+                    .padding(.top, geometry.size.height < 680 ? 48 : 76).padding(.bottom, 48)
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
-                .frame(maxWidth: 720, alignment: .leading)
-                .padding(.horizontal, 32).padding(.top, 90).padding(.bottom, 56)
-                .frame(maxWidth: .infinity, alignment: .top)
+                .id(store.settingsPage)
             }
-            .id(store.settingsPage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(ChatChrome.canvas)
         }
@@ -86,32 +93,43 @@ struct SettingsView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("Settings").font(.system(size: 16, weight: .medium))
                 Spacer()
                 Button { store.showChat() } label: {
                     Image(systemName: "xmark").font(.system(size: 12))
-                        .foregroundStyle(.secondary).frame(width: 24, height: 24)
-                }.buttonStyle(.plain).help("Back to chat").accessibilityLabel("Back to chat")
+                        .foregroundStyle(.secondary).frame(width: 28, height: 28)
+                }.buttonStyle(SettingsSidebarControlStyle()).help("Back to chat").accessibilityLabel("Back to chat")
             }.padding(.horizontal, 8)
             HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.secondary)
                 TextField("Search", text: $search).textFieldStyle(.plain)
-                    .accessibilityLabel("Search settings")
-            }.padding(.horizontal, 12).frame(height: 36)
+                    .focused($searchIsFocused)
+                    .accessibilityLabel("Search settings").accessibilityIdentifier("settings-search")
+                if !search.isEmpty {
+                    Button { search = ""; searchIsFocused = true } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 12))
+                            .foregroundStyle(.secondary).frame(width: 20, height: 24)
+                    }.buttonStyle(SettingsSidebarControlStyle())
+                        .help("Clear search").accessibilityLabel("Clear settings search")
+                        .accessibilityIdentifier("settings-clear-search")
+                }
+            }.padding(.leading, 12).padding(.trailing, search.isEmpty ? 12 : 6).frame(height: 34)
                 .background(Color.primary.opacity(0.065), in: Capsule())
+                .overlay { Capsule().strokeBorder(Color.primary.opacity(searchIsFocused ? 0.15 : 0)).allowsHitTesting(false) }
             ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 22) {
                     navigationGroup("Personal", pages: [.general, .notifications, .appearance, .conversations, .keyboard])
                     navigationGroup("Integrations", pages: [.providers, .models])
                     navigationGroup("Coincide", pages: [.about])
                     if !SettingsPage.allCases.contains(where: matchesSearch) {
                         Text("No matching settings")
-                            .foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 12)
+                            .foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 4)
                     }
                 }
-            }
+                .padding(.top, 4).padding(.bottom, 12)
+            }.scrollIndicators(.hidden)
         }
         .padding(.horizontal, 12).padding(.top, 20).padding(.bottom, 12)
         .frame(width: 248).frame(maxHeight: .infinity, alignment: .topLeading)
@@ -132,22 +150,25 @@ struct SettingsView: View {
     @ViewBuilder private func navigationGroup(_ title: LocalizedStringKey, pages: [SettingsPage]) -> some View {
         let matches = pages.filter(matchesSearch)
         if !matches.isEmpty {
-            Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
-                .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 8)
-            ForEach(matches) { page in
-                Button { store.settingsPage = page } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: page.icon).font(.system(size: 14)).frame(width: 18)
-                        Text(page.title).font(.system(size: 13))
-                        Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 10).padding(.bottom, 6).accessibilityAddTraits(.isHeader)
+                ForEach(matches) { page in
+                    Button { store.settingsPage = page } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: page.icon).font(.system(size: 14)).frame(width: 18)
+                            Text(page.title).font(.system(size: 13)).lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(.primary).padding(.horizontal, 10).frame(height: 33)
+                        .contentShape(RoundedRectangle(cornerRadius: 7))
+                        .background(Color.primary.opacity(store.settingsPage == page ? 0.10 : hoveredPage == page ? 0.05 : 0), in: RoundedRectangle(cornerRadius: 7))
                     }
-                    .foregroundStyle(.primary).padding(.horizontal, 10).frame(height: 32)
-                    .contentShape(RoundedRectangle(cornerRadius: 7))
-                    .background(Color.primary.opacity(store.settingsPage == page ? 0.09 : 0), in: RoundedRectangle(cornerRadius: 7))
+                    .buttonStyle(.plain)
+                    .onHover { hoveredPage = $0 ? page : hoveredPage == page ? nil : hoveredPage }
+                    .accessibilityIdentifier("settings-page-" + page.rawValue)
+                    .accessibilityAddTraits(store.settingsPage == page ? .isSelected : [])
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("settings-page-" + page.rawValue)
-                .accessibilityAddTraits(store.settingsPage == page ? .isSelected : [])
             }
         }
     }
@@ -243,15 +264,18 @@ struct SettingsView: View {
                                 Text(agent.name).font(.system(size: 13, weight: .medium))
                                 Text(!store.models(for: agent).isEmpty ? "Models available" : store.pickerProviderAvailable(agent) ? "CLI found" : "Set up CLI")
                                     .font(.system(size: 12)).foregroundStyle(.secondary)
-                            }
+                            }.fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
-                            if provider == agent { Image(systemName: "checkmark").font(.system(size: 12)) }
+                            Image(systemName: "checkmark").font(.system(size: 12))
+                                .opacity(provider == agent ? 1 : 0).accessibilityHidden(true)
                         }
                         .padding(16).frame(maxWidth: .infinity)
                         .background(ChatChrome.settingsCard, in: RoundedRectangle(cornerRadius: 14))
-                        .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(provider == agent ? 0.28 : 0.08)) }
+                        .overlay { RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(hoveredProvider == agent ? 0.035 : 0)).allowsHitTesting(false) }
+                        .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(provider == agent ? 0.28 : hoveredProvider == agent ? 0.16 : 0.08)).allowsHitTesting(false) }
                         .contentShape(RoundedRectangle(cornerRadius: 14))
                     }.buttonStyle(.plain).accessibilityLabel(agent.name + " agent settings")
+                        .onHover { hoveredProvider = $0 ? agent : hoveredProvider == agent ? nil : hoveredProvider }
                         .accessibilityAddTraits(provider == agent ? .isSelected : [])
                 }
             }
@@ -281,5 +305,15 @@ struct SettingsView: View {
             } else { ClaudeRuntimeSettingsSection(runtime: store.claudeRuntime) }
             ShellEnvironmentSettings(environment: DesktopShell.shared.environment)
         }
+    }
+}
+
+private struct SettingsSidebarControlStyle: ButtonStyle {
+    @State private var isHovered = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Color.primary.opacity(configuration.isPressed ? 0.11 : isHovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .onHover { isHovered = $0 }
     }
 }
