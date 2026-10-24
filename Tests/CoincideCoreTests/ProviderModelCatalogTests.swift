@@ -79,8 +79,9 @@ func codexModelCatalogPreservesWireIdentityDynamicEffortsAndLegacyMissingMetadat
         #expect(model.reasoningEfforts.map(\.id) == ["medium", "future-super-effort"])
         #expect(model.reasoningEfforts.last?.description == "Future advertised depth 😀")
         #expect(model.defaultReasoningEffort == "future-super-effort" && model.isDefault)
-        #expect(models[1] == .init(id: "legacy-only-id", name: "legacy-only-id", catalogID: "legacy-only-id"))
-        #expect(models[2] == .init(id: "legacy-wire-only", name: "legacy-wire-only"))
+        // Codex app-server reports its collaboration modes for every model.
+        #expect(models[1] == .init(id: "legacy-only-id", name: "legacy-only-id", catalogID: "legacy-only-id", codexInteractionModes: [.default, .plan]))
+        #expect(models[2] == .init(id: "legacy-wire-only", name: "legacy-wire-only", codexInteractionModes: [.default, .plan]))
         let requests = try peer.frames().filter { $0["method"] == .string("model/list") }
         #expect(requests.count == 1 && requests[0]["params"]["limit"] == .number(100))
         #expect(requests[0]["params"]["includeHidden"] == .bool(false))

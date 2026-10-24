@@ -73,7 +73,8 @@ private func organizationOrder(_ snapshot: WorkspaceSnapshot, mode: ProjectSortM
         .init(id: UUID(), text: "Older accepted input", configuration: configuration, createdAt: organizationDate(150))
     ]
     #expect(organizationOrder(snapshot) == [first.id, second.id])
-    #expect(organizationOrder(snapshot, mode: .createdAt) == [second.id, first.id])
+    // Newest sorts by project creation; undated projects keep their saved order.
+    #expect(organizationOrder(snapshot, mode: .createdAt) == [first.id, second.id])
     snapshot.threads[0].updatedAt = organizationDate(90_000)
     snapshot.threads[0].messages.append(organizationMessage(.assistant, at: 80_000))
     #expect(organizationOrder(snapshot) == [first.id, second.id])
@@ -88,7 +89,7 @@ private func organizationOrder(_ snapshot: WorkspaceSnapshot, mode: ProjectSortM
     #expect(snapshot.projects.map(\.id) == [first.id, second.id])
 }
 
-@Test func projectCreatedSortUsesNewestEligibleThreadCreationAndIgnoresMessagesAndProjectDates() {
+@Test func projectNewestSortUsesProjectCreationAndIgnoresThreadActivity() {
     let first = organizationProject("First", created: 1_000, updated: 2_000), second = organizationProject("Second", created: 2_000, updated: 3_000)
     var snapshot = WorkspaceSnapshot(); snapshot.projects = [first, second]
     snapshot.threads = [
@@ -97,12 +98,12 @@ private func organizationOrder(_ snapshot: WorkspaceSnapshot, mode: ProjectSortM
     ]
     #expect(organizationOrder(snapshot, mode: .createdAt) == [second.id, first.id])
     snapshot.threads.append(organizationThread(first, created: 30, updated: 30))
-    #expect(organizationOrder(snapshot, mode: .createdAt) == [first.id, second.id])
+    #expect(organizationOrder(snapshot, mode: .createdAt) == [second.id, first.id])
     snapshot.threads[2].isArchived = true
     #expect(organizationOrder(snapshot, mode: .createdAt) == [second.id, first.id])
 }
 
-@Test func projectOrderingExcludesArchivedThreadsAcrossBothAutomaticModes() {
+@Test func projectActivityOrderingExcludesArchivedThreadsAndNewestIgnoresThem() {
     let first = organizationProject("Archived Activity"), second = organizationProject("Active")
     var snapshot = WorkspaceSnapshot(); snapshot.projects = [first, second]
     snapshot.threads = [
@@ -110,7 +111,8 @@ private func organizationOrder(_ snapshot: WorkspaceSnapshot, mode: ProjectSortM
         organizationThread(first, created: 99_999, updated: 99_999, messages: [organizationMessage(.user, at: 99_999)], archived: true),
         organizationThread(second, created: 200, updated: 200, messages: [organizationMessage(.user, at: 200)])
     ]
-    for mode in [ProjectSortMode.updatedAt, .createdAt] { #expect(organizationOrder(snapshot, mode: mode) == [second.id, first.id]) }
+    #expect(organizationOrder(snapshot) == [second.id, first.id])
+    #expect(organizationOrder(snapshot, mode: .createdAt) == [first.id, second.id])
     snapshot.threads[1].isArchived = false
     for mode in [ProjectSortMode.updatedAt, .createdAt] { #expect(organizationOrder(snapshot, mode: mode) == [first.id, second.id]) }
 }
@@ -139,12 +141,12 @@ private func organizationOrder(_ snapshot: WorkspaceSnapshot, mode: ProjectSortM
         organizationThread(ordinary, created: 200, updated: 200, messages: [organizationMessage(.user, at: 200)])
     ]
     #expect(organizationOrder(snapshot) == [threadFallback.id, projectFallback.id, ordinary.id, unknown.id])
-    #expect(organizationOrder(snapshot, mode: .createdAt) == [projectFallback.id, ordinary.id, threadFallback.id, unknown.id])
+    #expect(organizationOrder(snapshot, mode: .createdAt) == [projectFallback.id, unknown.id, ordinary.id, threadFallback.id])
     snapshot.threads[0].createdAt = organizationDate(.nan); snapshot.threads[0].updatedAt = organizationDate(.infinity)
     snapshot.projects[3].createdAt = organizationDate(50_000)
     // A present thread with no finite score does not invent activity from the project's fallback.
     #expect(organizationOrder(snapshot) == [projectFallback.id, ordinary.id, unknown.id, threadFallback.id])
-    #expect(organizationOrder(snapshot, mode: .createdAt) == [projectFallback.id, ordinary.id, unknown.id, threadFallback.id])
+    #expect(organizationOrder(snapshot, mode: .createdAt) == [threadFallback.id, projectFallback.id, unknown.id, ordinary.id])
 }
 
 @Test func projectDatedTiesUseLocalizedTitleThenStableUUIDWhileUnknownTiesKeepManualOrder() {
@@ -200,8 +202,8 @@ private func organizationOrder(_ snapshot: WorkspaceSnapshot, mode: ProjectSortM
     let recovered = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(snapshot))
     #expect(recovered == snapshot && recovered.effectiveSidebarPreferences.sortMode == .manual)
     #expect(!recovered.isProjectExpanded(first.id))
-    #expect(ProjectSortMode.allCases.map(\.rawValue) == ["updated_at", "created_at", "manual"])
-    #expect(ProjectSortMode.allCases.map(\.title) == ["Last user message", "Created at", "Manual"])
+    #expect(ProjectSortMode.allCases.map(\.rawValue) == ["updated_at", "created_at", "manual", "name", "priority"])
+    #expect(ProjectSortMode.allCases.map(\.title) == ["Recently active", "Newest", "Custom", "Name", "Priority (pinned first)"])
     #expect(ProjectSortMode.allCases.map(\.id) == ProjectSortMode.allCases.map(\.rawValue))
 }
 
