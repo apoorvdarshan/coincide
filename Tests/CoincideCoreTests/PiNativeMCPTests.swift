@@ -12,10 +12,10 @@ private let nativePiMCPEnabled = ProcessInfo.processInfo.environment["COINCIDE_N
 @Test(.enabled(if: nativePiMCPEnabled), .timeLimit(.minutes(1)))
 func piNativeMCPToolsReadWithoutApprovalRenameOnlyAfterSupervisedApprovalAndRemainOwnedAcrossNextTurn() async throws {
     let f = try NativePiMCPFixture()
-    let engine = try WorkspaceEngine(url: f.database, appMCPEnabled: true, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: f.database, appMCPEnabled: true, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
+        try await saveLegacyProviderFixture(project: f.project, threads: [f.thread], at: f.database)
         _ = try await engine.load()
-        try await engine.dispatch(.addProjectWithThread(project: f.project, thread: f.thread))
         let firstID = UUID()
         let firstInput = "First synthetic app-tool workflow"
         try await engine.dispatch(.submit(threadID: f.thread.id, text: firstInput), id: firstID)
@@ -80,7 +80,7 @@ func piNativeMCPToolsReadWithoutApprovalRenameOnlyAfterSupervisedApprovalAndRema
         try WorkspaceJournal.validate(stored)
         await engine.shutdown(); try f.assertStopped()
         let count = try f.frames().count
-        let reopened = try WorkspaceEngine(url: f.database, appMCPEnabled: true, identityResolver: { _ in nil })
+        let reopened = try WorkspaceEngine(url: f.database, appMCPEnabled: true, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
         do {
             let reloaded = try await reopened.load()
             let durable = try #require(reloaded.threads.first { $0.id == f.thread.id })

@@ -11,7 +11,7 @@ private let commandTCPSuccessor = "queued normal $native-review-id 工作"
 @Test(.timeLimit(.minutes(1)), arguments: ["success", "terminal-before-ack"])
 func openCodeV2CommandHTTPIntegrationBindsOnlyTheObservedNativeRootBeforeCapturedFIFOAndNeverFallsBackToPrompt(mode: String) async throws {
     let fixture = try CommandTCPFixture(mode: mode)
-    let engine = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
         let thread = try await fixture.register(in: engine)
         _ = try await engine.dispatch(.submit(threadID: thread.id, text: commandTCPInput))
@@ -97,7 +97,7 @@ func openCodeV2CommandHTTPIntegrationBindsOnlyTheObservedNativeRootBeforeCapture
 @Test(.timeLimit(.minutes(1)), arguments: ["ambiguous-root", "dropped-no-root"])
 func openCodeV2CommandHTTPIntegrationUnownedOrLostRootHoldsFIFOAcrossRestartWithoutRetryOrPromptFallback(mode: String) async throws {
     let fixture = try CommandTCPFixture(mode: mode)
-    let engine = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
         let thread = try await fixture.register(in: engine)
         _ = try await engine.dispatch(.submit(threadID: thread.id, text: commandTCPInput))
@@ -125,7 +125,7 @@ func openCodeV2CommandHTTPIntegrationUnownedOrLostRootHoldsFIFOAcrossRestartWith
         if mode == "dropped-no-root" { #expect(stopped.runHistory?.first?.turnIDs.isEmpty == true) }
         await engine.shutdown()
         try await commandTCPEventually("uncertain native process drain") { fixture.processStopped }
-        let reopened = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil })
+        let reopened = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
         do {
             let loaded = try await reopened.load()
             let durable = try #require(loaded.threads.first { $0.id == thread.id })
@@ -159,13 +159,13 @@ private struct CommandTCPFixture: Sendable {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     }
     func register(in engine: WorkspaceEngine) async throws -> CodingThread {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: workspace.path)
         let model = OpenCodeModelSelection(providerID: "synthetic", id: "wire-model", variant: "balanced")
         var thread = CodingThread(project: project)
         thread.provider = .opencode; thread.model = model.catalogID; thread.checkpointPolicy = .disabled
         thread.openCodeConfiguration = .init(executable: executable.path, model: model, agentID: "build")
-        _ = try await engine.dispatch(.addProject(project)); _ = try await engine.dispatch(.createThread(thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: database)
+        _ = try await engine.load()
         return thread
     }
     func enqueueSuccessor(in engine: WorkspaceEngine, threadID: UUID) async throws {

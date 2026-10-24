@@ -297,16 +297,13 @@ private func waitCloneEngine(_ condition: () async throws -> Bool) async throws 
     }
 }
 
-@Test(.timeLimit(.minutes(1))) func cloningWorkspaceRejectsAgentModelDiscoveryBeforeStartingAProcessAndNeutralDiscoveryStillWorks() async throws {
+@Test(.timeLimit(.minutes(1))) func cloningWorkspaceRejectsCodexModelDiscoveryBeforeStartingAProcessAndNeutralDiscoveryStillWorks() async throws {
     try await withCloneEngine { f in
         let plan = try f.plan(), peer = f.harness.peer(plan.id)
         let (_, thread) = try await f.start(plan)
         try await waitCloneEngine { await peer.starts == 1 }
-        let agent = ACPAgentConfiguration(name: "Metadata fixture", executable: "fixture-agent")
-        try await f.engine.dispatch(.saveACPAgent(agent))
-        try await f.engine.dispatch(.editThread(thread.id, .acpAgent(agent)))
         let configured = try #require(await f.engine.current().snapshot.threads.first { $0.id == thread.id })
-        #expect(configured.provider == .acp && !FileManager.default.fileExists(atPath: configured.workspacePath))
+        #expect(configured.provider == .codex && !FileManager.default.fileExists(atPath: configured.workspacePath))
         await #expect(throws: CoincideError.self) { try await f.engine.models(thread: configured) }
         #expect(f.harness.sessions(thread.id).isEmpty && f.harness.providerPaths().isEmpty)
         #expect(await f.engine.current().error == nil)

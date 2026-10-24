@@ -16,8 +16,9 @@ private struct MuseConfigurationFixture {
     init(path: String = "/tmp/coincide-muse-captures") throws {
         let project = WorkspaceProject(path: path)
         var thread = CodingThread(project: project); thread.checkpointPolicy = .disabled
+        // Historical persisted state; current provider admission remains disabled.
+        thread.provider = .muse; thread.museConfiguration = .init()
         snapshot.projects = [project]; snapshot.threads = [thread]
-        try edit(.provider(.muse))
     }
     @discardableResult mutating func apply(_ command: EngineCommand) throws -> WorkspaceDecision {
         let result = try WorkspaceDecision.make(command, id: UUID(), snapshot: snapshot, now: Date())

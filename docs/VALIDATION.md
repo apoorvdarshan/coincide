@@ -27,6 +27,16 @@ was performed. Nine conversations and the selected conversation were retained.
 Exact-commit hosted CI outcomes are recorded separately after completion;
 this entry does not claim full CLI/TUI feature parity.
 
+The first hosted run at `ce77169` failed during Swift 6.3.3 IR generation of a
+configuration picker setter (before tests ran); the local compiler is Swift 6.4.
+The follow-up replaces isolated method references with explicit binding closures.
+It also reconciles installed/configured plugin rows, uses public plugin display
+names, routes configuration links to their exact source, preserves drafts during
+navigation, and returns bounded recovery guidance from local CLI operations.
+Twenty focused compatibility/catalog tests and all 80 Python CI/CLI fixtures
+passed locally. A broader Core run and the newly added navigation/error cases
+are still in progress; these results do not establish hosted completion.
+
 ## 2026-10-24 — Sidebar sorting and maximized launch
 
 Projects and chats have independent, persisted choices for Newest, Recently

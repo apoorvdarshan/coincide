@@ -3,6 +3,11 @@ import Foundation
 import Observation
 
 @MainActor @Observable final class ProviderConfigurationEditorStore {
+    struct Destination: Equatable, Sendable {
+        let provider: ProviderKind
+        let scope: ProviderConfigurationScope
+        let sourceURL: URL
+    }
     var provider: ProviderKind = .codex
     var scope: ProviderConfigurationScope = .user
     private(set) var document: ProviderConfigurationDocument?
@@ -44,6 +49,42 @@ import Observation
     func setValue(_ value: String, for field: ProviderConfigurationField) {
         guard !isBusy, field.isEditable else { return }
         drafts[field.id] = value; message = nil; errorMessage = nil
+    }
+    /// Only route sources this structured editor actually manages. An imported
+    /// link from another profile must never silently select the current home.
+    static func destination(for item: ProviderIntegrationItem, codex: CodexRuntimeConfiguration,
+                            claude: ClaudeRuntimeProfile, workspacePath: String?) -> Destination? {
+        guard item.available, item.provider.isSupported, item.importMode != .copied,
+              item.kind == .mcp || item.kind == .plugins || item.kind == .hooks,
+              let scope = ProviderConfigurationScope(rawValue: item.scope.lowercased()),
+              let source = try? ProviderConfigurationEditor.sourceURL(provider: item.provider, scope: scope,
+                  codex: codex, claude: claude, workspacePath: workspacePath) else { return nil }
+        let original = URL(fileURLWithPath: item.sourcePath).standardizedFileURL
+        if original == source.standardizedFileURL { return .init(provider: item.provider, scope: scope, sourceURL: source) }
+        if item.provider == .claude, item.kind == .plugins,
+           let user = try? ProviderConfigurationEditor.sourceURL(provider: .claude, scope: .user,
+               codex: codex, claude: claude, workspacePath: workspacePath),
+           original == user.deletingLastPathComponent().appendingPathComponent("plugins/installed_plugins.json").standardizedFileURL {
+            return .init(provider: .claude, scope: scope, sourceURL: source)
+        }
+        return nil
+    }
+    func selectSource(_ destination: Destination, codex: CodexRuntimeConfiguration,
+                      claude: ClaudeRuntimeProfile, workspacePath: String?) async throws {
+        guard !isBusy else { throw CoincideError("Wait for the current configuration operation to finish.") }
+        let source = try ProviderConfigurationEditor.sourceURL(provider: destination.provider, scope: destination.scope,
+            codex: codex, claude: claude, workspacePath: workspacePath)
+        guard source.standardizedFileURL == destination.sourceURL.standardizedFileURL else {
+            throw CoincideError("The integration's configuration source changed. Refresh it before opening settings.")
+        }
+        provider = destination.provider; scope = destination.scope
+        // Navigation retains both the previous draft and any destination draft.
+        // Only explicit Reload may replace a captured document/revision.
+        await load(codex: codex, claude: claude, workspacePath: workspacePath)
+        guard document?.provider == destination.provider, document?.scope == destination.scope,
+              document?.sourceURL.standardizedFileURL == source.standardizedFileURL else {
+            throw CoincideError(errorMessage ?? "This configuration source is no longer available.")
+        }
     }
     func load(codex: CodexRuntimeConfiguration, claude: ClaudeRuntimeProfile, workspacePath: String?, force: Bool = false) async {
         if provider == .codex && scope == .local { scope = .user }

@@ -33,22 +33,33 @@ private struct AgentSessionImportDecisionFixture {
     }
 }
 
-@Test(arguments: AgentSessionSource.allCases) func agentSessionAdoptionPreservesNativeIdentityAndPublicHistoryWithoutStartingProviderOrInventingRunEvidence(source: AgentSessionSource) async throws {
+@Test(arguments: AgentSessionSource.allCases) func agentSessionImportCopiesPublicHistoryAndPreservesSourceProvenanceWithoutBindingOrStartingTheOriginalSession(source: AgentSessionSource) async throws {
     let f = try await AgentSessionImportDecisionFixture.make(source); defer { f.files.cleanup() }
     let command = UUID(); var decision = WorkspaceDecision(snapshot: f.initial())
     try decision.acceptAgentSessionImport(f.admission, id: command, now: f.files.now)
     let thread = try #require(decision.snapshot.threads.first), record = try #require(decision.snapshot.agentSessionImports?.first)
     #expect(decision.effects.isEmpty && decision.closeRuntimes.isEmpty && thread.runtimeID == nil && thread.activeRun == nil)
-    #expect(thread.providerThreadID == f.admission.review.transcript.providerSessionID && thread.provider == source.provider)
+    #expect(thread.providerThreadID == nil && thread.provider == source.provider)
+    #expect(record.nativeSessionID == f.admission.review.transcript.providerSessionID)
     #expect(thread.messages.map(\.text) == f.admission.review.transcript.messages.map(\.text))
     #expect(thread.messages.allSatisfy { $0.runReference == nil && $0.providerEntity == nil && $0.attachments == nil })
     #expect(thread.runHistory == nil && thread.forkedFromHistoryOperationID == nil && thread.claudeInheritedHead == nil)
     #expect(thread.isSettled && thread.queuePaused && thread.settlement?.script == nil)
     #expect(record.lastCommandID == command && record.reviewDigest == f.admission.review.digest && !record.modified && !record.tombstoned)
+    let pending = decision.snapshot.pendingContextTransfers(threadID: thread.id)
+    #expect(pending.count == 1)
+    let transfer = try #require(pending.first)
+    #expect(transfer.status == .pending && transfer.delivery == nil && transfer.targetRunID == nil)
+    #expect(transfer.review.strategy == .portableContext && transfer.review.targetThreadID == thread.id)
+    #expect(transfer.review.sourceConfiguration.nativeThreadID == record.nativeSessionID)
+    #expect(transfer.review.targetConfiguration.nativeThreadID == nil)
+    #expect(transfer.review.messages.map(\.text) == thread.messages.map(\.text))
     let previous = decision.snapshot
     try decision.acceptAgentSessionImport(f.admission, id: UUID(), now: f.files.now)
     try decision.snapshot.reconcileAgentSessionImports(previous: previous)
     #expect(decision.snapshot.threads.count == 1 && decision.snapshot.threads.first == thread)
+    #expect(decision.snapshot.pendingContextTransfers(threadID: thread.id).count == 1)
+    #expect(decision.effects.isEmpty && decision.closeRuntimes.isEmpty)
     try WorkspaceJournal.validate(decision.snapshot)
     try decision.snapshot.validateAgentSessionImports()
 }

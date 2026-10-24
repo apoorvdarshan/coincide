@@ -3,16 +3,15 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-/// Real private TCP, production factory/owned process/HTTP/SSE, SQLite and FIFO.
+/// Historical adapter with private TCP/owned process/HTTP/SSE, SQLite and FIFO.
 /// The executable is synthetic Python and never loads a vendor or invokes a model.
 @Test(.timeLimit(.minutes(1)))
 func openCodeV1HTTPIntegrationRunsCapturedFIFOAndDrainsTheExactOwnedParent() async throws {
     let fixture = try V1EngineHTTPFixture()
     let engine: WorkspaceEngine
-    do { engine = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil }) }
+    do { engine = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil }) }
     catch { try? fixture.removeIfStopped(); throw error }
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.workspace.path)
         let balanced = OpenCodeModelSelection(providerID: "synthetic", id: "wire-model/with-slash", variant: "balanced")
         var initial = CodingThread(project: project)
@@ -22,8 +21,8 @@ func openCodeV1HTTPIntegrationRunsCapturedFIFOAndDrainsTheExactOwnedParent() asy
         let id = initial.id
         let row = ProviderModel(id: balanced.catalogID, name: "Synthetic native 1 model",
             openCodeSelection: .init(providerID: balanced.providerID, id: balanced.id), openCodeVariants: ["balanced", "fast"])
-        try await engine.dispatch(.addProject(project))
-        try await engine.dispatch(.createThread(initial))
+        try await saveLegacyProviderFixture(project: project, threads: [initial], at: fixture.database)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: id, text: "wire-v1-first 工作 🌍"))
         try await v1HTTPEngineEventually("first owned user, assistant and tool") {
             let thread = await engine.current().snapshot.threads.first { $0.id == id }

@@ -3,20 +3,20 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-/// Production ProviderSessions.make, exact owned Pi process, real stdio and
+/// Historical Pi adapter with an explicitly injected private process, real stdio and
 /// SQLite/FIFO. This peer never imports Pi or makes a vendor/model request.
 @Test(.timeLimit(.minutes(1)))
 func piEngineNativeRPCUsesCapturedFIFOReopensForPolicyAndPreservesDurableProjection() async throws {
     let fixture = try PiEngineFixture()
-    let engine = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.root.path)
         var thread = CodingThread(project: project)
         let configuration = PiConfiguration(executable: fixture.executable.path)
         thread.provider = .pi; thread.piConfiguration = configuration
         thread.checkpointPolicy = .disabled; thread.permission = .supervised
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: fixture.database)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "First exact 工作 input"))
         try await piEngineEventually {
             let current = await engine.current().snapshot.threads.first { $0.id == thread.id }
@@ -84,7 +84,7 @@ func piEngineNativeRPCUsesCapturedFIFOReopensForPolicyAndPreservesDurableProject
         let database = try WorkspaceDatabase(url: fixture.database), rebuilt = try await database.rebuildProjection().snapshot
         let durable = try #require(rebuilt.threads.first { $0.id == thread.id })
         #expect(durable.messages == final.messages && durable.runHistory == final.runHistory && durable.piConfiguration == final.piConfiguration)
-        let reopened = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil })
+        let reopened = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
         _ = try await reopened.load(); await reopened.shutdown()
         let afterReopen = try fixture.frames(); #expect(afterReopen.filter { $0["type"].string == "prompt" }.count == 2)
         #expect(fixture.allParentsStopped)

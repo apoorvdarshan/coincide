@@ -150,10 +150,16 @@ private func completedACPRunReleased(_ snapshot: WorkspaceSnapshot, threadID: UU
     let url = root.appendingPathComponent("workspace.sqlite")
     let fixture = try #require(Bundle.module.url(forResource: "acp_server", withExtension: "py", subdirectory: "Fixtures"))
     let agent = ACPAgentConfiguration(name: "Fixture", executable: "/usr/bin/python3", arguments: [fixture.path, "config"])
-    let engine = try WorkspaceEngine(url: url), project = WorkspaceProject(path: root.path)
+    let factory: WorkspaceEngine.ProviderFactory = { thread in
+        let agent = try #require(thread.acpAgent)
+        return try ACPSession(executable: URL(fileURLWithPath: agent.executable), arguments: agent.arguments, cwd: URL(fileURLWithPath: thread.workspacePath))
+    }
+    let engine = try WorkspaceEngine(url: url, providerFactory: factory), project = WorkspaceProject(path: root.path)
     var thread = CodingThread(project: project); thread.provider = .acp; thread.acpAgent = agent; thread.model = "fixture"
     do {
-        _ = try await engine.load(); try await engine.dispatch(.addProject(project)); try await engine.dispatch(.saveACPAgent(agent)); try await engine.dispatch(.createThread(thread))
+        #expect(throws: CoincideError.self) { try ProviderSessions.make(for: thread) }
+        try await saveLegacyProviderFixture(project: project, threads: [thread], acpAgents: [agent], at: url)
+        _ = try await engine.load()
         let first = UUID()
         try await engine.dispatch(.submit(threadID: thread.id, text: "first"), id: first)
         try await waitACP { await engine.current().snapshot.threads[0].runtimeRequests.count == 1 }
@@ -178,7 +184,7 @@ private func completedACPRunReleased(_ snapshot: WorkspaceSnapshot, threadID: UU
         try await waitACP { completedACPRunReleased(await engine.current().snapshot, threadID: thread.id, runID: second) }
         #expect(await engine.current().snapshot.threads[0].messages.filter({ $0.role == .assistant }).count == 4)
         await engine.shutdown()
-        let reopened = try WorkspaceEngine(url: url)
+        let reopened = try WorkspaceEngine(url: url, providerFactory: factory)
         do {
             let restored = try await reopened.load()
             #expect(restored.acpAgents == [agent] && restored.threads[0].providerThreadID == "fixture-session")
@@ -204,10 +210,16 @@ private func completedACPRunReleased(_ snapshot: WorkspaceSnapshot, threadID: UU
     let url = root.appendingPathComponent("workspace.sqlite"), gate = root.appendingPathComponent("background-gate")
     let fixture = try #require(Bundle.module.url(forResource: "acp_server", withExtension: "py", subdirectory: "Fixtures"))
     let agent = ACPAgentConfiguration(name: "Background fixture", executable: "/usr/bin/python3", arguments: [fixture.path, "background", gate.path])
-    let engine = try WorkspaceEngine(url: url), project = WorkspaceProject(path: root.path)
+    let factory: WorkspaceEngine.ProviderFactory = { thread in
+        let agent = try #require(thread.acpAgent)
+        return try ACPSession(executable: URL(fileURLWithPath: agent.executable), arguments: agent.arguments, cwd: URL(fileURLWithPath: thread.workspacePath))
+    }
+    let engine = try WorkspaceEngine(url: url, providerFactory: factory), project = WorkspaceProject(path: root.path)
     var thread = CodingThread(project: project); thread.provider = .acp; thread.acpAgent = agent
     do {
-        _ = try await engine.load(); try await engine.dispatch(.addProject(project)); try await engine.dispatch(.saveACPAgent(agent)); try await engine.dispatch(.createThread(thread))
+        #expect(throws: CoincideError.self) { try ProviderSessions.make(for: thread) }
+        try await saveLegacyProviderFixture(project: project, threads: [thread], acpAgents: [agent], at: url)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "first"))
         try await waitACP { await engine.current().snapshot.threads[0].runtimeRequests.count == 1 }
         try await engine.dispatch(.respond(threadID: thread.id, requestID: .string("opaque-17"), response: .option("opaque-once")))
@@ -225,15 +237,22 @@ private func completedACPRunReleased(_ snapshot: WorkspaceSnapshot, threadID: UU
 
 /// Opt-in real provider usage. Sends only a generated marker in an empty workspace.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_ACP_TURN"] == "1"), .timeLimit(.minutes(3)))
-func installedOpenCodeCompletesATurnThroughTheNativeEngine() async throws {
+func installedOpenCodeCompletesATurnThroughExplicitLegacyAdapter() async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
-    let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"))
+    let url = root.appendingPathComponent("workspace.sqlite")
+    let engine = try WorkspaceEngine(url: url, providerFactory: { thread in
+        let agent = try #require(thread.acpAgent)
+        let executable = try #require(ProcessChannel.findExecutable(agent.executable))
+        return try ACPSession(executable: executable, arguments: agent.arguments, cwd: URL(fileURLWithPath: thread.workspacePath))
+    })
     do {
         let agent = ACPAgentConfiguration(name: "OpenCode", executable: "opencode", arguments: ["acp"])
         let project = WorkspaceProject(path: root.path), marker = "ACP-\(UUID().uuidString.prefix(8))"
         var thread = CodingThread(project: project); thread.provider = .acp; thread.acpAgent = agent
         thread.model = ProcessInfo.processInfo.environment["COINCIDE_ACP_TEST_MODEL"] ?? ""
-        _ = try await engine.load(); try await engine.dispatch(.addProject(project)); try await engine.dispatch(.saveACPAgent(agent)); try await engine.dispatch(.createThread(thread))
+        #expect(throws: CoincideError.self) { try ProviderSessions.make(for: thread) }
+        try await saveLegacyProviderFixture(project: project, threads: [thread], acpAgents: [agent], at: url)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "Reply with exactly \(marker) and nothing else. Do not use any tools."))
         let deadline = ContinuousClock.now + .seconds(140)
         while true {

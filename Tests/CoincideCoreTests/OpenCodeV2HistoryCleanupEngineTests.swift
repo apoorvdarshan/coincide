@@ -96,8 +96,8 @@ func openCodeV2HistoryWaitsForArchivedExactSourceCloseBeforeReviewOrMutation() a
         factories.increment(); return OpenCodeHistoryCleanupSession(peer: peer)
     }, identityResolver: { _ in nil })
     do {
+        try await saveLegacyProviderFixture(project: project, threads: [source], at: root.appendingPathComponent("workspace.sqlite"))
         _ = try await engine.load()
-        try await engine.dispatch(.addProjectWithThread(project: project, thread: source))
         try await engine.dispatch(.submit(threadID: sourceID, text: "Original offline input"))
         try await historyEngineEventually {
             guard let current = await engine.current().snapshot.threads.first(where: { $0.id == sourceID }) else { return false }

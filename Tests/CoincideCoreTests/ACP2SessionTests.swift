@@ -7,8 +7,9 @@ private struct V2Fixture {
     let gate: URL
     let engine: WorkspaceEngine
     let thread: CodingThread
+    let factory: WorkspaceEngine.ProviderFactory
 }
-private func withV2(_ mode: String, systemFactory: Bool = false, body: (V2Fixture) async throws -> Void) async throws {
+private func withV2(_ mode: String, verifyRetiredFactory: Bool = false, body: (V2Fixture) async throws -> Void) async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let fixture = try #require(Bundle.module.url(forResource: "acp_v2_server", withExtension: "py", subdirectory: "Fixtures"))
     let gate = root.appendingPathComponent("gate"), project = WorkspaceProject(path: root.path)
@@ -19,13 +20,15 @@ private func withV2(_ mode: String, systemFactory: Bool = false, body: (V2Fixtur
         try ACP2Session(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: agent.arguments, cwd: URL(fileURLWithPath: thread.workspacePath),
                         cancellationTimeout: .milliseconds(100), acceptanceTimeout: mode == "lost_ack" ? .milliseconds(250) : .seconds(20))
     }
-    let selectedFactory: WorkspaceEngine.ProviderFactory
-    if systemFactory { selectedFactory = { thread in try ProviderSessions.make(for: thread) } }
-    else { selectedFactory = factory }
-    let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), providerFactory: selectedFactory)
+    if verifyRetiredFactory {
+        #expect(throws: CoincideError.self) { try ProviderSessions.make(for: thread) }
+    }
+    let url = root.appendingPathComponent("workspace.sqlite")
+    try await saveLegacyProviderFixture(project: project, threads: [thread], acpAgents: [agent], at: url)
+    let engine = try WorkspaceEngine(url: url, providerFactory: factory)
     do {
-        _ = try await engine.load(); try await engine.dispatch(.addProject(project)); try await engine.dispatch(.saveACPAgent(agent)); try await engine.dispatch(.createThread(thread))
-        try await body(.init(root: root, gate: gate, engine: engine, thread: thread))
+        _ = try await engine.load()
+        try await body(.init(root: root, gate: gate, engine: engine, thread: thread, factory: factory))
         await engine.shutdown()
     } catch { await engine.shutdown(); throw error }
 }
@@ -54,7 +57,7 @@ private func approveV2UntilIdle(_ f: V2Fixture, allowPausedQueue: Bool = false) 
 
 @Test(.timeLimit(.minutes(1)), arguments: ["normal", "echo_after", "early_state"])
 func acpV2NativeEnginePreservesEntitiesImageInputBooleanConfigAndUserIdentity(_ mode: String) async throws {
-    try await withV2(mode, systemFactory: true) { f in
+    try await withV2(mode, verifyRetiredFactory: true) { f in
         try await f.engine.dispatch(.editThread(f.thread.id, .model("fixture")))
         try await f.engine.dispatch(.editThread(f.thread.id, .agentConfiguration(id: "boolean", value: .bool(true))))
         try await f.engine.dispatch(.editThread(f.thread.id, .agentConfiguration(id: "mode", value: .string("plan"))))
@@ -211,15 +214,15 @@ func acpV2RejectedAndUnconfirmedSubmissionsRemainVisibleWithoutAutomaticResend(_
 
 @Test(.timeLimit(.minutes(1)), arguments: ["normal", "resume_busy"])
 func acpV2RestartResumesWithoutReplayAndKeepsTheReportedForegroundSnapshot(_ mode: String) async throws {
-    try await withV2(mode, systemFactory: true) { f in
+    try await withV2(mode, verifyRetiredFactory: true) { f in
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "first")); try await approveV2UntilIdle(f)
         await f.engine.shutdown()
-        let url = f.root.appendingPathComponent("workspace.sqlite"), reopened = try WorkspaceEngine(url: url)
+        let url = f.root.appendingPathComponent("workspace.sqlite"), reopened = try WorkspaceEngine(url: url, providerFactory: f.factory)
         do {
             let snapshot = try await reopened.load()
             #expect(snapshot.threads[0].providerThreadID == "v2-session")
             try await reopened.dispatch(.submit(threadID: f.thread.id, text: "second"))
-            let fixture = V2Fixture(root: f.root, gate: f.gate, engine: reopened, thread: f.thread)
+            let fixture = V2Fixture(root: f.root, gate: f.gate, engine: reopened, thread: f.thread, factory: f.factory)
             if mode == "resume_busy" {
                 try await waitV2 { await reopened.current().snapshot.threads[0].runtimeRequests.contains { $0.id == .string("resume-request") } }
                 #expect(await reopened.current().snapshot.threads[0].state == .awaitingApproval)
@@ -253,14 +256,20 @@ func acpV2RestartResumesWithoutReplayAndKeepsTheReportedForegroundSnapshot(_ mod
 @Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_ACP2"] == "1"), .timeLimit(.minutes(3)))
 func installedOpenCodeUsesTheVersionNegotiatedOnItsNativeConnection() async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
-    let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"))
+    let url = root.appendingPathComponent("workspace.sqlite")
+    let engine = try WorkspaceEngine(url: url, providerFactory: { thread in
+        let agent = try #require(thread.acpAgent)
+        let executable = try #require(ProcessChannel.findExecutable(agent.executable))
+        return try ACP2Session(executable: executable, arguments: agent.arguments, cwd: URL(fileURLWithPath: thread.workspacePath))
+    })
     do {
         var agent = ACPAgentConfiguration(name: "OpenCode v2 negotiation", executable: "opencode", arguments: ["acp"])
         agent.experimentalV2 = true
         let project = WorkspaceProject(path: root.path), marker = "ACP2\(Int.random(in: 100_000...999_999))"
         var thread = CodingThread(project: project); thread.provider = .acp; thread.acpAgent = agent
         thread.model = ProcessInfo.processInfo.environment["COINCIDE_ACP_TEST_MODEL"] ?? ""
-        _ = try await engine.load(); try await engine.dispatch(.addProject(project)); try await engine.dispatch(.saveACPAgent(agent)); try await engine.dispatch(.createThread(thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], acpAgents: [agent], at: url)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "Reply with exactly \(marker) and nothing else. Do not use any tools."))
         let deadline = ContinuousClock.now + .seconds(140)
         while true {
@@ -282,7 +291,7 @@ func installedOpenCodeUsesTheVersionNegotiatedOnItsNativeConnection() async thro
 }
 
 @Test(.timeLimit(.minutes(1))) func acpV2QueuedTurnsKeepTheirCapturedBooleanConfiguration() async throws {
-    try await withV2("normal", systemFactory: true) { f in
+    try await withV2("normal", verifyRetiredFactory: true) { f in
         try await f.engine.dispatch(.editThread(f.thread.id, .agentConfiguration(id: "boolean", value: .bool(true))))
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "first"))
         try await waitV2 { await f.engine.current().snapshot.threads[0].runtimeRequests.count == 1 }

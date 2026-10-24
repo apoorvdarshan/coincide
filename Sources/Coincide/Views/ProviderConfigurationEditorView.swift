@@ -29,14 +29,20 @@ struct ProviderConfigurationEditorView: View {
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             SettingsCard(title: "Configuration source") {
                 SettingsRow(title: "Provider") {
-                    Picker("Provider", selection: Binding(get: { store.provider }, set: selectProvider)) {
+                    Picker("Provider", selection: Binding<ProviderKind>(
+                        get: { store.provider },
+                        set: { provider in selectProvider(provider) }
+                    )) {
                         Text("Codex").tag(ProviderKind.codex)
                         Text("Claude").tag(ProviderKind.claude)
                     }.labelsHidden().frame(width: 160).accessibilityIdentifier("configuration-provider")
                 }
                 SettingsDivider()
                 SettingsRow(title: "Scope", subtitle: "Inherit removes an override from this file. Other scopes and organization policy still apply.") {
-                    Picker("Scope", selection: Binding(get: { store.scope }, set: selectScope)) {
+                    Picker("Scope", selection: Binding<ProviderConfigurationScope>(
+                        get: { store.scope },
+                        set: { scope in selectScope(scope) }
+                    )) {
                         Text("User").tag(ProviderConfigurationScope.user)
                         Text("Shared project").tag(ProviderConfigurationScope.project)
                         if store.provider == .claude { Text("Project local").tag(ProviderConfigurationScope.local) }
@@ -52,7 +58,7 @@ struct ProviderConfigurationEditorView: View {
                         }
                         HStack(spacing: 10) {
                             Button(document.exists ? "Open source file" : "Show configuration folder", action: openSource)
-                            Button("Reload") { reload() }.disabled(store.hasChanges).accessibilityIdentifier("configuration-reload")
+                            Button("Reload") { reload(force: true) }.disabled(store.hasChanges).accessibilityIdentifier("configuration-reload")
                             Spacer()
                             if store.isBusy { ProgressView().controlSize(.small) }
                         }.buttonStyle(SettingsActionButtonStyle())
@@ -172,7 +178,7 @@ struct ProviderConfigurationEditorView: View {
         if store.hasChanges { pendingScope = scope; confirmDiscard = true }
         else { store.scope = scope; reload() }
     }
-    private func reload() { Task { await store.load(codex: codex, claude: claude, workspacePath: workspacePath, force: true) } }
+    private func reload(force: Bool = false) { Task { await store.load(codex: codex, claude: claude, workspacePath: workspacePath, force: force) } }
     private func openSource() {
         guard let document = store.document else { return }
         if document.exists { NSWorkspace.shared.open(document.sourceURL) }

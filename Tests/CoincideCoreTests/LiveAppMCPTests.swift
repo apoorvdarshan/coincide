@@ -2,9 +2,30 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
+private func selectedLiveAppMCPProviders(_ requested: String?) throws -> [ProviderKind] {
+    guard let requested else { return [.codex, .claude] }
+    switch requested {
+    case "codex": return [.codex]
+    case "claude": return [.claude]
+    default:
+        throw LiveAppMCPFailure("Set COINCIDE_LIVE_APP_MCP_PROVIDER to codex or claude, or unset it to check both. Other providers are no longer supported.")
+    }
+}
+
+// Keep test cases discoverable for an invalid opt-in value. Each case validates
+// the selection before creating files or a provider runtime and fails clearly.
 private let liveAppMCPProviders: [ProviderKind] =
-    ProcessInfo.processInfo.environment["COINCIDE_LIVE_APP_MCP_PROVIDER"] == "opencode"
-        ? [.opencode] : [.codex, .claude, .opencode]
+    (try? selectedLiveAppMCPProviders(ProcessInfo.processInfo.environment["COINCIDE_LIVE_APP_MCP_PROVIDER"]))
+        ?? [.codex, .claude]
+
+@Test func liveAppMCPProviderSelectionAcceptsOnlySupportedProvidersWithoutDefaultingInvalidInput() throws {
+    #expect(try selectedLiveAppMCPProviders(nil) == [.codex, .claude])
+    #expect(try selectedLiveAppMCPProviders("codex") == [.codex])
+    #expect(try selectedLiveAppMCPProviders("claude") == [.claude])
+    for value in ProviderKind.allCases.filter({ !$0.isSupported }).map(\.rawValue) + ["", "unknown", "CLAUDE"] {
+        #expect(throws: LiveAppMCPFailure.self) { try selectedLiveAppMCPProviders(value) }
+    }
+}
 
 /// Explicit opt-in: two small model turns per installed provider, using its
 /// existing CLI login. All app tools address a newly generated private database;
@@ -12,6 +33,7 @@ private let liveAppMCPProviders: [ProviderKind] =
 @Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_APP_MCP"] == "1"),
       .timeLimit(.minutes(6)), arguments: liveAppMCPProviders)
 func installedProvidersUseAppMCPThroughNativeEngineAndRetainChangesAcrossRestart(_ kind: ProviderKind) async throws {
+    _ = try selectedLiveAppMCPProviders(ProcessInfo.processInfo.environment["COINCIDE_LIVE_APP_MCP_PROVIDER"])
     let manager = FileManager.default, testID = UUID()
     let root = manager.temporaryDirectory.appendingPathComponent("coincide-live-app-mcp-" + testID.uuidString)
     try manager.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -28,7 +50,6 @@ func installedProvidersUseAppMCPThroughNativeEngineAndRetainChangesAcrossRestart
     if kind == .claude {
         source.claudeRuntimeConfiguration = try ClaudeRuntimeConfiguration.capture(workspacePath: project.path)
     }
-    if kind == .opencode { source.openCodeConfiguration = .init(generation: .v2) }
     let targetID = source.id.uuidString.lowercased()
     let title = "MCP_" + testID.uuidString.replacingOccurrences(of: "-", with: "")
     let requestID = "live-mcp-" + testID.uuidString.lowercased()
@@ -162,10 +183,6 @@ private func liveAppMCPHasTool(_ thread: CodingThread, runID: UUID, name: String
         guard message.role == .tool, message.runReference?.runID == runID else { return false }
         if thread.provider == .codex {
             return message.providerEntity?.fields["title"] == .string("coincide." + name)
-                && message.providerEntity?.fields["status"] == .string("completed")
-        }
-        if thread.provider == .opencode {
-            return message.providerEntity?.fields["title"] == .string("coincide_" + name)
                 && message.providerEntity?.fields["status"] == .string("completed")
         }
         return message.text.hasPrefix("mcp__coincide__" + name + "\n")

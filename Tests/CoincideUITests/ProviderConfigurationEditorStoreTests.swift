@@ -153,3 +153,63 @@ private struct ConfigurationStoreFixture {
     #expect(store.value(try f.model(store)) == "keep-this" && store.hasChanges)
     #expect(store.document?.sourceURL == f.source() && store.errorMessage == nil)
 }
+
+@MainActor @Test func providerConfigurationIntegrationNavigationTargetsExactProviderScopeAndRestoresBothDrafts() async throws {
+    let f = try ConfigurationStoreFixture(); defer { f.clean() }
+    let store = ProviderConfigurationEditorStore()
+    await f.load(store)
+    store.setValue("codex-unsaved", for: try f.model(store))
+    let localSource = f.project.appendingPathComponent(".claude/settings.local.json")
+    let claudeItem = ProviderIntegrationItem(provider: .claude, kind: .hooks, name: "PreToolUse", summary: "Configured hook",
+        sourcePath: localSource.path, scope: "Local")
+    let codexItem = ProviderIntegrationItem(provider: .codex, kind: .mcp, name: "fixture", summary: "Configured MCP server",
+        sourcePath: f.source().path, scope: "User")
+    let claudeTarget = try #require(ProviderConfigurationEditorStore.destination(for: claudeItem,
+        codex: f.codex, claude: f.claude, workspacePath: f.project.path))
+    let codexTarget = try #require(ProviderConfigurationEditorStore.destination(for: codexItem,
+        codex: f.codex, claude: f.claude, workspacePath: f.project.path))
+    try await store.selectSource(claudeTarget, codex: f.codex, claude: f.claude, workspacePath: f.project.path)
+    #expect(store.provider == .claude && store.scope == .local && store.document?.sourceURL == localSource)
+    #expect(store.value(try f.model(store)) == "claude-local" && !store.hasChanges)
+    store.setValue("claude-unsaved", for: try f.model(store))
+    try await store.selectSource(codexTarget, codex: f.codex, claude: f.claude, workspacePath: f.project.path)
+    #expect(store.provider == .codex && store.scope == .user)
+    #expect(store.value(try f.model(store)) == "codex-unsaved" && store.hasChanges)
+    try await store.selectSource(claudeTarget, codex: f.codex, claude: f.claude, workspacePath: f.project.path)
+    #expect(store.value(try f.model(store)) == "claude-unsaved" && store.hasChanges)
+    #expect(try f.text(f.source()) == "model = 'codex-one'\n")
+    #expect(try f.text(localSource) == #"{"model":"claude-local"}"#)
+}
+
+@MainActor @Test func providerConfigurationIntegrationNavigationRejectsForeignAndUnsupportedSourcePaths() async throws {
+    let f = try ConfigurationStoreFixture(); defer { f.clean() }
+    let foreign = ProviderIntegrationItem(provider: .codex, kind: .plugins, name: "fixture", summary: "Linked plugin",
+        sourcePath: f.source(f.otherCodex).path, scope: "User", importMode: .linked)
+    let manifest = ProviderIntegrationItem(provider: .claude, kind: .plugins, name: "fixture", summary: "Plugin manifest",
+        sourcePath: f.project.appendingPathComponent("plugin.json").path, scope: "Project")
+    let mcp = ProviderIntegrationItem(provider: .claude, kind: .mcp, name: "fixture", summary: "Project MCP file",
+        sourcePath: f.project.appendingPathComponent(".mcp.json").path, scope: "Project")
+    for item in [foreign, manifest, mcp] {
+        #expect(ProviderConfigurationEditorStore.destination(for: item,
+            codex: f.codex, claude: f.claude, workspacePath: f.project.path) == nil)
+    }
+    let registry = URL(fileURLWithPath: try #require(f.claude.configurationDirectory)).appendingPathComponent("plugins/installed_plugins.json")
+    let installed = ProviderIntegrationItem(provider: .claude, kind: .plugins, name: "fixture", summary: "Installed plugin",
+        sourcePath: registry.path, scope: "Project")
+    let destination = try #require(ProviderConfigurationEditorStore.destination(for: installed,
+        codex: f.codex, claude: f.claude, workspacePath: f.project.path))
+    #expect(destination.provider == .claude && destination.scope == .project)
+    #expect(destination.sourceURL == f.project.appendingPathComponent(".claude/settings.json"))
+    #expect(ProviderConfigurationEditorStore.destination(for: installed,
+        codex: f.codex, claude: f.claude, workspacePath: nil) == nil)
+
+    let store = ProviderConfigurationEditorStore()
+    await f.load(store)
+    store.setValue("keep-draft", for: try f.model(store))
+    let stale = ProviderConfigurationEditorStore.Destination(provider: .codex, scope: .user, sourceURL: f.source())
+    await #expect(throws: CoincideError.self) {
+        try await store.selectSource(stale, codex: f.otherCodex, claude: f.claude, workspacePath: f.project.path)
+    }
+    #expect(store.value(try f.model(store)) == "keep-draft" && store.hasChanges)
+    #expect(store.document?.sourceURL == f.source())
+}

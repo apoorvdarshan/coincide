@@ -27,6 +27,10 @@ public struct ProviderIntegrationItem: Codable, Identifiable, Sendable, Equatabl
     public let provider: ProviderKind
     public let kind: ProviderIntegrationKind
     public let name: String
+    /// Optional human-facing manifest label. The native name remains the stable
+    /// provider key used by identity, configuration and invocation.
+    public var displayName: String?
+    public var title: String { displayName ?? name }
     public let summary: String
     public let sourcePath: String
     public let scope: String
@@ -39,11 +43,13 @@ public struct ProviderIntegrationItem: Codable, Identifiable, Sendable, Equatabl
 
     public init(provider: ProviderKind, kind: ProviderIntegrationKind, name: String, summary: String,
                 sourcePath: String, scope: String, enabled: Bool = true, invocation: String? = nil,
-                importMode: ProviderIntegrationImportMode? = nil, libraryPath: String? = nil, available: Bool = true) {
+                importMode: ProviderIntegrationImportMode? = nil, libraryPath: String? = nil, available: Bool = true,
+                displayName: String? = nil) {
         self.id = Self.identity(provider: provider, kind: kind, name: name, sourcePath: sourcePath, scope: scope)
         self.provider = provider; self.kind = kind; self.name = name; self.summary = summary
         self.sourcePath = sourcePath; self.scope = scope; self.enabled = enabled; self.invocation = invocation
         self.importMode = importMode; self.libraryPath = libraryPath; self.available = available
+        self.displayName = displayName
     }
 
     static func identity(provider: ProviderKind, kind: ProviderIntegrationKind, name: String, sourcePath: String, scope: String) -> String {
@@ -58,6 +64,12 @@ public struct ProviderIntegrationItem: Codable, Identifiable, Sendable, Equatabl
               ![name, sourcePath, scope].contains(where: { $0.unicodeScalars.contains { $0.value < 32 || $0.value == 127 } }),
               invocation.map({ $0.utf8.count <= 1_024 && !$0.contains("\0") }) ?? true else {
             throw CoincideError("Integration metadata is invalid. Refresh the provider source and try again.")
+        }
+        if let displayName {
+            guard !displayName.isEmpty, displayName.utf8.count <= 512,
+                  !displayName.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
+                throw CoincideError("The integration display name is invalid. Refresh its provider source.")
+            }
         }
     }
 }

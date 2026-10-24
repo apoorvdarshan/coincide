@@ -17,6 +17,27 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def local_action_error(command, result):
+    """Only documented local recovery errors may expose an app-authored message."""
+    generic = "Coincide could not complete the command."
+    allowed = {
+        "configuration": {"configuration_review_required", "configuration_changed", "configuration_invalid"},
+        "configuration-set": {"configuration_review_required", "configuration_changed", "configuration_invalid"},
+        "integrations": {"integration_refresh_required"},
+        "integration-import": {"integration_refresh_required"},
+        "integration-remove": {"integration_refresh_required"},
+        "integration-use": {"integration_refresh_required"},
+    }
+    structured = result.get("structuredContent")
+    error = structured.get("error") if isinstance(structured, dict) else None
+    if not isinstance(error, dict) or not isinstance(error.get("code"), str) or error["code"] not in allowed.get(command, set()):
+        return generic
+    message = error.get("message")
+    if not isinstance(message, str) or not message or len(message) > 4096 or any(ord(c) < 32 or ord(c) == 127 for c in message):
+        return generic
+    return message
+
+
 def connection():
     root = Path.home() / "Library/Application Support/Coincide/Control"
     info = root.lstat()
@@ -134,7 +155,7 @@ def main():
     rpc("notifications/initialized", {}, notification=True)
     result = rpc("tools/call", {"name": name, "arguments": arguments})
     if result.get("isError"):
-        raise ValueError("Coincide could not complete the command.")
+        raise ValueError(local_action_error(name, result))
     print(json.dumps(result.get("structuredContent"), indent=2, ensure_ascii=False))
 
 

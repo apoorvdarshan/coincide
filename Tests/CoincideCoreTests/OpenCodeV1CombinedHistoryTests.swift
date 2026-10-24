@@ -113,7 +113,16 @@ private func combinedV1Review(fixture: ConversationHistoryFilesFixture, source: 
     try WorkspaceJournal.validate(fixture.snapshot)
 }
 
-@Test func openCodeV1HistoryCombinedFilesRetainExactCheckpointAcrossMixedOriginalAndAdoptedRunOwners() throws {
+private struct CombinedV1FirstAdoption {
+    var fixture: ConversationHistoryFilesFixture
+    let originalReference: ProviderConversationReference
+    let result: ProviderConversationSnapshot
+}
+
+// Keep construction temporaries out of the later reducer/ledger-validation
+// stack. Swift Testing workers have bounded stacks; no behavior is bypassed.
+@inline(never)
+private func completeFirstV1Adoption() throws -> CombinedV1FirstAdoption {
     let prepared = try combinedV1Fixture()
     var fixture = prepared.0
     let (first, firstResult, firstCandidate) = (prepared.1, prepared.2, prepared.3)
@@ -122,7 +131,21 @@ private func combinedV1Review(fixture: ConversationHistoryFilesFixture, source: 
     try fixture.finishProvider(first, result: .conversationHistoryConfirmed(firstResult))
     try fixture.dispatchFiles(first); try fixture.finishFiles(first)
     try fixture.command(.client(.dismissConversationHistoryRecall(operationID: first.id)))
+    return .init(fixture: fixture, originalReference: first.sourceReference, result: firstResult)
+}
 
+private struct CombinedV1SecondAdoption {
+    var fixture: ConversationHistoryFilesFixture
+    let review: ConversationHistoryReview
+    let result: ProviderConversationSnapshot
+    let candidate: OpenCodeV1HistoryCandidate
+    let originalReference: ProviderConversationReference
+    let firstAdoptedReference: ProviderConversationReference
+}
+
+@inline(never)
+private func prepareSecondV1Adoption(_ first: CombinedV1FirstAdoption) throws -> CombinedV1SecondAdoption {
+    var fixture = first.fixture
     var thread = fixture.thread
     let newID = UUID(), inputID = "msg_zz_adopted_input", replyID = "msg_zz_adopted_reply"
     let started = fixture.now.addingTimeInterval(100)
@@ -137,7 +160,7 @@ private func combinedV1Review(fixture: ConversationHistoryFilesFixture, source: 
     user.runReference = .init(threadID: thread.id, runID: newID)
     var reply = ChatMessage(id: "mixed-reply-\(newID)", role: .assistant, text: "Reply on adopted B"); reply.runReference = user.runReference
     thread.messages += [user, reply]; fixture.snapshot.threads[0] = thread
-    let previousNative = try #require(firstResult.openCodeV1)
+    let previousNative = try #require(first.result.openCodeV1)
     let source = try OpenCodeV1HistorySnapshot(reference: previousNative.reference, runtimeIdentity: previousNative.runtimeIdentity,
         workspacePath: previousNative.workspacePath, projectID: previousNative.projectID,
         sessionDigest: String(repeating: "c", count: 64), messages: previousNative.messages + [
@@ -150,8 +173,16 @@ private func combinedV1Review(fixture: ConversationHistoryFilesFixture, source: 
         selected: newID, destination: "ses_combined_adopted_c")
     let files = try #require(second.files)
     #expect(files.target.checkpointRunID == fixture.runs[0] && files.target.stage == .postRun)
-    #expect(second.openCodeV1?.inputs.map(\.originalReference.nativeThreadID) == [first.sourceReference.nativeThreadID, firstResult.reference.nativeThreadID])
+    #expect(second.openCodeV1?.inputs.map(\.originalReference.nativeThreadID) == [first.originalReference.nativeThreadID, first.result.reference.nativeThreadID])
     try fixture.snapshot.validateConversationHistoryFilesReview(second)
+    return .init(fixture: fixture, review: second, result: secondResult, candidate: secondCandidate,
+                 originalReference: first.originalReference, firstAdoptedReference: first.result.reference)
+}
+
+@inline(never)
+private func finishSecondV1Adoption(_ prepared: CombinedV1SecondAdoption) throws {
+    var fixture = prepared.fixture
+    let second = prepared.review, secondResult = prepared.result, secondCandidate = prepared.candidate
     try fixture.accept(second); try fixture.dispatchProvider(second)
     try fixture.command(.conversationHistoryCandidateObserved(operationID: second.id, candidate: secondCandidate, incarnation: fixture.incarnation))
     try fixture.finishProvider(second, result: .conversationHistoryConfirmed(secondResult))
@@ -161,7 +192,13 @@ private func combinedV1Review(fixture: ConversationHistoryFilesFixture, source: 
     try fixture.command(.client(.recallConversationHistoryPrompt(operationID: second.id)))
     #expect(fixture.thread.draft == "Newest typing on C\n\nInput on adopted B")
     #expect(fixture.thread.providerThreadID == secondResult.reference.nativeThreadID)
-    #expect(fixture.thread.runHistory?.first?.providerThreadID == first.sourceReference.nativeThreadID)
-    #expect(fixture.thread.runHistory?.last?.providerThreadID == firstResult.reference.nativeThreadID)
+    #expect(fixture.thread.runHistory?.first?.providerThreadID == prepared.originalReference.nativeThreadID)
+    #expect(fixture.thread.runHistory?.last?.providerThreadID == prepared.firstAdoptedReference.nativeThreadID)
     try WorkspaceJournal.validate(fixture.snapshot)
+}
+
+@Test func openCodeV1HistoryCombinedFilesRetainExactCheckpointAcrossMixedOriginalAndAdoptedRunOwners() throws {
+    let first = try completeFirstV1Adoption()
+    let second = try prepareSecondV1Adoption(first)
+    try finishSecondV1Adoption(second)
 }

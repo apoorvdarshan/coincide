@@ -85,12 +85,13 @@ private func withCommandEngine(provider: ProviderKind = .opencode, generation: O
     thread.provider = provider; thread.checkpointPolicy = .disabled
     if provider == .opencode { thread.openCodeConfiguration = .init(generation: generation) }
     if provider == .pi { thread.piConfiguration = .init() }
+    let databaseURL = root.appendingPathComponent("workspace.sqlite")
+    try await saveLegacyProviderFixture(project: project, threads: [thread], at: databaseURL)
     let factory = CommandEngineFactory(held: held, resultPath: resultPath)
-    let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"),
+    let engine = try WorkspaceEngine(url: databaseURL,
         providerFactory: { factory.make($0) }, identityResolver: { _ in nil })
     do {
         _ = try await engine.load()
-        try await engine.dispatch(.addProjectWithThread(project: project, thread: thread))
         try await body(.init(root: root, engine: engine, factory: factory, project: project, thread: thread))
         for peer in factory.peers { await peer.release() }
         await engine.shutdown()
@@ -149,7 +150,13 @@ func providerCommandsEngineFencesChangedCaptureIncarnationAndJoinsCanceledRead(c
             case "reopen":
                 try await f.engine.dispatch(.removeProject(projectID: f.project.id, expectedThreadIDs: [f.thread.id]))
                 await f.engine.awaitProjectRemovalCleanup(projectID: f.project.id)
-                try await f.engine.dispatch(.addProjectWithThread(project: f.project, thread: f.thread))
+                await #expect(throws: WorkspaceCommandError.self) {
+                    try await f.engine.dispatch(.addProjectWithThread(project: f.project, thread: f.thread))
+                }
+                // Reuse both public identities with a supported conversation.
+                // The retired metadata read must not publish into that replacement.
+                var replacement = CodingThread(project: f.project); replacement.id = f.thread.id
+                try await f.engine.dispatch(.addProjectWithThread(project: f.project, thread: replacement))
             default: read.cancel()
             }
             for peer in f.factory.peers { await peer.release() }
@@ -159,6 +166,10 @@ func providerCommandsEngineFencesChangedCaptureIncarnationAndJoinsCanceledRead(c
             #expect(completed == 1 && closes == 1 && prompts == 0)
             let current = await f.engine.current()
             #expect(current.error == nil)
+            if change == "reopen" {
+                let replacement = try #require(current.snapshot.threads.first { $0.id == f.thread.id })
+                #expect(replacement.provider == .codex && replacement.messages.isEmpty && replacement.activeRun == nil)
+            }
         } catch {
             read.cancel(); for peer in f.factory.peers { await peer.release() }; _ = await read.result
             throw error

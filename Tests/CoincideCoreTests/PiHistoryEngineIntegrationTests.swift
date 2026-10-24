@@ -304,8 +304,8 @@ private func withPiPreparedEngine(mode: String = "normal", legacy: Bool = false,
     let factory = PiPreparedEngineFactory(databaseURL: database, runtime: runtime, directory: native, mode: mode)
     let engine = try WorkspaceEngine(url: database, providerFactory: { try factory.make($0) }, identityResolver: { _ in nil })
     do {
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: database)
         _ = try await engine.load()
-        try await engine.dispatch(.addProjectWithThread(project: project, thread: thread))
         try await body(.init(root: root, database: database, runtime: runtime, project: project, thread: thread, engine: engine, factory: factory))
         for peer in factory.sessions { await peer.releasePreparation(); await peer.releaseSteeringReservation() }
         await engine.shutdown()
@@ -406,8 +406,8 @@ func piHistoryEngineRejectsForeignPreparationBeforeCallingPreparedSend(_ mismatc
     }
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: ["stop", "remove-and-recreate"])
-func piHistoryEngineRetiresHeldPreparationBeforeAnyPromptAcrossStopAndNewIncarnation(_ action: String) async throws {
+@Test(.timeLimit(.minutes(1)), arguments: ["stop", "remove-and-reject-readmission"])
+func piHistoryEngineRetiresHeldPreparationBeforeAnyPromptAcrossStopAndRejectedLegacyReadmission(_ action: String) async throws {
     try await withPiPreparedEngine(mode: "held") { f in
         let runID = UUID()
         try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "Held prospective Pi input"), id: runID)
@@ -428,19 +428,19 @@ func piHistoryEngineRetiresHeldPreparationBeforeAnyPromptAcrossStopAndNewIncarna
             try await f.engine.dispatch(.removeProject(projectID: f.project.id, expectedThreadIDs: [f.thread.id]))
             await peer.releasePreparation()
             await f.engine.awaitProjectRemovalCleanup(projectID: f.project.id)
-            try await f.engine.dispatch(.addProjectWithThread(project: f.project, thread: f.thread))
-            let freshRun = UUID()
-            try await f.engine.dispatch(.submit(threadID: f.thread.id, text: "New incarnation exact Pi input"), id: freshRun)
-            try await piPreparedEngineEventually {
-                let sessions = f.factory.sessions
-                let writes = await sessions.last?.observations().promptWrites
-                return sessions.count == 2 && writes == 1
+            // Retired providers cannot be re-admitted after removal. Current
+            // provider reincarnation is covered by ProjectIdentityLifecycleTests;
+            // here a
+            // late historical preparation must never recreate or run its chat.
+            let beforeReadmission = await f.engine.current().snapshot
+            await #expect(throws: WorkspaceCommandError.self) {
+                try await f.engine.dispatch(.addProjectWithThread(project: f.project, thread: f.thread))
             }
-            let second = try #require(f.factory.sessions.last), secondTrace = await second.observations()
-            #expect(secondTrace.preparation?.runID == freshRun && secondTrace.preparation?.runID != runID)
-            let current = await f.engine.current().snapshot.threads.first
-            #expect(current?.runHistory?.count == 1 && current?.runHistory?.first?.id == freshRun)
-            #expect(current?.runHistory?.first?.pi?.preparation == secondTrace.preparation)
+            let afterReadmission = await f.engine.current().snapshot
+            #expect(afterReadmission == beforeReadmission)
+            #expect(afterReadmission.projects.allSatisfy { $0.id != f.project.id })
+            #expect(afterReadmission.threads.allSatisfy { $0.id != f.thread.id })
+            #expect(f.factory.sessions.count == 1)
         }
         let retired = await peer.observations()
         #expect(retired.preparedSendInvocations == 0 && retired.promptWrites == 0 && retired.legacySends == 0)

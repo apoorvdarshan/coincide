@@ -92,8 +92,8 @@ private struct PiWarmHistoryFixture {
                 if let git { return git.service(at: root) }
                 return GitCheckpointService(root: root)
             })
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: database)
         _ = try await engine.load()
-        try await engine.dispatch(.addProjectWithThread(project: project, thread: thread))
         if let git {
             try await engine.beginWorktreePreparation(threadID: thread.id,
                 selection: .createBranch(name: "pi-history-files", baseRef: "refs/heads/main"))

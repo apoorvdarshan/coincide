@@ -61,10 +61,15 @@ private struct ManagedCommandFixture {
         var project = WorkspaceProject(path: url.path); project.name = title; return project
     }
 }
-private func withManagedCommands(_ body: (ManagedCommandFixture) async throws -> Void) async throws {
+private func withManagedCommands(historicalACPAgents: [ACPAgentConfiguration] = [], _ body: (ManagedCommandFixture) async throws -> Void) async throws {
     let root = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: root) }
     let harness = ManagedCommandHarness()
     let engine = try WorkspaceEngine(url: root.appendingPathComponent("workspace.sqlite"), providerFactory: { harness.make($0) })
+    if !historicalACPAgents.isEmpty {
+        var snapshot = WorkspaceSnapshot(); snapshot.acpAgents = historicalACPAgents
+        let database = try WorkspaceDatabase(url: root.appendingPathComponent("workspace.sqlite"))
+        try await database.save(snapshot, event: "Historical ACP metadata before managed project admission")
+    }
     do {
         _ = try await engine.load(); try await body(.init(root: root, engine: engine, harness: harness))
         await engine.shutdown()
@@ -172,9 +177,8 @@ private enum InvalidManagedStarter: String, CaseIterable {
     case wrongProject, wrongWorkspace, populatedHistory, activeRun, queuedTurn, unsavedAgent, missingAgent
 }
 @Test(.timeLimit(.minutes(1))) func invalidManagedStarterRejectsTheWholeRegistrationAndKeepsPreparedFiles() async throws {
-    try await withManagedCommands { f in
-        let saved = ACPAgentConfiguration(name: "Saved metadata", executable: "fixture-acp")
-        try await f.engine.dispatch(.saveACPAgent(saved))
+    let saved = ACPAgentConfiguration(name: "Saved metadata", executable: "fixture-acp")
+    try await withManagedCommands(historicalACPAgents: [saved]) { f in
         let database = try WorkspaceDatabase(url: f.databaseURL), baseline = await f.engine.current()
         let eventCount = try await database.journalEventCount()
         for invalid in InvalidManagedStarter.allCases {
@@ -212,18 +216,33 @@ private enum InvalidManagedStarter: String, CaseIterable {
     }
 }
 
-@Test(.timeLimit(.minutes(1))) func managedProjectRegistrationAcceptsSavedACPInvocationWithoutStartingIt() async throws {
-    try await withManagedCommands { f in
-        let agent = ACPAgentConfiguration(name: "Saved native agent", executable: "fixture-agent", arguments: ["acp", "literal argument"])
-        try await f.engine.dispatch(.saveACPAgent(agent))
+@Test(.timeLimit(.minutes(1))) func managedProjectRegistrationRejectsHistoricalACPInvocationAtomicallyWithoutStartingIt() async throws {
+    let agent = ACPAgentConfiguration(name: "Saved native agent", executable: "fixture-agent", arguments: ["acp", "literal argument"])
+    try await withManagedCommands(historicalACPAgents: [agent]) { f in
         let project = try f.preparedProject("saved-acp")
+        let readme = URL(fileURLWithPath: project.path).appendingPathComponent("README.md")
+        let preparedBytes = try Data(contentsOf: readme)
         var candidate = CodingThread(project: project); candidate.provider = .acp; candidate.acpAgent = agent
-        let starter = candidate
-        try await f.engine.dispatch(.addProjectWithThread(project: project, thread: starter))
-        let registered = await f.engine.current().snapshot
-        #expect(registered.projects == [project] && registered.threads == [starter] && f.harness.count == 0)
+        let starter = candidate, commandID = UUID(), baseline = await f.engine.current()
         let database = try WorkspaceDatabase(url: f.databaseURL)
-        #expect(try await database.rebuildProjection().snapshot == registered)
+        let eventCount = try await database.journalEventCount()
+        #expect(baseline.snapshot.acpAgents == [agent])
+        // Persisted metadata must not authorize registration of a removed provider.
+        for _ in 0..<2 {
+            do {
+                try await f.engine.dispatch(.addProjectWithThread(project: project, thread: starter), id: commandID)
+                Issue.record("Managed registration admitted a removed ACP provider.")
+            } catch let error as WorkspaceCommandError {
+                #expect(error.message == "Coincide supports Codex and Claude only.")
+            }
+            let unchanged = await f.engine.current()
+            #expect(unchanged.snapshot == baseline.snapshot && unchanged.sequence == baseline.sequence)
+            #expect(unchanged.error == nil && f.harness.count == 0)
+            #expect(try Data(contentsOf: readme) == preparedBytes)
+        }
+        #expect(try await database.receipt(commandID)?.rejection != nil)
+        #expect(try await database.journalEventCount() == eventCount)
+        #expect(try await database.rebuildProjection().snapshot == baseline.snapshot)
         #expect(try await database.effects().isEmpty)
     }
 }

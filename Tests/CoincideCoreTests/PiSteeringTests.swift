@@ -280,19 +280,19 @@ func piSteeringUnconfirmedAdmissionNeverReplaysOrReportsAcknowledged(_ action: S
     }
 }
 
-/// The actual factory launches the production Pi actor and literal --mode rpc
+/// The explicit historical fixture launches the Pi actor and literal --mode rpc
 /// extension. Native stdio, SQLite, FIFO and recovery share the same path.
 @Test(.timeLimit(.minutes(1)))
 func piSteeringEngineKeepsOneRunAndCapturedFIFOWithoutInventingNativeTurnsOrReplayingAfterReopen() async throws {
     let f = try PiSteeringFixture(options: ["terminalBeforeACK": .bool(true), "holdSteeringACK": .bool(true)])
     let databaseURL = f.root.appendingPathComponent("workspace.sqlite")
-    let engine = try WorkspaceEngine(url: databaseURL, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: databaseURL, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: f.root.path)
         var thread = CodingThread(project: project)
         thread.provider = .pi; thread.piConfiguration = f.configuration; thread.checkpointPolicy = .disabled
-        try await engine.dispatch(.addProjectWithThread(project: project, thread: thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: databaseURL)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "OPEN"))
         try await piSteeringEventually { await engine.promptSteeringAvailability(threadID: thread.id).canSteer }
         let started = try #require(await engine.current().snapshot.threads.first), runID = try #require(started.activeRun?.id)
@@ -336,7 +336,7 @@ func piSteeringEngineKeepsOneRunAndCapturedFIFOWithoutInventingNativeTurnsOrRepl
         let database = try WorkspaceDatabase(url: databaseURL), rebuilt = try await database.rebuildProjection().snapshot
         #expect(rebuilt.promptSteerings == saved.promptSteerings && rebuilt.threads.first?.messages == saved.threads.first?.messages)
         let beforeReopen = try f.rows()
-        let reopened = try WorkspaceEngine(url: databaseURL, identityResolver: { _ in nil })
+        let reopened = try WorkspaceEngine(url: databaseURL, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
         _ = try await reopened.load(); await reopened.shutdown()
         let afterReopen = try f.rows(); #expect(afterReopen == beforeReopen)
         #expect(f.parentsStopped)
@@ -354,11 +354,11 @@ func piSteeringEngineLostAdmissionPausesFIFOAndReopenNeverRepeatsTheInput() asyn
                          arguments: [f.root.path], steeringTimeout: .milliseconds(250))
     }, identityResolver: { _ in nil })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: f.root.path)
         var thread = CodingThread(project: project)
         thread.provider = .pi; thread.piConfiguration = f.configuration; thread.checkpointPolicy = .disabled
-        try await engine.dispatch(.addProjectWithThread(project: project, thread: thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: database)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "OPEN"))
         try await piSteeringEventually { await engine.promptSteeringAvailability(threadID: thread.id).canSteer }
         let runID = try #require(await engine.current().snapshot.threads.first?.activeRun?.id)
@@ -373,7 +373,7 @@ func piSteeringEngineLostAdmissionPausesFIFOAndReopenNeverRepeatsTheInput() asyn
         #expect(current.messages.filter { $0.promptSteeringID == operation.id }.map(\.text) == ["STEER no retry"])
         let before = try f.rows()
         #expect(before.filter { $0["type"].string == "prompt" }.map { $0["message"].string } == ["OPEN", "STEER no retry"])
-        let reopened = try WorkspaceEngine(url: database, identityResolver: { _ in nil })
+        let reopened = try WorkspaceEngine(url: database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
         _ = try await reopened.load(); await reopened.shutdown()
         let after = try f.rows(); #expect(after == before && f.parentsStopped)
         try f.remove()

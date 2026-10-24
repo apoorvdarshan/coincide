@@ -13,11 +13,20 @@ extension ProviderIntegrationCatalog {
         var reader = IntegrationDiscovery(codex: codex, claude: claude, workspace: workspace)
         try reader.discover()
         let imports = try libraryItems(libraryRoot: libraryRoot)
-        var indexed = Dictionary(reader.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let liveIndexed = Dictionary(reader.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var indexed = liveIndexed
         for var item in imports {
             if item.importMode == .linked {
-                if let live = indexed[item.id] {
+                if let live = liveIndexed[item.id] {
                     item = live; item.importMode = .linked
+                } else if let canonicalID = reader.linkedAliases[item.id], let live = liveIndexed[canonicalID] {
+                    // Preserve an older imported registry link and its removal
+                    // identity after it is reconciled with a settings entry.
+                    item = .init(provider: item.provider, kind: item.kind, name: item.name,
+                                 summary: live.summary, sourcePath: item.sourcePath, scope: item.scope,
+                                 enabled: live.enabled, invocation: live.invocation, importMode: .linked,
+                                 available: live.available, displayName: live.displayName)
+                    if indexed[canonicalID]?.imported != true { indexed.removeValue(forKey: canonicalID) }
                 } else { item.available = false }
             }
             if let assetKey = instructionAssetKey(item) {
@@ -52,6 +61,7 @@ private struct IntegrationDiscovery {
     var issues: [ProviderIntegrationIssue] = []
     var visited = Set<String>()
     var instructionAssets = Set<String>()
+    var linkedAliases: [String: String] = [:]
     var codexPluginStates: [String: Bool] = [:]
     var claudePluginStates: [String: Bool] = [:]
     var claudeMCPDisabled = Set<String>()
@@ -259,7 +269,13 @@ private struct IntegrationDiscovery {
         let root = codex + "/plugins/cache/" + parts[1] + "/" + parts[0]
         let versions = children(root, provider: .codex).sorted { $0.compare($1, options: .numeric) == .orderedDescending }
         guard let version = versions.first(where: safeComponent) else { return }
-        pluginAssets(root + "/" + version, identifier: identifier, provider: .codex, enabled: enabled)
+        let installation = root + "/" + version
+        if let label = pluginDisplayName(at: installation, provider: .codex) {
+            for index in items.indices where items[index].provider == .codex && items[index].kind == .plugins && items[index].name == identifier {
+                items[index].displayName = label
+            }
+        }
+        pluginAssets(installation, identifier: identifier, provider: .codex, enabled: enabled)
     }
     mutating func codexCachedPlugins() {
         let cache = codex + "/plugins/cache"
@@ -299,7 +315,8 @@ private struct IntegrationDiscovery {
                             ? "Installed remote plugin. Runtime availability and authentication remain with Codex."
                             : "Cached plugin assets. Activation is controlled by Codex; no active installation was found.",
                           sourcePath: remotelyInstalled ? markerPath : installed.manifest,
-                          scope: remotelyInstalled ? "Plugin" : "Cache", enabled: remotelyInstalled))
+                          scope: remotelyInstalled ? "Plugin" : "Cache", enabled: remotelyInstalled,
+                          displayName: pluginDisplayName(manifest)))
                 pluginAssets(installed.path, identifier: identifier, provider: .codex, enabled: remotelyInstalled)
             }
         }
@@ -309,6 +326,7 @@ private struct IntegrationDiscovery {
         guard let registry = json(path, provider: .claude), let plugins = registry["plugins"] as? [String: Any] else { return }
         for (name, raw) in plugins {
             guard let installations = raw as? [[String: Any]] else { issue(path, .claude); continue }
+            var rootsByScope: [String: [String]] = [:]
             for installation in installations {
                 let scope = installation["scope"] as? String ?? "user"
                 if scope == "project" || scope == "local" {
@@ -316,13 +334,46 @@ private struct IntegrationDiscovery {
                           URL(fileURLWithPath: target).standardizedFileURL.path == workspace else { continue }
                 }
                 guard let root = installation["installPath"] as? String, root.hasPrefix("/"), root.utf8.count < 4_096 else { continue }
+                rootsByScope[scope.capitalized, default: []].append(root)
+            }
+            for scope in rootsByScope.keys.sorted() {
+                let roots = rootsByScope[scope] ?? []
                 let enabled = claudePluginStates[name] ?? false
-                add(.init(provider: .claude, kind: .plugins, name: name,
-                          summary: "Installed plugin. Enabled state follows the original Claude settings.",
-                          sourcePath: path, scope: scope.capitalized, enabled: enabled, available: ClaudeSkillFiles.exists(root)))
-                pluginAssets(root, identifier: name, provider: .claude, enabled: enabled)
+                let available = roots.contains(where: ClaudeSkillFiles.exists)
+                var label: String?
+                for root in roots where label == nil { label = pluginDisplayName(at: root, provider: .claude) }
+                let registered = ProviderIntegrationItem(provider: .claude, kind: .plugins, name: name,
+                    summary: "Installed plugin. Enabled state follows the original Claude settings.",
+                    sourcePath: path, scope: scope, enabled: enabled, available: available, displayName: label)
+                if let index = items.firstIndex(where: { $0.provider == .claude && $0.kind == .plugins && $0.name == name && $0.scope == scope }) {
+                    let configured = items[index]
+                    items[index] = .init(provider: .claude, kind: .plugins, name: name,
+                        summary: "Installed plugin. Uses the original Claude configuration and credentials.",
+                        sourcePath: configured.sourcePath, scope: scope, enabled: enabled, available: available, displayName: label)
+                    linkedAliases[registered.id] = configured.id
+                } else { add(registered) }
+                for root in roots { pluginAssets(root, identifier: name, provider: .claude, enabled: enabled) }
             }
         }
+    }
+    mutating func pluginDisplayName(at root: String, provider: ProviderKind) -> String? {
+        let physical = URL(fileURLWithPath: root).resolvingSymlinksInPath().path
+        for name in [".codex-plugin/plugin.json", ".claude-plugin/plugin.json", "plugin.json"] {
+            let path = root + "/" + name
+            guard ClaudeSkillFiles.inside(URL(fileURLWithPath: path).resolvingSymlinksInPath().path, root: physical) else { continue }
+            if let manifest = json(path, provider: provider) { return pluginDisplayName(manifest) }
+        }
+        return nil
+    }
+    private func pluginDisplayName(_ manifest: [String: Any]) -> String? {
+        let interface = manifest["interface"] as? [String: Any]
+        for raw in [interface?["displayName"], manifest["displayName"], manifest["display_name"], manifest["title"]] {
+            guard let value = raw as? String else { continue }
+            let label = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !label.isEmpty, label.utf8.count <= 512,
+               !label.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) { return label }
+        }
+        return nil
     }
     mutating func pluginAssets(_ root: String, identifier: String, provider: ProviderKind, enabled: Bool) {
         let namespace = String(identifier.split(separator: "@").first ?? Substring(identifier))

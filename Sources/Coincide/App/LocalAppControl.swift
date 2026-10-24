@@ -73,6 +73,62 @@ final class LocalAppControl {
         try Task.checkCancellation()
         guard credential?.sessionID == invocation.scope.sessionID else { throw MCPError(.unauthorized) }
         await registry.touch(sessionID: invocation.scope.sessionID)
+        return try await Self.localActionResult(invocation.toolName) {
+            try await self.invokeAction(invocation)
+        }
+    }
+
+    /// Only these local actions have a public recovery contract. Never forward
+    /// arbitrary filesystem, provider, or configuration error descriptions.
+    static func localActionResult(_ action: String, operation: () async throws -> MCPToolResult) async throws -> MCPToolResult {
+        do { return try await operation() }
+        catch is CancellationError { throw MCPError(.cancelled) }
+        catch let error as MCPError { throw error }
+        catch {
+            let code: String, message: String
+            if action == "configuration" || action == "configuration-set",
+               let safe = error as? CoincideError, safeConfigurationErrors.contains(safe.message) {
+                if safe.message == "Read configuration first and use its unexpired review ID for one change." {
+                    code = "configuration_review_required"
+                } else if safe.message == "This configuration changed outside Coincide. Reload it before saving; your provider file has not been overwritten."
+                    || safe.message == "The configuration changed while saving. Reload it and try again." {
+                    code = "configuration_changed"
+                } else { code = "configuration_invalid" }
+                message = safe.message + " Read configuration again for the same provider and scope before retrying. Review IDs are single-use."
+            } else if ["integrations", "integration-import", "integration-remove", "integration-use"].contains(action) {
+                code = "integration_refresh_required"
+                message = "The integration action could not be completed. Refresh integrations and review the current workspace and item ID before retrying. Completed imports are retained."
+            } else { throw error }
+            return .init(content: [message], structuredContent: .object([
+                "error": .object(["code": .string(code), "message": .string(message)])
+            ]), isError: true)
+        }
+    }
+
+    private static let safeConfigurationErrors: Set<String> = [
+        "Read configuration first and use its unexpired review ID for one change.",
+        "The provider configuration directory must be an absolute path.",
+        "Select a project to edit its configuration.",
+        "Codex has user and project configuration scopes.",
+        "This configuration changed outside Coincide. Reload it before saving; your provider file has not been overwritten.",
+        "The configuration changed while saving. Reload it and try again.",
+        "This setting cannot be changed with the structured editor.",
+        "Use the provider's source file for sensitive values. Credentials cannot be entered in this editor.",
+        "Choose Enabled, Disabled or Inherit.",
+        "Choose a supported setting value.",
+        "Enter a single value of at most 512 characters.",
+        "Use up to 200 entries, one per line, each at most 512 characters.",
+        "Enter a whole number from 100000 to 1000000.",
+        "An advanced value occupies this setting. Edit it in the source file.",
+        "The provider settings are not a valid JSON object. Correct the source file before editing.",
+        "The provider settings have duplicate keys or a structure that cannot be rewritten safely.",
+        "This TOML source has syntax or an advanced table layout that the structured editor cannot safely change. Edit it in the provider's source file.",
+        "The provider configuration link has no readable target. Repair the link before editing.",
+        "The structured editor requires a regular configuration file you own, no larger than 1 MB, without hard links.",
+        "This configuration is too large for the structured editor."
+    ]
+
+    private func invokeAction(_ invocation: MCPInvocation) async throws -> MCPToolResult {
         let args = invocation.arguments
         let result: JSONValue
         switch invocation.toolName {

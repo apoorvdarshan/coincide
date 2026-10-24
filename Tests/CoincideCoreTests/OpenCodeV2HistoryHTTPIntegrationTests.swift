@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-/// Real owned executable → loopback HTTP/SSE → production factory → SQLite.
+/// Private owned executable → loopback HTTP/SSE → historical adapter → SQLite.
 /// The peer has no vendor dependency, model, account or access to user files.
 @Test(.timeLimit(.minutes(1)))
 func openCodeV2HistoryHTTPForkAndRewindUseWholeSteeredRunsAndPreserveGitDraftAndCapturedSettings() async throws {
@@ -308,7 +308,7 @@ private struct OpenCodeHistoryHTTPFixture: Sendable {
         } catch { git.cleanup(); throw error }
     }
     func engine() throws -> WorkspaceEngine {
-        do { return try .init(url: database, identityResolver: { _ in nil }) }
+        do { return try .init(url: database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil }) }
         catch { if processesStopped { git.cleanup() }; throw error }
     }
     func thread(_ engine: WorkspaceEngine, _ id: UUID) async throws -> CodingThread {
@@ -319,14 +319,14 @@ private struct OpenCodeHistoryHTTPFixture: Sendable {
         await engine.current().snapshot.conversationHistoryOperation(id)
     }
     func seed(_ engine: WorkspaceEngine) async throws -> Seed {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: workspace.path)
         let selection = OpenCodeModelSelection(providerID: "synthetic", id: "history-model", variant: "balanced")
         let menu = ProviderModel(id: selection.catalogID, name: "Synthetic history model", openCodeSelection: .init(providerID: "synthetic", id: "history-model"), openCodeVariants: ["balanced", "fast"])
         var initial = CodingThread(project: project)
         initial.provider = .opencode; initial.model = selection.catalogID; initial.checkpointPolicy = .disabled
         initial.openCodeConfiguration = .init(executable: executable.path, model: selection, agentID: "build")
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(initial))
+        try await saveLegacyProviderFixture(project: project, threads: [initial], at: database)
+        _ = try await engine.load()
         let threadID = initial.id
         var runs: [UUID] = [], openings: [String] = []
         for index in 1...3 {

@@ -240,19 +240,19 @@ func museSteeringBoundedLedgerPreservesAcceptedCommandsAndRejectsOverflowBeforeW
 }
 
 @Test(.timeLimit(.minutes(1)))
-func museSteeringProductionEngineKeepsAuthorAttributionAndCapturedFIFOThroughRealNativeTerminalAndStop() async throws {
+func museSteeringLegacyAdapterEngineKeepsAuthorAttributionAndCapturedFIFOThroughRealNativeTerminalAndStop() async throws {
     let fixture = try MuseSessionFixture(options: ["observeSteer": .bool(true), "holdSteerReply": .bool(true),
         "steerLateError": .bool(true), "background": .bool(true), "holdInterruptTerminal": .bool(true)], resource: "muse_steering_server")
     let database = fixture.root.appendingPathComponent("workspace.sqlite")
-    let engine = try WorkspaceEngine(url: database, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.root.path)
         var seed = CodingThread(project: project)
         seed.provider = .muse; seed.permission = .supervised; seed.checkpointPolicy = .disabled
         seed.museConfiguration = .init(executable: fixture.executable.path)
         let threadID = seed.id
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(seed))
+        try await saveLegacyProviderFixture(project: project, threads: [seed], at: database)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: threadID, text: "Root native Muse input"))
         try await museEventually {
             let current = await engine.current().snapshot.threads.first { $0.id == threadID }
@@ -340,16 +340,16 @@ func museSteeringProductionEngineKeepsAuthorAttributionAndCapturedFIFOThroughRea
 }
 
 @Test(.timeLimit(.minutes(1)))
-func museSteeringProductionEngineUnknownNativeTargetACKKeepsInputUnconfirmedAndPausesFIFOWithoutReplay() async throws {
+func museSteeringLegacyAdapterEngineUnknownNativeTargetACKKeepsInputUnconfirmedAndPausesFIFOWithoutReplay() async throws {
     let fixture = try MuseSessionFixture(options: ["observeSteer": .bool(false), "wrongSteerTurn": .bool(true)], resource: "muse_steering_server")
-    let engine = try WorkspaceEngine(url: fixture.root.appendingPathComponent("workspace.sqlite"), identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: fixture.root.appendingPathComponent("workspace.sqlite"), providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.root.path)
         var seed = CodingThread(project: project)
         seed.provider = .muse; seed.museConfiguration = .init(executable: fixture.executable.path); seed.checkpointPolicy = .disabled
         let threadID = seed.id
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(seed))
+        try await saveLegacyProviderFixture(project: project, threads: [seed], at: fixture.root.appendingPathComponent("workspace.sqlite"))
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: threadID, text: "Original before unknown steering"))
         try await museEventually { await engine.current().snapshot.threads.first { $0.id == threadID }?.activeRun?.nativeTurnID != nil }
         let before = await engine.current(), runID = try #require(before.snapshot.threads.first { $0.id == threadID }?.activeRun?.id)

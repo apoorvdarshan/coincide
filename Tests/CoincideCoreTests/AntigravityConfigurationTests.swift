@@ -10,8 +10,10 @@ private struct AntigravityConfigurationFixture {
     init(path: String = "/tmp/coincide-antigravity-configuration") throws {
         let project = WorkspaceProject(path: path)
         var thread = CodingThread(project: project); thread.checkpointPolicy = .disabled
+        // Seed a historical value rather than selecting a removed provider.
+        thread.provider = .antigravity; thread.antigravityConfiguration = .init()
         snapshot.projects = [project]; snapshot.threads = [thread]
-        try edit(.provider(.antigravity))
+        try WorkspaceJournal.validate(snapshot)
     }
     @discardableResult mutating func apply(_ command: EngineCommand) throws -> WorkspaceDecision {
         let decision = try WorkspaceDecision.make(command, id: UUID(), snapshot: snapshot, now: Date())

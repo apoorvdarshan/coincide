@@ -115,20 +115,29 @@ private func awaitNativeManagedInstall(_ service: AntigravityInstallation) async
     }
 }
 
-@Test func managedAntigravityProductionFactoryRunsAndReopensWithoutPATHOrPromptReplay() async throws {
+@Test func managedLegacyAntigravityAdapterRunsAndReopensWhileProductionFactoryRejectsIt() async throws {
     let fixture = try NativeManagedRuntimeFixture(), installer = try fixture.installer()
     let databaseURL = fixture.root.appendingPathComponent("workspace.sqlite")
     let configuration = AntigravityConfiguration(instanceID: UUID(), runtimeSelection: .managed, authGeneration: UUID())
-    let engine = try WorkspaceEngine(url: databaseURL,
-        providerFactory: { try ProviderSessions.make(for: $0, antigravityStateRoot: fixture.root.appendingPathComponent("state"), antigravityInstallation: installer) },
-        identityResolver: { _ in nil })
+    let factory: WorkspaceEngine.ProviderFactory = { thread in
+        let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
+        let configuration = try #require(captured.antigravityConfiguration)
+        let pair = try installer.resolve(configuration: configuration)
+        return AntigravitySession(executable: pair.executable, cwd: URL(fileURLWithPath: captured.workspacePath),
+            configuration: configuration, permission: captured.permission,
+            stateRoot: fixture.root.appendingPathComponent("state"), installation: installer)
+    }
+    let engine = try WorkspaceEngine(url: databaseURL, providerFactory: factory, identityResolver: { _ in nil })
     do {
         try await awaitNativeManagedInstall(installer)
         try AntigravityAccountRegistry.save(.init(configuration: configuration, accessState: .verified), rootURL: fixture.root.appendingPathComponent("AntigravitySettings"))
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.root.path)
         var thread = CodingThread(project: project); thread.provider = .antigravity; thread.antigravityConfiguration = configuration; thread.checkpointPolicy = .disabled
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
+        #expect(throws: CoincideError.self) {
+            try ProviderSessions.make(for: thread, antigravityStateRoot: fixture.root.appendingPathComponent("state"), antigravityInstallation: installer)
+        }
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: databaseURL)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "Generated managed-runtime input"))
         try await antigravityEventually {
             let current = await engine.current().snapshot.threads.first { $0.id == thread.id }
@@ -137,7 +146,7 @@ private func awaitNativeManagedInstall(_ service: AntigravityInstallation) async
         await engine.shutdown()
         let prompts = try fixture.rows().filter { $0["method"] == .string("session/prompt") }; #expect(prompts.count == 1)
         let reopened = try WorkspaceEngine(url: databaseURL,
-            providerFactory: { try ProviderSessions.make(for: $0, antigravityStateRoot: fixture.root.appendingPathComponent("state"), antigravityInstallation: installer) }, identityResolver: { _ in nil })
+            providerFactory: factory, identityResolver: { _ in nil })
         let state = try await reopened.load(); await reopened.shutdown()
         #expect(state.threads.first?.antigravityConfiguration?.runtimeSelection == .managed)
         #expect(try fixture.rows().filter { $0["method"] == .string("session/prompt") }.count == 1)

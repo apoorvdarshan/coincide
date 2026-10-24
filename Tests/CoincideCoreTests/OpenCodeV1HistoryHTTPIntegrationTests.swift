@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-/// Production factory/owned child/real loopback HTTP+SSE/SQLite, without a
+/// Historical adapter/owned child/real loopback HTTP+SSE/SQLite, without a
 /// vendor executable, account or model. Native copies persist across hosts.
 @Test(.timeLimit(.minutes(1)))
 func openCodeV1HistoryHTTPRepeatedAdoptionsResolveImmutableRunsAndPublishCandidateBeforeFurtherWire() async throws {
@@ -258,14 +258,13 @@ private struct V1HistoryHTTPFixture: Sendable {
             return .init(git: git, workspace: workspace, executable: executable, database: git.root.appendingPathComponent("v1-history.sqlite"), before: before, mainBefore: mainBefore)
         } catch { git.cleanup(); throw error }
     }
-    func engine() throws -> WorkspaceEngine { try .init(url: database, identityResolver: { _ in nil }) }
+    func engine() throws -> WorkspaceEngine { try .init(url: database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil }) }
     func thread(_ engine: WorkspaceEngine, _ id: UUID) async throws -> CodingThread {
         let current = await engine.current().snapshot
         return try #require(current.threads.first { $0.id == id })
     }
     func operation(_ engine: WorkspaceEngine, _ id: UUID) async -> ConversationHistoryOperation? { await engine.current().snapshot.conversationHistoryOperation(id) }
     func seed(_ engine: WorkspaceEngine) async throws -> Seed {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: workspace.path)
         let selection = OpenCodeModelSelection(providerID: "synthetic", id: "history-model/with-slash", variant: "balanced")
         let menu = ProviderModel(id: selection.catalogID, name: "Private history model", openCodeSelection: .init(providerID: selection.providerID, id: selection.id), openCodeVariants: ["balanced", "fast"])
@@ -273,7 +272,8 @@ private struct V1HistoryHTTPFixture: Sendable {
         initial.provider = .opencode; initial.checkpointPolicy = .disabled
         initial.openCodeConfiguration = .init(generation: .v1, executable: executable.path, model: selection, agentID: "build")
         let id = initial.id
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(initial))
+        try await saveLegacyProviderFixture(project: project, threads: [initial], at: database)
+        _ = try await engine.load()
         var inputs: [Input] = []
         for number in 1...3 {
             try await engine.dispatch(.editThread(id, .openCodeVariant(model: menu, variant: number == 2 ? "fast" : "balanced")))

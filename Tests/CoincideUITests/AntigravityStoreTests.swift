@@ -34,7 +34,7 @@ private actor NativeAntigravityCatalogPeer: ProviderSession {
     }
 }
 
-@Test @MainActor func nativeChoosingAntigravityCopiesSavedAccountWithoutStartingProviderOrDiscardingDraft() async throws {
+@Test @MainActor func nativeChoosingAntigravityIsUnavailableWithoutChangingSavedAccountOrDiscardingDraft() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-antigravity-provider-" + UUID().uuidString)
         .standardizedFileURL.resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -52,9 +52,10 @@ private actor NativeAntigravityCatalogPeer: ProviderSession {
     do {
         #expect(store.antigravityAccount.configuration == configuration)
         store.setProvider(.antigravity, id: thread.id)
-        try await waitAntigravityStore { store.thread(thread.id)?.antigravityConfiguration == configuration }
         let current = try #require(store.thread(thread.id))
-        #expect(current.provider == .antigravity && current.model == "saved-native-model")
+        #expect(current.provider == thread.provider && current.model == thread.model && current.antigravityConfiguration == nil)
+        #expect(store.errorMessage?.contains("Codex and Claude only") == true)
+        #expect(store.antigravityAccount.configuration == configuration)
         #expect(current.draft == thread.draft && current.isPinned && current.messages.isEmpty && current.activeRun == nil)
         #expect(try await WorkspaceDatabase(url: database).effects().isEmpty)
         #expect(await engine.current().error == nil)
@@ -62,7 +63,7 @@ private actor NativeAntigravityCatalogPeer: ProviderSession {
     await store.shutdown(); try FileManager.default.removeItem(at: root)
 }
 
-@Test @MainActor func nativeAntigravityModelRefreshCannotPublishAfterAccountGenerationOrRuntimeChanges() async throws {
+@Test @MainActor func nativeAntigravityModelRefreshIsUnavailableAndPreservesLegacyRuntimeChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-antigravity-catalog-" + UUID().uuidString)
         .standardizedFileURL.resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -81,18 +82,23 @@ private actor NativeAntigravityCatalogPeer: ProviderSession {
         return NativeAntigravityCatalogPeer(gate: gate, model: .init(id: old ? "stale-model" : "current-model", name: old ? "Old account" : "Current account"))
     }, identityResolver: { _ in nil })
     let store = WorkspaceStore(engine: engine); await store.load()
-    let refresh = Task { await store.refreshModels(provider: .antigravity) }
     do {
-        try await waitAntigravityStore { await gate.entered == 1 }
+        await store.refreshModels(provider: .antigravity)
+        #expect(await gate.entered == 0)
+        #expect(store.modelCatalogErrors[.antigravity]?.contains("Codex and Claude only") == true)
+        #expect(store.thread(thread.id)?.antigravityConfiguration == original)
         let receipt = try await engine.dispatch(.editThread(thread.id, .antigravityConfiguration(replacement)))
         #expect(receipt.rejection == nil)
         try await waitAntigravityStore { store.thread(thread.id)?.antigravityConfiguration == replacement }
-        await gate.release(); await refresh.value
         #expect(store.models(for: try #require(store.thread(thread.id))).isEmpty)
         #expect(store.thread(thread.id)?.draft == thread.draft)
         await store.refreshModels(provider: .antigravity)
-        #expect(store.models(for: try #require(store.thread(thread.id))).map(\.id) == ["current-model"])
+        #expect(store.models(for: try #require(store.thread(thread.id))).isEmpty)
+        #expect(await gate.entered == 0)
+        #expect(store.thread(thread.id)?.antigravityConfiguration == replacement)
+        #expect(store.modelCatalogErrors[.antigravity]?.contains("Codex and Claude only") == true)
+        #expect(try await WorkspaceDatabase(url: database).effects().isEmpty)
         #expect(await engine.current().error == nil)
-    } catch { await gate.release(); await refresh.value; await store.shutdown(); try? FileManager.default.removeItem(at: root); throw error }
+    } catch { await gate.release(); await store.shutdown(); try? FileManager.default.removeItem(at: root); throw error }
     await store.shutdown(); try FileManager.default.removeItem(at: root)
 }

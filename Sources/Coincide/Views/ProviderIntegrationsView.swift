@@ -16,10 +16,10 @@ struct ProviderIntegrationsView: View {
     private var rows: [ProviderIntegrationItem] {
         model.items.filter {
             $0.kind == kind && (provider == nil || $0.provider == provider) && (!libraryOnly || $0.imported) &&
-            (query.isEmpty || [$0.name, $0.summary, $0.scope, $0.provider.name].contains { $0.localizedStandardContains(query) })
+            (query.isEmpty || [$0.title, $0.name, $0.summary, $0.scope, $0.provider.name].contains { $0.localizedStandardContains(query) })
         }.sorted {
             if $0.imported != $1.imported { return $0.imported }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
         }
     }
 
@@ -129,13 +129,13 @@ struct ProviderIntegrationsView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 if !item.imported {
-                    Toggle("Select \(item.name)", isOn: Binding(get: { selected.contains(item.id) }, set: {
+                    Toggle("Select \(item.title)", isOn: Binding(get: { selected.contains(item.id) }, set: {
                         if $0 { selected.insert(item.id) } else { selected.remove(item.id) }
                     })).labelsHidden().toggleStyle(.checkbox).disabled(!item.available)
                 }
                 ProviderLogo(provider: item.provider, size: 20)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(verbatim: item.name).font(.system(size: 14, weight: .medium)).textSelection(.enabled)
+                    Text(verbatim: item.title).font(.system(size: 14, weight: .medium)).textSelection(.enabled)
                     if !item.summary.isEmpty {
                         Text(verbatim: item.summary).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3)
                     }
@@ -147,7 +147,7 @@ struct ProviderIntegrationsView: View {
                     if item.imported { Button("Remove from Coincide…", role: .destructive) { removing = item } }
                 } label: { Image(systemName: "ellipsis").frame(width: 20, height: 20) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .accessibilityLabel("Options for \(item.name)")
+                    .accessibilityLabel("Options for \(item.title)")
             }
             HStack(spacing: 10) {
                 if item.kind == .skills || item.kind == .commands {
@@ -155,8 +155,12 @@ struct ProviderIntegrationsView: View {
                         .buttonStyle(SettingsActionButtonStyle()).disabled(!canUse(item))
                         .accessibilityIdentifier("integration-use-" + item.id)
                 } else {
-                    Button("Manage configuration") { store.showSettings(.configuration) }
-                        .buttonStyle(SettingsActionButtonStyle())
+                    if configurationDestination(item) != nil {
+                        Button("Manage configuration") { manageConfiguration(item) }
+                            .buttonStyle(SettingsActionButtonStyle())
+                    } else {
+                        Text("Managed in \(item.provider.name)").font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer(minLength: 8)
                 if item.imported {
@@ -180,6 +184,30 @@ struct ProviderIntegrationsView: View {
     private func use(_ item: ProviderIntegrationItem) async {
         await perform { try await store.useIntegration(item) }
     }
+    private func configurationDestination(_ item: ProviderIntegrationItem) -> ProviderConfigurationEditorStore.Destination? {
+        guard model.scope == store.integrationScope,
+              model.items.contains(where: { $0 == item }) else { return nil }
+        return ProviderConfigurationEditorStore.destination(for: item, codex: store.integrationCodexConfiguration,
+            claude: store.integrationClaudeProfile, workspacePath: store.integrationScope.workspacePath)
+    }
+    private func manageConfiguration(_ item: ProviderIntegrationItem) {
+        guard let destination = configurationDestination(item) else { return }
+        let scope = store.integrationScope
+        let codex = store.integrationCodexConfiguration, claude = store.integrationClaudeProfile
+        Task {
+            await perform {
+                guard store.integrationScope == scope, configurationDestination(item) == destination else {
+                    throw CoincideError("The integration source changed. Refresh it before opening settings.")
+                }
+                try await store.configurationEditor.selectSource(destination, codex: codex, claude: claude, workspacePath: scope.workspacePath)
+                guard store.integrationScope == scope, configurationDestination(item) == destination else {
+                    throw CoincideError("The selected workspace changed. Choose the integration again.")
+                }
+                detail = nil
+                store.showSettings(.configuration)
+            }
+        }
+    }
     private func perform(_ action: () async throws -> Void) async {
         actionError = nil
         do { try await action() }
@@ -195,12 +223,13 @@ struct ProviderIntegrationsView: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 ProviderLogo(provider: item.provider, size: 24)
-                Text(item.name).font(.system(size: 19, weight: .medium))
+                Text(verbatim: item.title).font(.system(size: 19, weight: .medium))
                 Spacer()
                 Button("Done") { detail = nil }.keyboardShortcut(.cancelAction)
             }
             Text(item.summary).foregroundStyle(.secondary).textSelection(.enabled)
             LabeledContent("Agent", value: item.provider.name)
+            if item.title != item.name { LabeledContent("Identifier", value: item.name) }
             LabeledContent("Scope", value: item.scope)
             LabeledContent("Status", value: status(item))
             VStack(alignment: .leading, spacing: 6) {
@@ -215,8 +244,10 @@ struct ProviderIntegrationsView: View {
                 Text("This entry follows the original CLI configuration. Its credentials stay with that CLI, and it only runs when that provider loads it.")
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            Button("Provider configuration") { detail = nil; store.showSettings(.configuration) }
-                .buttonStyle(SettingsActionButtonStyle())
+            if configurationDestination(item) != nil {
+                Button("Provider configuration") { manageConfiguration(item) }
+                    .buttonStyle(SettingsActionButtonStyle())
+            }
         }.padding(28).frame(width: 540).fixedSize(horizontal: false, vertical: true)
     }
     private var explanation: String {

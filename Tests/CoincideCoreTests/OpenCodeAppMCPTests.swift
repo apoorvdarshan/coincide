@@ -3,15 +3,15 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-/// Production factory, owned parent, native HTTP/SSE, real app MCP and durable
+/// Historical adapter, owned parent, native HTTP/SSE, real app MCP and durable
 /// reducer. Only OpenCode's child is a synthetic peer; no model is invoked.
 @Test(.timeLimit(.minutes(1)), arguments: [OpenCodeGeneration.v1, .v2], [false, true])
-func openCodeAppMCPProductionEnginePreservesFIFOStopRedactionAndDurableWrites(generation: OpenCodeGeneration, aliasWorkspace: Bool) async throws {
+func openCodeAppMCPLegacyAdapterPreservesFIFOStopRedactionAndDurableWrites(generation: OpenCodeGeneration, aliasWorkspace: Bool) async throws {
     let f = try OpenCodeAppMCPFixture(generation: generation, aliasWorkspace: aliasWorkspace)
-    let engine = try WorkspaceEngine(url: f.database, appMCPEnabled: true, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: f.database, appMCPEnabled: true, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
+        try await saveLegacyProviderFixture(project: f.project, threads: [f.thread], at: f.database)
         _ = try await engine.load()
-        try await engine.dispatch(.addProjectWithThread(project: f.project, thread: f.thread))
         try await engine.dispatch(.submit(threadID: f.thread.id, text: f.firstInput))
         try await openCodeAppMCPEventually {
             let thread = await engine.current().snapshot.threads.first { $0.id == f.thread.id }

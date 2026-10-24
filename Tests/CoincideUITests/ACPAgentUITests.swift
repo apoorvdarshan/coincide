@@ -12,29 +12,36 @@ import Testing
     }
 }
 
-@MainActor @Test(.timeLimit(.minutes(1))) func nativeAgentSettingsSaveSelectEditAndRemoveKeepExistingConversationConfiguration() async throws {
+@MainActor @Test(.timeLimit(.minutes(1))) func legacyAgentSettingsRejectNewAdmissionAndRemovalKeepsExistingConversationConfiguration() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-acp-ui-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let database = root.appendingPathComponent("workspace.sqlite"), store = WorkspaceStore(databaseURL: database)
+    let database = root.appendingPathComponent("workspace.sqlite")
+    var agent = ACPAgentConfiguration(name: "Native Fixture", executable: "/usr/bin/true", arguments: ["path with spaces", "$(literal)"])
+    agent.experimentalV2 = true
+    let project = WorkspaceProject(path: root.path)
+    var legacy = CodingThread(project: project); legacy.provider = .acp; legacy.acpAgent = agent
+    let supported = CodingThread(project: project)
+    var snapshot = WorkspaceSnapshot(); snapshot.projects = [project]; snapshot.threads = [legacy, supported]; snapshot.acpAgents = [agent]
+    try WorkspaceJournal.validate(snapshot)
+    try await WorkspaceDatabase(url: database).save(snapshot, event: "legacy.acp.ui.fixture")
+    let store = WorkspaceStore(databaseURL: database)
     await store.load()
     do {
-        var agent = ACPAgentConfiguration(name: "Native Fixture", executable: "/usr/bin/true", arguments: ["path with spaces", "$(literal)"])
-        agent.experimentalV2 = true
-        try await store.saveACPAgent(agent)
         #expect(store.snapshot.acpAgents == [agent])
-        store.addProject(at: root); try await waitACPUI { store.snapshot.projects.count == 1 }
-        store.newThread(); try await waitACPUI { store.selectedThreadID != nil }
-        let id = try #require(store.selectedThreadID)
-        store.setACPAgent(agent, id: id); try await waitACPUI { store.thread(id)?.acpAgent == agent }
+        let id = legacy.id
+        store.setACPAgent(agent, id: supported.id)
+        #expect(store.thread(supported.id)?.provider == .codex && store.thread(supported.id)?.acpAgent == nil)
+        #expect(store.errorMessage?.contains("Codex and Claude only") == true)
         store.setAgentConfig("reasoning", value: "high", id: id)
         try await waitACPUI { store.thread(id)?.agentConfigValues?["reasoning"] == "high" }
         store.setAgentConfiguration("boolean", value: .bool(true), id: id)
         try await waitACPUI { store.thread(id)?.agentConfiguration?["boolean"] == .bool(true) }
         if ProcessInfo.processInfo.environment["COINCIDE_RENDER_ACP"] == "1" { try await captureACPSettings(store) }
         var updated = agent; updated.name = "Edited Fixture"; updated.arguments = ["different"]
-        try await store.saveACPAgent(updated)
-        #expect(store.snapshot.acpAgents == [updated] && store.thread(id)?.acpAgent == agent)
+        await #expect(throws: WorkspaceCommandError.self) { try await store.saveACPAgent(updated) }
+        #expect(store.snapshot.acpAgents == [agent] && store.thread(id)?.acpAgent == agent)
+        #expect(store.errorMessage?.contains("Codex and Claude only") == true)
         store.removeACPAgent(agent.id); try await waitACPUI { store.snapshot.acpAgents.isEmpty }
         #expect(store.thread(id)?.acpAgent == agent)
         await store.shutdown()

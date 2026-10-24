@@ -11,8 +11,9 @@ private struct NativeOpenCodeConfigurationFixture {
     init(path: String = "/tmp/coincide-native-opencode-configuration") throws {
         let project = WorkspaceProject(path: path)
         var thread = CodingThread(project: project); thread.checkpointPolicy = .disabled
+        // Historical persisted state; current provider admission remains disabled.
+        thread.provider = .opencode; thread.openCodeConfiguration = .init()
         snapshot.projects = [project]; snapshot.threads = [thread]
-        try edit(.provider(.opencode))
     }
     @discardableResult mutating func apply(_ command: EngineCommand) throws -> WorkspaceDecision {
         let result = try WorkspaceDecision.make(command, id: UUID(), snapshot: snapshot, now: Date())

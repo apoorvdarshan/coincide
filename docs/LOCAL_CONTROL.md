@@ -115,6 +115,13 @@ not exposed through this interface. An empty value removes the selected
 scope's override where supported. Read configuration again after each save.
 Provider-owned settings may require a new CLI session to take effect.
 
+Expired, consumed, or stale configuration reviews return a recovery error. Read
+`configuration` again for the same provider and scope, review the current fields,
+then submit a new `configuration-set` request. Validation failures also consume
+the review ID. Integration failures ask you to refresh `integrations` and check
+the selected workspace and item ID; completed imports remain available. The CLI
+does not retry either action automatically or display arbitrary provider errors.
+
 ## Local provider sessions
 
 **Settings → Sessions** and `sessions codex|claude` inspect sessions owned by

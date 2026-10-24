@@ -84,10 +84,10 @@ func antigravityAuthenticationInterruptsHeldBaselineBeforeDrainingAndNeverDispat
     let databaseURL = fixture.root.appendingPathComponent("workspace.sqlite")
     let engine = try WorkspaceEngine(url: databaseURL, providerFactory: { _ in provider }, identityResolver: { _ in nil }, checkpointFactory: { _ in checkpoint })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.root.path)
         var thread = CodingThread(project: project); thread.provider = .antigravity; thread.antigravityConfiguration = fixture.configuration
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: databaseURL)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "Automatic baseline must finish before provider work"))
         try await antigravityEventually { await checkpoint.preparing }
         let beforeState = await engine.current().snapshot, before = try #require(beforeState.threads.first { $0.id == thread.id })

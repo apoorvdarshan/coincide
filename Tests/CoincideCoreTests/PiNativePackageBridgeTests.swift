@@ -13,10 +13,10 @@ private let nativePiPackageBridgeEnabled = ProcessInfo.processInfo.environment["
 @Test(.enabled(if: nativePiPackageBridgeEnabled), .timeLimit(.minutes(1)))
 func piNativePackageBridgeExpandsSkillsAndTemplatesProvesSteeringAndStoresOnlyDigestEvidence() async throws {
     let fixture = try NativePiPackageBridgeFixture()
-    let engine = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
+        try await saveLegacyProviderFixture(project: fixture.project, threads: [fixture.thread], at: fixture.database)
         _ = try await engine.load()
-        try await engine.dispatch(.addProjectWithThread(project: fixture.project, thread: fixture.thread))
         let openingText = "Native $alpha $alpha and $beta"
         let firstRun = UUID()
         try await engine.dispatch(.submit(threadID: fixture.thread.id, text: openingText), id: firstRun)
@@ -97,7 +97,7 @@ func piNativePackageBridgeExpandsSkillsAndTemplatesProvesSteeringAndStoresOnlyDi
         try fixture.assertStopped()
         let modelCount = try fixture.frames().filter { $0["kind"] == .string("model-start") }.count
         #expect(modelCount == 4)
-        let reopened = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil })
+        let reopened = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
         _ = try await reopened.load(); await reopened.shutdown()
         let afterReopen = try fixture.frames()
         #expect(afterReopen.filter { $0["kind"] == .string("model-start") }.count == modelCount)

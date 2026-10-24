@@ -88,3 +88,17 @@ Every old test not listed above is mapped below. Paths in this table are under
 SwiftUI host-layout tests now exercise embedded Settings instead of the deleted
 inspector and source-control Settings view. Source-control token-store tests
 remain unchanged. Full native desktop verification runs on GitHub Actions.
+
+## Saved legacy provider data
+
+Retained ACP, Antigravity, Muse, OpenCode and Pi protocol/queue/history suites
+seed validated historical snapshots before loading the engine. Tests that need
+wire traffic inject private synthetic adapters; the production factory still
+rejects these providers. New admission regressions verify that neither thread
+creation, provider selection nor saved ACP metadata can enable a removed
+provider. Managed-project rejection preserves prepared files and does not start
+effects. Import tests verify independent Coincide-owned context, with no binding
+to the original provider session.
+
+This keeps the legacy data and protocol assertions runnable without restoring
+retired app controls or weakening the Codex/Claude-only admission boundary.

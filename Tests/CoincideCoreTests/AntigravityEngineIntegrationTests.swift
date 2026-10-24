@@ -2,19 +2,26 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-/// Actual production native factory, real private stdio, exact file delegation,
-/// SQLite and replay. No Antigravity executable/account/model is contacted.
+/// Historical adapter contract: private synthetic stdio, exact file delegation,
+/// SQLite and replay. Production admission remains disabled for this provider.
 @Test(.timeLimit(.minutes(1)))
-func antigravityEngineCapturedFIFOFileGuardNativeStopAndReopenWithoutReplay() async throws {
+func legacyAntigravityAdapterKeepsCapturedFIFOFileGuardNativeStopAndReopenWithoutReplay() async throws {
     let fixture = try AntigravityFixture(options: ["holdCancel": .bool(true), "delegateFiles": .bool(true)])
     let databaseURL = fixture.root.appendingPathComponent("workspace.sqlite")
-    let engine = try WorkspaceEngine(url: databaseURL, providerFactory: { try ProviderSessions.make(for: $0, antigravityStateRoot: fixture.state) }, identityResolver: { _ in nil })
+    let factory: WorkspaceEngine.ProviderFactory = { thread in
+        let captured = thread.activeRun?.configuration ?? ProviderConfiguration(thread: thread)
+        let configuration = try #require(captured.antigravityConfiguration)
+        return AntigravitySession(executable: fixture.executable, cwd: URL(fileURLWithPath: captured.workspacePath),
+            configuration: configuration, permission: captured.permission, stateRoot: fixture.state)
+    }
+    let engine = try WorkspaceEngine(url: databaseURL, providerFactory: factory, identityResolver: { _ in nil })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.root.path)
         var thread = CodingThread(project: project)
         thread.provider = .antigravity; thread.antigravityConfiguration = fixture.configuration; thread.permission = .supervised; thread.checkpointPolicy = .disabled
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
+        #expect(throws: CoincideError.self) { try ProviderSessions.make(for: thread, antigravityStateRoot: fixture.state) }
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: databaseURL)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "First generated native prompt"))
         try await antigravityEventually {
             let current = await engine.current().snapshot.threads.first { $0.id == thread.id }
@@ -58,7 +65,7 @@ func antigravityEngineCapturedFIFOFileGuardNativeStopAndReopenWithoutReplay() as
         let saved = try #require(rebuilt.threads.first { $0.id == thread.id })
         #expect(final.runHistory?.map(\.status) == [.completed, .interrupted])
         #expect(saved.messages == final.messages && saved.runHistory == final.runHistory && saved.antigravityConfiguration == final.antigravityConfiguration)
-        let reopened = try WorkspaceEngine(url: databaseURL, providerFactory: { try ProviderSessions.make(for: $0, antigravityStateRoot: fixture.state) }, identityResolver: { _ in nil })
+        let reopened = try WorkspaceEngine(url: databaseURL, providerFactory: factory, identityResolver: { _ in nil })
         _ = try await reopened.load(); await reopened.shutdown()
         let after = try fixture.rows("prompt"); #expect(after.count == 2 && fixture.stopped)
         try fixture.remove()

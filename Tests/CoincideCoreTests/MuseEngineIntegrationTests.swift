@@ -2,22 +2,22 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-/// Production native factory, a private real stdio MSP process and SQLite.
+/// Historical native adapter, a private real stdio MSP process and SQLite.
 /// The synthetic server never loads Muse, signs in, or invokes a model.
 @Test(.timeLimit(.minutes(1)))
 func museEngineNativeMSPRunsCapturedFIFOAndExactStopWithDurableReopen() async throws {
     let fixture = try MuseSessionFixture(options: ["newProfileContract": .bool(true), "holdInterruptTerminal": .bool(true)])
     let databaseURL = fixture.root.appendingPathComponent("workspace.sqlite")
-    let engine = try WorkspaceEngine(url: databaseURL, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: databaseURL, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     let sentinel = fixture.root.appendingPathComponent("source.txt")
     try Data("Preserved source\n".utf8).write(to: sentinel)
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.root.path)
         var thread = CodingThread(project: project)
         thread.provider = .muse; thread.museConfiguration = .init(executable: fixture.executable.path)
         thread.permission = .supervised; thread.checkpointPolicy = .disabled
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: databaseURL)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "First generated MSP prompt"))
         try await museEventually {
             let current = await engine.current().snapshot.threads.first { $0.id == thread.id }
@@ -78,7 +78,7 @@ func museEngineNativeMSPRunsCapturedFIFOAndExactStopWithDurableReopen() async th
         let database = try WorkspaceDatabase(url: databaseURL), replayed = try await database.rebuildProjection().snapshot
         let saved = try #require(replayed.threads.first { $0.id == thread.id })
         #expect(saved.messages == final.messages && saved.runHistory == final.runHistory && saved.museConfiguration == final.museConfiguration)
-        let reopened = try WorkspaceEngine(url: databaseURL, identityResolver: { _ in nil })
+        let reopened = try WorkspaceEngine(url: databaseURL, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
         _ = try await reopened.load(); await reopened.shutdown()
         let after = try fixture.rows("prompt"); #expect(after.count == 2 && fixture.parentsStopped)
         try fixture.removeIfStopped()

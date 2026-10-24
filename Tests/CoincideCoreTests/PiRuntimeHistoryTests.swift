@@ -411,17 +411,17 @@ private func assertPiHistoryParentsExited(_ peer: PiHistoryPeer) throws {
     }
 }
 
-@Test(.timeLimit(.minutes(1))) func piCapturedProductionEngineCommitsEachPreparationBeforeFIFOAndKeepsExactHistoryAcrossReopen() async throws {
+@Test(.timeLimit(.minutes(1))) func piCapturedLegacyAdapterEngineCommitsEachPreparationBeforeFIFOAndKeepsExactHistoryAcrossReopen() async throws {
     let peer = try PiHistoryPeer(), database = peer.root.appendingPathComponent("workspace.sqlite")
     let sentinel = peer.root.appendingPathComponent("source.txt"), bytes = Data("unchanged source\n".utf8)
     try bytes.write(to: sentinel)
-    let engine = try WorkspaceEngine(url: database, identityResolver: { _ in nil })
+    let engine = try WorkspaceEngine(url: database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: peer.root.path)
         var thread = peer.thread(); thread.activeRun = nil; thread.runHistory = nil; thread.messages = []
         thread.projectID = project.id
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], at: database)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "engine first"))
         try await piHistoryEventually {
             let current = await engine.current().snapshot.threads.first { $0.id == thread.id }

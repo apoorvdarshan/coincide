@@ -49,14 +49,15 @@ import Testing
 @Test func nativeGrokEngineReopensForCapturedQueuedPolicyInsteadOfFutureHeader() async throws {
     let directory = try temporaryWorkspace(); defer { try? FileManager.default.removeItem(at: directory) }
     let registry = GrokConfigurationSessions()
-    let engine = try WorkspaceEngine(url: directory.appendingPathComponent("grok.sqlite"),
+    let databaseURL = directory.appendingPathComponent("grok.sqlite")
+    let engine = try WorkspaceEngine(url: databaseURL,
         providerFactory: { registry.make($0) }, identityResolver: { _ in nil })
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: directory.path), agent = ACPIntegration.grok.configuration()
         var thread = CodingThread(project: project); thread.provider = .acp; thread.acpAgent = agent
         thread.permission = .supervised; thread.checkpointPolicy = .disabled
-        try await engine.dispatch(.saveACPAgent(agent)); try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(thread))
+        try await saveLegacyProviderFixture(project: project, threads: [thread], acpAgents: [agent], at: databaseURL)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: thread.id, text: "Ask first"))
         try await grokConfigurationEventually { let current = await engine.current(); return registry.sessions.count == 1 && current.snapshot.threads[0].activeRun?.nativeTurnID != nil }
         let first = registry.sessions[0]

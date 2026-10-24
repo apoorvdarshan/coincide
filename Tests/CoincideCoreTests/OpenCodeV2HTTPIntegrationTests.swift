@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import CoincideCore
 
-/// Exercises the production factory, owned child, HTTP/SSE implementation and
+/// Exercises an explicit historical adapter, owned child, HTTP/SSE implementation and
 /// journal reducer together. The executable is a private synthetic TCP peer;
 /// this test never invokes an installed OpenCode executable or a model.
 @Test(.timeLimit(.minutes(1)))
@@ -11,15 +11,14 @@ func openCodeV2HTTPIntegrationRunsCapturedFIFOThroughEngineAndDrainsItsExactOwne
     let fixture = try OpenCodeV2EngineHTTPFixture()
     let engine: WorkspaceEngine
     do {
-        // Deliberately retain the default ProviderSessions.make factory. Only
-        // repository identity is disabled; the real native adapter is created.
-        engine = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil })
+        // The app factory rejects retired providers; inject the private native
+        // adapter to retain wire, queue, and owned-process regression coverage.
+        engine = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil })
     } catch {
         try? fixture.removeFilesIfProcessStopped()
         throw error
     }
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.workspace.path)
         var initial = CodingThread(project: project)
         let balanced = OpenCodeModelSelection(providerID: "synthetic", id: "wire-model", variant: "balanced")
@@ -30,8 +29,8 @@ func openCodeV2HTTPIntegrationRunsCapturedFIFOThroughEngineAndDrainsItsExactOwne
         let threadID = initial.id
         let menuModel = ProviderModel(id: balanced.catalogID, name: "Synthetic TCP model",
             openCodeSelection: .init(providerID: "synthetic", id: "wire-model"), openCodeVariants: ["balanced", "fast"])
-        try await engine.dispatch(.addProject(project))
-        try await engine.dispatch(.createThread(initial))
+        try await saveLegacyProviderFixture(project: project, threads: [initial], at: fixture.database)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: threadID, text: "wire-first 工作 🌍"))
 
         try await openCodeV2EngineHTTPEventually("first native step and authoritative snapshots") {
@@ -160,10 +159,9 @@ func openCodeV2HTTPIntegrationRunsCapturedFIFOThroughEngineAndDrainsItsExactOwne
 func openCodeV2HTTPIntegrationSteeringHoldsTheOriginalEngineRunAcrossExecutionsBeforeCapturedFIFOStarts() async throws {
     let fixture = try OpenCodeV2EngineHTTPFixture(resource: "opencode_v2_steering_http")
     let engine: WorkspaceEngine
-    do { engine = try WorkspaceEngine(url: fixture.database, identityResolver: { _ in nil }) }
+    do { engine = try WorkspaceEngine(url: fixture.database, providerFactory: { try makeLegacyNativeAdapterFixtureSession($0) }, identityResolver: { _ in nil }) }
     catch { try? fixture.removeFilesIfProcessStopped(); throw error }
     do {
-        _ = try await engine.load()
         let project = WorkspaceProject(path: fixture.workspace.path)
         let balanced = OpenCodeModelSelection(providerID: "synthetic", id: "wire-model", variant: "balanced")
         let menuModel = ProviderModel(id: balanced.catalogID, name: "Synthetic TCP model",
@@ -172,7 +170,8 @@ func openCodeV2HTTPIntegrationSteeringHoldsTheOriginalEngineRunAcrossExecutionsB
         initial.provider = .opencode; initial.model = balanced.catalogID; initial.checkpointPolicy = .disabled
         initial.openCodeConfiguration = .init(executable: fixture.executable.path, model: balanced, agentID: "build")
         let threadID = initial.id
-        try await engine.dispatch(.addProject(project)); try await engine.dispatch(.createThread(initial))
+        try await saveLegacyProviderFixture(project: project, threads: [initial], at: fixture.database)
+        _ = try await engine.load()
         try await engine.dispatch(.submit(threadID: threadID, text: "steering-root 工作 🌍"))
         try await openCodeV2EngineHTTPEventually("the native foreground steering boundary") {
             let thread = await engine.current().snapshot.threads.first { $0.id == threadID }

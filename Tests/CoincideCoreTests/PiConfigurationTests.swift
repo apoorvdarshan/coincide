@@ -14,8 +14,9 @@ private struct NativePiConfigurationFixture {
     init(path: String = "/tmp/coincide-pi-config") throws {
         let project = WorkspaceProject(path: path)
         var thread = CodingThread(project: project); thread.checkpointPolicy = .disabled
+        // Historical persisted state; current provider admission remains disabled.
+        thread.provider = .pi; thread.piConfiguration = .init()
         snapshot.projects = [project]; snapshot.threads = [thread]
-        try edit(.provider(.pi))
     }
     @discardableResult mutating func apply(_ command: EngineCommand) throws -> WorkspaceDecision {
         let decision = try WorkspaceDecision.make(command, id: UUID(), snapshot: snapshot, now: Date())

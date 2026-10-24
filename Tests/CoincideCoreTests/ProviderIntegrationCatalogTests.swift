@@ -248,3 +248,64 @@ private struct IntegrationFixture {
     #expect(scan.issues.contains { $0.message.contains("outside its installation") })
     #expect(!String(decoding: try JSONEncoder().encode(scan), as: UTF8.self).contains("PRIVATE-OUTSIDE-DESCRIPTION"))
 }
+
+@Test func integrationClaudePluginsMergeConfigurationAndInstallationPerScopeAndPreserveImportedLinks() throws {
+    let f = try IntegrationFixture(); defer { f.close() }
+    let name = "review@local"
+    let userSettings = f.claude.appendingPathComponent("settings.json")
+    let projectSettings = f.workspace.appendingPathComponent(".claude/settings.json")
+    try f.write(userSettings, #"{"enabledPlugins":{"review@local":true}}"#)
+    try f.write(projectSettings, #"{"enabledPlugins":{"review@local":false}}"#)
+    let userInstall = f.claude.appendingPathComponent("plugins/cache/local/review/1.0")
+    let projectInstall = f.workspace.appendingPathComponent("installed-review")
+    for root in [userInstall, projectInstall] {
+        try f.write(root.appendingPathComponent(".claude-plugin/plugin.json"), #"{"name":"review","displayName":"Review Tools"}"#)
+    }
+    let registry = f.claude.appendingPathComponent("plugins/installed_plugins.json")
+    let installations: [[String: String]] = [
+        ["scope": "user", "installPath": userInstall.path],
+        ["scope": "project", "projectPath": f.workspace.path, "installPath": projectInstall.path],
+        ["scope": "project", "projectPath": "/other-project", "installPath": "/other-installation"]
+    ]
+    let bytes = try JSONSerialization.data(withJSONObject: ["plugins": [name: installations]])
+    try f.write(registry, String(decoding: bytes, as: UTF8.self))
+    let rows = try f.scan().items.filter { $0.provider == .claude && $0.kind == .plugins && $0.name == name }
+    #expect(rows.count == 2 && Set(rows.map(\.scope)) == ["User", "Project"])
+    #expect(rows.allSatisfy { $0.available && !$0.enabled && $0.title == "Review Tools" })
+    #expect(rows.first { $0.scope == "User" }?.sourcePath == userSettings.path)
+    #expect(rows.first { $0.scope == "Project" }?.sourcePath == projectSettings.path)
+
+    // A previously imported registry row remains the same removable link,
+    // without reintroducing its now-reconciled configured duplicate.
+    let old = ProviderIntegrationItem(provider: .claude, kind: .plugins, name: name, summary: "Installed plugin",
+        sourcePath: registry.path, scope: "User")
+    _ = try ProviderIntegrationCatalog.importItem(old, libraryRoot: f.library)
+    let linkedRows = try f.scan().items.filter { $0.provider == .claude && $0.kind == .plugins && $0.name == name }
+    #expect(linkedRows.count == 2)
+    let linked = try #require(linkedRows.first { $0.scope == "User" })
+    #expect(linked.id == old.id && linked.sourcePath == registry.path && linked.importMode == .linked && linked.available)
+    try ProviderIntegrationCatalog.removeImport(id: old.id, libraryRoot: f.library)
+    try FileManager.default.removeItem(at: projectInstall)
+    let final = try f.scan().items.filter { $0.provider == .claude && $0.kind == .plugins && $0.name == name }
+    #expect(final.first { $0.scope == "User" }?.sourcePath == userSettings.path)
+    #expect(final.first { $0.scope == "User" }?.available == true)
+    #expect(final.first { $0.scope == "Project" }?.available == false)
+}
+
+@Test func integrationPluginDisplayNamesPreserveNativeIdentityAndOnlyReadPublicLabels() throws {
+    let f = try IntegrationFixture(); defer { f.close() }
+    let plugin = f.codex.appendingPathComponent("plugins/cache/remote/app-fixture")
+    try f.write(plugin.appendingPathComponent(".codex-remote-plugin-install.json"), #"{"schema_version":1,"remote_plugin_id":"opaque-fixture"}"#)
+    try f.write(plugin.appendingPathComponent("1.0/.codex-plugin/plugin.json"), #"{"name":"app-fixture","interface":{"displayName":"Fixture Music"},"privateSetting":"PRIVATE-MANIFEST"}"#)
+    let item = try #require(try f.scan().items.first { $0.provider == .codex && $0.kind == .plugins })
+    #expect(item.name == "app-fixture@remote" && item.title == "Fixture Music")
+    let sameIdentity = ProviderIntegrationItem(provider: item.provider, kind: item.kind, name: item.name,
+        summary: item.summary, sourcePath: item.sourcePath, scope: item.scope)
+    #expect(item.id == sameIdentity.id && sameIdentity.title == sameIdentity.name)
+    let data = try JSONEncoder().encode(item)
+    #expect(!String(decoding: data, as: UTF8.self).contains("PRIVATE-MANIFEST"))
+    var oldObject = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    oldObject.removeValue(forKey: "displayName")
+    let old = try JSONDecoder().decode(ProviderIntegrationItem.self, from: JSONSerialization.data(withJSONObject: oldObject))
+    #expect(old.id == item.id && old.displayName == nil && old.title == old.name)
+}
