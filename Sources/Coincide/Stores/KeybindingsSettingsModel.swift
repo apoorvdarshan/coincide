@@ -3,7 +3,7 @@ import Foundation
 
 enum KeybindingSource: String, Sendable { case `default` = "Default", custom = "Custom", project = "Project" }
 
-/// One Settings row (T3 `KeybindingRow`).
+/// One saved keyboard shortcut shown in Settings.
 struct KeybindingRow: Identifiable, Equatable {
     let id: String
     let command: KeybindingCommand
@@ -21,11 +21,11 @@ struct KeybindingRow: Identifiable, Equatable {
     var canRemove: Bool { source != .default }
 }
 
-/// Port of T3 `KeybindingsSettings.logic`.
+/// Keyboard settings for the commands available in the chat app.
 enum KeybindingsSettingsModel {
     static func rows(_ keybindings: [ResolvedKeybinding], defaults: [ResolvedKeybinding] = KeybindingDefaults.resolved) -> [KeybindingRow] {
         var byID: [String: KeybindingRow] = [:], order: [String] = []
-        for binding in keybindings {
+        for binding in keybindings where MainWindowController.supports(binding.command) {
             let key = binding.keyText, when = binding.whenText
             let id = [binding.command.rawValue, key, when].joined(separator: "\u{0}")
             let isDefault = defaults.contains { $0.command == binding.command && $0.keyText == key && $0.whenText == when }
@@ -83,10 +83,10 @@ enum KeybindingsSettingsModel {
 
     /// Commands for a new binding: every Coincide-dispatched or reserved command.
     static var commandOptions: [KeybindingCommand] {
-        KeybindingCatalog.allCommands.filter { [.available, .reserved].contains($0.availability) }
+        KeybindingCatalog.allCommands.filter(MainWindowController.supports)
     }
 
-    /// T3 `keybindingFromKeyboardEvent` with layout characters on macOS: Command
+    /// Record layout characters on macOS: Command
     /// records as `mod`; a US shifted glyph records as its key plus Shift.
     static func recordedKey(keyCode: UInt16, characters: String?, command: Bool, control: Bool, option: Bool, shift: Bool) -> String? {
         let physical = KeyStroke.specialKeys[keyCode] ?? KeyStroke.physicalKeys[keyCode]

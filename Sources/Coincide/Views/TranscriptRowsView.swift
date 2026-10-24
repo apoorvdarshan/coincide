@@ -3,7 +3,7 @@ import CoincideMarkdown
 import SwiftUI
 
 struct TranscriptSheetRequest: Identifiable, Equatable {
-    enum Action: Equatable { case history(UUID, ConversationHistoryKind), changes(UUID) }
+    enum Action: Equatable { case history(UUID, ConversationHistoryKind) }
     let source: TranscriptActionSource
     let action: Action
     var id: String { source.threadID.uuidString + "/" + String(source.threadCreatedAt.timeIntervalSince1970) + "/" + String(describing: action) }
@@ -18,7 +18,6 @@ struct TranscriptSheet: View {
         if threadID == request.source.threadID, store.transcriptSourceIsCurrent(request.source) {
             switch request.action {
             case .history(let run, let kind): ConversationHistoryReviewSheet(store: store, threadID: threadID, runID: run, kind: kind, close: close)
-            case .changes(let run): RunCheckpointDiffSheet(store: store, threadID: threadID, runID: run)
             }
         } else {
             VStack(spacing: 12) {
@@ -135,14 +134,9 @@ struct TranscriptRowsView: View {
                 .id(entry.message.id).threadFindHighlight(entry.message.id)
         case .fold(let fold):
             TurnFoldRow(fold: fold, toggle: { TranscriptViewState.toggle(fold.id, in: &scoped.expandedFolds) })
-        case .changes(let changes):
-            let key = changesKey(changes)
-            TurnChangesFooter(changes: changes, workspacePath: thread.workspacePath, load: scoped.changeSummaries[key],
-                              fetch: { await loadChanges(changes) }, viewChanges: changes.checkpointRevision == nil ? nil : {
-                                  guard let message = thread.visibleMessages.last(where: { $0.runReference == .init(threadID: thread.id, runID: changes.runID) }),
-                                        let source = store.captureTranscriptSource(thread: thread, message: message), store.transcriptSourceIsCurrent(source) else { return }
-                                  present(.init(source: source, action: .changes(changes.runID)))
-                              }, openFile: openPath).id(key)
+        case .changes:
+            EmptyView()
+
         }
     }
 
@@ -178,38 +172,11 @@ struct TranscriptRowsView: View {
         if message.role == .assistant, meta.terminalResponse {
             actions.forkUnavailableReason = store.conversationHistoryUnavailableReason(threadID: thread.id, runID: runID, kind: .forkAfterRun)
             actions.forkFromHere = { guard store.transcriptSourceIsCurrent(source) else { return }; present(.init(source: source, action: .history(runID, .forkAfterRun))) }
-            if meta.canShowChanges { actions.viewChanges = { guard store.transcriptSourceIsCurrent(source) else { return }; present(.init(source: source, action: .changes(runID))) } }
         }
         return actions
     }
 
-    private func changesKey(_ changes: TranscriptTurnChanges) -> String { changes.runID.uuidString + "/" + (changes.checkpointRevision ?? "tools") }
-    private func changesCurrent(_ changes: TranscriptTurnChanges) -> Bool {
-        guard !Task.isCancelled, let current = store.thread(thread.id), current.createdAt == thread.createdAt,
-              current.projectID == thread.projectID, current.workspacePath.utf8.elementsEqual(thread.workspacePath.utf8),
-              current.workspacePreparation?.id == thread.workspacePreparation?.id else { return false }
-        guard let run = current.activeHistoryRuns.first(where: { $0.id == changes.runID }), run.status.isTerminal,
-              current.activeRun?.id != changes.runID, let checkpoints = run.checkpoints,
-              TranscriptLayout.canShowDiff(checkpoints), let post = checkpoints.postRun else { return false }
-        return changes.checkpointRevision == checkpoints.baseline.id.uuidString + ":" + post.id.uuidString
-    }
-    private func loadChanges(_ changes: TranscriptTurnChanges) async {
-        let owner = scoped, key = changesKey(changes)
-        guard changes.checkpointRevision != nil, changesCurrent(changes), owner.changeSummaries[key] == nil || owner.changeSummaries[key] == .unavailable else { return }
-        if owner.changeSummaries.count >= 256 { owner.changeSummaries.removeAll(keepingCapacity: true) }
-        owner.changeSummaries[key] = .loading
-        do {
-            let diff = try await store.runCheckpointDiff(threadID: thread.id, runID: changes.runID, maxBytes: 262_144)
-            try Task.checkCancellation()
-            let parsing = Task.detached(priority: .utility) { TranscriptPatch.parse(diff.patch) ?? [] }
-            let files = await withTaskCancellationHandler { await parsing.value } onCancel: { parsing.cancel() }
-            guard changesCurrent(changes) else { owner.changeSummaries.removeValue(forKey: key); return }
-            owner.changeSummaries[key] = .loaded(files, truncated: diff.truncated)
-        } catch {
-            if Task.isCancelled || !changesCurrent(changes) { owner.changeSummaries.removeValue(forKey: key) }
-            else { owner.changeSummaries[key] = .unavailable }
-        }
-    }
+
 }
 
 enum TranscriptPreferences {
@@ -226,16 +193,14 @@ enum TranscriptEntryCaption {
     }
 }
 
-/// The working row under an active run, with T3's live elapsed time.
+/// Native working status and elapsed time for the active reply.
 struct TranscriptWorkingIndicator: View {
     let thread: CodingThread
     var body: some View {
         if thread.state == .running || thread.state == .awaitingApproval {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text(RunCheckpointPresentation.preparingBaseline(in: thread)
-                     ? String(localized: "Preparing workspace snapshot…")
-                     : thread.state == .awaitingApproval ? String(localized: "Waiting for input…")
+                Text(thread.state == .awaitingApproval ? String(localized: "Waiting for input…")
                      : thread.providerActivity?.state == .idle ? String(localized: "Waiting for agent confirmation…")
                      : String(localized: "\(thread.providerName) is working…"))
                     .font(.caption).foregroundStyle(.secondary)

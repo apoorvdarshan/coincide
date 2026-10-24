@@ -50,17 +50,16 @@ struct ComposerView: View {
     @State private var dismissedCommandTrigger: ComposerCommandMention?
     @State private var highlightedCommandID: String?
     @State private var insertionError: String?
-    @State private var stashMenuOpen = false
     private var draftChangesBlockSend: Bool { draftThreadID.map { draftTools?.blocksSubmission($0) == true } ?? false }
     private var canSend: Bool { sendAvailable && !historyLocked && !submitting && !draftChangesBlockSend && (hasAttachments || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
     private var canSteer: Bool { steeringAvailable && steer != nil }
     private var delivery: ComposerDelivery {
         .resolve(running: busy, preference: followUpBehavior, alternate: false, canSteer: canSteer)
     }
-    private var height: CGFloat { min(150, max(60, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
+    private var height: CGFloat { min(150, max(42, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
     private var pasteTypes: [UTType] { draftTools == nil ? [.fileURL, .image] : [.fileURL, .image, .plainText] }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             if let skills, commandAnchor != nil {
                 ProviderCommandPicker(model: skills, query: Binding(get: { commandQuery }, set: { manualCommandQuery = $0 }),
                     searchField: manualCommandAnchor != nil, selectedID: selectedCommand?.id,
@@ -77,8 +76,8 @@ struct ComposerView: View {
             }
             if let draftTools, let draftThreadID { ComposerDraftToolsFeedback(store: draftTools, threadID: draftThreadID) }
             ZStack(alignment: .topLeading) {
-                if text.isEmpty { Text("Work with \(providerName ?? provider.name)").foregroundStyle(.tertiary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
-                TextEditor(text: $text).font(.system(size: 15)).frame(height: height)
+                if text.isEmpty { Text("Work with \(providerName ?? provider.name)").font(.system(size: 14)).foregroundStyle(.secondary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
+                TextEditor(text: $text).font(.system(size: 14)).frame(height: height)
                     .accessibilityIdentifier("composer-input")
                     .focused($editorFocused)
                     .onAppear { editorFocused = true }
@@ -113,8 +112,8 @@ struct ComposerView: View {
             }
         }
         .padding(14)
-        .background(ChatChrome.composer, in: RoundedRectangle(cornerRadius: 24))
-        .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(Color.primary.opacity(0.04), lineWidth: 1).allowsHitTesting(false) }
+        .background(ChatChrome.composer, in: RoundedRectangle(cornerRadius: 22))
+        .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(Color.primary.opacity(0.04), lineWidth: 1).allowsHitTesting(false) }
         .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $dropTargeted) { providers in importProviders(providers); return true }
         .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false) } }
         .background { geometry("bounds") }
@@ -132,18 +131,9 @@ struct ComposerView: View {
             if let referenceFile { Button("Reference a workspace file…", action: referenceFile).accessibilityIdentifier("composer-reference-file") }
             if skills?.supportsSkills == true { Button("Skills…", action: openSkills).accessibilityIdentifier("composer-skills") }
             if skills?.supportsCommands == true { Button("Commands…", action: openCommands).accessibilityIdentifier("composer-commands") }
-            if let draftTools, let draftThreadID {
-                Divider()
-                Button("Stash prompt") { stashPrompt() }.disabled(historyLocked || draftTools.stopping || draftTools.hasUnresolved(draftThreadID))
-                Button("Saved prompts…") { stashMenuOpen = true }
-                if let discardDraft { Button("Discard draft", role: .destructive, action: discardDraft).disabled(text.isEmpty && !hasAttachments) }
-            }
         } label: { Image(systemName: "plus").font(.system(size: 19)).frame(width: 26, height: 26) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(submitting)
         .help("Add files, skills or commands").accessibilityLabel("Add files and tools")
-        .popover(isPresented: $stashMenuOpen) {
-            if let draftTools, let draftThreadID { ComposerStashMenu(store: draftTools, threadID: draftThreadID, showing: $stashMenuOpen) }
-        }
     }
     private var permissionControl: some View {
         Menu {
@@ -153,7 +143,7 @@ struct ComposerView: View {
                     else { Text(mode.nativeTitle(for: provider)) }
                 }
             }
-        } label: { Label(permission.nativeTitle(for: provider), systemImage: "slider.horizontal.3").font(.caption) }
+        } label: { Label(permission.nativeTitle(for: provider), systemImage: "slider.horizontal.3").font(.system(size: 12)) }
         .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
         .accessibilityLabel("\(provider.name) permissions")
         .help(provider == .codex ? "Codex sandbox and approval policy for future turns." : "Claude Code permission mode for future turns.")
@@ -263,14 +253,6 @@ struct ComposerView: View {
         text = replacement.0; selectedRange = replacement.1; observedEditorText = replacement.0
         selectionRequest = .init(text: replacement.0, range: replacement.1); insertionError = nil
     }
-    private func stashPrompt() {
-        guard let draftTools, let draftThreadID, !historyLocked, !submitting else { return }
-        if text.isEmpty && !hasAttachments {
-            let entries = draftTools.stashes(draftThreadID)
-            if entries.count == 1 { draftTools.restore(entries[0].id, threadID: draftThreadID) }
-            else { stashMenuOpen.toggle() }
-        } else { draftTools.stash(threadID: draftThreadID) }
-    }
     private func openSkills() {
         manualCommandAnchor = nil; dismissedCommandTrigger = typedCommandTrigger; highlightedCommandID = nil
         insertionError = nil; manualSkillQuery = ""; highlightedSkillID = nil
@@ -334,9 +316,6 @@ struct ComposerView: View {
         if modifiers == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "v", draftTools != nil {
             guard let value = NSPasteboard.general.string(forType: .string) else { return false }
             pasteText(value, bypass: true); return true
-        }
-        if modifiers == [.command], event.charactersIgnoringModifiers?.lowercased() == "s", draftTools != nil {
-            stashPrompt(); return true
         }
         let commands = commandAnchor != nil
         guard commands || skillAnchor != nil else { return false }

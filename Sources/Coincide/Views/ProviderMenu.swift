@@ -9,28 +9,30 @@ struct ProviderMenu: View {
     @AppStorage(ModelPickerPreferences.key) private var hiddenModels = "[]"
     private var controls: ProviderModelControlsPresentation { .init(thread: thread, models: store.models(for: thread)) }
     private var summary: String {
-        guard !thread.model.isEmpty else { return "Choose model" }
+        guard !thread.model.isEmpty else { return "\(thread.provider.name) default" }
         var parts = [store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? thread.model]
         if thread.provider == .codex, let effort = thread.reasoningEffort { parts.append(ReasoningEffortPresentation.title(effort)) }
-        parts += controls.summaryComponents
-        return parts.joined(separator: " · ")
+        if thread.provider == .claude, let effort = controls.claudeOptions?.effort {
+            parts.append(ReasoningEffortPresentation.title(effort))
+        }
+        return parts.joined(separator: " ")
     }
     var body: some View {
         Button { store.modelPickerPresented.toggle() } label: {
             HStack(spacing: 5) {
-                if !thread.model.isEmpty { ProviderLogo(provider: thread.provider, size: 16) }
+                ProviderLogo(provider: thread.provider, size: 14)
                 Text(summary).lineLimit(1).truncationMode(.middle)
                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
-            }.font(.system(size: 13)).frame(maxWidth: 300, alignment: .trailing).fixedSize(horizontal: false, vertical: true)
+            }.font(.system(size: 13)).frame(maxWidth: 270, alignment: .trailing).fixedSize(horizontal: false, vertical: true)
         }
         .buttonStyle(.plain).accessibilityLabel("Choose model").accessibilityValue(summary)
-        .accessibilityIdentifier("provider-model-menu").help(summary)
+        .accessibilityIdentifier("provider-model-menu").help(([summary] + controls.summaryComponents).joined(separator: " · "))
         .popover(isPresented: $store.modelPickerPresented, arrowEdge: .bottom) { picker }
     }
     private var picker: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Models").font(.headline)
+                Text("Models").font(.system(size: 14, weight: .medium))
                 Spacer()
                 if store.modelPickerLoading { ProgressView().controlSize(.small) }
                 Button { Task { await store.refreshPickerModels(force: true) } } label: { Image(systemName: "arrow.clockwise") }
@@ -43,7 +45,7 @@ struct ProviderMenu: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(ProviderKind.builtIn.filter { store.pickerProviderAvailable($0) }) { provider in
                         HStack(spacing: 8) { ProviderLogo(provider: provider); Text(provider.name) }
-                            .font(.caption).foregroundStyle(.secondary).padding(.top, 6)
+                            .font(.system(size: 12)).foregroundStyle(.secondary).padding(.top, 6)
                         let models = visibleModels(provider)
                         ForEach(models) { model in modelRow(provider, model: model) }
                         if store.models(for: provider).isEmpty {
@@ -85,7 +87,7 @@ struct ProviderMenu: View {
                 }.menuStyle(.borderlessButton).fixedSize()
             }
         }
-        .padding(16).frame(width: 310).background(ChatChrome.composer)
+        .padding(12).frame(width: 310).background(ChatChrome.sidebar)
         .task { await store.refreshPickerModels() }
     }
     private func visibleModels(_ provider: ProviderKind) -> [ProviderModel] {
@@ -104,7 +106,7 @@ struct ProviderMenu: View {
                 Text(model.name).lineLimit(2).multilineTextAlignment(.leading)
                 Spacer(minLength: 8)
                 if provider == thread.provider && model.id == thread.model { Image(systemName: "checkmark") }
-            }.padding(.horizontal, 10).padding(.vertical, 9).contentShape(Rectangle())
+            }.font(.system(size: 13)).padding(.horizontal, 10).padding(.vertical, 8).contentShape(Rectangle())
                 .background(provider == thread.provider && model.id == thread.model ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain).disabled(!canChoose(provider))
             .accessibilityIdentifier("provider-model-" + ModelPickerPreferences.id(provider, model.id))

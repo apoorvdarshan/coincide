@@ -31,7 +31,6 @@ struct MainWindowKeyboardSupport: ViewModifier {
             }
             .onDisappear { controller?.deactivate() }
             .onChange(of: store.selectedThreadID) { _, id in controller?.selectionChanged(to: id) }
-            .onChange(of: store.inspectorVisible) { old, new in if old, !new { controller?.inspectorWillHide() } }
     }
 }
 
@@ -41,7 +40,7 @@ extension View {
     }
 }
 
-/// T3's non-blocking invalid-configuration warning with a path to the file.
+/// An invalid shortcut configuration warning with a path to the saved file.
 struct KeybindingsIssueBanner: View {
     let message: String
     let keybindings: KeybindingsStore

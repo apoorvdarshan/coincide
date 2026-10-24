@@ -1,22 +1,13 @@
 import AppKit
 import CoincideCore
-import CoincideTerminal
 import Observation
 import SwiftUI
 
 /// Presentations that stay owned by ContentView's state.
 struct MainWindowPresentations {
     var newProject: @MainActor () -> Void = {}
-    var cloneRepository: @MainActor () -> Void = {}
     var importAgentProjects: @MainActor () -> Void = {}
-    var settle: @MainActor (CodingThread) -> Void = { _ in }
-    var runScript: @MainActor (CodingThread) -> Void = { _ in }
-    var toggleTerminal: @MainActor () -> Void = {}
-    var terminalVisible: @MainActor () -> Bool = { false }
-    var terminalTarget: @MainActor () -> TerminalCommandTarget? = { nil }
-    var projectActions: @MainActor () -> ProjectActionCommands? = { nil }
     var newWindow: @MainActor () -> Void = {}
-    var openRemote: @MainActor () -> Void = {}
     var openSettings: @MainActor () -> Void = {}
     var canInteract: @MainActor () -> Bool = { true }
 }
@@ -34,7 +25,6 @@ struct MainWindowActionCapture: Equatable {
     let runID: UUID?
     let runtimeID: UUID?
     let settlementID: UUID?
-    let workspaceIdentity: TerminalWorkspaceIdentity?
 }
 struct MainWindowProjectCapture: Equatable {
     let id: UUID
@@ -86,8 +76,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Per-window command target: everything the menus, the command palette and the
-/// keyboard dispatcher can do in one main window. The remote window has none,
-/// so these commands disable there.
+/// keyboard dispatcher can do in one chat window.
 @MainActor @Observable
 final class MainWindowController {
     let store: WorkspaceStore
@@ -105,13 +94,9 @@ final class MainWindowController {
     @ObservationIgnored var focusComposerAction: (@MainActor () -> Void)?
     private(set) var palette: CommandPaletteModel?
     private(set) var find: ThreadFindModel?
-    private(set) var inspectorRequest: InspectorRequest?
-    /// The inspector's visible tab, reported by WorkspaceInspector.
-    var inspectorTab = InspectorTab.changes
     private(set) var jumpHintsVisible = false
     private(set) var notice: String?
     private(set) var history = ThreadNavigationHistory()
-    private(set) var closedViews = ClosedViewHistory()
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
     @ObservationIgnored private var hintTask: Task<Void, Never>?
     @ObservationIgnored private var focusTask: Task<Void, Never>?
@@ -141,7 +126,6 @@ final class MainWindowController {
         jumpHintsVisible = false; window = nil
     }
     func drain() async {
-        await presentations.projectActions()?.drain()
         while !controls.isEmpty { for task in Array(controls.values) { await task.value }; await Task.yield() }
     }
     func captureAction() -> MainWindowActionCapture {
@@ -151,8 +135,7 @@ final class MainWindowController {
         return .init(projectID: project?.id, projectCreatedAt: project?.createdAt, projectPath: project.map { Data($0.path.utf8) },
             threadID: thread?.id, threadCreatedAt: thread?.createdAt,
             configuration: thread.flatMap { try? encoder.encode(ProviderConfiguration(thread: $0)) }, preparationID: thread?.workspacePreparation?.id,
-            runID: thread?.activeRun?.id, runtimeID: thread?.runtimeID, settlementID: thread?.settlement?.id,
-            workspaceIdentity: thread.flatMap { try? TerminalWorkspaceIdentity.capture(thread: $0) })
+            runID: thread?.activeRun?.id, runtimeID: thread?.runtimeID, settlementID: thread?.settlement?.id)
     }
     func actionStillCurrent(_ captured: MainWindowActionCapture) -> Bool { canHandleInteraction && captured == captureAction() }
     func captureProject(_ project: WorkspaceProject) -> MainWindowProjectCapture {
@@ -177,35 +160,30 @@ final class MainWindowController {
 
     // MARK: Availability
 
+    /// Legacy shortcut IDs remain readable in saved configuration, but only
+    /// these chat commands have an executable route in the current app.
+    nonisolated static func supports(_ command: KeybindingCommand) -> Bool {
+        switch command {
+        case .sidebarToggle, .commandPaletteToggle, .themeSelect, .appearanceCycle, .windowNew,
+             .projectNew, .projectAdd, .projectImport, .chatNew, .chatNewLocal, .navigationBack,
+             .navigationForward, .chatFind, .threadCopyReference, .threadPin, .threadStop,
+             .threadUndo, .threadPrevious, .threadNext: return true
+        default: return command.threadJumpNumber != nil
+        }
+    }
+
     func canPerform(_ command: KeybindingCommand) -> Bool {
-        guard canHandleInteraction else { return false }
-        if command.scriptID != nil { return presentations.projectActions()?.canPerform(command) == true }
+        guard Self.supports(command), canHandleInteraction else { return false }
         let thread = store.selectedThread
         switch command {
-        case .sidebarToggle, .commandPaletteToggle, .themeSelect, .appearanceCycle, .rightPanelToggle, .windowNew, .remoteOpen,
-             .projectNew, .projectAdd, .projectClone, .projectImport: return !store.isLoading
-        case .chatNew, .chatNewLocal: return !store.isLoading && !store.snapshot.projects.isEmpty
+        case .sidebarToggle, .commandPaletteToggle, .themeSelect, .appearanceCycle, .windowNew,
+             .projectNew, .projectAdd, .projectImport: return !store.isLoading
+        case .chatNew, .chatNewLocal: return !store.isLoading
         case .navigationBack: return history.canGoBack(isValid: store.canNavigate(to:))
         case .navigationForward: return history.canGoForward(isValid: store.canNavigate(to:))
-        case .terminalToggle: return thread.map(store.workspaceReady(for:)) ?? false
-        case .terminalNew, .terminalClose, .terminalSplit, .terminalSplitVertical:
-            guard let target = presentations.terminalTarget(), let captured = target.thread,
-                  captured.id == thread?.id, target.isVisible else { return false }
-            if command == .terminalClose { return target.selected != nil }
-            guard target.canOpen, !target.terminals.isRestoring, store.canOpenTerminal(for: captured) else { return false }
-            return command == .terminalNew || target.terminals.canSplit(in: captured.id)
-        case .viewReopenClosed: return !closedViews.isEmpty
-        case .diffToggle: return thread.map(store.canPresentWorkspaceInspector(for:)) ?? false
-        case .filePickerToggle, .projectSearchToggle, .editorOpenFavorite:
-            return thread.map { store.canAccessWorkspaceFiles($0.workspacePath) } ?? false
-        case .chatFind, .threadCopyReference: return thread != nil
-        case .threadPin: return thread != nil
+        case .chatFind, .threadCopyReference, .threadPin: return thread != nil
         case .threadStop: return thread.map { store.isBusy($0.id) } ?? false
         case .threadUndo: return !store.threadActionUndo.group(ownerID: undoOwnerID).isEmpty
-        case .threadSettle:
-            guard let thread else { return false }
-            if let settlement = thread.settlement { return settlement.phase != .resuming }
-            return store.canSettle(thread)
         case .threadPrevious: return store.adjacentThread(.previous) != nil
         case .threadNext: return store.adjacentThread(.next) != nil
         default:
@@ -217,7 +195,6 @@ final class MainWindowController {
     /// Runs a command; false when it does not apply in this window right now.
     @discardableResult func perform(_ command: KeybindingCommand, expected: MainWindowActionCapture? = nil) -> Bool {
         guard canPerform(command), expected.map(actionStillCurrent) ?? true else { return false }
-        if command.scriptID != nil { return presentations.projectActions()?.perform(command) == true }
         let captured = expected ?? captureAction()
         let thread = store.selectedThread
         switch command {
@@ -227,43 +204,18 @@ final class MainWindowController {
         case .appearanceCycle:
             let mode = AppearanceMode.cycle(defaults)
             showNotice(String(localized: "Appearance: \(mode.title)"))
-        case .rightPanelToggle: store.inspectorVisible.toggle()
-        case .diffToggle:
-            if store.inspectorVisible, inspectorTab == .changes { store.inspectorVisible = false }
-            else { store.inspectorVisible = true; inspectorRequest = .init(tab: .changes) }
-        case .filePickerToggle: store.inspectorVisible = true; inspectorRequest = .init(tab: .files, searchMode: .paths, focusSearch: true)
-        case .projectSearchToggle: store.inspectorVisible = true; inspectorRequest = .init(tab: .files, searchMode: .contents, focusSearch: true)
-        case .viewReopenClosed: return reopenClosedView()
         case .navigationBack:
             guard let id = history.goBack(isValid: store.canNavigate(to:)) else { return false }
             store.selectThread(id)
         case .navigationForward:
             guard let id = history.goForward(isValid: store.canNavigate(to:)) else { return false }
             store.selectThread(id)
-        case .terminalToggle: presentations.toggleTerminal()
-        case .terminalNew, .terminalClose, .terminalSplit, .terminalSplitVertical:
-            guard let target = presentations.terminalTarget(), let thread = target.thread else { return false }
-            do {
-                switch command {
-                case .terminalNew: try target.terminals.add(for: thread)
-                case .terminalClose: if let selected = target.selected { target.terminals.requestClose(selected, threadID: thread.id) }
-                default: try target.terminals.split(for: thread, axis: command == .terminalSplit ? .horizontal : .vertical)
-                }
-            } catch { store.errorMessage = error.localizedDescription; return false }
         case .chatNew:
             if store.orderedProjectGroups.count > 1 {
                 openPalette(); palette?.open(view: CommandPaletteItems.newThreadInView(self))
             } else { store.newThread() }
         case .chatNewLocal: store.newThread()
         case .chatFind: openFind()
-        case .editorOpenFavorite:
-            guard let path = thread?.workspacePath else { return false }
-            ownedControl { [weak self, store] in
-                guard self?.actionStillCurrent(captured) == true, store.canAccessWorkspaceFiles(path) else { return }
-                do { try await store.externalEditors().open(ExternalEditorTarget(workspaceRoot: URL(fileURLWithPath: path))) }
-                catch is CancellationError { }
-                catch { store.errorMessage = error.localizedDescription }
-            }
         case .threadStop:
             guard let id = thread?.id else { return false }
             ownedControl { [store] in
@@ -274,20 +226,14 @@ final class MainWindowController {
             store.togglePin(thread.id)
             showNotice(thread.isPinned ? String(localized: "Unpinned “\(thread.title)”") : String(localized: "Pinned “\(thread.title)”"))
         case .threadUndo: undoLatestThreadAction()
-        case .threadSettle:
-            guard let thread else { return false }
-            if let settlement = thread.settlement { store.requestResume(thread.id, generationID: settlement.id) }
-            else { presentations.settle(thread) }
         case .threadCopyReference: return copyThreadReference()
         case .threadPrevious, .threadNext:
             guard let id = store.adjacentThread(command == .threadPrevious ? .previous : .next) else { return false }
             store.selectThread(id)
         case .projectNew: presentations.newProject()
         case .projectAdd: store.addProject()
-        case .projectClone: presentations.cloneRepository()
         case .projectImport: presentations.importAgentProjects()
         case .windowNew: presentations.newWindow()
-        case .remoteOpen: presentations.openRemote()
         default:
             guard let number = command.threadJumpNumber, let id = store.threadForJump(number) else { return false }
             store.selectThread(id)
@@ -295,46 +241,13 @@ final class MainWindowController {
         return true
     }
 
-    // MARK: History and closed views
+    // MARK: Conversation history
 
     /// Records a selection change for back/forward; history-driven selections are already current.
     func selectionChanged(to id: UUID?) {
         history.visit(id)
         if let find, find.threadID != id { self.find = nil }
     }
-
-    /// Records the inspector view that was just hidden so ⇧⌘T can reopen it.
-    func inspectorWillHide() {
-        guard let thread = store.selectedThread, store.canPresentWorkspaceInspector(for: thread) else { return }
-        var entry = ClosedViewEntry(threadID: thread.id, workspacePath: thread.workspacePath, tab: inspectorTab)
-        if inspectorTab == .files, store.canAccessWorkspaceFiles(thread.workspacePath),
-           let document = (try? store.fileBrowser(path: thread.workspacePath))?.document {
-            entry.filePath = document.relativePath
-        }
-        closedViews.record(entry)
-    }
-
-    @discardableResult func reopenClosedView() -> Bool {
-        let restore = closedViews.takeNext { entry in
-            guard let thread = store.thread(entry.threadID), store.canNavigate(to: entry.threadID),
-                  thread.workspacePath == entry.workspacePath else { return .missing }
-            guard store.canPresentWorkspaceInspector(for: thread),
-                  entry.filePath == nil || store.canAccessWorkspaceFiles(entry.workspacePath) else { return .notReady }
-            return .ready(alreadyOpen: store.inspectorVisible && store.selectedThreadID == entry.threadID && inspectorTab == entry.tab && entry.filePath == nil)
-        }
-        guard let restore else {
-            showNotice(String(localized: "Nothing to reopen")); return false
-        }
-        if store.selectedThreadID != restore.threadID { store.selectThread(restore.threadID) }
-        store.inspectorVisible = true
-        inspectorRequest = .init(tab: restore.tab)
-        if let path = restore.filePath {
-            store.openFile(URL(fileURLWithPath: restore.workspacePath).appendingPathComponent(path), line: restore.line, workspacePath: restore.workspacePath)
-        }
-        return true
-    }
-
-    func consumeInspectorRequest(_ id: UUID) { if inspectorRequest?.id == id { inspectorRequest = nil } }
 
     // MARK: Palette, find and focus
 
@@ -346,7 +259,7 @@ final class MainWindowController {
             return CommandPaletteItems.sources(for: self, query: query)
         }, dismiss: { [weak self] returnFocus in self?.closePalette(returnFocus: returnFocus) })
     }
-    /// Closing returns focus to the composer, as in T3.
+    /// Closing returns focus to the composer.
     func closePalette(returnFocus: Bool = true) {
         guard palette != nil else { return }
         palette = nil
@@ -377,17 +290,9 @@ final class MainWindowController {
         }
     }
 
-    /// NavigationSplitView is backed by an NSSplitViewController whose sidebar item
-    /// toggles natively; the responder chain alone misses it when nothing has focus.
     private func toggleSidebar() -> Bool {
-        if let content = window?.contentView, let split = Self.sidebarSplitController(in: content) { split.toggleSidebar(nil); return true }
-        return false
-    }
-    private static func sidebarSplitController(in view: NSView) -> NSSplitViewController? {
-        if let split = view as? NSSplitView, let controller = split.delegate as? NSSplitViewController,
-           controller.splitViewItems.contains(where: { $0.behavior == .sidebar }) { return controller }
-        for subview in view.subviews { if let found = sidebarSplitController(in: subview) { return found } }
-        return nil
+        store.sidebarVisible.toggle()
+        return true
     }
     @discardableResult func focusComposer() -> Bool {
         guard canHandleInteraction else { return false }
@@ -398,7 +303,7 @@ final class MainWindowController {
 
     // MARK: Thread reference and notices
 
-    /// T3 copies a PR link when the thread has one; Coincide threads copy their stable ID.
+    /// Coincide conversations expose their stable local ID.
     @discardableResult func copyThreadReference() -> Bool {
         guard canHandleInteraction, let thread = store.selectedThread else { return false }
         pasteboard.clearContents()
@@ -417,7 +322,7 @@ final class MainWindowController {
         }
     }
 
-    /// T3 shows jump hints after the modifiers are held for 200 ms and hides them at once.
+    /// Show jump hints after a short modifier hold, then hide them immediately on release.
     func syncJumpHints(_ show: Bool) {
         guard show else { hintTask?.cancel(); hintTask = nil; if jumpHintsVisible { jumpHintsVisible = false }; return }
         guard !jumpHintsVisible, hintTask == nil else { return }

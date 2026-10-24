@@ -1,5 +1,38 @@
 # Validation record
 
+## 2026-10-24 — Native chat-first UI and workspace UI removal
+
+- Installed the official ChatGPT desktop app (26.1021.22027, build 21747,
+  `com.openai.codex`) as the requested visual reference. Verified the download
+  checksum and installed code signature. Inspected Codex/ChatGPT Home, the model
+  menu and General settings. Task download/extraction copies were removed;
+  `/Applications/ChatGPT.app` remains installed.
+- Rebuilt the main window with SwiftUI/AppKit: 48pt rail, 248pt sidebar, uniform
+  13pt project/chat rows, 32pt row height, neutral selected/hover states, a
+  centered 640pt empty-chat composer and eight compact Settings pages.
+  Project and Recent rows now use separate stable identities; the visual check
+  caught and corrected blank duplicated rows. Existing chats remain intact.
+- Deleted inspector/Git, terminal drawer, clone, project actions/settings,
+  scripts, settlement and scheduling UI files. Removed the corresponding menus,
+  palette/shortcut routes, remote window scene and source-control/terminal
+  Settings pages. Kept storage helpers needed by existing saved data in Stores.
+  This removes the app surfaces, not every historical backend/schema type.
+- Removed workspace/run-checkpoint banners and changes-sheet actions from the
+  ordinary chat UI. Provider approvals, tool output, attachments and queued
+  messages remain. Workspace file links now use the existing native external
+  editor service instead of opening the removed inspector; that route compiled
+  but was not exercised against a user file during this pass.
+- Final incremental build passed in 11.92 seconds. Development packaging,
+  launch and `codesign --verify --deep --strict` passed. Live CLI reported one
+  project, nine conversations, and no running turns. CLI navigation/screenshots
+  confirmed populated and empty chat, expanded/collapsed sidebar, General
+  settings and the unified model popover. Catalog reads returned seven Codex
+  and thirteen Claude choices without errors; no model prompt was sent.
+- Automated tests and CI remain deferred by explicit user direction. Historical
+  tests for removed UI/types and commands need reconciliation before the full
+  suite resumes. This pass does not establish provider execution, OAuth,
+  import/handoff regression coverage or pixel-for-pixel reference parity.
+
 ## 2026-10-24 — Local Codex/Claude scope and CLI control
 
 - Provider selection, Settings, context-transfer choices, app-tool provider input,

@@ -2828,7 +2828,13 @@ final class WorkspaceStore {
         let relative = String(url.path.dropFirst(root.path.count + 1))
         do { _ = try WorkspaceFiles(root: root).resolve(relative) }
         catch { errorMessage = error.localizedDescription; return }
-        fileNavigation = .init(workspacePath: workspacePath, path: relative, line: line); inspectorVisible = true
+        Task {
+            do {
+                let location = try line.map { try ExternalEditorLocation(line: $0) }
+                try await externalEditors().open(.init(workspaceRoot: root, relativePath: relative, location: location))
+            } catch is CancellationError { }
+            catch { errorMessage = error.localizedDescription }
+        }
     }
     func refreshModels(provider: ProviderKind? = nil, reportErrors: Bool = true, threadID: UUID? = nil) async {
         guard !isRefreshingModels, let engine else { return }; isRefreshingModels = true

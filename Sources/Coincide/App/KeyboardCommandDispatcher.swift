@@ -1,6 +1,5 @@
 import AppKit
 import CoincideCore
-import CoincideTerminal
 import SwiftUI
 
 /// What holds keyboard focus, for `when` contexts and type-to-focus.
@@ -15,7 +14,6 @@ enum KeyboardFocusKind: Equatable, Sendable {
 
     @MainActor static func classify(_ responder: NSResponder?, composer: NSTextView?) -> KeyboardFocusKind {
         guard let responder else { return .passive }
-        if LocalTerminalSession.isTerminalResponder(responder) { return .terminal }
         if let text = responder as? NSTextView {
             if let composer, text === composer { return .composer }
             if text.isFieldEditor { return .editableText }
@@ -28,8 +26,7 @@ enum KeyboardFocusKind: Equatable, Sendable {
     }
 }
 
-/// T3 `composerFocusRedirect`: printable typing with no editable or interactive
-/// target and no floating layer goes to the composer.
+/// Printable typing with no editable or interactive target goes to the composer.
 enum TypeToFocus {
     static func shouldRedirect(focus: KeyboardFocusKind, hasSheet: Bool, overlayOpen: Bool, command: Bool, control: Bool, characters: String?) -> Bool {
         guard focus == .passive, !hasSheet, !overlayOpen, !control else { return false }
@@ -160,11 +157,11 @@ final class KeyboardCommandDispatcher {
         return KeybindingContext([
             "isDesktop": true, "isWeb": false,
             "threadUndoAvailable": controller.store.threadActionUndo.claimsShortcut(ownerID: controller.undoOwnerID),
-            "terminalFocus": focus == .terminal, "terminalOpen": controller.presentations.terminalVisible(),
+            "terminalFocus": false, "terminalOpen": false,
             "editableFocus": focus.isEditable, "composerFocus": focus == .composer, "fileEditorFocus": focus == .fileEditor,
             "composerDraft": !(thread?.draft.isEmpty ?? true), "turnRunning": thread.map { store.isBusy($0.id) } ?? false,
             "draftThreadRoute": thread?.messages.isEmpty ?? false,
-            "rightPanelOpen": store.inspectorVisible, "inspectorOpen": store.inspectorVisible,
+            "rightPanelOpen": false, "inspectorOpen": false,
             "commandPaletteOpen": controller.palette != nil, "threadFindOpen": controller.find != nil,
             "previewFocus": false, "previewOpen": false, "usagePageOpen": false, "modelPickerOpen": false,
         ])
@@ -183,35 +180,6 @@ final class KeyboardCommandDispatcher {
         decisions[identity] = decision; decisionOrder.append(identity)
         if decisionOrder.count > 64 { decisions.removeValue(forKey: decisionOrder.removeFirst()) }
         return result
-    }
-    /// The native terminal and app monitors share the exact event decision.
-    /// New/close/split keys are owned by the configured engine even when unbound.
-    func routeTerminalEvent(_ event: NSEvent) -> TerminalKeyEventDisposition {
-        if handle(event) == nil { return .handled }
-        switch TerminalCommand.keyCommand(characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags) {
-        case .newTerminal?, .close?, .splitRight?, .splitDown?: return .passThrough
-        default: return .useDefault
-        }
-    }
-    func terminalKeyEquivalent(_ command: TerminalCommand, in window: NSWindow?) -> TerminalKeyEquivalent? {
-        guard let window, window.isKeyWindow, let controller = controller(for: window), controller.canHandleInteraction,
-              let keybindings else { return nil }
-        let configured: KeybindingCommand
-        switch command {
-        case .newTerminal: configured = .terminalNew
-        case .close: configured = .terminalClose
-        case .splitRight: configured = .terminalSplit
-        case .splitDown: configured = .terminalSplitVertical
-        default: return nil
-        }
-        guard let shortcut = keybindings.shortcut(for: configured, context: context(for: controller, focus: .terminal)),
-              let key = KeybindingsStore.keyEquivalent(shortcut.key) else { return nil }
-        var modifiers: NSEvent.ModifierFlags = []
-        if shortcut.usesCommand { modifiers.insert(.command) }
-        if shortcut.control { modifiers.insert(.control) }
-        if shortcut.option { modifiers.insert(.option) }
-        if shortcut.shift { modifiers.insert(.shift) }
-        return .init(characters: String(key.character), modifiers: modifiers)
     }
     private func handleOnce(_ event: NSEvent) -> NSEvent? {
         if let window = event.window, window.isKeyWindow, let remote = remoteUndoRegistrations[ObjectIdentifier(window)], remote.window === window,
@@ -236,26 +204,9 @@ final class KeyboardCommandDispatcher {
         let stroke = KeyStroke(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
                                command: flags.contains(.command), control: flags.contains(.control), option: flags.contains(.option), shift: flags.contains(.shift))
         let context = context(for: controller, focus: controller.palette != nil ? .editableText : focus)
-        let projectDefaults = controller.presentations.projectActions()?.defaults ?? []
-        let command = keybindings.resolve(stroke, context: context, projectDefaults: projectDefaults)
+        let resolved = keybindings.resolve(stroke, context: context)
+        let command = resolved.flatMap { MainWindowController.supports($0) ? $0 : nil }
         if command != .threadUndo { controller.store.threadActionUndo.releaseShortcut(ownerID: controller.undoOwnerID) }
-        if command?.scriptID != nil {
-            if stroke.command, !stroke.control, !stroke.option,
-               !stroke.keys.isDisjoint(with: ["c", "x", "v", "a", "z"]),
-               (window.firstResponder as? NSTextView).map({ $0.isEditable || $0.isSelectable }) == true {
-                // Empty selections and unavailable clipboard contents disable a
-                // native edit action; they never turn its key into a shell run.
-                return event
-            }
-            // Project shortcuts yield to the current responder's native Edit,
-            // Window and Quit actions, including the existing quit protection.
-            if Self.nativeMenuOwns(stroke, menu: NSApp.mainMenu, window: window) { return event }
-            if (focus == .fileEditor || focus == .terminal), stroke.command, !stroke.control, !stroke.option,
-               !stroke.shift, stroke.keys.contains("f") {
-                decline(event) // Preserve MenuCommandInvocation's native Find fallback.
-                return event
-            }
-        }
         if let palette = controller.palette {
             // The palette keeps focus: number shortcuts choose its entries and only a few commands act.
             switch command {
@@ -266,7 +217,7 @@ final class KeyboardCommandDispatcher {
             case .chatFind?: controller.closePalette(returnFocus: false); controller.openFind(); return nil
             case .threadCopyReference?: controller.closePalette(); controller.copyThreadReference(); return nil
             default:
-                if keybindings.isBound(stroke, projectDefaults: projectDefaults) { decline(event) }
+                if keybindings.isBound(stroke) { decline(event) }
                 return event
             }
         }
@@ -275,7 +226,7 @@ final class KeyboardCommandDispatcher {
             if !event.isARepeat || Self.repeats(command) { controller.perform(command) }
             return nil
         }
-        if keybindings.isBound(stroke, projectDefaults: projectDefaults) { decline(event); return event }
+        if keybindings.isBound(stroke) { decline(event); return event }
         if TypeToFocus.shouldRedirect(focus: focus, hasSheet: window.attachedSheet != nil, overlayOpen: controller.find != nil,
                                       command: flags.contains(.command), control: flags.contains(.control), characters: event.characters),
            controller.focusComposer() {
@@ -286,35 +237,6 @@ final class KeyboardCommandDispatcher {
 
     /// Traversal may auto-repeat while held; toggles never do.
     static func repeats(_ command: KeybindingCommand) -> Bool { command == .threadPrevious || command == .threadNext }
-
-    private static func nativeMenuOwns(_ stroke: KeyStroke, menu: NSMenu?, window: NSWindow) -> Bool {
-        guard let menu else { return false }
-        let nativeActions: Set<String> = [
-            "copy:", "cut:", "paste:", "pasteAsPlainText:", "pasteAndMatchStyle:", "selectAll:", "undo:", "redo:",
-            "performTextFinderAction:", "performFindPanelAction:", "saveDocument:", "saveDocumentAs:", "revertDocumentToSaved:",
-            "performClose:", "terminate:", "hide:", "hideOtherApplications:", "unhideAllApplications:",
-            "miniaturize:", "performMiniaturize:", "performZoom:", "showPreferencesWindow:", "showSettingsWindow:"
-        ]
-        for item in menu.items where !item.isHidden {
-            if let submenu = item.submenu, (item.isEnabled || menu.autoenablesItems), nativeMenuOwns(stroke, menu: submenu, window: window) { return true }
-            guard !item.keyEquivalent.isEmpty, let action = item.action, nativeActions.contains(NSStringFromSelector(action)) else { continue }
-            let modifiers = item.keyEquivalentModifierMask
-            let shortcut = KeybindingShortcut(key: item.keyEquivalent.lowercased(), meta: modifiers.contains(.command),
-                control: modifiers.contains(.control), shift: modifiers.contains(.shift) || item.keyEquivalent != item.keyEquivalent.lowercased(),
-                option: modifiers.contains(.option))
-            guard shortcut.matches(stroke), let target = NSApp.target(forAction: action, to: item.target, from: item) else { continue }
-            if let view = target as? NSView, view.window !== window { continue }
-            if let targetWindow = target as? NSWindow, targetWindow !== window { continue }
-            // Autoenabled menu state may be stale until the next presentation.
-            // Ask the current target before allowing a script to consume its key.
-            if let validator = target as? NSMenuItemValidation {
-                if validator.validateMenuItem(item) { return true }
-            } else if let validator = target as? NSUserInterfaceValidations {
-                if validator.validateUserInterfaceItem(item) { return true }
-            } else if item.isEnabled { return true }
-        }
-        return false
-    }
 
     private func decline(_ event: NSEvent) { declined = (event.timestamp, event.keyCode, event.windowNumber) }
     /// A menu key equivalent that matches a keybinding the dispatcher declined

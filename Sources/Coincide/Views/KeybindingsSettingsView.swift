@@ -59,7 +59,7 @@ struct KeybindingsSettingsView: View {
             .listStyle(.inset(alternatesRowBackgrounds: true))
             Text(verbatim: keybindings.fileURL.path).font(.caption2.monospaced()).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                 .textSelection(.enabled)
-            Text("The last rule whose shortcut and condition match wins. Defaults include !terminalFocus where the terminal keeps its keys. Edit keybindings.json directly for the full syntax.")
+            Text("The last matching shortcut rule wins. Your saved configuration is preserved; only commands available in Coincide are shown here.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(4)
@@ -133,9 +133,9 @@ private struct KeybindingRowView: View {
     }
     static func availabilityNote(_ availability: KeybindingCommandAvailability) -> LocalizedStringKey {
         switch availability {
-        case .reserved: "Reserved for the terminal; Coincide does not run this shortcut yet."
-        case .project: "Runs a registered action in the current main window. The original thread and checkout must still match."
-        default: "Not available in Coincide. The rule is kept for T3 Code compatibility."
+        case .reserved: "This shortcut is not available in the current interface."
+        case .project: "This saved project action is not available in the chat interface."
+        default: "Not available in Coincide. Your saved rule is preserved."
         }
     }
 }
