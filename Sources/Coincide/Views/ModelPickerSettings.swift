@@ -38,36 +38,76 @@ extension PermissionMode {
 struct ModelPickerSettings: View {
     @Bindable var store: WorkspaceStore
     @AppStorage(ModelPickerPreferences.key) private var hiddenModels = "[]"
+
     var body: some View {
-        Section("Models in the composer") {
-            Text("Choose the models shown in the main picker. Hidden models remain available under All models.")
-                .font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsCard {
+                SettingsRow(title: "Models in the composer", subtitle: "Choose what appears in the model picker. Hidden models remain available under All models.") {
+                    Button(store.modelPickerLoading ? "Loading…" : "Refresh") {
+                        Task { await store.refreshPickerModels(force: true) }
+                    }
+                    .buttonStyle(SettingsActionButtonStyle())
+                    .disabled(store.modelPickerLoading)
+                    .accessibilityIdentifier("models-refresh")
+                }
+                SettingsDivider()
+                SettingsRow(title: "Show all models", subtitle: "Restore every available model to the main picker.") {
+                    Button("Show all") { hiddenModels = "[]" }
+                        .buttonStyle(SettingsActionButtonStyle())
+                        .disabled(ModelPickerPreferences.hidden(hiddenModels).isEmpty)
+                }
+            }
             ForEach(ProviderKind.builtIn) { provider in
-                let models = store.models(for: provider)
+                providerCard(provider)
+            }
+        }
+        .task { await store.refreshPickerModels() }
+    }
+
+    private func providerCard(_ provider: ProviderKind) -> some View {
+        let models = store.models(for: provider)
+        return SettingsCard {
+            HStack(spacing: 10) {
+                ProviderLogo(provider: provider, size: 22)
+                Text(provider.name).font(.system(size: 13, weight: .medium))
+                Spacer()
                 if !models.isEmpty {
-                    HStack(spacing: 8) { ProviderLogo(provider: provider); Text(provider.name).font(.headline) }
-                    ForEach(models) { model in
+                    Text("\(models.count) models").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }.padding(.vertical, 14)
+            SettingsDivider()
+            if models.isEmpty && store.modelPickerLoading {
+                SettingsRow(title: "Loading models…", subtitle: "Reading the available models from this CLI.") {
+                    ProgressView().controlSize(.small)
+                }
+            } else if models.isEmpty {
+                SettingsRow(title: store.pickerProviderAvailable(provider) ? "No models loaded" : "CLI not installed",
+                            subtitle: store.pickerProviderAvailable(provider) ? "Refresh to load models from this agent." : "Install the agent CLI and sign in to use its models.") {
+                    Button("Agent settings") { store.settingsPage = .providers }
+                        .buttonStyle(SettingsActionButtonStyle())
+                }
+            } else {
+                ForEach(models) { model in
+                    if model.id != models.first?.id { SettingsDivider() }
+                    SettingsRow(title: LocalizedStringKey(model.name)) {
                         Toggle(model.name, isOn: Binding(get: {
                             !ModelPickerPreferences.hidden(hiddenModels).contains(ModelPickerPreferences.id(provider, model.id))
                         }, set: { visible in
                             hiddenModels = ModelPickerPreferences.setting(hiddenModels, provider: provider, model: model.id, visible: visible)
                         }))
+                        .labelsHidden().toggleStyle(.switch)
+                        .accessibilityLabel(model.name)
                         .accessibilityIdentifier("model-visible-" + ModelPickerPreferences.id(provider, model.id))
                     }
-                } else {
-                    LabeledContent(provider.name, value: store.pickerProviderAvailable(provider) ? "Load models to choose" : "CLI not installed")
-                }
-                if let error = store.modelCatalogErrors[provider] {
-                    Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    .help(model.id)
                 }
             }
-            HStack {
-                Button(store.modelPickerLoading ? "Loading…" : "Refresh models") { Task { await store.refreshPickerModels(force: true) } }
-                    .disabled(store.modelPickerLoading)
-                Button("Show all models") { hiddenModels = "[]" }
-                    .disabled(ModelPickerPreferences.hidden(hiddenModels).isEmpty)
+            if let error = store.modelCatalogErrors[provider] {
+                SettingsDivider()
+                Text(error).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 14)
             }
         }
-        .task { await store.refreshPickerModels() }
     }
 }

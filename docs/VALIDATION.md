@@ -5557,3 +5557,49 @@ private reasoning or attachment-byte replay. First-reply context delivery,
 fresh-import execution, and the earlier Codex app-tool readiness failure are
 not established as fixed by these build/catalog/navigation checks. Those need
 the deferred provider runtime validation; the app is not claimed fully tested.
+
+
+## 2026-10-24: embedded Settings and native navigation review
+
+Removed the separate SwiftUI Settings scene. The app menu, Command-comma,
+rail, model picker, welcome review action, command palette, and local CLI now
+route to Settings inside the existing main window. All eight supported pages
+use shared native cards, rows, menus, and typography; runtime paths and shortcut
+conditions are in advanced disclosures. Home returns to the selected chat,
+New Chat consistently creates a chat, and notification/link selections leave
+Settings. Existing saved file-operation holds expose their guarded recovery
+controls without restoring the removed inspector.
+
+The installed ChatGPT desktop General page was inspected directly. Coincide's
+General, Appearance, Notifications, Agents (Codex and Claude), Models,
+Conversations, Keyboard, and About pages were visually inspected with CLI PNGs
+and native window snapshots. Catalog discovery returned seven Codex and thirteen
+Claude models. The app-menu Settings command and an actual foreground
+Command-comma both opened embedded Settings in the same main window. Clicking
+Home retained the selected empty chat and all nine saved chats. A conversation
+URL returned from Settings to that same chat without sending a prompt.
+
+That URL check also exposed SwiftUI creating an extra main window. The scene now
+prefers handling external events in an existing window, and presentation prefers
+the current window. These final routing changes compiled successfully but were
+not re-exercised after the user requested no interruption on the external display.
+The active app was left closed; subsequent work was build-only. Future visual
+checks for this task must stay entirely on the built-in Mac display, including
+relaunch placement, rather than relying on macOS's active-screen restoration.
+
+A sampled quit hang showed NSApplication termination inside the shortcut's task,
+while shutdown joins that same task. The product quit callback now dispatches
+termination after the shortcut task returns. This correction was compiled; the
+quit interaction itself was not rerun. The already-quitting idle development
+process was stopped without reopening it. Saved conversation files were not
+modified for these checks.
+
+Native packaging/signing/launch checks passed before the final build-only pass
+(logs: `/tmp/coincide-settings-navigation-build.log`,
+`/tmp/coincide-settings-navigation-release-check.log`, and
+`/tmp/coincide-settings-window-routing-build.log`). The final build-only log is
+`/tmp/coincide-inline-settings-build-only.log`. Visual captures use the local
+`/tmp/coincide-inline-` prefix. Automated tests, provider smoke prompts, and hosted
+CI remain deferred by explicit user direction. This evidence establishes native
+build and inspected navigation/layout behavior, not complete provider execution
+or pixel-for-pixel parity with every ChatGPT feature.

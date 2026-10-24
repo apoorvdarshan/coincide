@@ -15,7 +15,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             WorkspaceRail(store: store)
             if store.showingSettings {
-                SettingsView(store: store, embedded: true)
+                SettingsView(store: store)
             } else {
                 if store.sidebarVisible {
                     SidebarView(store: store, onNewProject: { newProjectSheetPresented = true },
@@ -46,7 +46,7 @@ struct ContentView: View {
             MainWindowPresentations(newProject: { newProjectSheetPresented = true },
                 importAgentProjects: { agentSessionImportSheetPresented = true },
                 newWindow: { openWindow(id: MainWindowCoordinator.sceneID) },
-                openSettings: { store.showingSettings = true }, canInteract: { canInteract })
+                openSettings: { store.showSettings() }, canInteract: { canInteract })
         }
     }
 

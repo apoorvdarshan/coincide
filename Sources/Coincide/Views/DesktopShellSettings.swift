@@ -10,35 +10,36 @@ struct DesktopShellSettings: View {
     @AppStorage(ThreadBannerCoordinator.preference) private var threadBanners = true
 
     var body: some View {
-        Section("Confirmations") {
-            Picker("Quit shortcut (⌘Q)", selection: $quitMode) {
-                ForEach(QuitShortcutStateMachine.Mode.allCases) { Text($0.title).tag($0.rawValue) }
-            }.accessibilityIdentifier("settings-quit-shortcut")
-            Toggle("Ask before quitting while conversations run", isOn: $confirmRunningQuit)
-                .accessibilityIdentifier("settings-confirm-running-quit")
-            Text("Hold ⌘Q for a moment or press it twice to quit. Choosing Quit from the Coincide menu skips the shortcut delay and still checks unfinished work. Quitting stops running turns; queued messages wait until you resume them.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        Section("While agents run") {
-            Picker("Keep Mac awake", selection: $keepAwake) {
-                ForEach(ActivityAssertionPolicy.Preference.allCases) { Text($0.title).tag($0.rawValue) }
+        SettingsCard(title: "General") {
+            SettingsRow(title: "Quit shortcut", subtitle: "Choose how ⌘Q quits Coincide. The app menu always quits immediately after checking unfinished work.") {
+                SettingsMenu(label: QuitShortcutStateMachine.Mode(rawValue: quitMode)?.title ?? QuitShortcutStateMachine.Mode.hold.title) {
+                    ForEach(QuitShortcutStateMachine.Mode.allCases) { mode in
+                        Button(mode.title) { quitMode = mode.rawValue }
+                    }
+                }.accessibilityLabel("Quit shortcut").accessibilityIdentifier("settings-quit-shortcut")
             }
-            .onChange(of: keepAwake) { _, _ in shell.activity?.update() }
-            .accessibilityIdentifier("settings-keep-awake")
-            Toggle("Show banners for other conversations", isOn: $threadBanners)
-                .accessibilityIdentifier("settings-in-app-banners")
-            Text("Coincide prevents App Nap while conversations run. Keeping the Mac awake stops idle sleep; the display can still sleep. Banners appear when another conversation finishes, fails or needs input while Coincide is active.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            SettingsDivider()
+            SettingsRow(title: "Confirm before quitting", subtitle: "Ask while conversations are running. Quitting stops active turns; queued messages wait until you resume them.") {
+                Toggle("Ask before quitting while conversations run", isOn: $confirmRunningQuit).labelsHidden()
+                    .accessibilityIdentifier("settings-confirm-running-quit")
+            }
         }
-        ShellEnvironmentSettings(environment: shell.environment)
+        SettingsCard(title: "While agents run") {
+            SettingsRow(title: "Keep Mac awake", subtitle: "Prevent idle sleep during conversations. Your display can still sleep.") {
+                SettingsMenu(label: ActivityAssertionPolicy.Preference(rawValue: keepAwake)?.title ?? ActivityAssertionPolicy.defaultPreference.title) {
+                    ForEach(ActivityAssertionPolicy.Preference.allCases) { preference in
+                        Button(preference.title) { keepAwake = preference.rawValue }
+                    }
+                }.onChange(of: keepAwake) { _, _ in shell.activity?.update() }
+                    .accessibilityLabel("Keep Mac awake").accessibilityIdentifier("settings-keep-awake")
+            }
+            SettingsDivider()
+            SettingsRow(title: "Conversation banners", subtitle: "Show when another chat finishes, fails, or needs input while Coincide is active.") {
+                Toggle("Show banners for other conversations", isOn: $threadBanners).labelsHidden()
+                    .accessibilityIdentifier("settings-in-app-banners")
+            }
+        }
         CommandLineToolSettings(tool: shell.commandLineTool)
-        Section("About") {
-            LabeledContent("Version", value: Self.versionText())
-            HStack {
-                Button("View Licenses…") { shell.showLicenses() }.accessibilityIdentifier("settings-view-licenses")
-                Button("Run Setup Again…") { shell.showWelcome() }.accessibilityIdentifier("settings-run-setup")
-            }
-        }
     }
 
     static func versionText(_ info: [String: Any]? = Bundle.main.infoDictionary) -> String {
@@ -51,22 +52,23 @@ struct DesktopShellSettings: View {
 struct ShellEnvironmentSettings: View {
     @Bindable var environment: ShellEnvironmentController
     var body: some View {
-        Section("Shell environment") {
-            Toggle("Use login shell environment", isOn: Binding(get: { environment.isEnabled }, set: { value in Task { await environment.setEnabled(value) } }))
-                .disabled(!environment.available)
-            LabeledContent("Status") {
-                HStack(spacing: 6) {
+        SettingsCard(title: "Shell environment") {
+            SettingsRow(title: "Use login shell environment", subtitle: "Find CLI tools installed with Homebrew, nvm, mise, or similar managers. Running conversations keep their current environment.") {
+                Toggle("Use login shell environment", isOn: Binding(get: { environment.isEnabled }, set: { value in Task { await environment.setEnabled(value) } }))
+                    .labelsHidden().disabled(!environment.available)
+            }
+            SettingsDivider()
+            SettingsRow(title: "Status", subtitle: LocalizedStringKey(environment.summary)) {
+                HStack(spacing: 8) {
                     if environment.isCapturing { ProgressView().controlSize(.small) }
-                    Text(environment.summary).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+                    Button("Refresh") { Task { await environment.refresh() } }
+                        .buttonStyle(SettingsActionButtonStyle()).disabled(!environment.isEnabled || environment.isCapturing)
                 }
             }.accessibilityIdentifier("settings-shell-environment-status")
             if let failure = environment.snapshot?.failure {
-                Text(failure).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(failure).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.bottom, 14)
             }
-            Button("Refresh Shell Environment") { Task { await environment.refresh() } }
-                .disabled(!environment.isEnabled || environment.isCapturing)
-            Text("Coincide reads PATH and selected variables from your login shell so agents, terminals and Git find tools installed with Homebrew, nvm, mise or similar managers. Running conversations and terminals keep the environment they started with.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -74,25 +76,29 @@ struct ShellEnvironmentSettings: View {
 struct CommandLineToolSettings: View {
     @Bindable var tool: CommandLineToolController
     var body: some View {
-        Section("Command-line tool") {
-            LabeledContent("coincide command") {
-                switch tool.state {
-                case .installed(let url): Text(url.path).foregroundStyle(.secondary).textSelection(.enabled)
-                case .notInstalled: Text("Not installed").foregroundStyle(.secondary)
+        SettingsCard(title: "Command-line tool") {
+            SettingsRow(title: "coincide command", subtitle: "Open a project from Terminal with coincide [folder]. Nothing is sent to an agent.") {
+                HStack(spacing: 8) {
+                    switch tool.state {
+                    case .installed:
+                        Button("Reinstall") { tool.install() }.disabled(tool.isWorking)
+                        Button("Remove", role: .destructive) { tool.remove() }.disabled(tool.isWorking)
+                    case .notInstalled:
+                        Button("Install…") { tool.install() }.disabled(tool.isWorking).accessibilityIdentifier("settings-install-cli")
+                    }
+                }.buttonStyle(SettingsActionButtonStyle())
+            }
+            if case .installed(let url) = tool.state {
+                SettingsDivider()
+                SettingsRow(title: "Installed at") {
+                    Text(url.path).font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary).textSelection(.enabled).lineLimit(2).truncationMode(.middle)
                 }
             }
-            HStack {
-                switch tool.state {
-                case .installed:
-                    Button("Reinstall") { tool.install() }.disabled(tool.isWorking)
-                    Button("Remove", role: .destructive) { tool.remove() }.disabled(tool.isWorking)
-                case .notInstalled:
-                    Button("Install Command…") { tool.install() }.disabled(tool.isWorking).accessibilityIdentifier("settings-install-cli")
-                }
+            if let message = tool.message {
+                Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.bottom, 14)
             }
-            if let message = tool.message { Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
-            Text("Run coincide [folder] in Terminal to open a folder as a project and start a new conversation there. Nothing is sent to an agent.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }.task { tool.refresh() }
     }
 }

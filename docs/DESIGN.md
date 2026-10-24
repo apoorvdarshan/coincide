@@ -36,8 +36,13 @@ UI to imitate the reference.
   identify the connected integrations; they are not the Coincide app identity.
 - Keep tool output, approvals and questions in the conversation. Show details
   when needed without turning the default chat into an operations dashboard.
-- Settings uses native navigation and the same typography as chat. Expose only
-  controls that are connected to the supported app behavior.
+- Settings replaces the conversation and sidebar inside the existing main window,
+  keeping the navigation rail visible. The app menu, ⌘,, rail, command palette,
+  model picker, welcome flow and CLI use that same route. Do not add a separate
+  SwiftUI Settings scene. Home returns to the selected chat without creating one.
+- Settings pages share rounded cards, row spacing, descriptions and native menu
+  controls. Personal and integration sections contain only supported behavior.
+  Advanced CLI paths and shortcut conditions stay behind disclosures.
 
 The former inspector/files/Git panels, terminal drawer, remote-workspace scene,
 project-action/worktree/settlement controls and run-history navigation are removed
@@ -45,6 +50,10 @@ from the current app UI. Do not reintroduce those entry points through toolbars,
 menus, keyboard commands or Settings during this pass. Provider tool activity and
 approval of provider requests remain part of chat. Historical implementations
 may remain internally; this redesign does not claim every backend was deleted.
+If a saved file-restore or pull-request operation still holds a conversation,
+show its existing recovery controls in a compact disclosure in that chat. Keep
+the hold until the existing guarded recovery action resolves it; do not silently
+clear accepted operations or restore the removed inspector.
 
 ## Providers and conversation ownership
 

@@ -37,7 +37,7 @@ struct ProviderMenu: View {
                 if store.modelPickerLoading { ProgressView().controlSize(.small) }
                 Button { Task { await store.refreshPickerModels(force: true) } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).disabled(store.modelPickerLoading).help("Refresh models")
-                Button { store.modelPickerPresented = false; store.settingsPage = .models; store.showingSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                Button { store.showSettings(.models) } label: { Image(systemName: "slider.horizontal.3") }
                     .buttonStyle(.plain).help("Choose models to show").accessibilityLabel("Model picker settings")
             }
             TextField("Search models", text: $query).textFieldStyle(.roundedBorder)

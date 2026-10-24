@@ -143,7 +143,7 @@ final class WorkspaceStore {
     @ObservationIgnored lazy var notifications = NativeThreadNotifications { [weak self] id in
         guard let self, !self.terminating, let thread = self.thread(id), !thread.isArchived,
               self.snapshot.projects.contains(where: { $0.id == thread.projectID }) else { return }
-        self.selectedProjectID = thread.projectID; self.showArchived = false; self.selectedThreadID = id
+        guard self.selectThread(id) else { return }
         _ = NSApp?.delegate?.applicationShouldHandleReopen?(NSApplication.shared, hasVisibleWindows: false)
         NSApp?.activate(ignoringOtherApps: true)
     }
@@ -1666,7 +1666,7 @@ final class WorkspaceStore {
             if let rejection = receipt.rejection { throw WorkspaceCommandError(rejection) }
             guard let created = self.thread(threadID), created.scratchWorkspace == allocation.receipt else { throw ScratchWorkspaceError() }
             if !Task.isCancelled, !self.terminating, self.selectedProjectID == selectedProject, self.selectedThreadID == selectedThread {
-                self.selectedProjectID = created.projectID; self.showArchived = false; self.selectedThreadID = threadID
+                self.selectThread(threadID)
             }
             return threadID
         }
@@ -1780,7 +1780,7 @@ final class WorkspaceStore {
             throw CoincideError("The new conversation could not be opened.")
         }
         if !Task.isCancelled, selectedProjectID == selectedProject && selectedThreadID == selectedThread {
-            selectedProjectID = project.id; showArchived = false; selectedThreadID = thread.id
+            selectThread(thread.id)
         }
         return thread.id
     }

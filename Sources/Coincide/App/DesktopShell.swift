@@ -47,8 +47,7 @@ final class DesktopShell {
         environment.start()
         store.notifications.banners = ThreadBannerCoordinator(center: banners, selectedThreadID: { [weak store] in store?.selectedThreadID },
                                                                currentThread: { [weak store] in store?.thread($0) }) { [weak self, weak store] id in
-            guard let store, let thread = store.thread(id), store.snapshot.projects.contains(where: { $0.id == thread.projectID }) else { return }
-            store.selectedProjectID = thread.projectID; store.showArchived = thread.isArchived; store.selectedThreadID = id
+            guard let store, store.selectThread(id) else { return }
             self?.mainWindows?.presentIfNeeded()
         }
         deepLinks = DeepLinkRouter(store: store, banners: banners)
@@ -58,7 +57,11 @@ final class DesktopShell {
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "q",
                let controller = keybindings.dispatcher.controller(for: event.window), !controller.canHandleInteraction { return true }
             return keybindings.dispatcher.handle(event) == nil || keybindings.dispatcher.declinedCurrentEvent()
-        }) { NSApp.terminate(nil) }
+        }) {
+            // Finish the shortcut task before AppKit starts termination. The
+            // shutdown path joins that task; terminating inside it deadlocks.
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
         quitShortcut?.install()
         activity = AgentActivityAssertion { [weak store, weak remoteStore] in
             (store?.snapshot.threads.filter(\.isBusy).count ?? 0) + (remoteStore?.activeRunCount ?? 0)
@@ -180,6 +183,14 @@ final class DesktopShell {
                 self?.markWelcomeCompleted(); self?.windows.close(id: "welcome"); self?.mainWindows?.presentIfNeeded()
             }, readiness: self.readiness)
         }
+    }
+
+    func showSettings(page: SettingsPage? = nil) {
+        guard !closed, let store else { return }
+        store.showSettings(page)
+        windows.close(id: "welcome")
+        mainWindows?.presentIfNeeded()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func showLicenses() {

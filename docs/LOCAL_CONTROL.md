@@ -30,7 +30,9 @@ Commands return JSON. None sends a prompt to a model.
 - `models --refresh` refreshes the selected chat's catalog. `--all --refresh`
   reads both available CLI catalogs. Catalog reads do not prove model execution.
 - `ui --settings PAGE` accepts `general`, `appearance`, `notifications`, `providers`,
-  `models`, `conversations`, `keyboard`, and `about`.
+  `models`, `conversations`, `keyboard`, and `about`. It opens embedded Settings
+  in the existing main window, using the same navigation state as the app menu
+  and ⌘,. `ui --chat` returns to the selected conversation without creating one.
 - `screenshot` writes a new PNG and refuses to overwrite a file. `--popover`
   captures the single visible native popover, refusing ambiguity. Native content
   rendering may omit system-composited chrome; it is not a full screen capture.

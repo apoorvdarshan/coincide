@@ -7,6 +7,7 @@ enum ChatChrome {
     static let sidebar = color(light: 0.955, dark: 0.115)
     static let composer = color(light: 0.945, dark: 0.185)
     static let footer = color(light: 0.965, dark: 0.145)
+    static let settingsCard = color(light: 0.975, dark: 0.135)
     static let separator = Color.primary.opacity(0.065)
     private static func color(light: CGFloat, dark: CGFloat) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
@@ -19,14 +20,16 @@ struct WorkspaceRail: View {
     @Bindable var store: WorkspaceStore
     var body: some View {
         VStack(spacing: 12) {
-            item("New chat", icon: "house.fill", selected: !store.showingSettings) {
-                store.showingSettings = false; store.newThread()
+            item("Home", icon: "house.fill", selected: !store.showingSettings) {
+                store.showChat()
             }
             item("Projects and recent chats", icon: "sidebar.left", selected: false) {
-                store.showingSettings = false; store.sidebarVisible.toggle()
+                let returningFromSettings = store.showingSettings
+                store.showChat()
+                store.sidebarVisible = returningFromSettings ? true : !store.sidebarVisible
             }
             Spacer()
-            item("Settings", icon: "gearshape", selected: store.showingSettings) { store.showingSettings.toggle() }
+            item("Settings", icon: "gearshape", selected: store.showingSettings) { store.showSettings() }
         }
         .padding(.vertical, 10).frame(width: 48).background(ChatChrome.canvas)
     }

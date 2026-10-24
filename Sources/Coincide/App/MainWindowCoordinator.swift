@@ -69,7 +69,7 @@ final class MainWindowCoordinator {
 
     private func restoreRegisteredWindow() -> Bool {
         windows = windows.filter { $0.value.window != nil }
-        guard let window = windows.values.compactMap(\.window).first(where: { $0.isVisible || $0.isMiniaturized }) else { return false }
+        guard let window = currentWindow, window.isVisible || window.isMiniaturized else { return false }
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
         return true

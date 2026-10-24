@@ -149,10 +149,10 @@ final class LocalAppControl {
             let sidebar = args["sidebar"].string
             guard sidebar == nil || sidebar == "show" || sidebar == "hide",
                   !(settings != nil && args["chat"] == .bool(true)) else { throw MCPError(.invalidParams) }
-            if let settings { store.settingsPage = settings; store.showingSettings = true }
-            if args["chat"] == .bool(true) { store.showingSettings = false }
+            if let settings { store.showSettings(settings) }
+            if args["chat"] == .bool(true) { store.showChat() }
             if let sidebar { store.sidebarVisible = sidebar == "show" }
-            if args["model_picker"] == .bool(true) { store.showingSettings = false; store.modelPickerPresented = true }
+            if args["model_picker"] == .bool(true) { store.showChat(); store.modelPickerPresented = true }
             else { store.modelPickerPresented = false }
             result = uiState
         case "screenshot":

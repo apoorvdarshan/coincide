@@ -15,54 +15,71 @@ struct KeybindingsSettingsView: View {
     var body: some View {
         let rows = KeybindingsSettingsModel.rows(keybindings.keybindings)
         let groups = KeybindingsSettingsModel.groups(KeybindingsSettingsModel.filter(rows, query: query))
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-                TextField("Search commands, shortcuts or conditions", text: $query).textFieldStyle(.plain)
-                    .accessibilityLabel("Search keyboard shortcuts").accessibilityIdentifier("keybindings-search")
-                Button { editRevision = keybindings.revision; editing = .new } label: { Label("Add Shortcut", systemImage: "plus") }
-                    .accessibilityIdentifier("keybindings-add")
-                Button { keybindings.openFile() } label: { Image(systemName: "curlybraces") }
-                    .help("Open keybindings.json").accessibilityLabel("Open keybindings.json")
-                Button { keybindings.revealFile() } label: { Image(systemName: "folder") }
-                    .help("Show keybindings.json in Finder").accessibilityLabel("Show keybindings.json in Finder")
-            }.padding(8).coincideSurface(cornerRadius: 8)
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsCard {
+                HStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+                    TextField("Search shortcuts", text: $query).textFieldStyle(.plain).font(.system(size: 13))
+                        .accessibilityLabel("Search keyboard shortcuts").accessibilityIdentifier("keybindings-search")
+                    Button("Add shortcut") { editRevision = keybindings.revision; editing = .new }
+                        .buttonStyle(SettingsActionButtonStyle()).accessibilityIdentifier("keybindings-add")
+                }.padding(.vertical, 12)
+            }
             if !keybindings.issues.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label("keybindings.json has issues. Valid rules and defaults still apply.", systemImage: "exclamationmark.triangle")
-                        .font(.caption.weight(.semibold)).foregroundStyle(.orange)
-                    ForEach(Array(keybindings.issues.enumerated()), id: \.offset) { Text(verbatim: $0.element.summary).font(.caption).foregroundStyle(.secondary) }
+                SettingsCard {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Some shortcuts need attention", systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 13)).foregroundStyle(.orange)
+                        ForEach(Array(keybindings.issues.enumerated()), id: \.offset) {
+                            Text(verbatim: $0.element.summary).font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                    }.padding(.vertical, 14)
                 }.accessibilityIdentifier("keybindings-issues")
             }
-            if let error { Text(verbatim: error).font(.caption).foregroundStyle(.red).accessibilityIdentifier("keybindings-error") }
-            List {
-                if groups.isEmpty { Text("No keyboard shortcuts match your search.").foregroundStyle(.secondary) }
-                ForEach(groups, id: \.title) { group in
-                    Section(group.title) {
-                        ForEach(group.rows) { row in
-                            KeybindingRowView(row: row, edit: { editRevision = keybindings.revision; editing = .row(row) }, reset: {
-                                let expected = keybindings.revision
-                                perform { try await reset(row, expectedRevision: expected) }
-                            }, remove: {
-                                let expected = keybindings.revision
-                                perform { try await keybindings.remove(row.rule, expectedRevision: expected) }
-                            })
-                        }
-                    }
-                }
-                Section("Composer (built in)") {
-                    ForEach(Array(Self.builtIn.enumerated()), id: \.offset) { _, item in
-                        LabeledContent { Text(verbatim: item.1).font(.callout.monospaced()).foregroundStyle(.secondary) } label: { Text(item.0) }
+            if let error {
+                Text(verbatim: error).font(.system(size: 12)).foregroundStyle(.red)
+                    .accessibilityIdentifier("keybindings-error")
+            }
+            if groups.isEmpty {
+                Text("No shortcuts match your search.").font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+            ForEach(groups, id: \.title) { group in
+                SettingsCard(title: LocalizedStringKey(group.title == "Threads" ? "Chats" : group.title)) {
+                    ForEach(group.rows) { row in
+                        if row.id != group.rows.first?.id { SettingsDivider() }
+                        KeybindingRowView(row: row, edit: { editRevision = keybindings.revision; editing = .row(row) }, reset: {
+                            let expected = keybindings.revision
+                            perform { try await reset(row, expectedRevision: expected) }
+                        }, remove: {
+                            let expected = keybindings.revision
+                            perform { try await keybindings.remove(row.rule, expectedRevision: expected) }
+                        })
                     }
                 }
             }
-            .listStyle(.inset(alternatesRowBackgrounds: true))
-            Text(verbatim: keybindings.fileURL.path).font(.caption2.monospaced()).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
-                .textSelection(.enabled)
-            Text("The last matching shortcut rule wins. Your saved configuration is preserved; only commands available in Coincide are shown here.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            SettingsCard(title: "Composer") {
+                ForEach(Array(Self.builtIn.enumerated()), id: \.offset) { index, item in
+                    if index > 0 { SettingsDivider() }
+                    SettingsRow(title: item.0) {
+                        Text(verbatim: item.1).font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            SettingsCard(title: "Advanced") {
+                DisclosureGroup("Shortcut configuration") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("The last matching shortcut rule wins. Your saved configuration is preserved; only commands available in Coincide are shown here.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(verbatim: keybindings.fileURL.path).font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary).textSelection(.enabled)
+                        HStack(spacing: 8) {
+                            Button("Open configuration") { keybindings.openFile() }.buttonStyle(SettingsActionButtonStyle())
+                            Button("Show in Finder") { keybindings.revealFile() }.buttonStyle(SettingsActionButtonStyle())
+                        }
+                    }.padding(.top, 12).padding(.bottom, 4)
+                }.font(.system(size: 13)).padding(.vertical, 14)
+            }
         }
-        .padding(4)
         .sheet(item: $editing) { target in
             let expected = editRevision
             KeybindingEditorSheet(target: target, rows: rows, save: { rule, replacing in
@@ -72,8 +89,8 @@ struct KeybindingsSettingsView: View {
     }
 
     static let builtIn: [(LocalizedStringKey, String)] = [
-        ("Send", "↩"), ("New line", "⇧↩ / ⌥↩"), ("Opposite Queue or Steer action", "⌘↩"),
-        ("Stash prompt", "⌘S"), ("Paste as plain text", "⇧⌘V"), ("Close a picker", "⎋"),
+        ("Send", "↩"), ("New line", "⇧↩ / ⌥↩"), ("Alternate send action", "⌘↩"),
+        ("Paste as plain text", "⇧⌘V"), ("Close a picker", "⎋"),
     ]
 
     private func reset(_ row: KeybindingRow, expectedRevision: KeybindingsConfigRevision) async throws {
@@ -90,39 +107,39 @@ private struct KeybindingRowView: View {
     let edit: () -> Void
     let reset: () -> Void
     let remove: () -> Void
+    private var title: String {
+        if row.command == .sidebarToggle { return String(localized: "Toggle sidebar") }
+        if let number = row.command.threadJumpNumber { return String(localized: "Go to chat \(number)") }
+        let label = row.label.components(separatedBy: ": ").last ?? row.label
+        return label.replacingOccurrences(of: "Thread", with: "Chat")
+    }
+    private var subtitle: LocalizedStringKey? {
+        if !row.conflicts.isEmpty { return LocalizedStringKey("Also used by " + row.conflicts.joined(separator: ", ")) }
+        return row.source == .default ? nil : "Custom shortcut"
+    }
+    private var details: String {
+        row.command.rawValue + (row.when.isEmpty ? "" : "\nCondition: " + row.when)
+    }
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: row.label).lineLimit(1)
-                HStack(spacing: 6) {
-                    Text(verbatim: row.command.rawValue).font(.caption2.monospaced()).foregroundStyle(.tertiary)
-                    if !row.when.isEmpty { Text(verbatim: "when " + row.when).font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(1) }
+        SettingsRow(title: LocalizedStringKey(title), subtitle: subtitle) {
+            HStack(spacing: 8) {
+                Button(action: edit) {
+                    Text(verbatim: row.shortcut.label).font(.system(size: 13, design: .monospaced))
                 }
-                if row.command.availability == .unavailable || row.command.availability == .project || row.command.availability == .reserved {
-                    Text(Self.availabilityNote(row.command.availability)).font(.caption2).foregroundStyle(.secondary)
+                .buttonStyle(SettingsActionButtonStyle())
+                .help("Edit shortcut").accessibilityLabel(Text("Shortcut \(row.shortcut.accessibilityLabel). Edit"))
+                Menu {
+                    Button("Edit…", action: edit)
+                    if row.canReset { Button("Reset to Default", action: reset) }
+                    if row.canRemove { Button("Remove", role: .destructive, action: remove) }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 13)).frame(width: 22, height: 24)
                 }
-                if !row.conflicts.isEmpty {
-                    Label("Also used by \(row.conflicts.joined(separator: ", "))", systemImage: "exclamationmark.triangle")
-                        .font(.caption2).foregroundStyle(.orange).lineLimit(2)
-                }
-            }
-            Spacer(minLength: 8)
-            if row.source != .default {
-                Text(verbatim: row.source.rawValue).font(.caption2).foregroundStyle(.secondary)
-                    .padding(.horizontal, 5).padding(.vertical, 1).background(Color.accentColor.opacity(0.12), in: Capsule())
-            }
-            Button(action: edit) {
-                Text(verbatim: row.shortcut.label).font(.callout.monospaced()).padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
-            }.buttonStyle(.plain).help("Edit shortcut").accessibilityLabel(Text("Shortcut \(row.shortcut.accessibilityLabel). Edit"))
-            Menu {
-                Button("Edit…", action: edit)
-                if row.canReset { Button("Reset to Default", action: reset) }
-                if row.canRemove { Button("Remove", role: .destructive, action: remove) }
-            } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .accessibilityLabel(Text("Actions for \(row.label)"))
+                .accessibilityLabel(Text("Actions for \(title)"))
+            }
         }
+        .help(details)
         .contextMenu {
             Button("Edit…", action: edit)
             if row.canReset { Button("Reset to Default", action: reset) }
@@ -130,13 +147,6 @@ private struct KeybindingRowView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("keybinding-row-" + row.command.rawValue)
-    }
-    static func availabilityNote(_ availability: KeybindingCommandAvailability) -> LocalizedStringKey {
-        switch availability {
-        case .reserved: "This shortcut is not available in the current interface."
-        case .project: "This saved project action is not available in the chat interface."
-        default: "Not available in Coincide. Your saved rule is preserved."
-        }
     }
 }
 
@@ -205,8 +215,12 @@ struct KeybindingEditorSheet: View {
                             .accessibilityLabel("Shortcut text").accessibilityIdentifier("keybinding-editor-key")
                     }
                 }
-                TextField("Condition (optional)", text: $when, prompt: Text(verbatim: "!terminalFocus"))
-                    .font(.callout.monospaced()).accessibilityIdentifier("keybinding-editor-when")
+                DisclosureGroup("Advanced condition") {
+                    TextField("Condition (optional)", text: $when, prompt: Text(verbatim: "!editableFocus"))
+                        .font(.system(size: 13, design: .monospaced)).accessibilityIdentifier("keybinding-editor-when")
+                    Text("Conditions: \(KeybindingContext.knownIdentifiers.filter { $0 != "true" && $0 != "false" }.joined(separator: ", "))")
+                        .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             .formStyle(.grouped)
             VStack(alignment: .leading, spacing: 4) {
@@ -222,8 +236,6 @@ struct KeybindingEditorSheet: View {
                 default: EmptyView()
                 }
                 if !conflicts.isEmpty { Text("Conflicts with \(conflicts.joined(separator: ", ")). The rule saved last wins.").foregroundStyle(.orange) }
-                Text("Conditions: \(KeybindingContext.knownIdentifiers.filter { $0 != "true" && $0 != "false" }.joined(separator: ", "))")
-                    .foregroundStyle(.secondary)
                 if let error { Text(verbatim: error).foregroundStyle(.red) }
             }.font(.caption).fixedSize(horizontal: false, vertical: true)
             HStack {

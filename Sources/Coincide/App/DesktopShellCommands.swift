@@ -12,6 +12,12 @@ struct DesktopShellCommands: Commands {
     }
 
     var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { shell.showSettings() }
+                .keyboardShortcut(",", modifiers: .command)
+                .disabled(!store.hasLoadedWorkspace)
+                .accessibilityIdentifier("open-settings")
+        }
         CommandGroup(after: .pasteboard) {
             Divider()
             Button("Copy Prompt Link") { shell.copyPromptLink(includeContext: false) }

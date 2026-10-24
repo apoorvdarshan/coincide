@@ -9,153 +9,172 @@ struct CodexRuntimeSettingsSection: View {
     @State private var removing = false
 
     var body: some View {
-        Section("Codex Runtime") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Choose the Codex executable for future requests. Installing or checking a binary does not sign in or verify account access.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Picker("Runtime", selection: $runtime.selection) {
-                    ForEach(CodexRuntimeSelection.allCases) { selection in Text(selection.name).tag(selection) }
-                }.accessibilityIdentifier("codex-runtime-selection")
+        VStack(alignment: .leading, spacing: 20) {
+            SettingsCard(title: "Codex runtime") {
+                SettingsRow(title: "Runtime", subtitle: "Choose which Codex CLI to use.") {
+                    SettingsMenu(label: runtime.selection.name) {
+                        ForEach(CodexRuntimeSelection.allCases) { selection in
+                            Button { runtime.selection = selection } label: {
+                                if selection == runtime.selection { Label(selection.name, systemImage: "checkmark") }
+                                else { Text(selection.name) }
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("codex-runtime-selection")
                     .disabled(runtime.isApplying)
-                if runtime.selection == .existingCLI {
-                    Text(runtime.authenticationMode == .cliDefault
-                         ? String(localized: "Uses codex from the existing command-line environment. Your current CLI account and configuration remain in place.")
-                         : String(localized: "Uses codex from the existing command-line environment. ChatGPT authentication is configured separately below."))
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                } else if runtime.selection == .custom {
-                    ViewThatFits(in: .horizontal) {
-                        HStack { executableField; chooseExecutable }
-                        VStack(alignment: .leading, spacing: 8) { executableField; chooseExecutable }
-                    }.disabled(runtime.isApplying)
-                } else {
-                    managedRuntime
                 }
-                DisclosureGroup("Advanced: Codex Home", isExpanded: $advanced) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextField(runtime.authenticationMode == .ownedChatGPT
-                                  ? String(localized: "Shared Codex home (absolute folder)")
-                                  : String(localized: "Codex home (optional absolute folder)"), text: $runtime.homeDirectory)
-                            .accessibilityIdentifier("codex-runtime-home")
-                        Text(runtime.authenticationMode == .cliDefault
-                             ? String(localized: "Leave empty to inherit the CLI’s CODEX_HOME. Choosing another folder does not copy accounts, settings, or conversation history.")
-                             : String(localized: "An absolute shared home is required for Coincide-owned authentication. Choosing a folder does not migrate CLI accounts or history."))
-                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if runtime.selection == .custom {
+                    SettingsDivider()
+                    SettingsRow(title: "Executable") {
+                        HStack(spacing: 8) { executableField; chooseExecutable }
                     }.disabled(runtime.isApplying)
                 }
-                Text("Selected runtime: \(runtime.configuration.selection.name)")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("codex-runtime-saved-selection")
-                if let home = runtime.configuration.homeDirectory {
-                    Text("Selected Codex home: \(home)")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                SettingsDivider()
+                SettingsRow(title: "Currently using") {
+                    Text(runtime.configuration.selection.name)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("codex-runtime-saved-selection")
                 }
                 if let inspected = runtime.inspected {
+                    SettingsDivider()
                     inspection(inspected)
                 } else if runtime.isChecking {
-                    HStack { ProgressView().controlSize(.small); Text("Checking the selected executable…") }
+                    SettingsDivider()
+                    SettingsRow(title: "Checking runtime…") {
+                        ProgressView().controlSize(.small)
+                    }
                 }
-                if runtime.hasUnappliedChanges {
-                    Text("Changes apply only when you choose Use Runtime. Existing conversations keep their captured runtime.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                SettingsDivider()
+                SettingsRow(title: "Apply runtime", subtitle: "Applies to future chats. Existing chats keep their runtime.") {
+                    HStack(spacing: 8) { selectionActions }
                 }
                 if let message = runtime.errorMessage {
-                    Text(message).font(.caption).foregroundStyle(.secondary)
+                    SettingsDivider()
+                    Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                        .accessibilityIdentifier("codex-runtime-error")
-                }
-                ViewThatFits(in: .horizontal) {
-                    HStack { selectionActions }
-                    VStack(alignment: .leading, spacing: 8) { selectionActions }
+                        .padding(.vertical, 14).accessibilityIdentifier("codex-runtime-error")
                 }
             }
-            .background { geometry("bounds") }
-            .coordinateSpace(name: "codex-runtime-controls")
+            if runtime.selection == .managed { managedRuntime }
+            SettingsCard(title: nil) {
+                DisclosureGroup("Advanced", isExpanded: $advanced) {
+                    SettingsRow(title: "Codex home", subtitle: "Leave empty to use the CLI default. Accounts and history are not copied.") {
+                        TextField(runtime.authenticationMode == .ownedChatGPT
+                                  ? String(localized: "Absolute shared folder")
+                                  : String(localized: "Default"), text: $runtime.homeDirectory)
+                            .textFieldStyle(.roundedBorder).frame(minWidth: 150, maxWidth: 300)
+                            .accessibilityIdentifier("codex-runtime-home")
+                    }.disabled(runtime.isApplying)
+                    if let home = runtime.configuration.homeDirectory {
+                        SettingsDivider()
+                        SettingsRow(title: "Saved home") {
+                            Text(home).foregroundStyle(.secondary).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: 320, alignment: .trailing)
+                        }
+                    }
+                    if let inspected = runtime.inspected {
+                        SettingsDivider()
+                        SettingsRow(title: "Runtime source") { Text(inspected.source.name).foregroundStyle(.secondary) }
+                        SettingsDivider()
+                        SettingsRow(title: "Executable path") {
+                            Text(inspected.executable.path).foregroundStyle(.secondary).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: 320, alignment: .trailing)
+                        }
+                    }
+                }.font(.system(size: 13)).padding(.vertical, 14)
+            }
         }
+        .background { geometry("bounds") }
+        .coordinateSpace(name: "codex-runtime-controls")
         .confirmationDialog("Remove Managed Codex?", isPresented: $removing, titleVisibility: .visible) {
             Button("Remove Managed Codex", role: .destructive) { runtime.removeManagedRuntime() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Remove only the Codex package installed by Coincide. CLI accounts, Codex homes, and custom executables remain saved. A runtime still in use cannot be removed.")
+            Text("Removes the package installed by Coincide. Accounts, homes and custom executables are kept. A runtime in use cannot be removed.")
         }
     }
     private var executableField: some View {
-        TextField("Executable path or command", text: $runtime.executable)
+        TextField("Path or command", text: $runtime.executable)
+            .textFieldStyle(.roundedBorder).frame(minWidth: 150, maxWidth: 280)
             .accessibilityIdentifier("codex-runtime-executable")
     }
     private var chooseExecutable: some View {
-        Button("Choose Executable…") {
+        Button("Choose…") {
             let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false
             panel.allowsMultipleSelection = false; panel.prompt = String(localized: "Choose")
             if panel.runModal() == .OK, let url = panel.url { runtime.executable = url.path }
-        }.accessibilityIdentifier("codex-runtime-choose-executable")
+        }.buttonStyle(SettingsActionButtonStyle())
+            .accessibilityLabel("Choose Codex executable")
+            .accessibilityIdentifier("codex-runtime-choose-executable")
     }
     private var managedRuntime: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Installs a pinned Codex CLI package. Available features depend on the executable’s actual version; a package verification does not verify account access.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text(runtime.installationStatus).fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("codex-installation-status")
+        SettingsCard(title: "Managed installation") {
+            SettingsRow(title: "Codex package", subtitle: "Download and manage a separate CLI for Coincide.") {
+                Text(runtime.installationStatus).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("codex-installation-status")
+            }
             if let installed = runtime.state.installedVersion {
-                Text("Managed package version: \(installed)")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                SettingsDivider()
+                SettingsRow(title: "Installed version") { Text(installed).foregroundStyle(.secondary) }
             }
             if let target = runtime.state.version, target != runtime.state.installedVersion {
-                Text("Package to install: \(target)")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                SettingsDivider()
+                SettingsRow(title: "Available package") { Text(target).foregroundStyle(.secondary) }
             }
-            Text("The pinned 0.156.1 package does not support Coincide’s reviewed Codex conversation history or in-flight steering. Those controls require a supported newer CLI.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if runtime.state.phase.isWorking || runtime.isCancelling {
-                ProgressView(value: runtime.progress).accessibilityLabel("Codex installation progress")
-                    .accessibilityIdentifier("codex-installation-progress")
-                if runtime.state.phase == .downloading {
-                    Text(runtime.progressText).font(.caption).foregroundStyle(.secondary)
-                }
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: runtime.progress).accessibilityLabel("Codex installation progress")
+                        .accessibilityIdentifier("codex-installation-progress")
+                    if runtime.state.phase == .downloading {
+                        Text(runtime.progressText).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }.padding(.vertical, 14)
             }
             if let message = runtime.state.message {
-                Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled).padding(.vertical, 14)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack { installationActions }
-                VStack(alignment: .leading, spacing: 8) { installationActions }
-            }
+            SettingsDivider()
+            SettingsRow(title: "Installation") { HStack(spacing: 8) { installationActions } }
         }
     }
     private func inspection(_ result: CodexInstallationExecutable) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Executable check passed").accessibilityIdentifier("codex-runtime-check-status")
-            Text("Source: \(result.source.name)").font(.caption).foregroundStyle(.secondary)
-            if let version = result.version {
-                Text("Observed version: \(version)").font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("codex-runtime-observed-version")
-            } else {
-                Text("The executable did not report a version.").font(.caption).foregroundStyle(.secondary)
+        SettingsRow(title: "Runtime check", subtitle: "Checks the executable. Account status is shown separately.") {
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("Executable ready").accessibilityIdentifier("codex-runtime-check-status")
+                if let version = result.version {
+                    Text(version).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("codex-runtime-observed-version")
+                } else { Text("Version not reported").font(.system(size: 12)).foregroundStyle(.secondary) }
             }
-            Text(result.executable.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            Text("Account access has not been checked. Refresh the Codex account section separately.")
-                .font(.caption).foregroundStyle(.secondary)
-        }.fixedSize(horizontal: false, vertical: true)
+        }
     }
     @ViewBuilder private var selectionActions: some View {
-        Button(runtime.isApplying ? "Applying Runtime…" : "Use Runtime") { Task { await runtime.applySelection() } }
+        Button(runtime.isApplying ? "Applying…" : "Use Runtime") { Task { await runtime.applySelection() } }
+            .buttonStyle(SettingsActionButtonStyle())
             .disabled(!runtime.canApply).accessibilityIdentifier("codex-runtime-apply")
             .background { geometry("apply") }
         Button("Check Runtime") { Task { await runtime.checkRuntime() } }
+            .buttonStyle(SettingsActionButtonStyle())
             .disabled(!runtime.canCheck).accessibilityIdentifier("codex-runtime-check")
             .background { geometry("check") }
     }
     @ViewBuilder private var installationActions: some View {
         Button(runtime.installationTitle) { runtime.startInstallation() }
+            .buttonStyle(SettingsActionButtonStyle())
             .disabled(!runtime.canStartInstallation).accessibilityIdentifier("codex-install-runtime")
             .background { geometry("install") }
         if runtime.state.phase.isWorking || runtime.isCancelling {
             Button("Cancel Installation") { Task { await runtime.cancelInstallation() } }
+                .buttonStyle(SettingsActionButtonStyle())
                 .disabled(runtime.isCancelling).accessibilityIdentifier("codex-cancel-installation")
                 .background { geometry("cancel") }
         }
         if runtime.state.canRemove {
-            Button("Remove Managed Codex…", role: .destructive) { removing = true }
+            Button("Remove…", role: .destructive) { removing = true }
+                .buttonStyle(SettingsActionButtonStyle())
+                .accessibilityLabel("Remove Managed Codex")
                 .disabled(!runtime.canRemove).accessibilityIdentifier("codex-remove-runtime")
                 .background { geometry("remove") }
         }

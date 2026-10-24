@@ -6,12 +6,17 @@ struct TranscriptSettings: View {
     @AppStorage(TranscriptPreferences.timestampFormatKey) private var timestampFormat = TranscriptTimestampFormat.system.rawValue
     @AppStorage(TranscriptPreferences.foldCompletedRunsKey) private var foldCompletedRuns = true
     var body: some View {
-        Picker("Timestamp format", selection: $timestampFormat) {
-            ForEach(TranscriptTimestampFormat.allCases) { Text($0.title).tag($0.rawValue) }
-        }.accessibilityIdentifier("settings-timestamp-format")
-        Toggle("Collapse finished work", isOn: $foldCompletedRuns)
-            .accessibilityIdentifier("settings-fold-completed-runs")
-        Text("A finished turn's tool calls and reasoning fold under “Worked for …”. Select the row to show them again.")
-            .font(.caption).foregroundStyle(.secondary)
+        SettingsRow(title: "Timestamps", subtitle: "Choose how message times appear in conversations.") {
+            SettingsMenu(label: TranscriptTimestampFormat(rawValue: timestampFormat)?.title ?? TranscriptTimestampFormat.system.title) {
+                ForEach(TranscriptTimestampFormat.allCases) { format in
+                    Button(format.title) { timestampFormat = format.rawValue }
+                }
+            }.accessibilityLabel("Timestamp format").accessibilityIdentifier("settings-timestamp-format")
+        }
+        SettingsDivider()
+        SettingsRow(title: "Collapse finished work", subtitle: "Group completed tool calls and reasoning under “Worked for …”. Open the row to see them again.") {
+            Toggle("Collapse finished work", isOn: $foldCompletedRuns).labelsHidden()
+                .accessibilityIdentifier("settings-fold-completed-runs")
+        }
     }
 }

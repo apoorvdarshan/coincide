@@ -62,6 +62,7 @@ struct CoincideApp: App {
             ContentView(store: store).environment(keybindings)
                 .frame(minWidth: 900, minHeight: 600)
                 .background(MainWindowRegistration(coordinator: mainWindows))
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
@@ -91,7 +92,6 @@ struct CoincideApp: App {
                 CommandItem("Stop Reply", .threadStop, controller: keyboardController, keybindings: keybindings)
             }
         }
-        Settings { SettingsView(store: store).environment(keybindings) }
     }
 }
 

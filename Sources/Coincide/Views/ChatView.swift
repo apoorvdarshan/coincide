@@ -85,6 +85,7 @@ struct ChatView: View {
                     if composerHistoryLocked {
                         ConversationHistoryBanner(store: store, threadID: threadID)
                     }
+                    ConversationSavedOperationRecovery(store: store, thread: thread)
                     PromptSteeringBanner(store: store, threadID: threadID)
                     ForEach(store.approvals[threadID, default: []]) { request in
                         ApprovalView(request: request, isResponding: store.isResponding(request, threadID: threadID), onDecision: { allow in Task { await store.respond(request, threadID: threadID, allow: allow) } },
@@ -153,5 +154,100 @@ struct ChatView: View {
                 } cancel: { referenceFileSheet = false }
             }
         }
+    }
+}
+
+/// Recovery remains reachable for already accepted operations without opening
+/// the source-control inspector or preparing any new operation.
+private struct ConversationSavedOperationRecovery: View {
+    let store: WorkspaceStore
+    let thread: CodingThread
+
+    private var recoveryPaths: [String] {
+        var paths = thread.pullRequestCheckoutWorkspacePaths
+        if let plan = thread.workspacePreparation?.plan { paths.append(plan.commonDirectoryPath) }
+        for record in thread.runHistory ?? [] {
+            guard let checkpoints = record.checkpoints else { continue }
+            let attempts = [checkpoints.baseline] + checkpoints.previousPostRunAttempts + (checkpoints.postRun.map { [$0] } ?? [])
+            for attempt in attempts {
+                paths.append(attempt.workspacePath)
+                if let plan = attempt.plan { paths += [plan.workspacePath, plan.repositoryPath, plan.commonDirectoryPath] }
+            }
+        }
+        return paths
+    }
+
+    private var restores: [RunCheckpointRestoreOperation] {
+        guard store.isCheckpointRestoreLocked(threadID: thread.id) else { return [] }
+        let paths = recoveryPaths
+        return (store.snapshot.checkpointRestoreOperations ?? []).filter { operation in
+            operation.locksSource && (operation.review.threadID == thread.id || paths.contains {
+                overlaps($0, operation.review.gitReview.currentPlan.repositoryPath)
+            })
+        }
+    }
+
+    private var creations: [PullRequestCreationOperation] {
+        guard store.isPullRequestCreationLocked(threadID: thread.id) else { return [] }
+        let paths = recoveryPaths
+        return (store.snapshot.pullRequestCreations ?? []).filter { operation in
+            operation.locksSource && (operation.projectID == thread.projectID || paths.contains { path in
+                operation.scopePaths.contains { overlaps(path, $0) }
+            })
+        }
+    }
+
+    private var checkouts: [PullRequestCheckoutOperation] {
+        guard store.isPullRequestCheckoutLocked(threadID: thread.id) else { return [] }
+        let paths = thread.pullRequestCheckoutWorkspacePaths
+        return (store.snapshot.pullRequestCheckouts ?? []).filter { operation in
+            operation.locksSource && paths.contains { path in
+                operation.scopePaths.contains { overlaps(path, $0) }
+            }
+        }
+    }
+
+    var body: some View {
+        ForEach(restores) { operation in
+            DisclosureGroup("Review unfinished file restore") {
+                RunCheckpointRestoreOperationView(store: store, operation: operation)
+                    .padding(.top, 8)
+            }
+            .modifier(SavedOperationRecoveryAppearance())
+            .id(operation.id)
+        }
+        ForEach(creations) { operation in
+            DisclosureGroup("Review pull request creation") {
+                PullRequestOperationView(model: store.pullRequestStore(path: operation.review.context.workspacePath))
+                    .padding(.top, 8)
+            }
+            .modifier(SavedOperationRecoveryAppearance())
+            .id(operation.id)
+        }
+        ForEach(checkouts) { operation in
+            DisclosureGroup("Review pull request checkout") {
+                PullRequestCheckoutOperationView(model: store.pullRequestStore(path: operation.review.plan.sourcePath), operationID: operation.id)
+                    .padding(.top, 8)
+            }
+            .modifier(SavedOperationRecoveryAppearance())
+            .id(operation.id)
+        }
+    }
+
+    private func overlaps(_ first: String, _ second: String) -> Bool {
+        let a = URL(fileURLWithPath: first).standardizedFileURL.resolvingSymlinksInPath().path
+        let b = URL(fileURLWithPath: second).standardizedFileURL.resolvingSymlinksInPath().path
+        return a == b || a == "/" || b == "/" || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
+    }
+}
+
+private struct SavedOperationRecoveryAppearance: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
     }
 }

@@ -82,7 +82,7 @@ final class DeepLinkRouter {
             try Task.checkCancellation()
             warnHidden(prompt)
             banners.post(.info, title: String(localized: "Pull request #\(pullRequest.number)"),
-                         detail: String(localized: "Links never check out code. Open Pull Requests to check out \(pullRequest.repository.slug)#\(pullRequest.number) before sending."),
+                         detail: String(localized: "This link opened a draft for \(pullRequest.repository.slug)#\(pullRequest.number). It did not check out code or send a message."),
                          key: "deep-link-pr")
             return .openedDraft(threadID: id)
         case let .thread(id, prompt):
@@ -122,7 +122,7 @@ final class DeepLinkRouter {
     }
 
     private func select(_ thread: CodingThread) {
-        store.selectedProjectID = thread.projectID; store.showArchived = thread.isArchived; store.selectedThreadID = thread.id
+        store.selectThread(thread.id)
     }
 
     /// The most recently active project for the repository (forks count only for their

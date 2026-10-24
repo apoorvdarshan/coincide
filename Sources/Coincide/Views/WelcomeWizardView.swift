@@ -2,7 +2,7 @@ import AppKit
 import CoincideCore
 import SwiftUI
 
-/// First-run setup (T3 WelcomeWizard): check Codex and Claude Code, then add or import
+/// First-run setup: check Codex and Claude Code, then add or import
 /// projects. Closing it at any step finishes setup; Help → Welcome to Coincide reopens it.
 struct WelcomeWizardView: View {
     enum Step: Int, CaseIterable, Identifiable {
@@ -68,7 +68,7 @@ struct WelcomeWizardView: View {
     private var agents: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Welcome to Coincide").font(.largeTitle.bold())
-            Text("Coincide runs the coding agents already installed on this Mac with their own sign-in. Check Codex and Claude Code here; other agents can be set up later in Settings.")
+            Text("Coincide runs the coding agents already installed on this Mac with their own sign-in. Check Codex and Claude Code here; agent settings are available in Settings.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ForEach(ProviderReadiness.Agent.allCases) { agent in
                 let capturedRevision = readiness.capturedRevision[agent]
@@ -104,7 +104,7 @@ struct WelcomeWizardView: View {
                 Button("Import Agent Projects…") { importing = true }.accessibilityIdentifier("welcome-import-projects")
             }
             if store.snapshot.projects.isEmpty {
-                Text("No projects yet. You can also use File → New Project or Clone Repository later.").font(.callout).foregroundStyle(.secondary)
+                Text("No projects yet. You can also use File → New Project or Add Project later.").font(.callout).foregroundStyle(.secondary)
             } else {
                 List(store.snapshot.projects.prefix(8)) { project in
                     Label { VStack(alignment: .leading) { Text(project.name); Text(project.path).font(.caption).foregroundStyle(.secondary).lineLimit(1) } }
@@ -146,7 +146,6 @@ extension ProviderReadiness.Capture {
 }
 
 struct AgentReadinessRow: View {
-    @Environment(\.openSettings) private var openSettings
     let agent: ProviderReadiness.Agent
     let readiness: ProviderReadiness
     let executable: URL?
@@ -220,7 +219,7 @@ struct AgentReadinessRow: View {
                 }
                 .padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             } else if canReviewSettings {
-                Button("Review in Settings") { reviewSettings { openSettings() } }
+                Button("Review in Settings") { reviewSettings { DesktopShell.shared.showSettings(page: .providers) } }
             }
         }
         .padding(12)

@@ -126,15 +126,22 @@ enum CommandPaletteItems {
     }
 
     static func settingsItems(_ controller: MainWindowController) -> [PaletteItem] {
-        var items = [PaletteItem(id: "setting:keyboard", title: String(localized: "Keyboard Shortcuts"), subtitle: String(localized: "Settings · Keyboard"),
-                                 symbol: "keyboard", searchTerms: ["Keyboard Shortcuts", "keybindings", "shortcuts", "hotkeys", "keys"],
-                                 kind: .action { [weak controller] in if controller?.canHandleInteraction == true { controller?.presentations.openSettings() } })]
-        items += [("setting:follow-up", String(localized: "Messages During a Running Turn"), ["queue", "steer", "follow up", "running"]),
-                  ("setting:notifications", String(localized: "Notifications"), ["notifications", "sounds", "badge"])].map { id, title, terms in
-            PaletteItem(id: id, title: title, subtitle: String(localized: "Settings · General"), symbol: "gearshape", searchTerms: [title] + terms,
-                        isSecondary: true, kind: .action { [weak controller] in if controller?.canHandleInteraction == true { controller?.presentations.openSettings() } })
+        let pages: [(String, String, String, String, [String], SettingsPage)] = [
+            ("setting:keyboard", String(localized: "Keyboard Shortcuts"), String(localized: "Settings · Keyboard"),
+             "keyboard", ["keybindings", "shortcuts", "hotkeys", "keys"], .keyboard),
+            ("setting:follow-up", String(localized: "Messages During a Running Turn"), String(localized: "Settings · Conversations"),
+             "gearshape", ["queue", "steer", "follow up", "running"], .conversations),
+            ("setting:notifications", String(localized: "Notifications"), String(localized: "Settings · Notifications"),
+             "bell", ["notifications", "sounds", "badge"], .notifications)
+        ]
+        return pages.map { id, title, subtitle, symbol, terms, page in
+            PaletteItem(id: id, title: title, subtitle: subtitle, symbol: symbol, searchTerms: [title] + terms,
+                        isSecondary: page != .keyboard, kind: .action { [weak controller] in
+                guard let controller, controller.canHandleInteraction else { return }
+                controller.store.settingsPage = page
+                controller.presentations.openSettings()
+            })
         }
-        return items
     }
 
     /// Non-archived threads by recent activity. A query of two or more characters

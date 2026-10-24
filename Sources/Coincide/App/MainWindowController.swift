@@ -210,10 +210,7 @@ final class MainWindowController {
         case .navigationForward:
             guard let id = history.goForward(isValid: store.canNavigate(to:)) else { return false }
             store.selectThread(id)
-        case .chatNew:
-            if store.orderedProjectGroups.count > 1 {
-                openPalette(); palette?.open(view: CommandPaletteItems.newThreadInView(self))
-            } else { store.newThread() }
+        case .chatNew: store.newThread()
         case .chatNewLocal: store.newThread()
         case .chatFind: openFind()
         case .threadStop:
