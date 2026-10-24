@@ -60,7 +60,7 @@ final class ContextTransferStore {
     @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
     init() { }
     var sourceOptions: [ContextTransferSourceOption] {
-        var result: [ContextTransferSourceOption] = [.init(id: "latest", title: "Latest stable completed observation")]
+        var result: [ContextTransferSourceOption] = [.init(id: "conversation", title: "Saved conversation"), .init(id: "latest", title: "Latest stable completed observation")]
         for run in (sourceThread?.runHistory ?? []).reversed() where run.removedByHistoryOperationID == nil && run.status.isTerminal && run.status != .unknown && run.messageAttributionVersion != nil {
             result.append(.init(id: "run-" + run.id.uuidString, title: "Run · \(run.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(run.status.rawValue)"))
             if let attempt = run.checkpoints?.postRun, attempt.phase == .ready, attempt.receipt != nil {
@@ -113,7 +113,8 @@ final class ContextTransferStore {
         }
         do {
             let point: ContextTransferSourcePoint
-            if sourceID == "latest" { point = .latestStable }
+            if sourceID == "conversation" { point = .conversation }
+            else if sourceID == "latest" { point = .latestStable }
             else if sourceID.hasPrefix("run-"), let id = UUID(uuidString: String(sourceID.dropFirst(4))) { point = .run(id) }
             else if sourceID.hasPrefix("checkpoint-"), let id = UUID(uuidString: String(sourceID.dropFirst(11))),
                     let run = source.runHistory?.first(where: { $0.checkpoints?.postRun?.id == id }), let attempt = run.checkpoints?.postRun {

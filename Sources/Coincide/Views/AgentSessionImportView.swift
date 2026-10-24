@@ -11,7 +11,7 @@ struct AgentSessionImportView: View {
                 Spacer()
                 Button("Done") { store.requestPause(); dismiss() }.keyboardShortcut(.cancelAction)
             }
-            Text("Find projects in your captured Codex and Claude profiles. Import copies saved conversation history into Coincide and keeps the original source files unchanged.")
+            Text("Copy saved Codex and Claude conversations into Coincide. Replies use a separate session, leaving the original CLI conversation unchanged. You can switch agents in the copied chat.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button(store.scanResult == nil ? "Scan Local Projects" : "Scan Again") { store.scan() }

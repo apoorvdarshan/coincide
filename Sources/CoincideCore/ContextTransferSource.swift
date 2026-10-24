@@ -6,6 +6,9 @@ extension WorkspaceSnapshot {
         let records = thread.activeHistoryRuns
         let run: ThreadRunRecord
         switch point {
+        case .conversation:
+            guard !thread.isBusy, thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty else { throw ContextTransferError.unavailable }
+            return .init(threadID: threadID, runID: nil)
         case .latestStable:
             guard let found = records.last(where: { $0.status == .completed && $0.checkpoints?.postRun?.phase == .ready && $0.checkpoints?.postRun?.receipt != nil }) else { throw ContextTransferError.invalidSource }
             run = found
@@ -25,33 +28,40 @@ extension WorkspaceSnapshot {
     }
     func contextTransferFingerprint(_ thread: CodingThread, point: ContextTransferResolvedPoint) throws -> String {
         struct State: Encodable { let configuration: ProviderConfiguration; let runs: [ThreadRunRecord]; let messages: [ChatMessage]; let lineage: ContextTransferLineage? }
-        guard let end = thread.activeHistoryRuns.firstIndex(where: { $0.id == point.runID }) else { throw ContextTransferError.invalidSource }
-        let runs = thread.activeHistoryRuns.prefix(end + 1).map { var record = $0; record.providerUsage = nil; return record }, ids = Set(runs.map(\.id))
+        let records: [ThreadRunRecord]
+        if let runID = point.runID {
+            guard let end = thread.activeHistoryRuns.firstIndex(where: { $0.id == runID }) else { throw ContextTransferError.invalidSource }
+            records = Array(thread.activeHistoryRuns.prefix(end + 1))
+        } else { records = thread.activeHistoryRuns }
+        let runs = records.map { var record = $0; record.providerUsage = nil; return record }, ids = Set(runs.map(\.id))
         return try ContextTransferProtocol.digest(State(configuration: .init(thread: thread), runs: runs,
-            messages: thread.messages.filter { $0.removedByHistoryOperationID == nil && $0.runReference.map { $0.threadID == thread.id && ids.contains($0.runID) } == true }, lineage: thread.contextTransferLineage))
+            messages: thread.messages.filter { $0.removedByHistoryOperationID == nil && (point.runID == nil || $0.runReference.map { $0.threadID == thread.id && ids.contains($0.runID) } == true) }, lineage: thread.contextTransferLineage))
     }
     func contextTransferMessages(thread: CodingThread, through point: ContextTransferResolvedPoint, ownRunsOnly: Bool) throws -> [ContextHandoffMessage] {
-        let records = thread.activeHistoryRuns
-        guard let index = records.firstIndex(where: { $0.id == point.runID }) else { throw ContextTransferError.invalidSource }
-        let included = Set(records.prefix(index + 1).map(\.id))
+        let records: [ThreadRunRecord]
+        if let runID = point.runID {
+            guard let index = thread.activeHistoryRuns.firstIndex(where: { $0.id == runID }) else { throw ContextTransferError.invalidSource }
+            records = Array(thread.activeHistoryRuns.prefix(index + 1))
+        } else { records = thread.activeHistoryRuns }
+        let included = Set(records.map(\.id))
         var result: [ContextHandoffMessage] = []
         if !ownRunsOnly, let lineage = thread.contextTransferLineage,
            let inherited = contextTransfer(lineage.transferID) { result = inherited.review.messages }
         for message in thread.messages where message.removedByHistoryOperationID == nil {
-            guard let attribution = message.runReference, attribution.threadID == thread.id,
-                  included.contains(attribution.runID) else { continue }
+            let attribution = message.runReference
+            guard point.runID == nil || attribution.map({ $0.threadID == thread.id && included.contains($0.runID) }) == true else { continue }
             guard message.role != .reasoning, let semantic = Self.publicContextMessage(message) else { continue }
             // Source archives carry text outcomes, never replay attachments,
             // commands, tool requests, or native reasoning as executable input.
-            let itemID = try ContextTransferProtocol.digest([thread.id.uuidString, attribution.runID.uuidString, message.id])
-            result.append(.init(id: "message:" + itemID, runID: attribution.runID,
+            let itemID = try ContextTransferProtocol.digest([thread.id.uuidString, attribution?.runID.uuidString ?? "imported", message.id])
+            result.append(.init(id: "message:" + itemID, runID: attribution?.runID,
                 role: message.role.rawValue, kind: semantic.kind, text: semantic.text))
             for attachment in message.attachments ?? [] {
-                result.append(.init(id: thread.id.uuidString + ":attachment:" + attachment.id.uuidString, runID: attribution.runID,
+                result.append(.init(id: thread.id.uuidString + ":attachment:" + attachment.id.uuidString, runID: attribution?.runID,
                     role: "system", kind: "attachmentMetadata", text: "Attachment \(attachment.name) (\(attachment.mimeType), \(attachment.byteCount) bytes, SHA-256 \(attachment.digest)). File bytes are not replayed by context transfer."))
             }
         }
-        for run in records.prefix(index + 1) {
+        for run in records {
             if let delivery = run.contextDelivery, delivery.status == .delivered {
                 let inheritedIDs = Set(thread.contextTransferLineage.flatMap { contextTransfer($0.transferID) }?.review.messages.map(\.id) ?? [])
                 result.append(contentsOf: delivery.selection.messages.filter { !ownRunsOnly || !inheritedIDs.contains($0.id) })
@@ -100,7 +110,7 @@ extension WorkspaceSnapshot {
               !source.isArchived,
               workspaceReady(for: source), !isConversationHistoryLocked(threadID: source.id),
               ContextTransferProtocol.same(ProviderConfiguration(thread: source), review.request.expectedConfiguration),
-              try contextTransferSource(threadID: source.id, point: review.sourcePoint.checkpointAttemptID.map { .checkpoint(runID: review.sourcePoint.runID, attemptID: $0, digest: review.sourcePoint.checkpointDigest ?? "") } ?? .run(review.sourcePoint.runID)) == review.sourcePoint,
+              try contextTransferSource(threadID: source.id, point: review.sourcePoint.source) == review.sourcePoint,
               try contextTransferFingerprint(source, point: review.sourcePoint) == review.sourceFingerprint,
               !((contextTransfers ?? []).contains { $0.id == review.id }),
               review.targetConfiguration.nativeThreadID == review.targetProviderBinding?.configuration.nativeThreadID,
@@ -172,7 +182,7 @@ extension WorkspaceSnapshot {
     }
     func contextProviderBinding(for thread: CodingThread, now: Date) throws -> ContextTransferProviderBinding? {
         let configuration = ProviderConfiguration(thread: thread)
-        guard configuration.nativeThreadID != nil else { return nil }
+        guard configuration.nativeThreadID != nil, !isOriginalImportedSession(thread) else { return nil }
         let runs = Set(thread.activeHistoryRuns.filter { $0.providerThreadID == configuration.nativeThreadID && Self.sameContextProvider($0.configuration, configuration) }.map(\.id))
         var known = Set<String>()
         for message in thread.messages where message.removedByHistoryOperationID == nil {
@@ -267,6 +277,7 @@ extension CodingThread {
     mutating func applyContextConfiguration(_ configuration: ProviderConfiguration) {
         provider = configuration.provider; workspacePath = configuration.workspacePath; providerThreadID = configuration.nativeThreadID
         model = configuration.model; reasoningEffort = configuration.reasoningEffort; permission = configuration.permission
+        codexModelSelectionSource = configuration.provider == .codex && !configuration.model.isEmpty ? .explicitModel : nil
         acpAgent = configuration.acpAgent; openCodeConfiguration = configuration.openCodeConfiguration; piConfiguration = configuration.piConfiguration
         museConfiguration = configuration.museConfiguration; antigravityConfiguration = configuration.antigravityConfiguration
         codexRuntimeConfiguration = configuration.codexRuntimeConfiguration; claudeRuntimeConfiguration = configuration.claudeRuntimeConfiguration

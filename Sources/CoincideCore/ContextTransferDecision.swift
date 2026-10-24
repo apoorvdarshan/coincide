@@ -150,6 +150,27 @@ extension WorkspaceDecision {
         guard pending.count <= 32, pending.allSatisfy({ transfer in
             var expected = transfer.review.targetConfiguration, actual = queued.configuration
             expected.model = actual.model; expected.reasoningEffort = actual.reasoningEffort; expected.permission = actual.permission
+            // Model controls may change after a copy/handoff is staged. Keep
+            // profile, workspace and unrelated agent settings bound exactly.
+            do {
+                let key: String?
+                switch actual.provider {
+                case .claude:
+                    _ = try ClaudeModelControl.options(in: actual)
+                    key = ClaudeModelControl.configurationKey
+                case .codex:
+                    _ = try CodexServiceTier.selected(in: actual)
+                    guard actual.agentModeID == nil || actual.agentModeID == "default" || actual.agentModeID == "plan" else { return false }
+                    expected.agentModeID = actual.agentModeID
+                    key = CodexServiceTier.configurationKey
+                default: key = nil
+                }
+                if let key {
+                    var settings = expected.agentConfiguration ?? [:]
+                    settings[key] = actual.agentConfiguration?[key]
+                    expected.agentConfiguration = settings.isEmpty ? nil : settings
+                }
+            } catch { return false }
             if let configuration = expected.openCodeConfiguration { expected.openCodeConfiguration = configuration.selecting(model: actual.openCodeConfiguration?.model) }
             if let configuration = expected.piConfiguration { expected.piConfiguration = configuration.selecting(model: actual.piConfiguration?.model, thinkingLevel: actual.piConfiguration?.thinkingLevel) }
             if let configuration = expected.museConfiguration { expected.museConfiguration = configuration.selecting(model: actual.museConfiguration?.model, reasoningEffort: actual.museConfiguration?.reasoningEffort) }
@@ -234,7 +255,7 @@ extension WorkspaceDecision {
         guard pending || uncertain else { return }
         switch edit {
         case .title, .draft, .pinned, .archived: return
-        case .model, .permission, .codexModel, .codexReasoning, .codexDefaultModel, .codexServiceTier, .claudeModel, .claudeModelOptions, .resetProviderModelOptions, .openCodeModel, .openCodeVariant, .piModel, .piThinking, .museModel, .museReasoning, .checkpointPolicy:
+        case .model, .permission, .codexModel, .codexReasoning, .codexDefaultModel, .codexServiceTier, .codexInteractionMode, .claudeModel, .claudeModelOptions, .resetProviderModelOptions, .openCodeModel, .openCodeVariant, .piModel, .piThinking, .museModel, .museReasoning, .checkpointPolicy:
             guard !uncertain else { throw ContextTransferError.uncertain }
         default: throw WorkspaceCommandError("This conversation has saved context. Keep its provider and workspace until delivery, or explicitly choose fresh context after an uncertain delivery.")
         }

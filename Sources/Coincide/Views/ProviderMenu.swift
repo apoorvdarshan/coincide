@@ -2,148 +2,117 @@ import CoincideCore
 import SwiftUI
 
 struct ProviderMenu: View {
-    var store: WorkspaceStore
+    @Bindable var store: WorkspaceStore
     let thread: CodingThread
-    private var controls: ProviderModelControlsPresentation {
-        .init(thread: thread, models: store.models(for: thread))
-    }
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            menu.frame(maxWidth: 280, alignment: .leading).fixedSize()
-            menu.frame(maxWidth: 280, alignment: .leading)
-        }
-    }
+    @State private var query = ""
+    @State private var showAll = false
+    @AppStorage(ModelPickerPreferences.key) private var hiddenModels = "[]"
+    private var controls: ProviderModelControlsPresentation { .init(thread: thread, models: store.models(for: thread)) }
     private var summary: String {
-        var parts = [thread.providerName]
-        if !thread.model.isEmpty {
-            let piName = thread.piConfiguration?.model.map { $0.provider + " / " + $0.modelID }
-            let museName = thread.museConfiguration?.model?.modelID
-            parts.append(store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? museName ?? piName ?? thread.openCodeConfiguration?.model?.id ?? thread.model)
-        }
-        if thread.provider == .codex, let effort = thread.reasoningEffort {
-            parts.append(String(localized: "Reasoning: \(ReasoningEffortPresentation.title(effort))"))
-        }
-        if thread.provider == .opencode {
-            if let variant = thread.openCodeConfiguration?.model?.variant { parts.append(variant) }
-            if let agent = thread.openCodeConfiguration?.agentID { parts.append(agent) }
-        }
-        if thread.provider == .pi, let level = thread.piConfiguration?.thinkingLevel { parts.append("Thinking: \(level)") }
-        if thread.provider == .muse, let effort = thread.museConfiguration?.reasoningEffort { parts.append("Reasoning: \(effort)") }
-        if thread.provider == .codex, let mode = thread.agentModeID {
-            parts.append(mode == "plan" ? String(localized: "Mode: Plan") : mode == "default" ? String(localized: "Mode: Default") : String(localized: "Mode needs attention"))
-        }
+        guard !thread.model.isEmpty else { return "Choose model" }
+        var parts = [store.models(for: thread).first(where: { $0.id == thread.model })?.name ?? thread.model]
+        if thread.provider == .codex, let effort = thread.reasoningEffort { parts.append(ReasoningEffortPresentation.title(effort)) }
         parts += controls.summaryComponents
         return parts.joined(separator: " · ")
     }
-    private var menu: some View {
-        Menu {
-            if thread.messages.isEmpty {
-                ForEach(ProviderKind.builtIn) { provider in
-                    Button { store.setProvider(provider, id: thread.id) } label: {
-                        if provider == thread.provider { Label(provider.name, systemImage: "checkmark") } else { Text(provider.name) }
-                    }
-                }
-                Divider()
+    var body: some View {
+        Button { store.modelPickerPresented.toggle() } label: {
+            HStack(spacing: 5) {
+                if !thread.model.isEmpty { ProviderLogo(provider: thread.provider, size: 16) }
+                Text(summary).lineLimit(1).truncationMode(.middle)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
+            }.font(.system(size: 13)).frame(maxWidth: 300, alignment: .trailing).fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(.plain).accessibilityLabel("Choose model").accessibilityValue(summary)
+        .accessibilityIdentifier("provider-model-menu").help(summary)
+        .popover(isPresented: $store.modelPickerPresented, arrowEdge: .bottom) { picker }
+    }
+    private var picker: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Models").font(.headline)
+                Spacer()
+                if store.modelPickerLoading { ProgressView().controlSize(.small) }
+                Button { Task { await store.refreshPickerModels(force: true) } } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain).disabled(store.modelPickerLoading).help("Refresh models")
+                Button { store.modelPickerPresented = false; store.settingsPage = .models; store.showingSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                    .buttonStyle(.plain).help("Choose models to show").accessibilityLabel("Model picker settings")
             }
-            if thread.provider == .codex {
-                Button { _ = store.useCodexDefaultModel(thread.id) } label: {
-                    choice("CLI Default Model", selected: thread.codexModelSelectionSource == .cliDefault)
-                }
-                .disabled(store.isReadingCodexModelDefaults(thread.id) || !store.workspaceReady(for: thread))
-                .accessibilityIdentifier("codex-model-default")
-                .help("Read this checkout's CLI default model. Saved reasoning preferences for that model are kept.")
-            } else {
-                Button("Default Model") { store.setModel("", id: thread.id) }
-            }
-            ForEach(store.models(for: thread)) { model in
-                Button { store.setModel(model.id, id: thread.id) } label: {
-                    choice(model.name, selected: thread.model == model.id && thread.codexModelSelectionSource != .cliDefault)
-                }.accessibilityIdentifier("provider-model-" + model.id)
-            }
-            if let model = store.codexReasoningModel(threadID: thread.id), !model.reasoningEfforts.isEmpty {
-                Divider()
-                reasoningMenu(model)
-            }
-            if thread.provider == .claude { claudeOptions }
-            if thread.provider == .codex { codexInteractionOptions; codexServiceTierOptions }
-            if thread.provider == .opencode {
-                openCodeOptions
-            }
-            if thread.provider == .muse, let model = store.models(for: thread).first(where: { $0.id == thread.model }), !model.reasoningEfforts.isEmpty {
-                Menu("Reasoning") {
-                    Button { _ = store.setMuseReasoning(nil, model: model, threadID: thread.id) } label: {
-                        choice("Muse Default", selected: thread.museConfiguration?.reasoningEffort == nil)
-                    }
-                    ForEach(model.reasoningEfforts) { effort in
-                        Button { _ = store.setMuseReasoning(effort.id, model: model, threadID: thread.id) } label: {
-                            choice(ReasoningEffortPresentation.title(effort.id), selected: thread.museConfiguration?.reasoningEffort == effort.id)
-                        }.help(effort.description)
-                    }
-                    if model.museReasoningEfforts == nil {
-                        Text("Compatibility choices; Muse did not advertise reasoning options.")
-                    }
-                }.accessibilityIdentifier("muse-reasoning-menu")
-            }
-            if thread.provider == .pi, let model = store.models(for: thread).first(where: { $0.id == thread.model }),
-               let levels = model.piThinkingLevels, !levels.isEmpty {
-                Divider()
-                Menu("Thinking") {
-                    Button { _ = store.setPiThinking(nil, model: model, threadID: thread.id) } label: {
-                        choice("Pi Default", selected: thread.piConfiguration?.thinkingLevel == nil)
-                    }
-                    ForEach(levels, id: \.self) { level in
-                        Button { _ = store.setPiThinking(level, model: model, threadID: thread.id) } label: {
-                            choice(level.capitalized, selected: thread.piConfiguration?.thinkingLevel == level)
+            TextField("Search models", text: $query).textFieldStyle(.roundedBorder)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(ProviderKind.builtIn.filter { store.pickerProviderAvailable($0) }) { provider in
+                        HStack(spacing: 8) { ProviderLogo(provider: provider); Text(provider.name) }
+                            .font(.caption).foregroundStyle(.secondary).padding(.top, 6)
+                        let models = visibleModels(provider)
+                        ForEach(models) { model in modelRow(provider, model: model) }
+                        if store.models(for: provider).isEmpty {
+                            Button("Use \(provider.name) CLI default") { choose(provider, modelID: "") }
+                                .buttonStyle(.plain).padding(.vertical, 7).disabled(!canChoose(provider))
+                            Text(store.modelCatalogErrors[provider] == nil ? "Loading available models…" : "Models unavailable. Check agent setup or refresh.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if models.isEmpty {
+                            Text(query.isEmpty ? "No models shown. Use All models or change Settings." : "No matching models")
+                                .font(.caption).foregroundStyle(.secondary).padding(.vertical, 7)
                         }
                     }
-                }.accessibilityIdentifier("pi-thinking-menu")
+                    if !ProviderKind.builtIn.contains(where: store.pickerProviderAvailable) {
+                        Text("Connect Codex or Claude in Settings to load models.").foregroundStyle(.secondary)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(height: 270)
+            if !ModelPickerPreferences.hidden(hiddenModels).isEmpty {
+                Toggle("All models", isOn: $showAll).toggleStyle(.switch).controlSize(.small)
             }
-            if thread.provider == .acp {
-                Divider()
-                Button("Reset Agent Options") { store.resetAgentOptions(thread.id) }
-                if let options = thread.providerMetadata?["configOptions"].array {
-                    ForEach(options, id: \.self) { option in
-                        if option["type"].string == "select", option["category"].string != "model", let id = ACPConfigurationOptions.id(option) {
-                            Menu(option["name"].string ?? id) {
-                                Button("Agent Default") {
-                                    if option["configId"].string != nil { store.setAgentConfiguration(id, value: nil, id: thread.id) }
-                                    else { store.setAgentConfig(id, value: nil, id: thread.id) }
-                                }
-                                ForEach(ACPConfigurationOptions.values(option), id: \.self) { value in
-                                    if let selected = value["value"].string {
-                                        Button(value["name"].string ?? selected) {
-                                            if option["configId"].string != nil { store.setAgentConfiguration(id, value: .string(selected), id: thread.id) }
-                                            else { store.setAgentConfig(id, value: selected, id: thread.id) }
-                                        }
-                                    }
-                                }
-                            }
-                        } else if option["type"].string == "boolean", let id = ACPConfigurationOptions.id(option) {
-                            Toggle(option["name"].string ?? id, isOn: Binding(
-                                get: { (thread.agentConfiguration?[id] ?? option["currentValue"]) == .bool(true) },
-                                set: { store.setAgentConfiguration(id, value: .bool($0), id: thread.id) }))
-                        }
-                    }
-                } else {
-                    Button("Agent Default Mode") { store.setAgentMode(nil, id: thread.id) }
-                    ForEach(thread.providerMetadata?["modes"]["availableModes"].array ?? [], id: \.self) { mode in
-                        if let id = mode["id"].string { Button(mode["name"].string ?? id) { store.setAgentMode(id, id: thread.id) } }
-                    }
-                }
+            if !thread.messages.isEmpty {
+                Text("Switch models and agents in this conversation. Saved history goes with you.").font(.caption).foregroundStyle(.secondary)
             }
             Divider()
-            Button("Refresh Models") { Task { await store.refreshModels(provider: thread.provider) } }
-                .disabled(((thread.provider == .acp || thread.provider == .opencode || thread.provider == .pi || thread.provider == .muse || thread.provider == .antigravity) && !store.workspaceReady(for: thread)) || (thread.provider == .antigravity && store.antigravityAccount.isWorking))
-        } label: {
-            // AppKit's native menu button derives its title from a single Text.
-            // Nested label stacks otherwise lose the selected model and effort.
-            Text(summary).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
+            HStack {
+                Text(thread.provider.name).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Menu("Model options") {
+                    if thread.provider == .codex {
+                        Button("CLI default model") { _ = store.useCodexDefaultModel(thread.id) }
+                            .disabled(store.isReadingCodexModelDefaults(thread.id) || !store.workspaceReady(for: thread))
+                        if let model = store.codexReasoningModel(threadID: thread.id), !model.reasoningEfforts.isEmpty { reasoningMenu(model) }
+                        codexInteractionOptions
+                        codexServiceTierOptions
+                    } else if thread.provider == .claude {
+                        Button("CLI default model") { store.setModel("", id: thread.id) }
+                        claudeOptions
+                    }
+                }.menuStyle(.borderlessButton).fixedSize()
+            }
         }
-        .menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
-        .accessibilityLabel("Provider and model")
-        .accessibilityValue(summary)
-        .accessibilityIdentifier("provider-model-menu")
-        .help(summary)
+        .padding(16).frame(width: 310).background(ChatChrome.composer)
+        .task { await store.refreshPickerModels() }
+    }
+    private func visibleModels(_ provider: ProviderKind) -> [ProviderModel] {
+        store.models(for: provider).filter { model in
+            (showAll || !ModelPickerPreferences.hidden(hiddenModels).contains(ModelPickerPreferences.id(provider, model.id))) &&
+                (query.isEmpty || model.name.localizedCaseInsensitiveContains(query) || model.id.localizedCaseInsensitiveContains(query))
+        }
+    }
+    private func canChoose(_ provider: ProviderKind) -> Bool {
+        !store.choosingModelThreads.contains(thread.id) &&
+        (provider == thread.provider || (!thread.isBusy && thread.queuedTurns.isEmpty && thread.runtimeRequests.isEmpty))
+    }
+    private func modelRow(_ provider: ProviderKind, model: ProviderModel) -> some View {
+        Button { choose(provider, modelID: model.id) } label: {
+            HStack(spacing: 10) {
+                Text(model.name).lineLimit(2).multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                if provider == thread.provider && model.id == thread.model { Image(systemName: "checkmark") }
+            }.padding(.horizontal, 10).padding(.vertical, 9).contentShape(Rectangle())
+                .background(provider == thread.provider && model.id == thread.model ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        }.buttonStyle(.plain).disabled(!canChoose(provider))
+            .accessibilityIdentifier("provider-model-" + ModelPickerPreferences.id(provider, model.id))
+    }
+    private func choose(_ provider: ProviderKind, modelID: String) {
+        Task {
+            if await store.choosePickerModel(provider: provider, modelID: modelID, threadID: thread.id) { store.modelPickerPresented = false }
+        }
     }
     @ViewBuilder private var codexInteractionOptions: some View {
         let model = store.models(for: thread).first { $0.id.utf8.elementsEqual(thread.model.utf8) }
@@ -248,41 +217,6 @@ struct ProviderMenu: View {
             Text("Saved service-tier controls are unavailable for this model or connection.")
             Button("Reset Service Tier to CLI Default") { store.resetCodexServiceTier(threadID: thread.id, expected: .init(thread: thread)) }
                 .accessibilityIdentifier("codex-service-tier-reset")
-        }
-    }
-    @ViewBuilder private var openCodeOptions: some View {
-        if thread.messages.isEmpty {
-            Menu("Server Generation") {
-                ForEach([OpenCodeGeneration.v1, .v2], id: \.self) { generation in
-                    Button { store.setOpenCodeGeneration(generation, threadID: thread.id) } label: {
-                        choice(generation == .v1 ? "OpenCode 1" : "OpenCode 2", selected: thread.openCodeConfiguration?.generation == generation)
-                    }
-                }
-            }.accessibilityIdentifier("opencode-generation-menu")
-        }
-        if let selected = thread.openCodeConfiguration?.model,
-           let model = store.models(for: thread).first(where: { $0.id == selected.catalogID }),
-           let variants = model.openCodeVariants, !variants.isEmpty {
-            Divider()
-            Menu("Variant") {
-                Button { store.setOpenCodeVariant(nil, model: model, threadID: thread.id) } label: {
-                    choice("Model Default", selected: selected.variant == nil)
-                }
-                ForEach(variants, id: \.self) { variant in
-                    Button { store.setOpenCodeVariant(variant, model: model, threadID: thread.id) } label: {
-                        choice(variant, selected: selected.variant == variant)
-                    }
-                }
-            }.accessibilityIdentifier("opencode-variant-menu")
-        }
-        if let catalog = store.openCodeCatalogs[thread.id] {
-            Menu("Agent") {
-                ForEach(catalog.agents.filter { !$0.hidden && $0.mode != .subagent }, id: \.id) { agent in
-                    Button { store.setOpenCodeAgent(agent.id, threadID: thread.id) } label: {
-                        choice(agent.name, selected: thread.openCodeConfiguration?.agentID == agent.id)
-                    }
-                }
-            }.accessibilityIdentifier("opencode-agent-menu")
         }
     }
     private func reasoningMenu(_ model: ProviderModel) -> some View {

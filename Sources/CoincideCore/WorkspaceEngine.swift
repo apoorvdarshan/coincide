@@ -3931,6 +3931,9 @@ public actor WorkspaceEngine {
         switch request {
         case .promptSteering, .pullRequestCheckout, .pullRequestCreation, .pullRequestAction, .conversationHistoryFiles, .checkpointRestore, .conversationHistory, .conversationHistoryMaintenance, .resolveRunCheckpoint, .captureRunCheckpoint, .resolveThreadScript, .startThreadScript, .resolveProjectScript, .startProjectScript, .resolveWorktree, .prepareWorktree, .projectClone: return .cancelled // Preparation/project actions are handled before thread lookup.
         case .providerStart(_, let runID, let capturedConfiguration, let prompt, let references):
+            guard !revision.snapshot.isOriginalImportedSession(configuration: capturedConfiguration, threadID: thread.id) else {
+                return .failed("This older import must continue in an independent Coincide copy. Send a new message after this turn stops.")
+            }
             if thread.scratchWorkspace != nil { try scratchWorkspaces.validate(thread: thread) }
             var configuration = capturedConfiguration
             guard thread.activeRun?.id == runID, thread.activeRun?.stopRequested == false, !isCodexAuthenticationLocked(configuration) else { return .cancelled }
@@ -6611,7 +6614,10 @@ extension WorkspaceEngine {
         target.nativeThreadID = nil; target.claudeLaunchSelection = nil; target.piFreshSessionIntent = nil
         var targetBinding: ContextTransferProviderBinding?
         if case .providerHandoff = request.intent {
-            targetBinding = source.contextProviderBindings?.last(where: { WorkspaceSnapshot.sameContextProvider($0.configuration, target) })
+            targetBinding = source.contextProviderBindings?.last(where: {
+                WorkspaceSnapshot.sameContextProvider($0.configuration, target) &&
+                !revision.snapshot.isOriginalImportedSession(configuration: $0.configuration, threadID: source.id)
+            })
             target.nativeThreadID = targetBinding?.configuration.nativeThreadID
         }
         var messages = try revision.snapshot.contextTransferMessages(thread: source, through: point, ownRunsOnly: base != nil)
@@ -6633,8 +6639,8 @@ extension WorkspaceEngine {
            target.workspacePath.utf8.elementsEqual(source.workspacePath.utf8),
            target.codexRuntimeConfiguration == source.codexRuntimeConfiguration,
            target.claudeRuntimeConfiguration == source.claudeRuntimeConfiguration,
-           source.activeHistoryRuns.first(where: { $0.id == point.runID })?.status == .completed {
-            do { native = try await reviewConversationHistory(threadID: source.id, runID: point.runID, kind: .forkAfterRun) }
+           let runID = point.runID, source.activeHistoryRuns.first(where: { $0.id == runID })?.status == .completed {
+            do { native = try await reviewConversationHistory(threadID: source.id, runID: runID, kind: .forkAfterRun) }
             catch is CancellationError { throw CancellationError() }
             catch { native = nil }
         }

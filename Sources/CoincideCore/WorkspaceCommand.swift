@@ -688,6 +688,7 @@ struct WorkspaceDecision: Sendable {
         var decision = Self(snapshot: snapshot)
         guard case .client(let action) = command else { throw WorkspaceCommandError("This workspace command was routed incorrectly.") }
         try decision.prepareClientCommand(action, commandID: id, now: now)
+        if let threadID = action.threadID { try decision.prepareImportedConversationCopy(threadID: threadID, commandID: id, now: now) }
             guard let threadID = action.threadID, let index = decision.snapshot.threads.firstIndex(where: { $0.id == threadID }) else { throw WorkspaceCommandError("This conversation no longer exists.") }
             var thread = decision.snapshot.threads[index]
         switch action {
@@ -1480,6 +1481,9 @@ struct WorkspaceDecision: Sendable {
                     thread.queuedTurns.insert(item, at: destination)
                 } else { thread.queuedTurns.append(item) }
             case .resumeQueue:
+                guard !decision.snapshot.isOriginalImportedSession(thread) else {
+                    throw WorkspaceCommandError("Remove the queued messages from this older import, then send them again to continue in an independent Coincide copy.")
+                }
                 guard thread.claudeResumeConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Claude resume attempt before resuming queued messages.") }
                 guard thread.piFreshConsumerRunID == nil else { throw WorkspaceCommandError("Inspect the previous Pi empty-context attempt before resuming queued messages.") }
                 guard !thread.isBusy, !thread.isArchived else { throw WorkspaceCommandError("Wait for the current turn before resuming the queue.") }
@@ -1646,6 +1650,12 @@ struct WorkspaceDecision: Sendable {
         }
     }
     mutating func startNext(in thread: inout CodingThread, now: Date) {
+        if snapshot.isOriginalImportedSession(thread) {
+            // A saved pre-copy queue must never restart the source CLI session.
+            thread.queuePaused = true
+            if let index = snapshot.threads.firstIndex(where: { $0.id == thread.id }) { snapshot.threads[index] = thread }
+            return
+        }
         if let i = snapshot.threads.firstIndex(where: { $0.id == thread.id }) { snapshot.threads[i] = thread }
         // These pure local gates cannot start work. Avoid materializing native
         // history proofs for a paused/empty queue, including read-only recovery.

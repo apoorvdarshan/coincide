@@ -15,62 +15,15 @@ struct ContentView: View {
     @State private var settlementThread: CodingThread?
     @Environment(KeybindingsStore.self) private var keybindings: KeybindingsStore?
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
     var body: some View {
-        NavigationSplitView {
-            SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true },
-                        onSettle: { settlementThread = $0 }, onImportAgentProjects: { agentSessionImportSheetPresented = true })
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
-        } detail: {
-            NativeInspectorSplit(isPresented: store.inspectorVisible) {
-                if let thread = store.selectedThread {
-                    TerminalDrawerSplit(terminals: terminals, threadID: thread.id, showsDrawer: terminals.isVisible(thread.id) && store.workspaceReady(for: thread)) {
-                        ChatView(store: store, threadID: thread.id, onSettle: { settlementThread = $0 }).id(thread.id).frame(minHeight: 280)
-                    } drawer: {
-                        TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
-                                      report: { store.errorMessage = $0 }, hide: { terminals.setVisible(false, threadID: thread.id) })
-                            .id(thread.id)
-                    }
-                        .frame(minWidth: 0, maxWidth: .infinity)
-                } else {
-                    ContentUnavailableView {
-                        Label("Coincide", systemImage: "square.stack.3d.up")
-                    } description: {
-                        Text("Your projects and coding agents, in a native Mac workspace.")
-                    } actions: {
-                        Button("Start Without a Project") { store.newScratchThread() }
-                            .disabled(store.isCreatingScratchConversation)
-                            .accessibilityIdentifier("scratch-empty-state")
-                        Button("New Project…") { newProjectSheetPresented = true }
-                        Button("Add Project…") { store.addProject() }
-                        Button("Import Agent Projects…") { agentSessionImportSheetPresented = true }
-                        if !store.snapshot.projects.isEmpty { Button("New Thread") { store.newThread() } }
-                    }
-                }
-            } inspector: {
-                if let thread = store.selectedThread {
-                    if store.canPresentWorkspaceInspector(for: thread) {
-                        WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath)
-                    } else {
-                        ContentUnavailableView("Workspace Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when checkout preparation finishes."))
-                    }
-                } else {
-                    ContentUnavailableView("No Thread Selected", systemImage: "sidebar.right", description: Text("Select a thread to browse its files and source control."))
-                }
-            }
+        HStack(spacing: 0) {
+            WorkspaceRail(store: store, toggleTerminal: toggleTerminal)
+            if store.showingSettings { SettingsView(store: store, embedded: true) }
+            else { workspace }
         }
-        .toolbar {
-            ToolbarItem {
-                Button { toggleTerminal() } label: { Label("Terminal", systemImage: "terminal") }
-                    .keyboardShortcut(keybindings == nil ? KeyboardShortcut("t", modifiers: [.command, .option]) : keybindings?.menuShortcut(.terminalToggle))
-                    .disabled(store.selectedThread.map { !store.workspaceReady(for: $0) } ?? true)
-            }
-            ToolbarItem {
-                ProjectActionsToolbarControl(store: store, terminals: terminals, commands: projectActionCommands, keybindings: keybindings, requests: .init(review: { scriptPreference = $1; scriptThread = $0 },
-                    addAction: { projectActions.addAction($0) }, settings: { projectActions.showSettings($0) }))
-            }
-            ToolbarItem { Button { store.inspectorVisible.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") } }
-        }
+        .background(ChatChrome.canvas)
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .toolbar { workspaceToolbar }
         .alert("Coincide", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("OK") { store.errorMessage = nil }
         } message: { Text(store.errorMessage ?? "") }
@@ -118,7 +71,66 @@ struct ContentView: View {
                 toggleTerminal: { toggleTerminal() }, terminalVisible: { store.selectedThreadID.map(terminals.isVisible) ?? false },
                 terminalTarget: { terminalCommandTarget }, projectActions: { projectActionCommands },
                 newWindow: { openWindow(id: MainWindowCoordinator.sceneID) }, openRemote: { openWindow(id: RemoteWorkspaceStore.sceneID) },
-                openSettings: { openSettings() }, canInteract: { terminalCommandTarget != nil })
+                openSettings: { store.showingSettings = true }, canInteract: { terminalCommandTarget != nil })
+        }
+    }
+    private var showsConversationToolbar: Bool { !store.showingSettings && !(store.selectedThread?.messages.isEmpty ?? true) }
+    @ToolbarContentBuilder private var workspaceToolbar: some ToolbarContent {
+        if showsConversationToolbar {
+            ToolbarItem {
+                Button { toggleTerminal() } label: { Label("Terminal", systemImage: "terminal") }
+                    .keyboardShortcut(keybindings == nil ? KeyboardShortcut("t", modifiers: [.command, .option]) : keybindings?.menuShortcut(.terminalToggle))
+                    .disabled(store.selectedThread.map { !store.workspaceReady(for: $0) } ?? true)
+            }
+            ToolbarItem {
+                ProjectActionsToolbarControl(store: store, terminals: terminals, commands: projectActionCommands, keybindings: keybindings, requests: .init(review: { scriptPreference = $1; scriptThread = $0 },
+                    addAction: { projectActions.addAction($0) }, settings: { projectActions.showSettings($0) }))
+            }
+            ToolbarItem { Button { store.inspectorVisible.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") } }
+        }
+    }
+    private var workspace: some View {
+        NavigationSplitView(columnVisibility: Binding(get: { store.sidebarVisible ? .all : .detailOnly }, set: { store.sidebarVisible = $0 != .detailOnly })) {
+            SidebarView(store: store, onClone: { cloneSheetPresented = true }, onNewProject: { newProjectSheetPresented = true },
+                        onSettle: { settlementThread = $0 }, onImportAgentProjects: { agentSessionImportSheetPresented = true })
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
+        } detail: {
+            NativeInspectorSplit(isPresented: store.inspectorVisible) {
+                if let thread = store.selectedThread {
+                    TerminalDrawerSplit(terminals: terminals, threadID: thread.id, showsDrawer: terminals.isVisible(thread.id) && store.workspaceReady(for: thread)) {
+                        ChatView(store: store, threadID: thread.id, onSettle: { settlementThread = $0 }, onToggleTerminal: toggleTerminal).id(thread.id).frame(minHeight: 280)
+                    } drawer: {
+                        TerminalPanel(terminals: terminals, thread: thread, canAdd: { store.canOpenTerminal(for: thread) },
+                                      report: { store.errorMessage = $0 }, hide: { terminals.setVisible(false, threadID: thread.id) })
+                            .id(thread.id)
+                    }
+                        .frame(minWidth: 0, maxWidth: .infinity)
+                } else {
+                    ContentUnavailableView {
+                        Label("Coincide", systemImage: "square.stack.3d.up")
+                    } description: {
+                        Text("Your projects and coding agents, in a native Mac workspace.")
+                    } actions: {
+                        Button("Start Without a Project") { store.newScratchThread() }
+                            .disabled(store.isCreatingScratchConversation)
+                            .accessibilityIdentifier("scratch-empty-state")
+                        Button("New Project…") { newProjectSheetPresented = true }
+                        Button("Add Project…") { store.addProject() }
+                        Button("Import Agent Projects…") { agentSessionImportSheetPresented = true }
+                        if !store.snapshot.projects.isEmpty { Button("New Thread") { store.newThread() } }
+                    }
+                }
+            } inspector: {
+                if let thread = store.selectedThread {
+                    if store.canPresentWorkspaceInspector(for: thread) {
+                        WorkspaceInspector(store: store, path: thread.workspacePath).id(thread.workspacePath)
+                    } else {
+                        ContentUnavailableView("Workspace Not Ready", systemImage: "arrow.down.circle", description: Text("Files and source control become available when checkout preparation finishes."))
+                    }
+                } else {
+                    ContentUnavailableView("No Thread Selected", systemImage: "sidebar.right", description: Text("Select a thread to browse its files and source control."))
+                }
+            }
         }
     }
     private func toggleTerminal() {

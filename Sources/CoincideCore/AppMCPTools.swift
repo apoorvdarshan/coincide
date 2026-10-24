@@ -211,7 +211,7 @@ public struct AppMCPTools: Sendable {
                 var all: [(Date, String, JSONValue)] = transfers.map { transfer in (transfer.updatedAt, transfer.id.uuidString, .object([
                     "id": Self.id(transfer.id), "type": .string(transfer.review.kind.rawValue),
                     "sourceThreadId": Self.id(transfer.sourceThreadID), "targetThreadId": Self.id(transfer.targetThreadID),
-                    "sourceRunId": Self.id(transfer.review.sourcePoint.runID), "status": .string(transfer.status.rawValue),
+                    "sourceRunId": transfer.review.sourcePoint.runID.map(Self.id) ?? .null, "status": .string(transfer.status.rawValue),
                     "strategy": .string(transfer.review.strategy.rawValue), "targetRunId": transfer.targetRunID.map(Self.id) ?? .null,
                     "deliveryStatus": transfer.delivery.map { .string($0.status.rawValue) } ?? .null,
                     "updatedAt": Self.date(transfer.updatedAt)])) }

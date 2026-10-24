@@ -32,8 +32,8 @@ extension WorkspaceStore {
     /// Selects a thread the way notification and pull-request navigation do.
     @discardableResult func selectThread(_ id: UUID) -> Bool {
         guard let target = thread(id), snapshot.projects.contains(where: { $0.id == target.projectID }) else { return false }
-        if !recentSidebarThreads.contains(where: { $0.id == id }) { sidebarProjectFilter = nil }
         selectedProjectID = target.projectID; showArchived = target.isArchived; selectedThreadID = id
+        showingSettings = false; modelPickerPresented = false
         return true
     }
     /// A history entry stays valid while its thread and project exist and the

@@ -23,8 +23,6 @@ struct ComposerView: View {
     let send: () -> Void
     let stop: () -> Void
     var reportGeometry: ((String, CGRect) -> Void)? = nil
-    var grokRuntimeMode: GrokACPRuntimeMode? = nil
-    var setGrokRuntimeMode: (GrokACPRuntimeMode) -> Void = { _ in }
     var skills: ProviderSkillsStore? = nil
     var draftTools: ComposerDraftToolsStore? = nil
     var draftThreadID: UUID? = nil
@@ -59,7 +57,7 @@ struct ComposerView: View {
     private var delivery: ComposerDelivery {
         .resolve(running: busy, preference: followUpBehavior, alternate: false, canSteer: canSteer)
     }
-    private var height: CGFloat { min(150, max(40, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
+    private var height: CGFloat { min(150, max(60, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 21 + 14)) }
     private var pasteTypes: [UTType] { draftTools == nil ? [.fileURL, .image] : [.fileURL, .image, .plainText] }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -79,7 +77,7 @@ struct ComposerView: View {
             }
             if let draftTools, let draftThreadID { ComposerDraftToolsFeedback(store: draftTools, threadID: draftThreadID) }
             ZStack(alignment: .topLeading) {
-                if text.isEmpty { Text("Message \(providerName ?? provider.name)…").foregroundStyle(.tertiary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
+                if text.isEmpty { Text("Work with \(providerName ?? provider.name)").foregroundStyle(.tertiary).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false) }
                 TextEditor(text: $text).font(.system(size: 15)).frame(height: height)
                     .accessibilityIdentifier("composer-input")
                     .focused($editorFocused)
@@ -115,7 +113,8 @@ struct ComposerView: View {
             }
         }
         .padding(14)
-        .coincideSurface(cornerRadius: 23)
+        .background(ChatChrome.composer, in: RoundedRectangle(cornerRadius: 24))
+        .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(Color.primary.opacity(0.04), lineWidth: 1).allowsHitTesting(false) }
         .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $dropTargeted) { providers in importProviders(providers); return true }
         .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 23).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false) } }
         .background { geometry("bounds") }
@@ -127,101 +126,37 @@ struct ComposerView: View {
             manualCommandAnchor = nil; dismissedCommandTrigger = nil; highlightedCommandID = nil
         }
     }
-    @ViewBuilder private var attachmentControls: some View {
-        Button(action: attach) { Image(systemName: "plus").frame(width: 24, height: 24) }
-            .buttonStyle(.plain).help("Attach files").accessibilityLabel("Attach files").accessibilityIdentifier(attachAccessibilityIdentifier ?? "composer-attach").disabled(submitting)
-        if let draftTools, let draftThreadID {
-            Button { stashPrompt() } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "bookmark")
-                    if !draftTools.stashes(draftThreadID).isEmpty { Text("\(draftTools.stashes(draftThreadID).count)").font(.caption2).monospacedDigit() }
-                }.frame(minWidth: 24, minHeight: 24)
-            }.buttonStyle(.plain).help("Stash prompt (⌘S). With an empty draft, restore the only saved prompt or open the stash.")
-                .accessibilityLabel("Stash prompt").accessibilityIdentifier("composer-stash")
-                .disabled(submitting || historyLocked || draftTools.stopping || draftTools.hasUnresolved(draftThreadID))
-                .contextMenu {
-                    Button("Show Stashed Prompts…") { stashMenuOpen = true }
-                    if let discardDraft { Button("Discard Draft", role: .destructive, action: discardDraft).disabled(text.isEmpty && !hasAttachments) }
-                }
-                .popover(isPresented: $stashMenuOpen) { ComposerStashMenu(store: draftTools, threadID: draftThreadID, showing: $stashMenuOpen) }
-        }
-        if let referenceFile {
-            Button(action: referenceFile) { Image(systemName: "at").frame(width: 24, height: 24) }
-                .buttonStyle(.plain).help("Reference a workspace file or folder").accessibilityLabel("Reference workspace file")
-                .accessibilityIdentifier("composer-reference-file").disabled(submitting)
-        }
-        if skills?.supportsSkills == true {
-            Button(action: openSkills) { Image(systemName: "dollarsign").frame(width: 24, height: 24) }
-                .buttonStyle(.plain).help("Choose a workspace skill, or type $ to search")
-                .accessibilityLabel("Choose a skill").accessibilityIdentifier("composer-skills")
-                .disabled(submitting || historyLocked || skills?.isClosed == true)
-        }
-        if skills?.supportsCommands == true {
-            Button(action: openCommands) { Text("/").font(.system(.body, design: .monospaced)).frame(width: 24, height: 24) }
-                .buttonStyle(.plain).help("Choose a provider command at the start of your message")
-                .accessibilityLabel("Choose a command").accessibilityIdentifier("composer-commands")
-                .disabled(submitting || historyLocked || skills?.isClosed == true)
+    private var attachmentControls: some View {
+        Menu {
+            Button("Attach files…", action: attach).accessibilityIdentifier(attachAccessibilityIdentifier ?? "composer-attach")
+            if let referenceFile { Button("Reference a workspace file…", action: referenceFile).accessibilityIdentifier("composer-reference-file") }
+            if skills?.supportsSkills == true { Button("Skills…", action: openSkills).accessibilityIdentifier("composer-skills") }
+            if skills?.supportsCommands == true { Button("Commands…", action: openCommands).accessibilityIdentifier("composer-commands") }
+            if let draftTools, let draftThreadID {
+                Divider()
+                Button("Stash prompt") { stashPrompt() }.disabled(historyLocked || draftTools.stopping || draftTools.hasUnresolved(draftThreadID))
+                Button("Saved prompts…") { stashMenuOpen = true }
+                if let discardDraft { Button("Discard draft", role: .destructive, action: discardDraft).disabled(text.isEmpty && !hasAttachments) }
+            }
+        } label: { Image(systemName: "plus").font(.system(size: 19)).frame(width: 26, height: 26) }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(submitting)
+        .help("Add files, skills or commands").accessibilityLabel("Add files and tools")
+        .popover(isPresented: $stashMenuOpen) {
+            if let draftTools, let draftThreadID { ComposerStashMenu(store: draftTools, threadID: draftThreadID, showing: $stashMenuOpen) }
         }
     }
-    @ViewBuilder private var permissionControl: some View {
-        if let grokRuntimeMode {
-            Menu {
-                ForEach(GrokACPRuntimeMode.allCases) { mode in
-                    Button { setGrokRuntimeMode(mode) } label: {
-                        if mode == grokRuntimeMode { Label(mode.name, systemImage: "checkmark") } else { Text(mode.name) }
-                    }
+    private var permissionControl: some View {
+        Menu {
+            ForEach(PermissionMode.allCases) { mode in
+                Button { setPermission(mode) } label: {
+                    if mode == permission { Label(mode.nativeTitle(for: provider), systemImage: "checkmark") }
+                    else { Text(mode.nativeTitle(for: provider)) }
                 }
-            } label: { Label(grokRuntimeMode.name, systemImage: "slider.horizontal.3").font(.caption) }
-                .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
-                .accessibilityIdentifier("grok-runtime-mode-menu")
-                .help("Grok's native launch policy applies to future inputs. Active and queued inputs retain their captured policy.")
-        } else if provider == .antigravity {
-            Menu {
-                ForEach(PermissionMode.allCases) { mode in
-                    Button { setPermission(mode) } label: {
-                        if mode == permission { Label(mode.antigravityTitle, systemImage: "checkmark") } else { Text(mode.antigravityTitle) }
-                    }
-                }
-            } label: { Label(permission.antigravityTitle, systemImage: "slider.horizontal.3").font(.caption) }
-                .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
-                .accessibilityIdentifier("antigravity-permission-menu")
-                .help("Applies to future inputs. Antigravity verifies its native mode before sending; active and queued inputs keep their captured policy.")
-        } else if provider == .muse {
-            Menu {
-                ForEach([PermissionMode.supervised, .fullAccess]) { mode in
-                    Button { setPermission(mode) } label: {
-                        if mode == permission { Label(mode.museTitle, systemImage: "checkmark") } else { Text(mode.museTitle) }
-                    }
-                }
-            } label: { Label(permission.museTitle, systemImage: "slider.horizontal.3").font(.caption) }
-                .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
-                .accessibilityIdentifier("muse-permission-menu")
-                .help("Muse verifies the selected permission profile before sending. Active and queued inputs retain their captured policy.")
-        } else if provider == .pi {
-            Menu {
-                ForEach([PermissionMode.supervised, .autoAcceptEdits, .fullAccess]) { mode in
-                    Button { setPermission(mode) } label: {
-                        if mode.piTitle == permission.piTitle { Label(mode.piTitle, systemImage: "checkmark") } else { Text(mode.piTitle) }
-                    }
-                }
-            } label: { Label(permission.piTitle, systemImage: "slider.horizontal.3").font(.caption) }
-                .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
-                .accessibilityIdentifier("pi-permission-menu")
-                .help("Pi tool approvals apply to future inputs. Active and queued inputs keep their captured policy. This does not sandbox the process.")
-        } else if provider == .acp {
-            Label("Agent permissions", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
-                .help("The agent enforces its own sandbox. Coincide shows the permission requests it sends.")
-        } else {
-            Menu {
-                ForEach(PermissionMode.allCases) { mode in
-                    Button { setPermission(mode) } label: {
-                        if mode == permission { Label(mode.title, systemImage: "checkmark") } else { Text(mode.title) }
-                    }
-                }
-            } label: { Label(permission.title, systemImage: "slider.horizontal.3").font(.caption) }
-            .menuStyle(.borderlessButton).fixedSize()
-            .disabled(historyLocked)
-        }
+            }
+        } label: { Label(permission.nativeTitle(for: provider), systemImage: "slider.horizontal.3").font(.caption) }
+        .menuStyle(.borderlessButton).fixedSize().disabled(historyLocked)
+        .accessibilityLabel("\(provider.name) permissions")
+        .help(provider == .codex ? "Codex sandbox and approval policy for future turns." : "Claude Code permission mode for future turns.")
     }
     private var newlineHint: some View {
         Text("⇧ Return for a new line").font(.caption2).foregroundStyle(.tertiary)
@@ -243,9 +178,11 @@ struct ComposerView: View {
             activate(alternate: NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.control))
         } label: {
             Image(systemName: delivery == .steer ? "arrow.turn.up.right" : "arrow.up").font(.system(size: 14, weight: .semibold))
-                .frame(width: 18, height: 18)
+                .frame(width: 32, height: 32)
+                .foregroundStyle(canSend ? ChatChrome.canvas : Color.secondary)
+                .background(canSend ? Color.primary : Color.primary.opacity(0.08), in: Circle())
         }
-        .coincidePrimaryAction().controlSize(.small).buttonBorderShape(.circle)
+        .buttonStyle(.plain)
         .keyboardShortcut(.return, modifiers: .command)
         .accessibilityLabel(sendAccessibilityLabel ?? (commandAnchor != nil ? String(localized: "Insert selected command or skill") : skillAnchor == nil ? delivery.label : String(localized: "Insert selected skill")))
         .accessibilityIdentifier("composer-send")

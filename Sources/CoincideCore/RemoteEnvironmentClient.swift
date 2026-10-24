@@ -1830,6 +1830,7 @@ extension RemoteEnvironmentClient {
                       result.value.basePoint != nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
             }
             switch request.sourcePoint {
+            case .conversation: guard result.value.sourcePoint.runID == nil else { throw RemoteEnvironmentClientError(.invalidResponse) }
             case .latestStable: break
             case .run(let id): guard result.value.sourcePoint.runID == id else { throw RemoteEnvironmentClientError(.invalidResponse) }
             case .checkpoint(let run, let id, let digest):
@@ -1968,6 +1969,7 @@ extension RemoteEnvironmentClient {
     }
     private static func validateContextPoint(_ point: ContextTransferResolvedPoint) throws {
         guard (point.checkpointAttemptID != nil) == (point.checkpointDigest != nil),
+              point.runID != nil || point.checkpointAttemptID == nil,
               point.checkpointDigest.map(Self.isTerminalDigest) ?? true else { throw RemoteEnvironmentClientError(.invalidResponse) }
     }
     private static func validateContextSummary(_ value: RemoteContextTransferSummary, target: RemoteWorkspaceTarget) throws {

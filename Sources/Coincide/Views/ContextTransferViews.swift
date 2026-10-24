@@ -32,9 +32,9 @@ struct ContextTransferFactsView: View {
             Text(value.coverage).font(.callout).foregroundStyle(.secondary)
             LabeledContent("Source provider", value: value.sourceProvider)
             LabeledContent("Destination provider", value: value.destinationProvider)
-            LabeledContent("Source run", value: value.sourcePoint.runID.uuidString).font(.caption.monospaced())
+            LabeledContent("Source", value: value.sourcePoint.runID?.uuidString ?? "Saved conversation").font(.caption.monospaced())
             if let checkpoint = value.sourcePoint.checkpointAttemptID { LabeledContent("After-run observation", value: checkpoint.uuidString).font(.caption.monospaced()) }
-            if let base = value.basePoint { LabeledContent("Fork base run", value: base.runID.uuidString).font(.caption.monospaced()) }
+            if let base = value.basePoint { LabeledContent("Fork base", value: base.runID?.uuidString ?? "Saved conversation").font(.caption.monospaced()) }
             VStack(alignment: .leading, spacing: 3) {
                 Text("Source workspace").font(.caption.weight(.medium)); Text(value.sourcePath).font(.caption.monospaced())
                 Text("Destination workspace").font(.caption.weight(.medium)); Text(value.destinationPath).font(.caption.monospaced())

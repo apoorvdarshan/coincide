@@ -76,6 +76,8 @@ struct CoincideApp: App {
                 .frame(minWidth: 900, minHeight: 600)
                 .background(MainWindowRegistration(coordinator: mainWindows))
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact)
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
             RemoteWorkspaceCommands(shortcut: keybindings.menuShortcut(.remoteOpen), allowsInvocation: { !keybindings.dispatcher.declinedCurrentEvent() })

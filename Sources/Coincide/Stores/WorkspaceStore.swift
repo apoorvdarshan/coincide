@@ -163,6 +163,10 @@ final class WorkspaceStore {
     var showArchived = false
     var errorMessage: String?
     var providerModels: [ProviderKind: [ProviderModel]] = [:]
+    var modelCatalogErrors: [ProviderKind: String] = [:]
+    var modelPickerLoading = false
+    var modelPickerPresented = false
+    var choosingModelThreads: Set<UUID> = []
     var acpModels: [UUID: [ProviderModel]] = [:]
     var openCodeCatalogs: [UUID: OpenCodeMetadataSnapshot] = [:]
     var piModels: [UUID: [ProviderModel]] = [:]
@@ -192,7 +196,9 @@ final class WorkspaceStore {
     @ObservationIgnored private var providerSkillsDrains: [UUID: (scope: ProviderSkillsStore.Scope, task: Task<Void, Never>)] = [:]
     let acpConnections = ACPConnectionStore()
     var inspectorVisible = false
-    var sidebarProjectFilter: String?
+    var sidebarVisible = true
+    var showingSettings = false
+    var settingsPage = SettingsPage.general
     var fileNavigation: FileNavigation?
     private var engine: WorkspaceEngine?
     private var loadingTask: Task<Void, Never>?
@@ -727,6 +733,11 @@ final class WorkspaceStore {
             configuration.reasoningEffort = nil
         }
         configuration.workspacePath = path; configuration.model = model; configuration.permission = permission
+        if provider == .codex, let row = models(for: provider).first(where: { $0.id == model }) {
+            // Keep the destination model and its advertised effort in the same
+            // durable handoff, so a failed follow-up edit cannot split them.
+            configuration.reasoningEffort = row.codexDefaultReasoningEffort
+        }
         configuration.nativeThreadID = nil; configuration.claudeLaunchSelection = nil; configuration.piFreshSessionIntent = nil
         return configuration
     }
@@ -1095,11 +1106,7 @@ final class WorkspaceStore {
         }.sorted { $0.isPinned != $1.isPinned ? $0.isPinned : $0.updatedAt > $1.updatedAt }
     }
     var orderedProjects: [WorkspaceProject] { snapshot.orderedProjects }
-    var recentSidebarThreads: [CodingThread] {
-        guard let key = sidebarProjectFilter, let group = orderedProjectGroups.first(where: { $0.key == key }) else { return visibleThreads }
-        let members = Set(group.memberProjectIDs)
-        return visibleThreads.filter { members.contains($0.projectID) }
-    }
+    var recentSidebarThreads: [CodingThread] { visibleThreads }
     var orderedProjectGroups: [ProjectGroup] { snapshot.orderedProjectGroups }
     var projectGroupingMode: ProjectGroupingMode { snapshot.effectiveSidebarPreferences.groupingMode }
     var projectSortMode: ProjectSortMode { snapshot.effectiveSidebarPreferences.sortMode }
@@ -1616,6 +1623,7 @@ final class WorkspaceStore {
     func isRetryingProjectClone(_ projectID: UUID) -> Bool { retryingProjectClones.contains(projectID) }
     func newScratchThread() {
         guard !terminating, !isCreatingScratchConversation else { return }
+        showingSettings = false
         Task { do { _ = try await openScratchDraft(draft: "") } catch { if !terminating { errorMessage = error.localizedDescription } } }
     }
     func openScratchDraft(draft: String, requestedProvider: ProviderKind? = nil, requestedModel: String? = nil) async throws -> UUID {
@@ -1687,6 +1695,7 @@ final class WorkspaceStore {
         Task { do { _ = try await task.value } catch { if !terminating { errorMessage = error.localizedDescription } } }
     }
     func newThread(projectID: UUID? = nil) {
+        showingSettings = false
         let project: WorkspaceProject
         if let projectID {
             // A stale checkout menu must never redirect its action to another workspace.
@@ -1984,6 +1993,66 @@ final class WorkspaceStore {
         if let current = thread(id), current.provider == .codex, let advertised = models(for: current).first(where: { $0.id == model }) {
             sendCommand(.editThread(id, .codexModel(advertised)))
         } else { sendCommand(.editThread(id, .model(model))) }
+    }
+    func pickerProviderAvailable(_ provider: ProviderKind) -> Bool {
+        !models(for: provider).isEmpty || ProcessChannel.findExecutable(provider == .codex ? codexRuntime.configuration.executable : claudeRuntime.profile.executable) != nil
+    }
+    func refreshPickerModels(force: Bool = false) async {
+        guard !modelPickerLoading else { return }
+        modelPickerLoading = true
+        defer { modelPickerLoading = false }
+        for provider in ProviderKind.builtIn where pickerProviderAvailable(provider) && (force || models(for: provider).isEmpty) {
+            if Task.isCancelled { return }
+            await refreshModels(provider: provider, reportErrors: false)
+        }
+    }
+    /// A model row owns its provider; no separate provider picker is required.
+    func choosePickerModel(provider: ProviderKind, modelID: String, threadID: UUID) async -> Bool {
+        guard provider.isSupported, !choosingModelThreads.contains(threadID), let original = thread(threadID) else { return false }
+        choosingModelThreads.insert(threadID)
+        defer { choosingModelThreads.remove(threadID) }
+        do {
+            if original.provider != provider {
+                guard !original.isBusy, original.queuedTurns.isEmpty, original.runtimeRequests.isEmpty else {
+                    throw CoincideError("Wait for this reply and queued messages to finish before switching agents.")
+                }
+                guard modelID.isEmpty || models(for: provider).contains(where: { $0.id == modelID }) else {
+                    throw CoincideError("That model is no longer available. Refresh models and choose again.")
+                }
+                if !original.messages.isEmpty || !snapshot.pendingContextTransfers(threadID: threadID).isEmpty {
+                    let transfer = contextTransferStore(threadID: threadID)
+                    transfer.kind = .providerHandoff; transfer.sourceID = "conversation"
+                    transfer.provider = provider; transfer.model = modelID; transfer.permission = original.permission
+                    guard await transfer.prepare() != nil else {
+                        throw CoincideError(transfer.errorMessage ?? "The saved conversation could not be prepared for this agent.")
+                    }
+                    guard await transfer.accept() else {
+                        throw CoincideError(transfer.errorMessage ?? "The conversation could not switch agents.")
+                    }
+                    await refreshModels(provider: provider, reportErrors: false, threadID: threadID)
+                    return true
+                }
+                let edit: ThreadEdit = provider == .codex ? .codexProvider(codexRuntime.configuration) : .claudeProvider(try claudeRuntimeCapture(original.workspacePath))
+                let receipt = try await enqueuePreparing { [weak self] in
+                    guard let self, let current = self.thread(threadID), ProviderConfiguration(thread: current).matchesModelControlCapture(.init(thread: original)) else { throw CancellationError() }
+                    return .editThread(threadID, edit)
+                }.value
+                if let rejection = receipt.rejection { throw CoincideError(rejection) }
+                // Bind capabilities to the new conversation's captured CLI runtime.
+                await refreshModels(provider: provider, reportErrors: false, threadID: threadID)
+            }
+            guard let current = thread(threadID), current.provider == provider else { throw CancellationError() }
+            let row = models(for: current).first { $0.id == modelID }
+            guard modelID.isEmpty || row != nil else { throw CoincideError("That model is no longer available. Refresh models and choose again.") }
+            let edit: ThreadEdit = provider == .claude ? .claudeModel(row) : row.map(ThreadEdit.codexModel) ?? .model("")
+            let receipt = try await enqueuePreparing { [weak self] in
+                guard let self, let fresh = self.thread(threadID), ProviderConfiguration(thread: fresh).matchesModelControlCapture(.init(thread: current)) else { throw CancellationError() }
+                return .editThread(threadID, edit)
+            }.value
+            if let rejection = receipt.rejection { throw CoincideError(rejection) }
+            return true
+        } catch is CancellationError { return false }
+        catch { if !terminating { errorMessage = error.localizedDescription }; return false }
     }
     func setProvider(_ provider: ProviderKind, id: UUID) {
         guard provider.isSupported else { errorMessage = "Coincide supports Codex and Claude only."; return }
@@ -2483,7 +2552,7 @@ final class WorkspaceStore {
 
     func submit(_ text: String, threadID id: UUID) -> Task<Bool, Never> {
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let thread = thread(id), thread.provider.isSupported, (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
+        guard !choosingModelThreads.contains(id), let thread = thread(id), thread.provider.isSupported, (!prompt.isEmpty || !thread.draftAttachments.isEmpty),
               !preparingWorkspaces.contains(id), !isImportingAttachments(id), !composerDraftTools.blocksSubmission(id), !acceptingHistoryThreads.contains(id),
               !snapshot.isConversationHistoryLocked(threadID: id), !isCheckpointRestoreLocked(threadID: id),
               !claudeResumeSelectionNeedsInspection(threadID: id),
@@ -2761,15 +2830,17 @@ final class WorkspaceStore {
         catch { errorMessage = error.localizedDescription; return }
         fileNavigation = .init(workspacePath: workspacePath, path: relative, line: line); inspectorVisible = true
     }
-    func refreshModels(provider: ProviderKind? = nil) async {
+    func refreshModels(provider: ProviderKind? = nil, reportErrors: Bool = true, threadID: UUID? = nil) async {
         guard !isRefreshingModels, let engine else { return }; isRefreshingModels = true
         defer { isRefreshingModels = false }
+        let catalogThread = threadID.flatMap { thread($0) } ?? selectedThread
+        let kind = provider ?? catalogThread?.provider ?? .codex
+        modelCatalogErrors.removeValue(forKey: kind)
         do {
-            let kind = provider ?? selectedThread?.provider ?? .codex
             guard kind.isSupported else { throw CoincideError("Coincide supports Codex and Claude only.") }
             if kind == .codex {
                 guard !codexRuntime.isApplying else { return }
-                let captured = selectedThread.flatMap { $0.provider == .codex ? $0 : nil }
+                let captured = catalogThread.flatMap { $0.provider == .codex ? $0 : nil }
                 let configuration = captured?.codexRuntimeConfiguration ?? (captured == nil ? codexRuntime.configuration : .init())
                 guard configuration.authenticationMode != .ownedChatGPT || !codexAuthenticationChanges.contains(configuration.instanceID) else { return }
                 let scope = codexMetadataScope, id = UUID()
@@ -2788,7 +2859,7 @@ final class WorkspaceStore {
                           ProviderConfiguration(thread: current).codexRuntimeBinding == ProviderConfiguration(thread: captured).codexRuntimeBinding else { return }
                     codexModels[captured.id] = models
                 } else if codexRuntime.configuration == configuration { providerModels[.codex] = models }
-            } else if kind == .claude, let captured = selectedThread, captured.provider == .claude {
+            } else if kind == .claude, let captured = catalogThread, captured.provider == .claude {
                 let models = try await engine.models(thread: captured)
                 guard !terminating, let current = thread(captured.id), current.provider == .claude,
                       current.projectID == captured.projectID, current.workspacePath == captured.workspacePath,
@@ -2797,13 +2868,13 @@ final class WorkspaceStore {
             } else if kind == .claude {
                 guard !claudeRuntime.isApplying else { return }
                 let profile = claudeRuntime.profile
-                let path = selectedThread?.workspacePath ?? snapshot.projects.first?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+                let path = catalogThread?.workspacePath ?? snapshot.projects.first?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
                 let runtime = try claudeRuntimeCapture(path)
                 let models = try await engine.models(provider: .claude, claudeRuntimeConfiguration: runtime)
                 guard !terminating, claudeRuntime.isLoaded, profile == claudeRuntime.profile else { return }
                 neutralClaudeModelProfile = profile; providerModels[.claude] = models
             } else if kind == .opencode {
-                guard let thread = selectedThread, thread.provider == .opencode else {
+                guard let thread = catalogThread, thread.provider == .opencode else {
                     throw CoincideError("Choose OpenCode in a conversation before refreshing its workspace models.")
                 }
                 let catalog = try await engine.openCodeInventory(thread: thread)
@@ -2812,14 +2883,14 @@ final class WorkspaceStore {
                       current.openCodeConfiguration?.runtimeIdentity == thread.openCodeConfiguration?.runtimeIdentity else { return }
                 openCodeCatalogs[thread.id] = catalog
             } else if kind == .antigravity {
-                guard let thread = selectedThread, thread.provider == .antigravity else { throw CoincideError("Choose Antigravity in a conversation before refreshing its models.") }
+                guard let thread = catalogThread, thread.provider == .antigravity else { throw CoincideError("Choose Antigravity in a conversation before refreshing its models.") }
                 let models = try await engine.models(thread: thread)
                 guard let current = self.thread(thread.id), current.projectID == thread.projectID, current.provider == .antigravity,
                       current.workspacePath == thread.workspacePath,
                       ProviderConfiguration(thread: current).antigravityRuntimeBinding == ProviderConfiguration(thread: thread).antigravityRuntimeBinding else { return }
                 antigravityModels[thread.id] = models
             } else if kind == .muse {
-                guard let thread = selectedThread, thread.provider == .muse else { throw CoincideError("Choose Muse in a conversation before refreshing its models.") }
+                guard let thread = catalogThread, thread.provider == .muse else { throw CoincideError("Choose Muse in a conversation before refreshing its models.") }
                 let models = try await engine.models(thread: thread)
                 guard let current = self.thread(thread.id), current.projectID == thread.projectID, current.provider == .muse,
                       current.workspacePath == thread.workspacePath,
@@ -2840,14 +2911,19 @@ final class WorkspaceStore {
                       current.workspacePath == thread.workspacePath,
                       ProviderConfiguration(thread: current).piRuntimeBinding == ProviderConfiguration(thread: thread).piRuntimeBinding else { return }
                 piModels[thread.id] = models
-            } else if kind == .acp, let thread = selectedThread, thread.acpAgent != nil {
+            } else if kind == .acp, let thread = catalogThread, thread.acpAgent != nil {
                 let models = try await engine.models(thread: thread)
                 guard let current = self.thread(thread.id), current.provider == thread.provider,
                       current.acpAgent == thread.acpAgent, current.workspacePath == thread.workspacePath else { return }
                 acpModels[thread.id] = models
             } else { providerModels[kind] = try await engine.models(provider: kind) }
         } catch is CancellationError { }
-        catch { if !terminating { errorMessage = error.localizedDescription } }
+        catch {
+            if !terminating {
+                modelCatalogErrors[kind] = error.localizedDescription
+                if reportErrors { errorMessage = error.localizedDescription }
+            }
+        }
     }
     func skillsScope(threadID: UUID) -> ProviderSkillsStore.Scope? {
         guard !terminating, let thread = thread(threadID), [.codex, .pi, .opencode, .claude].contains(thread.provider),

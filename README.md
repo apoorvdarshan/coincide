@@ -14,6 +14,26 @@ Existing historical implementation and validation records remain in
 [porting status](docs/PORTING.md) and [provider inventory](docs/PROVIDER_PARITY.md);
 they are not the current product scope or proof that every workflow works today.
 
+## Chat and models
+
+Projects expand into their recent chats. The main Recents list stays separate;
+search is in the sidebar header. The empty-chat composer is centered and moves
+below messages once a conversation starts.
+
+The composer has one searchable model picker for the configured Codex and Claude
+CLIs. **Settings → Models** chooses which models appear by default; **All models**
+reveals the others. Model-specific reasoning, effort, fast/service-tier and
+interaction options appear only when supported by the advertised capabilities.
+Changing agents keeps the same Coincide chat and draft. The destination receives
+saved conversation context on the next message; switching alone sends no prompt.
+Imports are independent Coincide copies and never continue the original CLI
+session. Long histories use a bounded context handoff, with omitted items kept
+in the local archive; private reasoning and attachment bytes are not replayed.
+**Settings → Agents** configures the CLI runtimes and shows their provider marks.
+
+The native app also exposes a private local CLI for navigation, catalog reads,
+model selection and screenshots. See [local CLI control](docs/LOCAL_CONTROL.md).
+
 ## Build and run
 
 Requires macOS 14+, a Swift 6.2+ toolchain, and Xcode Command Line Tools. Codex
@@ -47,7 +67,7 @@ dist/Coincide.app/Contents/MacOS/Coincide --verify-owned-codex-keychain
 Add a project folder, start a thread, and send a message. Coincide connects directly
 to the selected provider's native CLI protocol. Each conversation owns its
 provider connection; provider-specific account setup is described below.
-Choose the provider in a new conversation's header. Review requested commands and file
+Choose a model in the composer; its provider is selected automatically. Review requested commands and file
 changes in the conversation. Use the inspector to browse/edit files or inspect,
 stage, and commit Git changes. The branch menu creates/switches local branches or
 tracks fetched remote branches. Fetch, fast-forward Pull, and explicit single-branch
@@ -72,14 +92,14 @@ or Off (the default). Background alerts show the thread name and open its
 conversation; returning to Coincide clears attention counts. See
 [notification behavior and verification](docs/NOTIFICATIONS.md).
 
-Use **Refresh Models** in the header menu to load Codex's advertised models and
+Use **Refresh models** in the composer’s model picker to load Codex's advertised models and
 reasoning options. Reasoning preferences are saved separately for each model;
 **Model Default** clears that model's override. **CLI Default Model** reads the
 current checkout's CLI configuration and captures its concrete default model,
 keeping any saved reasoning preference for it. These choices apply to future
 turns. Active and queued turns retain the settings they already captured.
 
-**Settings → Providers → Codex Runtime** keeps **Installed CLI** as the default.
+**Settings → Agents → Codex Runtime** keeps **Installed CLI** as the default.
 Choose a custom executable or explicitly install the managed package, then choose
 **Use Runtime** for future conversations. An optional absolute Codex home replaces
 the inherited `CODEX_HOME`; no accounts, settings, or history are copied. Runtime
@@ -130,7 +150,7 @@ contract that retains verified steering inputs. These paths have offline checks.
 Broader installed acceptance, recovery and history compatibility remain
 unfinished; see [OpenCode boundaries](docs/OPENCODE_HTTP.md).
 
-**Settings → Providers → Add Grok** saves its native ACP profile. Its composer
+**Settings → Agents → Add Grok** saves its native ACP profile. Its composer
 offers **Ask**, **Auto**, and **Always approve**; active and queued inputs retain
 their captured launch policy. Questions submit exact selected choices and notes
 together. The integration can use the CLI's existing sign-in, with offline
@@ -166,7 +186,7 @@ Engine checks cover queueing and exact-turn Stop; installed Muse execution,
 steering, broader recovery, setup/auth and usage remain unfinished.
 
 Antigravity uses its paired `agy_acp_server.par` and `localharness_external`
-runtime. In **Settings → Providers → Antigravity**, explicitly install the pinned
+runtime. In **Settings → Agents → Antigravity**, explicitly install the pinned
 managed runtime or choose a custom pair. Managed downloads check the archive's
 size and SHA-256, extract only the paired executables and initialize them before
 activation. Updates preserve a running session's old pair; removal refuses an
@@ -178,7 +198,7 @@ inputs for review. Models and native permission choices apply to future inputs.
 Offline peers cover native conversations and account flows. Usage, broader
 recovery and installed account/model execution remain unfinished.
 
-**Settings → Providers → Codex Account** reads the existing CLI sign-in, plan,
+**Settings → Agents → Codex Account** reads the existing CLI sign-in, plan,
 and available allowance windows. Email stays hidden until revealed. Refresh
 checks account identity before and after reading usage; switching accounts clears
 old allowance bars, while failed usage checks mark retained information as stale.
@@ -410,7 +430,7 @@ fresh staging folder and preserves earlier attempts; it does not resume a partia
 network transfer. Existing destination folders are never overwritten. Git uses
 your existing credentials and SSH setup without opening an interactive prompt.
 
-In **Settings → Providers → ACP Agents**, save an agent name, executable, and
+In **Settings → Agents → ACP Agents**, save an agent name, executable, and
 arguments (one per line), then choose it in a new conversation's header.
 Arguments are passed literally. Model discovery supports the agent's config
 options and older model lists; mode and other select options appear after session

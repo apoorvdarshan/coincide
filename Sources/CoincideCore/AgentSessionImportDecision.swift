@@ -122,6 +122,7 @@ extension WorkspaceDecision {
         // history/checkpoint proof. No setup hook is discovered or executed.
         thread.state = .idle; thread.queuePaused = true
         thread.settlement = .init(id: TaskOrchestration.derivedID(threadID, "agent-session-import:settled"), settledAt: transcript.updatedAt)
+        try copyImportedConversation(&thread, commandID: commandID, now: now)
         let record = try AgentSessionImportRecord(admission: admission, thread: thread, commandID: commandID, previousSources: prior?.sources ?? [])
         var nextRecords = records.filter { $0.threadID != threadID }; nextRecords.append(record)
         guard nextRecords.count <= 20_000, try AgentSessionImportProtocol.payload(nextRecords).count <= 128 * 1_024 * 1_024 else { throw AgentSessionImportError.limit }
@@ -130,9 +131,80 @@ extension WorkspaceDecision {
         snapshot.agentSessionImports = nextRecords
     }
     private static func importRefusal() -> WorkspaceCommandError { .init("This native session is already owned, its project changed, or the imported conversation has been edited. Scan again and preserve the existing conversation.") }
+
+    /// Older imports retained the source CLI session ID. Detach it atomically
+    /// with the next authored input, before a queued turn captures configuration.
+    /// Busy or already queued legacy sessions must be stopped/cleared first.
+    mutating func prepareImportedConversationCopy(threadID: UUID, commandID: UUID, now: Date) throws {
+        guard let index = snapshot.threads.firstIndex(where: { $0.id == threadID }),
+              snapshot.isOriginalImportedSession(snapshot.threads[index]) else { return }
+        var thread = snapshot.threads[index]
+        try copyImportedConversation(&thread, commandID: commandID, now: now)
+        snapshot.threads[index] = thread
+        closeRuntimes.insert(threadID)
+    }
+
+    private mutating func copyImportedConversation(_ thread: inout CodingThread, commandID: UUID, now: Date) throws {
+        guard !thread.isBusy, thread.queuedTurns.isEmpty, thread.runtimeRequests.isEmpty,
+              !snapshot.hasUnresolvedContextDelivery(threadID: thread.id) else {
+            throw WorkspaceCommandError("Stop this imported conversation and clear its queued messages before continuing in its independent Coincide copy.")
+        }
+        let source = ProviderConfiguration(thread: thread)
+        guard let nativeID = source.nativeThreadID else { throw AgentSessionImportError.invalidRequest }
+        let pending = snapshot.pendingContextTransfers(threadID: thread.id)
+        // A repeated import may replace its own undelivered copy, but must not
+        // silently discard a handoff the user prepared for another destination.
+        guard pending.allSatisfy({
+            $0.review.sourceConfiguration.provider == source.provider &&
+            AgentSessionImportOwnership.sameSession($0.review.sourceConfiguration.nativeThreadID, nativeID)
+        }) else { throw ContextTransferError.unavailable }
+        var sourceSnapshot = snapshot
+        if let index = sourceSnapshot.threads.firstIndex(where: { $0.id == thread.id }) { sourceSnapshot.threads[index] = thread }
+        else { sourceSnapshot.threads.append(thread) }
+        let point = try sourceSnapshot.contextTransferSource(threadID: thread.id, point: .conversation)
+        let messages = try sourceSnapshot.contextTransferMessages(thread: thread, through: point, ownRunsOnly: false)
+        var destination = source
+        destination.nativeThreadID = nil; destination.claudeLaunchSelection = nil; destination.piFreshSessionIntent = nil
+        let transferID = TaskOrchestration.derivedID(commandID, "agent-session-import:context")
+        var review = ContextTransferReview(id: transferID, digest: "",
+            request: .init(sourceThreadID: thread.id, expectedConfiguration: source, sourcePoint: .conversation,
+                intent: .providerHandoff(destination: destination)),
+            sourcePoint: point, basePoint: nil, targetThreadID: thread.id, projectID: thread.projectID,
+            sourceConfiguration: source, targetConfiguration: destination, targetProviderBinding: nil,
+            strategy: .portableContext, title: thread.title, messages: messages, nativeReview: nil,
+            sourceFingerprint: try sourceSnapshot.contextTransferFingerprint(thread, point: point),
+            sourceIncarnation: commandID, targetIncarnation: nil, reviewedAt: now)
+        review.pendingSourceTransfers = pending.map { .init(id: $0.id, digest: $0.review.digest) }
+        review.digest = try review.validatedDigest()
+        let stored = snapshot.contextTransfers ?? []
+        let used = try stored.reduce(0) { try $0 + ContextTransferProtocol.payload($1.review).count }
+        guard stored.count < ContextTransferProtocol.maximumStoredTransfers,
+              try ContextTransferProtocol.payload(review).count <= ContextTransferProtocol.maximumStoredArchiveBytes - used else {
+            throw ContextTransferError.limit
+        }
+        for index in (snapshot.contextTransfers ?? []).indices where pending.contains(where: { $0.id == snapshot.contextTransfers![index].id }) {
+            snapshot.contextTransfers![index].status = .superseded; snapshot.contextTransfers![index].updatedAt = now
+        }
+        if snapshot.contextTransfers == nil { snapshot.contextTransfers = [] }
+        snapshot.contextTransfers!.append(.init(id: transferID, commandID: transferID, review: review, status: .pending, updatedAt: now))
+        thread.applyContextConfiguration(destination)
+        thread.contextProviderBindings?.removeAll {
+            $0.configuration.provider == source.provider && AgentSessionImportOwnership.sameSession($0.configuration.nativeThreadID, nativeID)
+        }
+    }
 }
 
 extension WorkspaceSnapshot {
+    func isOriginalImportedSession(_ thread: CodingThread) -> Bool {
+        isOriginalImportedSession(configuration: .init(thread: thread), threadID: thread.id)
+    }
+    func isOriginalImportedSession(configuration: ProviderConfiguration, threadID: UUID) -> Bool {
+        (agentSessionImports ?? []).contains {
+            $0.threadID == threadID && $0.provider.provider == configuration.provider &&
+            AgentSessionImportOwnership.sameSession(configuration.nativeThreadID, $0.nativeSessionID)
+        }
+    }
+
     /// Run once at the Engine commit gate, after all command reductions. The
     /// sticky bit detects a real edit before a later command can revert it.
     mutating func reconcileAgentSessionImports(previous: WorkspaceSnapshot) throws {

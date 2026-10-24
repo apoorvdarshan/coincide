@@ -5483,3 +5483,44 @@ packaging, installed-provider, live SSH, or interactive native UI acceptance.
 The eight independent feature briefs in `CLOUD_TASKS.md` are a handoff for
 ChatGPT Work or a dot coordinator, not a claim that those tasks have started or
 that full T3 parity is complete.
+
+## 2026-10-24: native chat UI and Coincide-owned conversations
+
+User direction supersedes the earlier T3 parity work: focus on Codex/Claude,
+local development, the supplied ChatGPT layout, and CLI control. Automated
+tests, provider smoke prompts, and hosted CI were explicitly deferred for this
+pass. No test suite or model inference was run for these changes.
+
+The updated native app builds, packages, signs and opens successfully through
+`script/build_and_run.sh --verify`. The combined context/import build completed
+in 39.36 seconds; the final incremental packaging build took 10.21 seconds.
+Logs are `/tmp/coincide-context-copy-final.log` and
+`/tmp/coincide-final-package.log`. Existing unrelated compiler warnings remain.
+
+Live local CLI inspection loaded seven Codex and thirteen Claude catalog rows
+without catalog errors. This verifies discovery, not authentication or inference.
+The CLI captured the revised chat, unified model popover and Models settings at
+`/tmp/coincide-final-chat.png`, `/tmp/coincide-final-picker.png` and
+`/tmp/coincide-final-settings.png`; all three were visually inspected. Provider
+marks, nested project chats, a single sidebar selection, the centered composer,
+and native settings/model visibility controls are present. The reference was
+inspected in the user's Chrome with explicit permission, then returned to its
+original General settings page. No ChatGPT desktop installation was needed.
+
+An existing imported conversation was switched Codex → Claude → Codex via
+`script/coincide model`, without sending a prompt. Its Coincide UUID and all six
+saved visible messages were unchanged (message payload hashes compared before
+and after), the original model was restored, and its original native session
+binding was cleared. One portable context transfer remains pending for the next
+authored message. The selected empty chat was restored afterward.
+The saved six-message copy, detached binding and single pending transfer were
+read back successfully after rebuilding and restarting the app.
+
+New imports now save independent copies; older imports detach at their next
+submission, with old source-bound queues and recovered provider-start effects
+blocked. Imported histories retain the existing bounded import policy (at most
+200 messages per conversation). Context delivery is budgeted public text, not
+private reasoning or attachment-byte replay. First-reply context delivery,
+fresh-import execution, and the earlier Codex app-tool readiness failure are
+not established as fixed by these build/catalog/navigation checks. Those need
+the deferred provider runtime validation; the app is not claimed fully tested.

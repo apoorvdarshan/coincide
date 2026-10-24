@@ -5,6 +5,7 @@ struct ChatView: View {
     @Bindable var store: WorkspaceStore
     let threadID: UUID
     var onSettle: ((CodingThread) -> Void)? = nil
+    var onToggleTerminal: (() -> Void)? = nil
     @State private var sending = false
     @AppStorage("followUpBehavior") private var followUpBehavior = ComposerFollowUpBehavior.queue.rawValue
     @State private var worktreeSheet = false
@@ -29,42 +30,22 @@ struct ChatView: View {
     private var draft: Binding<String> {
         Binding(get: { thread?.draft ?? "" }, set: { store.setDraft($0, id: threadID) })
     }
-    func submitCurrentDraft() -> Task<Bool, Never> {
-        store.submit(store.thread(threadID)?.draft ?? "", threadID: threadID)
-    }
-    func steerCurrentDraft() -> Task<Bool, Never> {
-        store.steer(store.thread(threadID)?.draft ?? "", threadID: threadID)
-    }
-    var body: some View {
-        if let thread {
-            VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Text(thread.title).font(.system(size: 15, weight: .medium)).lineLimit(1)
-                    Spacer()
-                    ConversationBranchChip(store: store, thread: thread)
+    private func workspaceMenu(_ thread: CodingThread) -> some View {
                     Menu {
+                        if thread.visibleMessages.isEmpty {
+                            Menu("Choose project") {
+                                ForEach(store.orderedProjects.filter { $0.scratch == nil }) { project in
+                                    Button(project.name) { store.newThread(projectID: project.id) }
+                                }
+                                Divider()
+                                Button("Open folder…") { store.addProject() }
+                            }
+                            Divider()
+                        }
                         Text(thread.workspacePath)
                         Button("Reveal Workspace") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: thread.workspacePath) }
                             .disabled(!store.workspaceReady(for: thread))
                         ExternalEditorMenu(store: store, workspacePath: thread.workspacePath, title: "Open Workspace in…")
-                        Button("Run History…") { runHistorySheet = true }
-                            .accessibilityIdentifier("conversation-run-history")
-                        Button("Delegated Tasks…") { delegatedTasksSheet = true }
-                            .accessibilityIdentifier("conversation-delegated-tasks")
-                        Button("Fork Context…") { showContextTransfer(.fork) }
-                        Button("Switch Provider with Context…") { showContextTransfer(.providerHandoff) }
-                        Toggle("Save Run Checkpoints", isOn: Binding(
-                            get: { thread.effectiveCheckpointPolicy == .automatic },
-                            set: { store.setCheckpointPolicy($0 ? .automatic : .disabled, id: threadID) }))
-                            .accessibilityIdentifier("conversation-run-checkpoints")
-                            .disabled(actionsLocked)
-                            .help("Save workspace observations before and after future messages. Already accepted messages keep their captured setting.")
-                        if let settlement = thread.settlement {
-                            Button("Resume Conversation") { store.requestResume(threadID, generationID: settlement.id) }
-                                .disabled(settlement.phase == .resuming || actionsLocked)
-                        } else if let onSettle {
-                            Button("Settle Conversation…") { onSettle(thread) }.disabled(!store.canSettle(thread))
-                        }
                         if thread.messages.isEmpty && thread.scratchWorkspace == nil {
                             Button("Choose Worktree…") { worktreeSheet = true }
                                 .disabled(thread.isSettled || thread.isBusy || !thread.queuedTurns.isEmpty || thread.workspacePreparation?.isRunning == true ||
@@ -76,17 +57,32 @@ struct ChatView: View {
                     .accessibilityIdentifier("conversation-workspace")
                     .accessibilityLabel("Conversation workspace")
                     .accessibilityValue(thread.workspacePath)
+    }
+    func submitCurrentDraft() -> Task<Bool, Never> {
+        store.submit(store.thread(threadID)?.draft ?? "", threadID: threadID)
+    }
+    func steerCurrentDraft() -> Task<Bool, Never> {
+        store.steer(store.thread(threadID)?.draft ?? "", threadID: threadID)
+    }
+    var body: some View {
+        if let thread {
+            VStack(spacing: 0) {
+                if !thread.visibleMessages.isEmpty {
+                HStack(spacing: 12) {
+                    Text(thread.title).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                    Spacer()
+                    ConversationBranchChip(store: store, thread: thread)
+                    workspaceMenu(thread)
                 }.padding(.horizontal, 24).padding(.vertical, 12)
+                }
+                if thread.visibleMessages.isEmpty {
+                    Spacer(minLength: 32)
+                    Text("What should we work on?").font(.system(size: 25, weight: .regular))
+                        .padding(.bottom, 30)
+                } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 28) {
-                            if thread.visibleMessages.isEmpty {
-                                VStack(spacing: 12) {
-                                    Text("What are we building?").font(.system(size: 29, weight: .medium))
-                                    Text("Start a conversation in \(store.selectedProject?.name ?? "your project").")
-                                        .font(.subheadline).foregroundStyle(.secondary)
-                                }.frame(maxWidth: .infinity).padding(.top, 100).padding(.bottom, 60)
-                            }
                             TranscriptRowsView(store: store, thread: thread, state: transcriptState, present: { transcriptSheet = $0 })
                                 .id(TranscriptCardScope(thread: thread))
                             TranscriptWorkingIndicator(thread: thread)
@@ -98,6 +94,7 @@ struct ChatView: View {
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: thread.visibleMessages.count) { proxy.scrollTo("latest", anchor: .bottom) }
                     .threadFind(threadID: threadID, messages: thread.visibleMessages, proxy: proxy)
+                }
                 }
                 VStack(spacing: 10) {
                     if let group = store.projectGroup(containing: thread.projectID), group.members.count > 1 {
@@ -174,15 +171,27 @@ struct ChatView: View {
                                          sending = false
                                      }
                                  }, stop: { Task { await store.interrupt(threadID) } },
-                                 grokRuntimeMode: ProviderConfiguration(thread: thread).effectiveGrokRuntimeMode,
-                                 setGrokRuntimeMode: { store.setGrokRuntimeMode($0, threadID: threadID) },
                                  skills: skillsModel, draftTools: store.composerDraftTools, draftThreadID: threadID, discardDraft: { store.discardComposerDraft(threadID) },
                                  modelControl: AnyView(ProviderMenu(store: store, thread: thread).disabled(actionsLocked)))
+                        .disabled(store.choosingModelThreads.contains(threadID))
+                    if thread.visibleMessages.isEmpty {
+                        HStack(spacing: 22) {
+                            workspaceMenu(thread)
+                            Button { store.inspectorVisible.toggle() } label: { Label("Files", systemImage: "doc") }
+                            if let onToggleTerminal { Button(action: onToggleTerminal) { Label("Terminal", systemImage: "terminal") } }
+                            Spacer()
+                        }
+                        .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                        .background(ChatChrome.footer, in: RoundedRectangle(cornerRadius: 16))
+                        .padding(.horizontal, 10).padding(.top, -10)
+                    }
                 }
-                .coincideGlassGroup()
                 .frame(minWidth: 0, maxWidth: 760).padding(.horizontal, 28).padding(.bottom, 16).frame(minWidth: 0, maxWidth: .infinity)
+                if thread.visibleMessages.isEmpty { Spacer(minLength: 64) }
             }
             .frame(minWidth: 0, maxWidth: .infinity)
+            .background(ChatChrome.canvas)
             .navigationTitle("Coincide")
             .task(id: store.promptSteeringKey(threadID: threadID)) {
                 await store.refreshPromptSteeringAvailability(threadID: threadID)

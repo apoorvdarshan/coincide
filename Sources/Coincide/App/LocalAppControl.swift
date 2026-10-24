@@ -29,11 +29,11 @@ final class LocalAppControl {
             workspacePath: root.path, permission: .fullAccess, capabilities: [.orchestration])
         let credential = try await registry.issue(scope: scope)
         self.credential = credential
-        let names = ["status", "projects", "threads", "thread", "providers", "models", "select", "new", "screenshot"]
+        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "screenshot"]
         let definitions = names.map { name in
             MCPToolDefinition(name: name, description: "Coincide local CLI: " + name,
                 inputSchema: .object(["type": .string("object")]), capability: .orchestration,
-                readOnly: !["select", "new", "screenshot"].contains(name))
+                readOnly: !["select", "new", "model", "ui", "screenshot"].contains(name))
         }
         let server = try await MCPHTTPServer.start(registry: registry, tools: definitions) { [weak self] invocation in
             guard let self else { throw MCPError(.unavailable) }
@@ -79,7 +79,7 @@ final class LocalAppControl {
                 "selectedThread": store.selectedThread.map(summary) ?? .null,
                 "projects": .number(Double(store.snapshot.projects.count)), "threads": .number(Double(store.snapshot.threads.count)),
                 "busyThreads": .array(store.snapshot.threads.filter { store.isBusy($0.id) }.map { .string($0.id.uuidString) }),
-                "ui": .object(["sidebar": .array([.string("Projects"), .string("Recents")]), "modelPicker": .string("composer")])])
+                "ui": uiState])
         case "projects":
             result = .array(store.orderedProjects.prefix(500).map { .object(["id": .string($0.id.uuidString), "name": .string($0.name), "path": .string($0.path)]) })
         case "threads":
@@ -103,6 +103,15 @@ final class LocalAppControl {
                     "authentication": .string("not checked"), "modelExecution": .string("not checked")])
             })
         case "models":
+            if args["all"] == .bool(true) {
+                if args["refresh"] == .bool(true) { await store.refreshPickerModels(force: true) }
+                result = .object(["providers": .array(ProviderKind.builtIn.map { provider in
+                    .object(["id": .string(provider.rawValue),
+                        "models": .array(store.models(for: provider).map { .object(["id": .string($0.id), "name": .string($0.name)]) }),
+                        "catalogError": store.modelCatalogErrors[provider].map(JSONValue.string) ?? .null])
+                })])
+                break
+            }
             let thread = try target(args)
             if args["refresh"] == .bool(true) {
                 guard store.selectedThreadID == thread.id else { throw CoincideError("Select this conversation before refreshing its models.") }
@@ -116,16 +125,41 @@ final class LocalAppControl {
         case "select":
             let thread = try target(args)
             guard store.selectThread(thread.id) else { throw MCPError(.unavailable) }
-            store.search = ""; store.sidebarProjectFilter = nil
+            store.search = ""
             result = .object(["selected": .string(thread.id.uuidString)])
+        case "model":
+            let thread = try target(args)
+            guard let raw = args["provider"].string, let provider = ProviderKind(rawValue: raw), provider.isSupported,
+                  let model = args["model"].string, model.utf8.count <= 512 else { throw MCPError(.invalidParams) }
+            guard await store.choosePickerModel(provider: provider, modelID: model, threadID: thread.id),
+                  let updated = store.thread(thread.id) else { throw CoincideError("Model selection was not completed. Inspect the current thread before retrying.") }
+            result = .object(["thread": summary(updated), "sent": .bool(false)])
         case "new":
             guard let path = args["path"].string, path.hasPrefix("/"), path.utf8.count <= 4096 else { throw MCPError(.invalidParams) }
             let id = try await store.openDraftThread(projectID: nil, folder: URL(fileURLWithPath: path), draft: "")
-            store.search = ""; store.sidebarProjectFilter = nil
+            store.search = ""
             result = .object(["threadId": .string(id.uuidString), "sent": .bool(false)])
+        case "ui":
+            // Validate the whole request before changing the visible page.
+            let settings: SettingsPage?
+            if let value = args["settings"].string {
+                guard let page = SettingsPage(rawValue: value) else { throw MCPError(.invalidParams) }
+                settings = page
+            } else { settings = nil }
+            let sidebar = args["sidebar"].string
+            guard sidebar == nil || sidebar == "show" || sidebar == "hide",
+                  !(settings != nil && args["chat"] == .bool(true)) else { throw MCPError(.invalidParams) }
+            if let settings { store.settingsPage = settings; store.showingSettings = true }
+            if args["chat"] == .bool(true) { store.showingSettings = false }
+            if let sidebar { store.sidebarVisible = sidebar == "show" }
+            if args["model_picker"] == .bool(true) { store.showingSettings = false; store.modelPickerPresented = true }
+            else { store.modelPickerPresented = false }
+            result = uiState
         case "screenshot":
+            let popovers = NSApp.windows.filter { $0.isVisible && $0.className.contains("Popover") }
+            let targetWindow = args["popover"] == .bool(true) ? (popovers.count == 1 ? popovers.first : nil) : windows.currentWindow
             guard let path = args["path"].string, path.hasPrefix("/"), path.hasSuffix(".png"), path.utf8.count <= 4096,
-                  let window = windows.currentWindow,
+                  let window = targetWindow,
                   let view = window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw MCPError(.unavailable) }
             view.cacheDisplay(in: view.bounds, to: bitmap)
             guard let data = bitmap.representation(using: .png, properties: [:]) else { throw MCPError(.unavailable) }
@@ -135,6 +169,13 @@ final class LocalAppControl {
         }
         let structured = result.object != nil ? result : .object([invocation.toolName: result])
         return MCPToolResult(content: [], structuredContent: structured)
+    }
+
+    private var uiState: JSONValue {
+        .object(["sidebarVisible": .bool(store.sidebarVisible),
+            "page": .string(store.showingSettings ? "settings" : "chat"),
+            "modelPickerVisible": .bool(store.modelPickerPresented),
+            "settingsPage": .string(store.settingsPage.rawValue), "modelPicker": .string("composer")])
     }
 
     private func target(_ arguments: JSONValue) throws -> CodingThread {
@@ -147,6 +188,9 @@ final class LocalAppControl {
         .object(["id": .string(thread.id.uuidString), "projectId": .string(thread.projectID.uuidString),
             "title": .string(String(thread.title.prefix(500))), "provider": .string(thread.provider.rawValue),
             "model": .string(thread.model), "state": .string(thread.state.rawValue), "archived": .bool(thread.isArchived),
-            "messageCount": .number(Double(thread.visibleMessages.count))])
+            "messageCount": .number(Double(thread.visibleMessages.count)),
+            "imported": .bool(store.snapshot.agentSessionImports?.contains(where: { $0.threadID == thread.id }) == true),
+            "nativeSessionBound": .bool(thread.providerThreadID != nil),
+            "pendingContextTransfers": .number(Double(store.snapshot.pendingContextTransfers(threadID: thread.id).count))])
     }
 }

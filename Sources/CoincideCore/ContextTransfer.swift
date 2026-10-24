@@ -4,17 +4,25 @@ import Foundation
 /// A source is resolved once at review time. A checkpoint source is an after-run
 /// observation; before-run baselines retain their separate rewind semantics.
 public enum ContextTransferSourcePoint: Codable, Sendable, Equatable {
+    /// Coincide's visible saved transcript, including imported messages that
+    /// have no native run or checkpoint attribution.
+    case conversation
     case latestStable
     case run(UUID)
     case checkpoint(runID: UUID, attemptID: UUID, digest: String)
 }
 public struct ContextTransferResolvedPoint: Codable, Sendable, Equatable {
     public let threadID: UUID
-    public let runID: UUID
+    public let runID: UUID?
     public let checkpointAttemptID: UUID?
     public let checkpointDigest: String?
-    public init(threadID: UUID, runID: UUID, checkpointAttemptID: UUID? = nil, checkpointDigest: String? = nil) {
+    public init(threadID: UUID, runID: UUID?, checkpointAttemptID: UUID? = nil, checkpointDigest: String? = nil) {
         self.threadID = threadID; self.runID = runID; self.checkpointAttemptID = checkpointAttemptID; self.checkpointDigest = checkpointDigest
+    }
+    var source: ContextTransferSourcePoint {
+        guard let runID else { return .conversation }
+        if let checkpointAttemptID { return .checkpoint(runID: runID, attemptID: checkpointAttemptID, digest: checkpointDigest ?? "") }
+        return .run(runID)
     }
 }
 public enum ContextTransferIntent: Codable, Sendable, Equatable {
