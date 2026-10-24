@@ -1,5 +1,31 @@
 # Validation record
 
+## 2026-10-24 — Sidebar sorting and maximized launch
+
+Projects and chats have independent, persisted choices for Newest, Recently
+active, Priority (pinned first), Name, and Custom. Custom order exposes Move up
+and Move down in item context menus. Project pins are stored separately from
+chat pins. The local CLI supports the same choices and custom moves.
+
+The native build completed in 26.75 seconds and strict bundle signature
+verification passed (`/tmp/coincide-sort-cli-build.log`). On the built-in Retina
+display, the new sort controls measured 26 by 26 points and the chat menu exposed
+all five choices directly. Moving a chat down through its native context menu
+changed both its project list and Recents. Its custom position survived switching
+to Name and back, and a full app restart. A CLI move restored the original order;
+the original sort choices, selected chat, eight-character unsent draft, one
+project, and nine conversations were retained. No provider turn was submitted.
+
+Launch fills the display's usable area instead of restoring the earlier
+1285 by 774 window. Live launches measured 1470 by 840–842 points as macOS Dock
+geometry settled, with the complete window on the built-in display. The menu bar
+and Dock remain available; this is a maximized normal window, not a full-screen
+Space. Captures use `/tmp/coincide-sort-` and `/tmp/coincide-sorting-` prefixes.
+
+Only one project exists in this workspace, so multi-project ordering and pin
+precedence were reviewed and compiled but not exercised against live user data.
+Automated tests and hosted CI remain deferred by user direction.
+
 ## 2026-10-24 — Correct oversized hover and menu targets
 
 - Fixed the model selector's flexible 270pt frame expanding even short labels.

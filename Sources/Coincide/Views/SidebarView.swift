@@ -18,7 +18,11 @@ struct SidebarView: View {
             header
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    sectionTitle("Projects")
+                    HStack {
+                        sectionTitle("Projects")
+                        Spacer(minLength: 4)
+                        projectSortMenu
+                    }
                     let projects = store.orderedProjects.filter { $0.scratch == nil }
                     ForEach(projects) { project in
                         projectRow(project)
@@ -32,6 +36,7 @@ struct SidebarView: View {
                     HStack {
                         sectionTitle(store.showArchived ? "Archived chats" : "Recents")
                         Spacer(minLength: 4)
+                        threadSortMenu
                         Button {
                             store.showArchived.toggle()
                         } label: {
@@ -195,6 +200,53 @@ struct SidebarView: View {
             .frame(height: 26, alignment: .leading)
     }
 
+    private var projectSortMenu: some View {
+        Menu {
+            ForEach([ProjectSortMode.createdAt, .updatedAt, .priority, .name, .manual]) { mode in
+                Toggle(LocalizedStringKey(mode.title), isOn: Binding(
+                    get: { store.projectSortMode == mode },
+                    set: { if $0 { store.setProjectSortMode(mode) } }))
+            }
+            if store.projectSortMode == .manual {
+                Divider()
+                Text("Right-click a project to move it.")
+            }
+        } label: { sortIcon }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .fixedSize().frame(width: 26, height: 26)
+        .modifier(SidebarControlHover())
+        .help(Text("Sort projects: \(store.projectSortMode.title)"))
+        .accessibilityLabel("Sort projects")
+        .accessibilityValue(Text(LocalizedStringKey(store.projectSortMode.title)))
+        .accessibilityIdentifier("sidebar-project-sort")
+    }
+
+    private var threadSortMenu: some View {
+        Menu {
+            ForEach([ThreadSortMode.createdAt, .updatedAt, .priority, .name, .manual]) { mode in
+                Toggle(LocalizedStringKey(mode.title), isOn: Binding(
+                    get: { store.threadSortMode == mode },
+                    set: { if $0 { store.setThreadSortMode(mode) } }))
+            }
+            if store.threadSortMode == .manual {
+                Divider()
+                Text("Right-click a chat to move it.")
+            }
+        } label: { sortIcon }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .fixedSize().frame(width: 26, height: 26)
+        .modifier(SidebarControlHover())
+        .help(Text("Sort chats: \(store.threadSortMode.title)"))
+        .accessibilityLabel("Sort chats")
+        .accessibilityValue(Text(LocalizedStringKey(store.threadSortMode.title)))
+        .accessibilityIdentifier("sidebar-thread-sort")
+    }
+
+    private var sortIcon: some View {
+        Image(systemName: "arrow.up.arrow.down")
+            .font(.system(size: 12)).foregroundStyle(.secondary)
+    }
+
     private func emptyState(_ title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.system(size: 12))
@@ -217,6 +269,9 @@ struct SidebarView: View {
                 Text(project.name).font(.system(size: 13, weight: .medium))
                     .lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
+                if store.snapshot.isProjectPinned(project.id) {
+                    Image(systemName: "pin").font(.system(size: 10)).foregroundStyle(.secondary)
+                }
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
                     .frame(width: 12)
@@ -230,6 +285,16 @@ struct SidebarView: View {
         .accessibilityValue(expanded ? Text("Expanded") : Text("Collapsed"))
         .contextMenu {
             Button("New chat") { store.newThread(projectID: project.id) }
+            Button(store.snapshot.isProjectPinned(project.id) ? "Unpin" : "Pin") { store.toggleProjectPin(project.id) }
+            if store.projectSortMode == .manual {
+                let projects = store.orderedProjects.filter { $0.scratch == nil }
+                Divider()
+                Button("Move up") { store.moveProject(project.id, by: -1) }
+                    .disabled(projects.first?.id == project.id)
+                Button("Move down") { store.moveProject(project.id, by: 1) }
+                    .disabled(projects.last?.id == project.id)
+                Divider()
+            }
             Button("Rename…") { title = project.name; renaming = .project(project.id) }
             Button("Remove Project…", role: .destructive) { removing = store.projectRemovalRequest(project.id) }
         }
@@ -282,6 +347,15 @@ struct SidebarView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .contextMenu {
             Button(thread.isPinned ? "Unpin" : "Pin") { store.togglePin(thread.id) }
+            if store.threadSortMode == .manual {
+                let chats = nested ? nestedChats : store.visibleThreads
+                Divider()
+                Button("Move up") { store.moveThread(thread.id, by: -1, in: nested ? thread.projectID : nil) }
+                    .disabled(chats.first?.id == thread.id)
+                Button("Move down") { store.moveThread(thread.id, by: 1, in: nested ? thread.projectID : nil) }
+                    .disabled(chats.last?.id == thread.id)
+                Divider()
+            }
             Button("Rename…") { title = thread.title; renaming = .thread(thread.id) }
             Button(thread.isArchived ? "Unarchive" : "Archive") { store.toggleArchive(thread.id) }
                 .disabled(store.isBusy(thread.id) || store.snapshot.isConversationHistoryLocked(threadID: thread.id)

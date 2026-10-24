@@ -191,6 +191,7 @@ public enum WorkspaceJournal {
         for agent in snapshot.acpAgents { try agent.validate() }
         try snapshot.sidebarPreferences?.validate(projectIDs: projects)
         let preferences = snapshot.effectiveSidebarPreferences, groups = snapshot.projectGroups
+        guard Set(preferences.threadOrder).isSubset(of: threads) else { throw CoincideError("Custom chat order references a conversation that no longer exists.") }
         let physicalKeys = Set(snapshot.projects.compactMap { snapshot.physicalProjectKey(for: $0.id) })
         guard preferences.selectedThreadID.map({ threads.contains($0) }) ?? true,
               Set(preferences.groupingOverrides.keys).isSubset(of: physicalKeys),

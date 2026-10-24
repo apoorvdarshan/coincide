@@ -17,6 +17,8 @@ Commands return JSON. None sends a prompt to a model.
 ./script/coincide ui --chat --sidebar hide
 ./script/coincide ui --model-picker
 ./script/coincide ui --display built-in
+./script/coincide sort
+./script/coincide sort --projects newest --chats priority
 ./script/coincide screenshot /tmp/coincide-window.png
 ./script/coincide screenshot /tmp/coincide-picker.png --popover
 ```
@@ -37,7 +39,18 @@ Commands return JSON. None sends a prompt to a model.
 - `ui --display built-in` fits and centers the existing main window on the Mac's
   built-in display without activating it. It fails when that display or the
   main window is unavailable. Status includes `display`, `onBuiltInDisplay`
-  (the whole window fits in the display's usable frame), and `windowCount`.
+  (the whole window fits in the display's usable frame), `fillsUsableScreen`,
+  and `windowCount`. New main windows fill the usable screen area, leaving the
+  menu bar and Dock available. You can resize the window afterward.
+- `sort` reads the saved choices and current sidebar IDs. `--projects` and
+  `--chats` independently accept `newest`, `active`, `priority`, `name`, or
+  `custom`. Priority puts pinned items first. The sidebar has matching sort
+  menus beside Projects and Recents. With Custom selected, right-click an item
+  and choose Move up or Move down. Custom positions survive other sort choices
+  and app restarts; newly created chats appear at the top of the custom list.
+  The CLI can also move items: `sort --move-chat UUID --direction up` or
+  `sort --move-project UUID --direction down`, with the corresponding sort
+  set to Custom. Chat moves use the currently visible (filtered) chat list.
 - `screenshot` writes a new PNG and refuses to overwrite a file. `--popover`
   captures the single visible native popover, refusing ambiguity. Native content
   rendering may omit system-composited chrome; it is not a full screen capture.
@@ -56,6 +69,6 @@ executable. The first option places each main window on the built-in display;
 the second suppresses Coincide's explicit app activation for launch, Settings,
 and conversation links. Use a background-capable launcher too: the flags cannot
 prevent an external launcher from activating the app. With no flags, normal
-macOS placement and activation remain unchanged. These options are per launch,
+macOS chooses the display and the app fills its usable area. These options are per launch,
 not saved user preferences. `--display=built-in` requires an available built-in
 screen to override placement; it does not alter external-monitor settings.

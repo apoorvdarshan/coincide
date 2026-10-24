@@ -29,11 +29,11 @@ final class LocalAppControl {
             workspacePath: root.path, permission: .fullAccess, capabilities: [.orchestration])
         let credential = try await registry.issue(scope: scope)
         self.credential = credential
-        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "screenshot"]
+        let names = ["status", "projects", "threads", "thread", "providers", "models", "model", "select", "new", "ui", "sort", "screenshot"]
         let definitions = names.map { name in
             MCPToolDefinition(name: name, description: "Coincide local CLI: " + name,
                 inputSchema: .object(["type": .string("object")]), capability: .orchestration,
-                readOnly: !["select", "new", "model", "ui", "screenshot"].contains(name))
+                readOnly: !["select", "new", "model", "ui", "sort", "screenshot"].contains(name))
         }
         let server = try await MCPHTTPServer.start(registry: registry, tools: definitions) { [weak self] invocation in
             guard let self else { throw MCPError(.unavailable) }
@@ -139,6 +139,25 @@ final class LocalAppControl {
             let id = try await store.openDraftThread(projectID: nil, folder: URL(fileURLWithPath: path), draft: "")
             store.search = ""
             result = .object(["threadId": .string(id.uuidString), "sent": .bool(false)])
+        case "sort":
+            let modes = ["newest": "created_at", "active": "updated_at", "priority": "priority", "name": "name", "custom": "manual"]
+            let projects = args["projects"].string, chats = args["chats"].string
+            let moveChat = args["move_chat"].string, moveProject = args["move_project"].string, direction = args["direction"].string
+            let moving = moveChat != nil || moveProject != nil
+            guard projects.map({ modes[$0] != nil }) ?? true, chats.map({ modes[$0] != nil }) ?? true,
+                  !(moveChat != nil && moveProject != nil),
+                  moveChat.map({ UUID(uuidString: $0) != nil }) ?? true,
+                  moveProject.map({ UUID(uuidString: $0) != nil }) ?? true,
+                  moving ? (direction == "up" || direction == "down") : direction == nil else { throw MCPError(.invalidParams) }
+            try await store.setSidebarSorting(projects: projects.flatMap { modes[$0].flatMap(ProjectSortMode.init(rawValue:)) },
+                                              chats: chats.flatMap { modes[$0].flatMap(ThreadSortMode.init(rawValue:)) })
+            if moving {
+                try await store.moveSidebarItem(chat: moveChat.flatMap(UUID.init(uuidString:)), project: moveProject.flatMap(UUID.init(uuidString:)),
+                                                by: direction == "up" ? -1 : 1)
+            }
+            result = .object(["projectSort": .string(store.projectSortMode.rawValue), "chatSort": .string(store.threadSortMode.rawValue),
+                "projects": .array(store.orderedProjects.filter { $0.scratch == nil }.map { .string($0.id.uuidString) }),
+                "chats": .array(store.visibleThreads.map { .string($0.id.uuidString) })])
         case "ui":
             // Validate the whole request before changing the visible page.
             let settings: SettingsPage?
@@ -185,6 +204,13 @@ final class LocalAppControl {
             "modelPickerVisible": .bool(store.modelPickerPresented),
             "settingsPage": .string(store.settingsPage.rawValue), "modelPicker": .string("composer"),
             "windowCount": .number(Double(windows.visibleWindowCount)),
+            "windowFrame": windows.currentWindow.map { .string(NSStringFromRect($0.frame)) } ?? .null,
+            "usableScreenFrame": windows.currentWindow?.screen.map { .string(NSStringFromRect($0.visibleFrame)) } ?? .null,
+            "fillsUsableScreen": .bool(windows.currentWindow.map { window in
+                guard let available = window.screen?.visibleFrame else { return false }
+                return abs(window.frame.minX - available.minX) < 1 && abs(window.frame.minY - available.minY) < 1 &&
+                    abs(window.frame.width - available.width) < 1 && abs(window.frame.height - available.height) < 1
+            } ?? false),
             "display": .string(windows.currentWindow?.screen?.localizedName ?? "Unavailable"),
             "onBuiltInDisplay": .bool(windows.currentWindow.map { window in
                 NativeWindowLaunch.builtInScreen.map { $0.visibleFrame.contains(window.frame) } ?? false

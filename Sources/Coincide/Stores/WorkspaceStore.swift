@@ -1101,15 +1101,16 @@ final class WorkspaceStore {
         }
     }
     var visibleThreads: [CodingThread] {
-        snapshot.threads.filter {
+        snapshot.orderedThreads.filter {
             $0.isArchived == showArchived && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.visibleMessages.contains { $0.text.localizedCaseInsensitiveContains(search) })
-        }.sorted { $0.isPinned != $1.isPinned ? $0.isPinned : $0.updatedAt > $1.updatedAt }
+        }
     }
     var orderedProjects: [WorkspaceProject] { snapshot.orderedProjects }
     var recentSidebarThreads: [CodingThread] { visibleThreads }
     var orderedProjectGroups: [ProjectGroup] { snapshot.orderedProjectGroups }
     var projectGroupingMode: ProjectGroupingMode { snapshot.effectiveSidebarPreferences.groupingMode }
     var projectSortMode: ProjectSortMode { snapshot.effectiveSidebarPreferences.sortMode }
+    var threadSortMode: ThreadSortMode { snapshot.effectiveSidebarPreferences.threadSortMode }
     func projectGroup(containing projectID: UUID) -> ProjectGroup? {
         snapshot.projectGroups.first { $0.memberProjectIDs.contains(projectID) }
     }
@@ -1321,11 +1322,40 @@ final class WorkspaceStore {
     }
     func setProjectExpanded(_ id: UUID, expanded: Bool) { sendCommand(.setProjectExpanded(projectID: id, expanded: expanded)) }
     func setProjectSortMode(_ mode: ProjectSortMode) { sendCommand(.setProjectSortMode(mode)) }
+    func setThreadSortMode(_ mode: ThreadSortMode) { sendCommand(.setThreadSortMode(mode)) }
+    func setSidebarSorting(projects: ProjectSortMode?, chats: ThreadSortMode?) async throws {
+        if let projects { _ = try await enqueue(.setProjectSortMode(projects)).value }
+        if let chats { _ = try await enqueue(.setThreadSortMode(chats)).value }
+    }
+    func toggleProjectPin(_ id: UUID) { sendCommand(.setProjectPinned(projectID: id, pinned: !snapshot.isProjectPinned(id))) }
+    func moveThread(_ id: UUID, by offset: Int, in projectID: UUID? = nil) {
+        if let command = threadMoveCommand(id, by: offset, in: projectID) { sendCommand(command) }
+    }
+    private func threadMoveCommand(_ id: UUID, by offset: Int, in projectID: UUID? = nil) -> WorkspaceCommand? {
+        let visible = visibleThreads.filter { projectID == nil || $0.projectID == projectID }.map(\.id)
+        guard threadSortMode == .manual, [-1, 1].contains(offset), let index = visible.firstIndex(of: id),
+              visible.indices.contains(index + offset) else { return nil }
+        let order = snapshot.customThreadOrder
+        guard let from = order.firstIndex(of: id), let to = order.firstIndex(of: visible[index + offset]) else { return nil }
+        var next = order; next.swapAt(from, to)
+        return .reorderThreads(threadIDs: next, expectedOrder: order)
+    }
     func moveProject(_ id: UUID, by offset: Int) {
+        if let command = projectMoveCommand(id, by: offset) { sendCommand(command) }
+    }
+    private func projectMoveCommand(_ id: UUID, by offset: Int) -> WorkspaceCommand? {
         let order = snapshot.projects.map(\.id)
-        guard projectSortMode == .manual, let index = order.firstIndex(of: id), [-1, 1].contains(offset), order.indices.contains(index + offset) else { return }
-        var next = order; next.remove(at: index); next.insert(id, at: index + offset)
-        sendCommand(.reorderProjects(projectIDs: next, expectedOrder: order))
+        let visible = orderedProjects.filter { $0.scratch == nil }.map(\.id)
+        guard projectSortMode == .manual, let index = visible.firstIndex(of: id), [-1, 1].contains(offset),
+              visible.indices.contains(index + offset), let from = order.firstIndex(of: id),
+              let to = order.firstIndex(of: visible[index + offset]) else { return nil }
+        var next = order; next.swapAt(from, to)
+        return .reorderProjects(projectIDs: next, expectedOrder: order)
+    }
+    func moveSidebarItem(chat: UUID?, project: UUID?, by offset: Int) async throws {
+        let command = chat.flatMap { threadMoveCommand($0, by: offset) } ?? project.flatMap { projectMoveCommand($0, by: offset) }
+        guard let command else { throw CoincideError("Choose Custom sorting and an item with a neighbor in that direction.") }
+        _ = try await enqueue(command).value
     }
     func moveProjects(fromOffsets offsets: IndexSet, toOffset destination: Int) {
         let order = snapshot.projects.map(\.id)

@@ -85,6 +85,9 @@ public indirect enum WorkspaceCommand: Codable, Sendable, Equatable {
     case removeProjectGroup(groupKey: String, expectedProjects: [ProjectGroupMemberReference], expectedThreadIDs: [UUID])
     case setProjectExpanded(projectID: UUID, expanded: Bool)
     case setProjectSortMode(ProjectSortMode)
+    case setProjectPinned(projectID: UUID, pinned: Bool)
+    case setThreadSortMode(ThreadSortMode)
+    case reorderThreads(threadIDs: [UUID], expectedOrder: [UUID])
     case setProjectGroupingMode(ProjectGroupingMode)
     case setProjectGroupingOverride(projectID: UUID, mode: ProjectGroupingMode?)
     case setProjectGroupExpanded(groupKey: String, expectedProjectIDs: [UUID], expanded: Bool)
@@ -1030,6 +1033,26 @@ struct WorkspaceDecision: Sendable {
             if preferences.sortMode != mode {
                 preferences.sortMode = mode; decision.snapshot.sidebarPreferences = preferences
             }
+        case .client(.setProjectPinned(let id, let pinned)):
+            guard decision.snapshot.projects.contains(where: { $0.id == id }) else { throw WorkspaceCommandError("This project is no longer available.") }
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            preferences.pinnedProjectIDs.removeAll { $0 == id }
+            if pinned { preferences.pinnedProjectIDs.append(id) }
+            decision.snapshot.sidebarPreferences = preferences
+        case .client(.setThreadSortMode(let mode)):
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            if mode == .manual, preferences.threadOrder.isEmpty {
+                preferences.threadOrder = decision.snapshot.orderedThreads.map(\.id)
+            }
+            preferences.threadSortMode = mode
+            decision.snapshot.sidebarPreferences = preferences
+        case .client(.reorderThreads(let order, let expected)):
+            guard decision.snapshot.effectiveSidebarPreferences.threadSortMode == .manual else { throw WorkspaceCommandError("Choose Custom sorting before moving chats.") }
+            guard decision.snapshot.customThreadOrder == expected,
+                  order.count == expected.count, Set(order) == Set(expected) else { throw WorkspaceCommandError("The chat order changed. Try moving the chat again.") }
+            var preferences = decision.snapshot.effectiveSidebarPreferences
+            preferences.threadOrder = order
+            decision.snapshot.sidebarPreferences = preferences
         case .client(.moveProject(let projectID, let before, let expected)):
             try decision.validateProjectOrder(expected)
             guard expected.contains(projectID), before.map({ expected.contains($0) }) ?? true else { throw WorkspaceCommandError("The project being moved is no longer available.") }
@@ -1498,7 +1521,7 @@ struct WorkspaceDecision: Sendable {
                 thread.draftAttachments += attachments
             case .removeAttachment(_, let attachmentID): thread.draftAttachments.removeAll { $0.id == attachmentID }
             case .abandonContextTransfer, .replaceComposerDraft, .discardComposerDraft, .threadActionUndo, .workspaceLifecycle, .setWorkspaceLifecyclePolicy: break // Routed through their atomic reducers above.
-            case .scheduledTask, .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
+            case .scheduledTask, .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .retryPostRunCheckpoint, .continueAfterPostRunCheckpoint, .settleThread, .resumeThread, .approveProjectScript, .stopProjectScript, .skipProjectScript, .retryProjectScript, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectPinned, .setThreadSortMode, .reorderThreads, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: break
             }
             if thread != decision.snapshot.threads[index] {
                 if case .editThread(_, .draft) = action {} else { thread.updatedAt = now }
@@ -2013,7 +2036,7 @@ extension WorkspaceCommand {
         case .discardComposerDraft(let discard): discard.expected.threadID
         case .threadActionUndo(let claim): claim.threadID
         case .abandonContextTransfer(let id, _, _): id
-        case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
+        case .acknowledgePromptSteering, .acknowledgePullRequestCheckout, .acknowledgePullRequestCreation, .acknowledgeConversationHistoryFiles, .dismissConversationHistoryRecall, .acknowledgeCheckpointRestore, .recallConversationHistoryPrompt, .addProject, .addProjectWithThread, .renameProject, .removeProject, .renameProjectGroup, .removeProjectGroup, .setProjectExpanded, .setProjectSortMode, .setProjectPinned, .setThreadSortMode, .reorderThreads, .setProjectGroupingMode, .setProjectGroupingOverride, .setProjectGroupExpanded, .setProjectGroupCheckout, .selectConversation, .moveProject, .reorderProjects, .reorderProjectGroups, .createThread, .saveACPAgent, .removeACPAgent, .startProjectClone, .cancelWorktreePreparation, .cancelProjectClone, .retryProjectClone: nil
         case .retryPostRunCheckpoint(let id, _, _), .continueAfterPostRunCheckpoint(let id, _, _), .settleThread(let id, _, _), .resumeThread(let id, _), .approveProjectScript(let id, _, _), .stopProjectScript(let id, _), .skipProjectScript(let id, _), .retryProjectScript(let id, _), .editThread(let id, _), .submit(let id, _), .submitFromAppMCP(let id, _, _), .submitCapturedClaude(let id, _, _), .submitCapturedPi(let id, _, _), .interrupt(let id), .interruptFromAppMCP(let id, _, _), .respond(let id, _, _), .removeQueued(let id, _), .editQueued(let id, _), .replaceQueuedText(let id, _, _, _), .moveQueued(let id, _, _, _), .resumeQueue(let id), .addAttachments(let id, _), .removeAttachment(let id, _): id
         }
     }

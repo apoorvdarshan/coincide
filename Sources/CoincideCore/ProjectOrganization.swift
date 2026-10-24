@@ -4,12 +4,32 @@ public enum ProjectSortMode: String, Codable, CaseIterable, Identifiable, Sendab
     case updatedAt = "updated_at"
     case createdAt = "created_at"
     case manual = "manual"
+    case name
+    case priority
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .updatedAt: "Last user message"
-        case .createdAt: "Created at"
-        case .manual: "Manual"
+        case .updatedAt: "Recently active"
+        case .createdAt: "Newest"
+        case .manual: "Custom"
+        case .name: "Name"
+        case .priority: "Priority (pinned first)"
+        }
+    }
+}
+
+public enum ThreadSortMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case updatedAt = "updated_at"
+    case createdAt = "created_at"
+    case priority, name, manual
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .updatedAt: "Recently active"
+        case .createdAt: "Newest"
+        case .priority: "Priority (pinned first)"
+        case .name: "Name"
+        case .manual: "Custom"
         }
     }
 }
@@ -55,14 +75,18 @@ public struct SidebarPreferences: Codable, Sendable, Equatable {
     public var groupExpandedByKey: [String: Bool]
     public var activeProjectByGroup: [String: UUID]
     public var selectedThreadID: UUID?
+    public var threadSortMode: ThreadSortMode
+    public var threadOrder: [UUID]
+    public var pinnedProjectIDs: [UUID]
     public init(sortMode: ProjectSortMode = .updatedAt, collapsedProjectIDs: [UUID] = [], groupingMode: ProjectGroupingMode = .repository,
                 groupingOverrides: [String: ProjectGroupingMode] = [:], groupExpandedByKey: [String: Bool] = [:], activeProjectByGroup: [String: UUID] = [:], selectedThreadID: UUID? = nil) {
         self.sortMode = sortMode; self.collapsedProjectIDs = collapsedProjectIDs
         self.groupingMode = groupingMode; self.groupingOverrides = groupingOverrides
         self.groupExpandedByKey = groupExpandedByKey; self.activeProjectByGroup = activeProjectByGroup
         self.selectedThreadID = selectedThreadID
+        self.threadSortMode = .priority; self.threadOrder = []; self.pinnedProjectIDs = []
     }
-    enum CodingKeys: String, CodingKey { case sortMode, collapsedProjectIDs, groupingMode, groupingOverrides, groupExpandedByKey, activeProjectByGroup, selectedThreadID }
+    enum CodingKeys: String, CodingKey { case sortMode, collapsedProjectIDs, groupingMode, groupingOverrides, groupExpandedByKey, activeProjectByGroup, selectedThreadID, threadSortMode, threadOrder, pinnedProjectIDs }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         sortMode = try values.decodeIfPresent(ProjectSortMode.self, forKey: .sortMode) ?? .updatedAt
@@ -72,11 +96,16 @@ public struct SidebarPreferences: Codable, Sendable, Equatable {
         groupExpandedByKey = try values.decodeIfPresent([String: Bool].self, forKey: .groupExpandedByKey) ?? [:]
         activeProjectByGroup = try values.decodeIfPresent([String: UUID].self, forKey: .activeProjectByGroup) ?? [:]
         selectedThreadID = try values.decodeIfPresent(UUID.self, forKey: .selectedThreadID)
+        threadSortMode = try values.decodeIfPresent(ThreadSortMode.self, forKey: .threadSortMode) ?? .priority
+        threadOrder = try values.decodeIfPresent([UUID].self, forKey: .threadOrder) ?? []
+        pinnedProjectIDs = try values.decodeIfPresent([UUID].self, forKey: .pinnedProjectIDs) ?? []
     }
     public func validate(projectIDs: Set<UUID>) throws {
         let collapsed = Set(collapsedProjectIDs)
         guard collapsed.count == collapsedProjectIDs.count else { throw CoincideError("A project cannot appear more than once in collapsed sidebar preferences.") }
         guard collapsed.isSubset(of: projectIDs) else { throw CoincideError("Collapsed sidebar preferences reference a project that does not exist.") }
+        guard Set(pinnedProjectIDs).count == pinnedProjectIDs.count, Set(pinnedProjectIDs).isSubset(of: projectIDs),
+              Set(threadOrder).count == threadOrder.count else { throw CoincideError("Sidebar ordering contains duplicate or unavailable items.") }
         guard activeProjectByGroup.values.allSatisfy({ projectIDs.contains($0) }),
               [Array(groupingOverrides.keys), Array(groupExpandedByKey.keys), Array(activeProjectByGroup.keys)].joined().allSatisfy({ !$0.isEmpty && !$0.contains("\0") && $0.utf8.count <= 65_536 }) else {
             throw CoincideError("Project grouping preferences contain an invalid checkout or key.")
@@ -87,6 +116,31 @@ public struct SidebarPreferences: Codable, Sendable, Equatable {
 public extension WorkspaceSnapshot {
     var effectiveSidebarPreferences: SidebarPreferences { sidebarPreferences ?? SidebarPreferences() }
     func isProjectExpanded(_ id: UUID) -> Bool { !effectiveSidebarPreferences.collapsedProjectIDs.contains(id) }
+    func isProjectPinned(_ id: UUID) -> Bool { effectiveSidebarPreferences.pinnedProjectIDs.contains(id) }
+
+    /// Newly created chats lead the custom list; switching sort modes preserves the saved order.
+    var customThreadOrder: [UUID] {
+        let saved = effectiveSidebarPreferences.threadOrder
+        let savedIDs = Set(saved), currentIDs = Set(threads.map(\.id))
+        return threads.filter { !savedIDs.contains($0.id) }.map(\.id) + saved.filter { currentIDs.contains($0) }
+    }
+
+    var orderedThreads: [CodingThread] {
+        let mode = effectiveSidebarPreferences.threadSortMode
+        let positions = Dictionary(uniqueKeysWithValues: customThreadOrder.enumerated().map { ($0.element, $0.offset) })
+        return threads.sorted { left, right in
+            if mode == .manual { return positions[left.id, default: .max] < positions[right.id, default: .max] }
+            if mode == .priority, left.isPinned != right.isPinned { return left.isPinned }
+            if mode == .name {
+                let comparison = left.title.localizedStandardCompare(right.title)
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+            }
+            let a = mode == .createdAt ? left.createdAt : left.updatedAt
+            let b = mode == .createdAt ? right.createdAt : right.updatedAt
+            if a != b { return a > b }
+            return left.id.uuidString < right.id.uuidString
+        }
+    }
 
     func physicalProjectKey(for id: UUID) -> String? { projects.first(where: { $0.id == id }).map(Self.physicalKey) }
     func isProjectGroupExpanded(_ key: String) -> Bool {
@@ -136,6 +190,14 @@ public extension WorkspaceSnapshot {
     var orderedProjectGroups: [ProjectGroup] {
         let groups = projectGroups, mode = effectiveSidebarPreferences.sortMode
         guard mode != .manual, groups.count > 1 else { return groups }
+        if mode == .name || mode == .priority || mode == .createdAt {
+            let positions = Dictionary(uniqueKeysWithValues: orderedProjects.enumerated().map { ($0.element.id, $0.offset) })
+            return groups.sorted { a, b in
+                let first = a.memberProjectIDs.compactMap { positions[$0] }.min() ?? .max
+                let second = b.memberProjectIDs.compactMap { positions[$0] }.min() ?? .max
+                return first < second
+            }
+        }
         let groupByProject = Dictionary(uniqueKeysWithValues: groups.flatMap { group in group.memberProjectIDs.map { ($0, group.key) } })
         var withThreads: Set<String> = [], latest: [String: Double] = [:]
         for thread in threads where !thread.isArchived {
@@ -174,12 +236,20 @@ public extension WorkspaceSnapshot {
         }
         let scored = projects.enumerated().map { index, project in
             let timestamp: Double?
-            if projectsWithThreads.contains(project.id) { timestamp = latest[project.id] }
-            else if mode == .createdAt { timestamp = Self.sortTimestamp(project.createdAt) }
+            if mode == .createdAt { timestamp = Self.sortTimestamp(project.createdAt) }
+            else if projectsWithThreads.contains(project.id) { timestamp = latest[project.id] }
             else { timestamp = Self.sortTimestamp(project.updatedAt) ?? Self.sortTimestamp(project.createdAt) }
             return (project: project, timestamp: timestamp, index: index)
         }
         return scored.sorted { left, right in
+            if mode == .priority {
+                let first = isProjectPinned(left.project.id), second = isProjectPinned(right.project.id)
+                if first != second { return first }
+            }
+            if mode == .name {
+                let comparison = left.project.name.localizedStandardCompare(right.project.name)
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+            }
             switch (left.timestamp, right.timestamp) {
             case (.some(let first), .some(let second)):
                 if first != second { return first > second }
@@ -199,7 +269,7 @@ public extension WorkspaceSnapshot {
     }
     private static func threadSortTimestamp(_ thread: CodingThread, mode: ProjectSortMode) -> Double? {
         switch mode {
-        case .updatedAt:
+        case .updatedAt, .priority, .name:
             let user = thread.visibleMessages.lazy.filter { $0.role == .user }.compactMap { sortTimestamp($0.createdAt) }.max()
             let queued = thread.queuedTurns.lazy.compactMap { sortTimestamp($0.createdAt) }.max()
             return [user, queued].compactMap { $0 }.max() ?? sortTimestamp(thread.updatedAt) ?? sortTimestamp(thread.createdAt)
@@ -232,6 +302,9 @@ extension WorkspaceSnapshot {
         let physical = Set(projects.map(Self.physicalKey)), groups = projectGroups
         let ids = Set(projects.map(\.id)), keys = Set(groups.map(\.key))
         preferences.collapsedProjectIDs.removeAll { !ids.contains($0) }
+        preferences.pinnedProjectIDs.removeAll { !ids.contains($0) }
+        let threadIDs = Set(threads.map(\.id))
+        preferences.threadOrder.removeAll { !threadIDs.contains($0) }
         if let selected = preferences.selectedThreadID, !threads.contains(where: { $0.id == selected }) { preferences.selectedThreadID = nil }
         preferences.groupingOverrides = preferences.groupingOverrides.filter { physical.contains($0.key) }
         preferences.groupExpandedByKey = preferences.groupExpandedByKey.filter { keys.contains($0.key) }

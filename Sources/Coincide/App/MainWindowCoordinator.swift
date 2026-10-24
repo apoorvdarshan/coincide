@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Explicit launch options for CLI-driven work; ordinary launches retain macOS placement.
+/// New main windows fill their display; CLI launches may explicitly choose the built-in screen.
 @MainActor
 enum NativeWindowLaunch {
     static var background: Bool { CommandLine.arguments.contains("--background") }
@@ -13,10 +13,15 @@ enum NativeWindowLaunch {
         }
     }
     static func place(_ window: NSWindow, on screen: NSScreen) {
-        let available = screen.visibleFrame.insetBy(dx: 16, dy: 12)
+        let available = screen.visibleFrame
         let size = CGSize(width: min(window.frame.width, available.width), height: min(window.frame.height, available.height))
         window.setFrame(NSRect(x: available.midX - size.width / 2, y: available.midY - size.height / 2,
                                width: size.width, height: size.height), display: true)
+    }
+    static func fill(_ window: NSWindow) {
+        guard !window.styleMask.contains(.fullScreen),
+              let screen = (builtIn ? builtInScreen : nil) ?? window.screen ?? NSScreen.main else { return }
+        window.setFrame(screen.visibleFrame, display: true)
     }
 }
 
@@ -78,9 +83,7 @@ final class MainWindowCoordinator {
     func register(_ window: NSWindow) {
         let id = ObjectIdentifier(window)
         guard windows[id] == nil else { awaitingPresentation = false; return }
-        if NativeWindowLaunch.builtIn, let screen = NativeWindowLaunch.builtInScreen {
-            NativeWindowLaunch.place(window, on: screen)
-        }
+        NativeWindowLaunch.fill(window)
         let registration = Registration(window)
         let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
             Task<Void, Never> { @MainActor [weak self] in _ = self?.windows.removeValue(forKey: id) }
@@ -94,7 +97,12 @@ final class MainWindowCoordinator {
         windows = windows.filter { $0.value.window != nil }
         guard let window = currentWindow, window.isVisible || window.isMiniaturized else { return false }
         if window.isMiniaturized { window.deminiaturize(nil) }
-        if NativeWindowLaunch.builtIn, let screen = NativeWindowLaunch.builtInScreen {
+        if let registration = windows[ObjectIdentifier(window)], registration.needsInitialFill {
+            // SwiftUI restoration and Dock geometry can settle after registration.
+            // Finish initial sizing once; reopening must not undo a manual resize.
+            NativeWindowLaunch.fill(window)
+            registration.needsInitialFill = false
+        } else if NativeWindowLaunch.builtIn, let screen = NativeWindowLaunch.builtInScreen {
             NativeWindowLaunch.place(window, on: screen)
         }
         if NativeWindowLaunch.background { window.orderFront(nil) }
@@ -105,6 +113,7 @@ final class MainWindowCoordinator {
     private final class Registration {
         weak var window: NSWindow?
         var observer: CloseObservation?
+        var needsInitialFill = true
         init(_ window: NSWindow) { self.window = window }
     }
     private final class CloseObservation: @unchecked Sendable {

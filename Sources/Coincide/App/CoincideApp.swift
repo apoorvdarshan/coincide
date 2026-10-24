@@ -98,7 +98,7 @@ struct CoincideApp: App {
 
 enum MainWindowSizing {
     static func size(fitting display: CGSize) -> CGSize {
-        CGSize(width: min(1280, max(1, display.width)), height: min(820, max(1, display.height)))
+        CGSize(width: max(1, display.width), height: max(1, display.height))
     }
 }
 
