@@ -162,6 +162,8 @@ jobs:
           name: coincide-native-ui-${{ github.sha }}-shard-${{ matrix.shard }}
           path: ${{ runner.temp }}/coincide-desktop-ui-artifacts
           if-no-files-found: error
+          # A re-run attempt must replace its shard's results, or the gate reads the old ones.
+          overwrite: true
           retention-days: 14
   native-ui:
     needs: [native-ui-shard, changes]
