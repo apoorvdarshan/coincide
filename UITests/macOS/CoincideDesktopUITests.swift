@@ -343,13 +343,18 @@ final class CoincideDesktopUITests: XCTestCase {
     @MainActor private func saveConfiguration(in app: XCUIApplication, expectsError: Bool = false) throws {
         let save = app.buttons["configuration-save"]
         try revealContentControl(save, in: app); XCTAssertTrue(save.isEnabled); save.click()
-        if expectsError { XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.waitForExistence(timeout: 5)) }
+        if expectsError {
+            // The result appears under the Save button and can sit just below the viewport.
+            let error = app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch
+            if !error.waitForExistence(timeout: 5) { try revealContentControl(error, in: app) }
+            XCTAssertTrue(error.exists)
+        }
         else {
-            // Saving replaces the document and re-renders the form; bring the result into view.
-            let saved = app.descendants(matching: .any).matching(identifier: "configuration-saved").firstMatch
-            if !saved.waitForExistence(timeout: 5) { try revealContentControl(saved, in: app) }
-            XCTAssertTrue(saved.exists)
-            XCTAssertFalse(save.isEnabled)
+            // A completed save leaves no unsaved changes, so Save disables. The confirmation
+            // label sits in a lazily rendered list and can leave the accessibility tree while
+            // scrolling; callers verify the file on disk.
+            XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == false"), object: save)],
+                                         timeout: 10) == .completed, "Save must complete and leave no unsaved changes.")
             XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.exists)
         }
     }
@@ -1059,7 +1064,8 @@ final class CoincideDesktopUITests: XCTestCase {
             let prompt = "Exercise native Claude question " + label
             try submitClaudeGUI(prompt, in: app)
             let submit = app.buttons["claude-question-submit"], cancel = app.buttons["claude-question-cancel"]
-            XCTAssertTrue(submit.waitForExistence(timeout: 10)); XCTAssertFalse(submit.isEnabled)
+            // The first turn launches the offline Claude process; CI has shown ~12 s for that.
+            XCTAssertTrue(submit.waitForExistence(timeout: label == "single" ? 30 : 10)); XCTAssertFalse(submit.isEnabled)
             XCTAssertTrue(cancel.isHittable)
             if label == "cancel" { cancel.click() }
             else {

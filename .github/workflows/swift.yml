@@ -3,8 +3,9 @@ on:
   push:
     branches: [main]
     paths: ['Sources/**', 'Tests/**', '!Tests/Fuzz/**', 'UITests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml', 'VERSION', 'docs/*-LICENSE.txt', 'docs/*-NOTICE.txt', 'docs/third-party-notices.json']
+  # Every pull request runs this workflow so the required `ci` check always
+  # reports; the changes job skips the macOS jobs when nothing they cover changed.
   pull_request:
-    paths: ['Sources/**', 'Tests/**', '!Tests/Fuzz/**', 'UITests/**', 'Package.swift', 'Package.resolved', 'script/**', '.github/workflows/swift.yml', 'VERSION', 'docs/*-LICENSE.txt', 'docs/*-NOTICE.txt', 'docs/third-party-notices.json']
   workflow_dispatch:
 permissions:
   contents: read
@@ -16,6 +17,7 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
+      swift: ${{ steps.paths.outputs.swift }}
       macos_ui: ${{ steps.paths.outputs.macos_ui }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,6 +30,8 @@ jobs:
         id: paths
         run: python3 script/macos_ui_ci.py changes
   build:
+    needs: [changes]
+    if: needs.changes.outputs.swift == 'true'
     runs-on: macos-26
     # Cold compilation has its own existing-sized budget. Listing tests builds
     # every test executable without running or substituting for any test. The
@@ -158,6 +162,8 @@ jobs:
           name: coincide-native-ui-${{ github.sha }}-shard-${{ matrix.shard }}
           path: ${{ runner.temp }}/coincide-desktop-ui-artifacts
           if-no-files-found: error
+          # A re-run attempt must replace its shard's results, or the gate reads the old ones.
+          overwrite: true
           retention-days: 14
   native-ui:
     needs: [native-ui-shard, changes]
@@ -176,3 +182,31 @@ jobs:
       - name: Enforce every isolated native UI runner outcome
         if: always() && needs.native-ui-shard.result != 'success'
         run: exit 1
+  ci:
+    # The single required status check. Every job above must succeed, or be
+    # skipped because the change does not affect it.
+    if: always()
+    needs: [changes, build, test, cli-e2e, native-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every applicable job to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          needs = json.loads(os.environ["NEEDS"])
+          changes = needs["changes"]
+          if changes["result"] != "success":
+              raise SystemExit("The change classification did not succeed.")
+          required = []
+          if changes["outputs"].get("swift") == "true":
+              required += ["build", "test", "cli-e2e"]
+          if changes["outputs"].get("macos_ui") == "true":
+              required.append("native-ui")
+          failed = {name: needs[name]["result"] for name in required if needs[name]["result"] != "success"}
+          failed.update({name: value["result"] for name, value in needs.items() if value["result"] in ("failure", "cancelled")})
+          if failed:
+              raise SystemExit("Required jobs did not succeed: " + json.dumps(failed, sort_keys=True))
+          print("Required jobs succeeded: " + (", ".join(required) or "none needed for this change"))
+          PY

@@ -221,6 +221,31 @@ class NativeUIConfigurationTests(unittest.TestCase):
             self.assertTrue(ci.needs_native_ui([path]), path)
         self.assertFalse(ci.needs_native_ui(["README.md", "Tests/CoincideCoreTests/WorkspaceTests.swift", "docs/VALIDATION.md"]))
 
+    def test_swift_filter_matches_push_paths_and_skips_docs_and_fuzz_only_changes(self):
+        for path in ["Sources/CoincideCore/Models.swift", "Tests/CoincideCoreTests/WorkspaceTests.swift", "UITests/macOS/cli_e2e.py",
+                     "script/coincide", "Package.swift", "Package.resolved", ".github/workflows/swift.yml", "VERSION",
+                     "docs/T3-CODE-LICENSE.txt", "docs/SwiftTerm-LICENSE.txt", "docs/YAMS-NOTICE.txt", "docs/third-party-notices.json"]:
+            self.assertTrue(ci.needs_swift([path]), path)
+        for path in ["README.md", "docs/VALIDATION.md", "Tests/Fuzz/coincide_cli_fuzzer.py", ".github/workflows/codeql.yml", "LICENSE", "SECURITY.md"]:
+            self.assertFalse(ci.needs_swift([path]), path)
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
+        push_paths = workflow.split("  push:\n", 1)[1].split("\n", 2)[1]
+        for pattern in ("'Sources/**'", "'Tests/**'", "'!Tests/Fuzz/**'", "'UITests/**'", "'script/**'", "'VERSION'"):
+            self.assertIn(pattern, push_paths)
+
+    def test_single_required_gate_always_reports_and_requires_applicable_jobs(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/swift.yml").read_text()
+        pull = workflow.split("  pull_request:\n", 1)[1].split("  workflow_dispatch:", 1)[0]
+        self.assertNotIn("paths:", pull, "Pull requests must always run so the required ci check reports.")
+        build = workflow.split("  build:\n", 1)[1].split("  test:\n", 1)[0]
+        self.assertIn("needs: [changes]", build)
+        self.assertIn("if: needs.changes.outputs.swift == 'true'", build)
+        gate = workflow.split("  ci:\n", 1)[1]
+        self.assertIn("if: always()", gate)
+        self.assertIn("needs: [changes, build, test, cli-e2e, native-ui]", gate)
+        for value in ('"build", "test", "cli-e2e"', 'required.append("native-ui")', '("failure", "cancelled")'):
+            self.assertIn(value, gate)
+
     def test_results_require_every_discovered_test_without_silent_skips(self):
         count = len(ci.native_test_identifiers())
         self.assertEqual(ci.verify_results(dict(totalTestCount=count, passedTests=count, failedTests=0, skippedTests=0), expected=count), count)

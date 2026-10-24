@@ -147,9 +147,10 @@ def verify_results(summary, expected=None):
     return total
 
 
-def classify_event(event, event_name):
+def changed_paths(event, event_name):
+    """Return the changed paths, or None when every check must run."""
     if event_name == "workflow_dispatch":
-        return True
+        return None
     if event_name == "pull_request":
         base, head = event["pull_request"]["base"]["sha"], event["pull_request"]["head"]["sha"]
         arguments = ["git", "diff", "--name-only", "-z", base + "..." + head]
@@ -160,7 +161,20 @@ def classify_event(event, event_name):
     else:
         raise ValueError("Unsupported workflow event; native UI checks cannot be classified safely.")
     output = subprocess.run(arguments, check=True, stdout=subprocess.PIPE).stdout
-    return needs_native_ui([path.decode("utf-8", "surrogateescape") for path in output.split(b"\0") if path])
+    return [path.decode("utf-8", "surrogateescape") for path in output.split(b"\0") if path]
+
+
+def needs_swift(paths):
+    """Mirror the push path filter: anything that can change the build or its tests."""
+    exact = {"Package.swift", "Package.resolved", ".github/workflows/swift.yml", "VERSION", "docs/third-party-notices.json"}
+    return any((path.startswith(("Sources/", "Tests/", "UITests/", "script/")) and not path.startswith("Tests/Fuzz/"))
+               or path in exact or (path.startswith("docs/") and path.endswith(("-LICENSE.txt", "-NOTICE.txt")))
+               for path in paths)
+
+
+def classify_event(event, event_name):
+    paths = changed_paths(event, event_name)
+    return paths is None or needs_native_ui(paths)
 
 
 def main():
@@ -181,9 +195,13 @@ def main():
     arguments = parser.parse_args()
     if arguments.command == "changes":
         with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as handle:
-            needed = classify_event(json.load(handle), os.environ["GITHUB_EVENT_NAME"])
+            paths = changed_paths(json.load(handle), os.environ["GITHUB_EVENT_NAME"])
+        swift = paths is None or needs_swift(paths)
+        needed = swift and (paths is None or needs_native_ui(paths))
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+            handle.write("swift=" + str(swift).lower() + "\n")
             handle.write("macos_ui=" + str(needed).lower() + "\n")
+        print("Swift checks required: " + str(swift).lower())
         print("Native UI checks required: " + str(needed).lower())
     elif arguments.command == "prepare":
         path = Path(arguments.xctestrun)

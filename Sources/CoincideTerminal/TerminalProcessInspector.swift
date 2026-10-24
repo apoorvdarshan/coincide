@@ -137,7 +137,9 @@ public enum TerminalProcessInspector {
 
     /// The working directory of the terminal's foreground job, or of the shell.
     public static func currentDirectory(shellPID: pid_t) -> String? {
-        guard shellPID > 0 else { return nil }
+        // Between fork and exec the shell still runs this process's image and
+        // working directory; that is not the terminal's directory yet.
+        guard shellPID > 0, executablePath(shellPID) != executablePath(getpid()) else { return nil }
         if let info = bsdInfo(shellPID), info.e_tpgid > 0, pid_t(info.e_tpgid) != shellPID,
            let directory = workingDirectory(of: pid_t(info.e_tpgid)) { return directory }
         return workingDirectory(of: shellPID)
@@ -172,6 +174,12 @@ public enum TerminalProcessInspector {
         guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
         return normalizedName(String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
     }
+    private static func executablePath(_ pid: pid_t) -> String? {
+        var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &path, UInt32(path.count)) > 0, let end = path.firstIndex(of: 0), end > 0 else { return nil }
+        return String(decoding: path[..<end].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
     private static func workingDirectory(of pid: pid_t) -> String? {
         var info = proc_vnodepathinfo()
         let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
