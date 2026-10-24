@@ -343,7 +343,12 @@ final class CoincideDesktopUITests: XCTestCase {
     @MainActor private func saveConfiguration(in app: XCUIApplication, expectsError: Bool = false) throws {
         let save = app.buttons["configuration-save"]
         try revealContentControl(save, in: app); XCTAssertTrue(save.isEnabled); save.click()
-        if expectsError { XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch.waitForExistence(timeout: 5)) }
+        if expectsError {
+            // The result appears under the Save button and can sit just below the viewport.
+            let error = app.descendants(matching: .any).matching(identifier: "configuration-error").firstMatch
+            if !error.waitForExistence(timeout: 5) { try revealContentControl(error, in: app) }
+            XCTAssertTrue(error.exists)
+        }
         else {
             // Saving replaces the document and re-renders the form; bring the result into view.
             let saved = app.descendants(matching: .any).matching(identifier: "configuration-saved").firstMatch
