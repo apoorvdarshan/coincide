@@ -30,11 +30,14 @@ public final class ThreadRunner {
         /// returned while the turn ran, or the turn produced output after the prompt was sent), or for a turn
         /// it started itself, it had already seen everything before. Only then are the turn's items counted as seen.
         var delivered = false
+        /// The model the turn runs with, recorded on its items even if the thread's selection changes meanwhile.
+        var modelID: String?
 
-        init(provider: ProviderKind, startedAt: Date, userItemID: UUID) {
+        init(provider: ProviderKind, startedAt: Date, userItemID: UUID, modelID: String? = nil) {
             self.provider = provider
             self.startedAt = startedAt
             self.userItemID = userItemID
+            self.modelID = modelID
         }
     }
 
@@ -150,7 +153,7 @@ public final class ThreadRunner {
         store.append(userItem, to: threadID)
         store.updateThread(threadID, touch: true) { $0.draft = nil }
         itemMaps[threadID] = [:]
-        turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID)
+        turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID, modelID: selection.modelID)
         resetTurnUsage(threadID, provider: provider, modelID: selection.modelID)
         store.notify(.runState(threadID))
 
@@ -430,7 +433,7 @@ public final class ThreadRunner {
 
     private func handle(_ event: AgentEvent, threadID: UUID, provider: ProviderKind, session: AgentSession) {
         lastActivity[threadID, default: [:]][provider] = Date()
-        let modelID = store.thread(threadID)?.selection.modelID
+        let modelID = self.modelID(for: provider, in: threadID)
         // Output from the provider of the running turn shows it has the prompt, once the prompt was sent.
         // Before that it comes from something else, such as a turn the agent started on its own meanwhile.
         let turnOfProvider = turns[threadID]?.provider == provider
@@ -592,6 +595,13 @@ public final class ThreadRunner {
         }
     }
 
+    /// The model `provider` works with on the thread: its running turn's, or the one it was last sent a message
+    /// with. The thread's selection may have moved on to another model or provider meanwhile.
+    private func modelID(for provider: ProviderKind, in threadID: UUID) -> String? {
+        if let turn = turns[threadID], turn.provider == provider, let modelID = turn.modelID { return modelID }
+        return store.thread(threadID)?.items.last { $0.provider == provider && $0.modelID != nil }?.modelID
+    }
+
     /// Events that only arrive once the provider is working on the prompt.
     private static func showsDelivery(_ event: AgentEvent) -> Bool {
         switch event {
@@ -613,7 +623,8 @@ public final class ThreadRunner {
         let text = note ?? String(localized: "\(provider.displayName) continued on its own.")
         let notice = TranscriptItem(kind: .notice, text: text, provider: provider)
         store.append(notice, to: threadID)
-        var state = TurnState(provider: provider, startedAt: Date(), userItemID: notice.id)
+        var state = TurnState(
+            provider: provider, startedAt: Date(), userItemID: notice.id, modelID: modelID(for: provider, in: threadID))
         state.isAgentInitiated = true
         state.isStarting = false
         state.promptSent = true

@@ -278,6 +278,25 @@ struct ThreadRunnerTests {
         #expect(claude.last?.sent.last?.handoffRecap?.contains("Codex did it") == true)
     }
 
+    @Test func itemsCarryTheModelOfTheProviderThatMadeThem() async {
+        await completeTurn("one", reply: "done")
+        let session = claude.last!
+        // The thread moved on to Codex; Claude then answers a finished background task on its own.
+        store.updateThread(threadID) { $0.selection = ModelSelection(provider: .codex, modelID: "gpt") }
+        session.emit(.agentTurnStarted(note: nil))
+        session.emit(.assistantText(itemID: "bg", text: "The background tests passed."))
+        session.emit(.turnCompleted(.completed))
+        #expect(items.last { $0.kind == .assistant }?.modelID == "m")
+
+        // Picking another model during a turn does not relabel the running turn's output.
+        store.updateThread(threadID) { $0.selection = ModelSelection(provider: .claude, modelID: "m") }
+        session.onSend = { _, _ in }
+        await runner.send(threadID: threadID, text: "two")
+        store.updateThread(threadID) { $0.selection = ModelSelection(provider: .claude, modelID: "other") }
+        session.emit(.assistantText(itemID: "r2", text: "Working on it."))
+        #expect(items.last?.modelID == "m")
+    }
+
     @Test func theInputCarriesTheRecapForANewNativeSession() async {
         await completeTurn("one", reply: "Claude did it")
         select(.codex)
