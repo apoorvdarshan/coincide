@@ -130,6 +130,8 @@ final class FakePiTransport: PiTransport {
     var onLine: ((String) -> Void)?
     var onExit: ((Int32, String) -> Void)?
     var reply: ((JSONValue) -> JSONValue?)?
+    /// Makes the process exit right after it starts, as Pi does when it cannot fork a session.
+    var exitOnStart: (status: Int32, stderr: String)?
     private(set) var isRunning = false
     private(set) var written: [JSONValue] = []
     private(set) var inputClosed = false
@@ -142,6 +144,7 @@ final class FakePiTransport: PiTransport {
 
     func start() throws {
         isRunning = true
+        if let exitOnStart { Task { self.exit(status: exitOnStart.status, stderr: exitOnStart.stderr) } }
     }
 
     func write(_ line: String) {
@@ -189,7 +192,12 @@ final class FakePiTransport: PiTransport {
 @MainActor
 final class FakePi {
     var transports: [FakePiTransport] = []
-    var sessionFile = "/fake/pi/sessions/2026-10-27T10-00-00-000Z_first.jsonl"
+    /// Unique per test: "Always allow" answers are remembered per session file for the app's lifetime.
+    var sessionFile = "/fake/pi/sessions/2026-10-27T10-00-00-000Z_\(UUID().uuidString).jsonl"
+    /// Where `--fork` puts the forked session; nil makes Pi exit, as when the source cannot be forked.
+    var forkedSessionFile: String? = "/fake/pi/sessions/2026-10-27T11-00-00-000Z_\(UUID().uuidString).jsonl"
+    /// Whether `get_commands` lists Coincide's extension command, as it does once Pi loaded the extension.
+    var extensionLoaded = true
     var model: JSONValue? = PiFixtures.deepseek
     var thinkingLevel = "high"
     var models: [JSONValue] = [PiFixtures.deepseek, PiFixtures.sonnet]
@@ -210,6 +218,13 @@ final class FakePi {
         let transport = FakePiTransport(arguments: arguments, environment: environment)
         transport.reply = { [unowned self] record in self.response(to: record) }
         transports.append(transport)
+        if arguments.contains("--fork") {
+            if let forkedSessionFile {
+                sessionFile = forkedSessionFile
+            } else {
+                transport.exitOnStart = (1, "Error: Cannot fork: source session file is empty or invalid\n")
+            }
+        }
         return transport
     }
 
@@ -265,7 +280,19 @@ final class FakePi {
         case "get_session_stats":
             response["data"] = stats
         case "prompt":
-            response["data"] = ["disposition": .string(promptDisposition)]
+            let handoff = record["message"]?.string?.hasPrefix("/\(PiExtension.handoffCommand) ") == true
+            response["data"] = ["disposition": .string(handoff ? "handled" : promptDisposition)]
+        case "get_commands":
+            var commands: [JSONValue] = [
+                ["name": "skill:review", "source": "skill", "sourceInfo": ["path": "/skills/review/SKILL.md", "source": "auto"]]
+            ]
+            if extensionLoaded {
+                commands.append([
+                    "name": .string(PiExtension.handoffCommand), "source": "extension",
+                    "sourceInfo": ["path": .string("/caches/Pi/" + PiExtension.fileName), "source": "cli"],
+                ])
+            }
+            response["data"] = ["commands": .array(commands)]
         case "compact":
             response["data"] = ["summary": "Summary", "tokensBefore": 1901, "estimatedTokensAfter": 1890]
         default:
@@ -290,6 +317,10 @@ final class PiEventLog {
 
     var approvals: [ApprovalRequest] {
         events.compactMap { if case .approvalRequested(let request) = $0 { request } else { nil } }
+    }
+
+    var questions: [UserInputRequest] {
+        events.compactMap { if case .userInputRequested(let request) = $0 { request } else { nil } }
     }
 
     var notices: [String] {

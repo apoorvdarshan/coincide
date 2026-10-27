@@ -106,6 +106,12 @@ public final class PiProvider: AgentProvider {
         executable: URL, environment: [String: String]
     ) async throws -> (models: [ModelOption]?, providers: [String]) {
         let client = PiRPCClient(transport: discoveryTransport(executable, environment))
+        // Nobody can answer a dialog an extension raises in this short-lived process; dismissing it keeps
+        // Pi from waiting on it instead of answering.
+        client.onEvent = { [weak client] record in
+            guard record["type"]?.string == "extension_ui_request", let dialog = PiDialog(record, tool: { _ in nil }) else { return }
+            client?.send(dialog.cancellation)
+        }
         defer { client.shutDown(grace: .seconds(1)) }
         do {
             try client.start()

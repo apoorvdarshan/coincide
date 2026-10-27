@@ -1,5 +1,8 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 
 @testable import CoincideKit
 
@@ -87,6 +90,26 @@ struct PiModelTests {
         #expect(PiModels.providers(in: ["models": [PiFixtures.deepseek, PiFixtures.sonnet, PiFixtures.sonnetOnOpenRouter]]) == ["openrouter", "anthropic"])
     }
 
+    @Test func handoffRecapSplitsOffTheUsersMessage() throws {
+        let thread = ChatThread(
+            projectID: UUID(), selection: ModelSelection(provider: .pi, modelID: "default"),
+            items: [TranscriptItem(kind: .user, text: "Fix the bug"), TranscriptItem(kind: .assistant, text: "Fixed.", provider: .codex)],
+            sessions: [.pi: ProviderSessionRef(sessionID: "/s.jsonl", seenItemCount: 0)])
+        let message = "/skill:review check\n\nthe parser"
+        let text = Handoff.prompt(for: message, thread: thread, provider: .pi)
+        let prompt = PiPrompt(text)
+        #expect(prompt.message == message)
+        let recap = try #require(prompt.recap)
+        #expect(recap.hasPrefix("<conversation_handoff>\n"))
+        #expect(recap.contains("</conversation_handoff>"))
+        #expect(recap.contains("Codex:\nFixed."))
+        #expect(!recap.contains("/skill:review"))
+        #expect(prompt.needsSeparateRecap)
+        #expect(!PiPrompt(Handoff.prompt(for: "Carry on", thread: thread, provider: .pi)).needsSeparateRecap)
+        #expect(PiPrompt("/compact") == PiPrompt(message: "/compact"))
+        #expect(PiPrompt("<conversation_handoff>\nno end") == PiPrompt(message: "<conversation_handoff>\nno end"))
+    }
+
     @Test func compactCommandMatchesT3() {
         #expect(PiCompactCommand.parse("/compact") == PiCompactCommand())
         #expect(PiCompactCommand.parse("  /compact   ") == PiCompactCommand())
@@ -104,6 +127,36 @@ struct PiModelTests {
         let payload = try PiImages.payload([png.path])
         #expect(payload == [["type": "image", "data": .string(bytes.base64EncodedString()), "mimeType": "image/png"]])
         #expect(throws: AgentError.self) { try PiImages.payload([directory.appendingPathComponent("missing.png").path]) }
+    }
+
+    @Test func imageTypesComeFromTheirData() throws {
+        let directory = piScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // A JPEG saved with a .png name is still a JPEG; a TIFF is converted to PNG.
+        let jpeg = directory.appendingPathComponent("photo.png")
+        try Self.image(type: .jpeg).write(to: jpeg)
+        #expect(try PiImages.payload([jpeg.path]).first?["mimeType"] == "image/jpeg")
+        let tiff = directory.appendingPathComponent("scan.tiff")
+        try Self.image(type: .tiff).write(to: tiff)
+        let converted = try #require(try PiImages.payload([tiff.path]).first)
+        #expect(converted["mimeType"] == "image/png")
+        let bytes = try #require(converted["data"]?.string.flatMap { Data(base64Encoded: $0) })
+        #expect(bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+    }
+
+    private static func image(type: UTType) throws -> Data {
+        let context = try #require(
+            CGContext(
+                data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        let image = try #require(context.makeImage())
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data as CFMutableData, type.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
     }
 }
 
@@ -176,6 +229,25 @@ struct PiToolTests {
         #expect(PiTools.todoMarkdown(statuses) == "- [ ] **plan**\n- [x] done")
         #expect(PiTools.todoMarkdown(["details": ["todos": []]]) == "No todos.")
         #expect(PiTools.todoMarkdown(["content": []]) == nil)
+    }
+
+    @Test func pathsInsideTheWorkingFolderAreShownRelative() {
+        let base = "/Users/me/project"
+        #expect(PiTools.info(id: "e", name: "edit", args: ["path": "/Users/me/project/Sources/App.swift"], relativeTo: base).title == "Edit Sources/App.swift")
+        #expect(PiTools.info(id: "r", name: "read", args: ["path": "/etc/hosts"], relativeTo: base).title == "Read /etc/hosts")
+        #expect(PiTools.info(id: "g", name: "grep", args: ["pattern": "x", "path": "/Users/me/project/Tests"], relativeTo: base).title == "Search for `x` in Tests")
+        #expect(PiTools.displayPath("/Users/me/projects/other.swift", relativeTo: base) == "/Users/me/projects/other.swift")
+        #expect(PiTools.displayPath("/Users/me/project", relativeTo: base) == "/Users/me/project")
+        #expect(PiTools.displayPath("relative.swift", relativeTo: base) == "relative.swift")
+        #expect(PiTools.displayPath("/a/b", relativeTo: nil) == "/a/b")
+    }
+
+    @Test func editsSentAsAStringOrAnObjectStillShowADiff() {
+        let asString = PiTools.info(id: "e", name: "edit", args: ["path": "a.ts", "edits": #"[{"oldText":"old","newText":"new"}]"#])
+        #expect(asString.detail == "--- a.ts\n+++ a.ts\n@@\n-old\n+new")
+        let asObject = PiTools.info(id: "e", name: "edit", args: ["path": "a.ts", "edits": ["oldText": "x", "newText": "y"]])
+        #expect(asObject.detail == "--- a.ts\n+++ a.ts\n@@\n-x\n+y")
+        #expect(PiTools.info(id: "e", name: "edit", args: ["path": "a.ts", "edits": "not json"]).detail == nil)
     }
 
     @Test func alwaysAllowRemembersTheExactSubject() {
@@ -448,14 +520,16 @@ struct PiDialogTests {
         let record: JSONValue = ["type": "extension_ui_request", "id": "ui-1", "method": "confirm", "title": "Allow bash?", "message": .string(marker)]
         let dialog = try #require(PiDialog(record, tool: knownTool))
         #expect(
-            dialog.request
+            dialog.approval
                 == ApprovalRequest(
                     id: "ui-1", category: .command, title: "Run `echo coincide-ok`", detail: "echo coincide-ok",
                     options: ApprovalRequest.standardOptions, toolCallID: "call_1"))
+        #expect(dialog.toolCallID == "call_1")
         #expect(dialog.rememberKey == "tool\u{0}bash\u{0}echo coincide-ok")
-        #expect(dialog.response(for: "allow") == ["type": "extension_ui_response", "id": "ui-1", "confirmed": true])
-        #expect(dialog.response(for: "allow_always") == ["type": "extension_ui_response", "id": "ui-1", "confirmed": true])
-        #expect(dialog.response(for: "deny") == ["type": "extension_ui_response", "id": "ui-1", "confirmed": false])
+        #expect(dialog.response(optionID: "allow", text: nil) == ["type": "extension_ui_response", "id": "ui-1", "confirmed": true])
+        #expect(dialog.response(optionID: "allow_always", text: nil) == ["type": "extension_ui_response", "id": "ui-1", "confirmed": true])
+        #expect(dialog.response(optionID: "deny", text: nil) == ["type": "extension_ui_response", "id": "ui-1", "confirmed": false])
+        #expect(dialog.response(optionID: "unknown", text: nil) == ["type": "extension_ui_response", "id": "ui-1", "cancelled": true])
         #expect(dialog.declines("deny"))
         #expect(!dialog.declines("allow"))
         #expect(dialog.timeout == nil)
@@ -468,42 +542,66 @@ struct PiDialogTests {
             "message": "This project has .pi/extensions.", "timeout": 5000,
         ]
         let dialog = try #require(PiDialog(record) { _ in nil })
-        #expect(dialog.request.title == "Run project extensions?")
-        #expect(dialog.request.detail == "This project has .pi/extensions.")
-        #expect(dialog.request.category == .other)
-        #expect(dialog.request.toolCallID == nil)
+        let request = try #require(dialog.approval)
+        #expect(request.title == "Run project extensions?")
+        #expect(request.detail == "This project has .pi/extensions.")
+        #expect(request.category == .other)
+        #expect(request.toolCallID == nil)
         #expect(dialog.rememberKey == "confirm\u{0}Run project extensions?\u{0}This project has .pi/extensions.")
         #expect(dialog.timeout == .milliseconds(5000))
     }
 
-    @Test func selectOffersEachChoiceAndKeepsEmptyValues() throws {
+    @Test func selectBecomesAQuestionAndKeepsEmptyValues() throws {
         // From T3's "emits a valid empty select option and returns its original value".
-        let record: JSONValue = ["type": "extension_ui_request", "id": "ui-select", "method": "select", "title": "Pick a tag", "options": ["stable", ""]]
+        let record: JSONValue = ["type": "extension_ui_request", "id": "ui-select", "method": "select", "title": "Pick a tag", "options": ["stable", "", "stable", "beta"]]
         let dialog = try #require(PiDialog(record) { _ in nil })
-        #expect(dialog.request.options.map(\.label) == ["stable", "Empty value", "Cancel"])
-        #expect(dialog.request.options.map(\.kind) == [.allowOnce, .allowOnce, .cancel])
-        #expect(dialog.response(for: "option.1") == ["type": "extension_ui_response", "id": "ui-select", "value": ""])
-        #expect(dialog.response(for: "cancel") == ["type": "extension_ui_response", "id": "ui-select", "cancelled": true])
-        #expect(!dialog.declines("option.0"))
-        #expect(dialog.declines("cancel"))
+        #expect(dialog.approval == nil)
+        let request = try #require(dialog.question)
+        #expect(request.id == "ui-select")
+        let question = try #require(request.questions.first)
+        #expect(question.id == "ui-select")
+        #expect(question.prompt == "Pick a tag")
+        #expect(question.options.map(\.label) == ["stable", PiDialog.emptyChoiceLabel, "beta"])
+        #expect(dialog.response(answers: ["ui-select": [PiDialog.emptyChoiceLabel]]) == ["type": "extension_ui_response", "id": "ui-select", "value": ""])
+        #expect(dialog.response(answers: ["ui-select": ["beta"]]) == ["type": "extension_ui_response", "id": "ui-select", "value": "beta"])
+        #expect(dialog.response(answers: [:]) == ["type": "extension_ui_response", "id": "ui-select", "cancelled": true])
+        #expect(dialog.response(answers: ["ui-select": ["nightly"]]) == ["type": "extension_ui_response", "id": "ui-select", "cancelled": true])
+        #expect(dialog.rememberKey == nil)
     }
 
-    @Test func inputAndEditorCanBeAnsweredOrDismissed() throws {
-        let input = try #require(PiDialog(["id": "i", "method": "input", "title": "Which database?", "placeholder": ""]) { _ in nil })
-        #expect(input.response(for: "empty") == ["type": "extension_ui_response", "id": "i", "value": ""])
-        #expect(input.request.detail == nil)
-        let prefill = "  fix(server): retain full editor content\n"
+    @Test func inputAndEditorAskForText() throws {
+        // From T3's "asks an input dialog's title when its placeholder is blank".
+        let title = "Which database?\n1. Postgres\n2. Type something.\nType your answer:"
+        let input = try #require(PiDialog(["id": "i", "method": "input", "title": .string(title), "placeholder": ""]) { _ in nil })
+        let ask = try #require(input.approval)
+        #expect(ask.title == "Which database?…")
+        #expect(ask.detail == title)
+        #expect(ask.textInput == TextInputSpec())
+        #expect(input.response(optionID: PiDialog.submitID, text: "SQLite") == ["type": "extension_ui_response", "id": "i", "value": "SQLite"])
+        #expect(input.response(optionID: PiDialog.submitID, text: nil) == ["type": "extension_ui_response", "id": "i", "value": ""])
+        #expect(input.response(optionID: PiDialog.cancelID, text: "x") == ["type": "extension_ui_response", "id": "i", "cancelled": true])
+        #expect(input.declines(PiDialog.cancelID))
+        #expect(!input.declines(PiDialog.submitID))
+
+        // From T3's "keeps the complete editor prefill editable and returns exact edited text".
+        let prefill = "  fix(server): retain full editor content\n\n" + String(repeating: "detail\n", count: 500) + "  "
         let editor = try #require(PiDialog(["id": "e", "method": "editor", "title": "Commit message", "prefill": .string(prefill)]) { _ in nil })
-        #expect(editor.request.detail == prefill)
-        #expect(editor.response(for: "keep") == ["type": "extension_ui_response", "id": "e", "value": .string(prefill)])
-        #expect(editor.response(for: "unknown") == ["type": "extension_ui_response", "id": "e", "cancelled": true])
+        #expect(editor.approval?.textInput == TextInputSpec(initialText: prefill, isMultiline: true))
+        #expect(editor.approval?.title == "Commit message")
+        let edited = "  fix(server): edited commit message\n\n"
+        #expect(editor.response(optionID: PiDialog.submitID, text: edited) == ["type": "extension_ui_response", "id": "e", "value": .string(edited)])
+        #expect(editor.response(optionID: PiDialog.submitID, text: "") == ["type": "extension_ui_response", "id": "e", "value": ""])
+        #expect(editor.response(optionID: PiDialog.submitID, text: nil) == ["type": "extension_ui_response", "id": "e", "value": .string(prefill)])
+        #expect(editor.cancellation == ["type": "extension_ui_response", "id": "e", "cancelled": true])
     }
 
-    @Test func notificationsAreNotDialogs() {
+    @Test func notificationsAreNotDialogsAndTimeoutsStayInRange() {
         #expect(PiDialog(["id": "n", "method": "notify", "message": "hi"]) { _ in nil } == nil)
         #expect(PiDialog(["id": "s", "method": "setStatus", "statusKey": "k"]) { _ in nil } == nil)
         #expect(PiDialog(["method": "confirm", "title": "no id"]) { _ in nil } == nil)
         #expect(PiDialog(["id": "x", "method": "select", "options": [], "timeout": -5]) { _ in nil }?.timeout == .zero)
+        #expect(PiDialog(["id": "x", "method": "confirm", "timeout": 0]) { _ in nil }?.timeout == nil)
+        #expect(PiDialog(["id": "x", "method": "confirm", "timeout": 1e300]) { _ in nil }?.timeout == .seconds(86_400))
     }
 }
 
@@ -526,8 +624,21 @@ struct PiExtensionTests {
         #expect(source.contains(#"const APPROVAL_MARKER = "coincide.toolApproval";"#))
         #expect(source.contains(#"const PLAN_TOOL = "propose_plan";"#))
         #expect(source.contains(#"const PLAN_BLOCK_PREFIX = "Plan mode is on, so ";"#))
+        #expect(source.contains(#"const HANDOFF_COMMAND = "coincide-handoff";"#))
+        #expect(source.contains("pi.registerCommand(HANDOFF_COMMAND"))
         #expect(source.contains(#"import { Type } from "typebox";"#))
         #expect(!source.contains("\\#("))
+    }
+
+    @Test func loadedExtensionIsFoundInPisCommands() {
+        let ours: JSONValue = ["name": "coincide-handoff", "source": "extension", "sourceInfo": ["path": "/Users/me/Library/Caches/Coincide/Pi/coincide-pi-extension.ts"]]
+        let renamed: JSONValue = ["name": "coincide-handoff:2", "source": "extension", "sourceInfo": ["path": "/x/coincide-pi-extension.ts"]]
+        let impostor: JSONValue = ["name": "coincide-handoff", "source": "extension", "sourceInfo": ["path": "/Users/me/.pi/agent/extensions/other.ts"]]
+        #expect(PiExtension.handoffCommandName(in: ["commands": [impostor, ours]]) == "coincide-handoff")
+        #expect(PiExtension.handoffCommandName(in: ["commands": [renamed]]) == "coincide-handoff:2")
+        #expect(PiExtension.handoffCommandName(in: ["commands": [impostor]]) == nil)
+        #expect(PiExtension.handoffCommandName(in: ["commands": []]) == nil)
+        #expect(PiExtension.handoffCommandName(in: nil) == nil)
     }
 
     @Test func launchArgumentsAndPolicyEnvironment() {

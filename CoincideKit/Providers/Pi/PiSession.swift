@@ -21,6 +21,8 @@ public final class PiSession: AgentSession {
         var abort: Duration = .seconds(4)
         var exitGrace: Duration = .seconds(2)
         var probeRetry: Duration = .milliseconds(100)
+        /// How soon to ask again when Pi is still busy after settling, in case it goes idle without saying so.
+        var busyRecheck: Duration = .seconds(2)
     }
 
     typealias TransportFactory = @MainActor (_ arguments: [String], _ environment: [String: String]) -> PiTransport
@@ -29,12 +31,17 @@ public final class PiSession: AgentSession {
     private struct Policy: Equatable {
         var accessMode: AccessMode
         var interactionMode: InteractionMode
+
+        /// Coincide's extension enforces approvals and plan mode, so those cannot run without it.
+        var needsExtension: Bool { accessMode == .approval || interactionMode == .plan }
     }
 
     private struct Turn {
         let number: Int
+        /// Pi has the prompt (or `/compact`). Until then the turn is being prepared, and `send` reports failures.
+        var sent = false
         /// A prompt starting with `/` may be an extension command that never starts a run.
-        let mayBeCommand: Bool
+        var mayBeCommand = false
         var sawAgentStart = false
         var settled = false
         /// Bumped whenever Pi becomes busy again, so an older idle probe cannot end the turn.
@@ -42,7 +49,6 @@ public final class PiSession: AgentSession {
         var interruptRequested = false
         var aborted = false
         var failure: String?
-        var finishing = false
     }
 
     private struct OpenDialog {
@@ -58,6 +64,9 @@ public final class PiSession: AgentSession {
         var thinking: String?
     }
 
+    /// "Always allow" answers by Pi session file, so restarting Pi (a new policy, the idle timeout) keeps them.
+    private static var approvalsBySession: [String: Set<String>] = [:]
+
     private let launch: AgentLaunch
     private let extensionDirectory: URL
     private let timing: Timing
@@ -71,14 +80,21 @@ public final class PiSession: AgentSession {
     private var turnCount = 0
     private var wakeCount = 0
     private var dialogs: [String: OpenDialog] = [:]
-    private var alwaysAllowed: Set<String> = []
+    private var alwaysAllowed: Set<String>
     /// Captured from the first process before it loads a saved session, so "Default" means Pi's default.
     private var baseline: Baseline?
     /// The model (`provider/id`) and thinking level the running process uses.
     private var currentModel: String?
     private var currentThinking: String?
+    /// How to invoke the extension's handoff command; nil when Pi did not load the extension.
+    private var handoffCommand: String?
     /// The process ended during a turn; the exit is reported right after that turn completes.
     private var exitAfterTurn: String?
+    /// Why the last process ended, for a turn that was still being prepared.
+    private var lastExit: String?
+    /// One `send` at a time: a turn the thread runner gave up on may still be starting Pi.
+    private var sending = false
+    private var sendWaiters: [CheckedContinuation<Void, Never>] = []
     private var isClosed = false
 
     public convenience init(launch: AgentLaunch) {
@@ -95,6 +111,9 @@ public final class PiSession: AgentSession {
         self.timing = timing
         self.makeTransport = makeTransport
         policy = Policy(accessMode: launch.accessMode, interactionMode: launch.interactionMode)
+        alwaysAllowed = launch.resumeSessionID.flatMap { Self.approvalsBySession[$0] } ?? []
+        // Pi works in the folder's real path (`/private/tmp`, not `/tmp`), which is what the model sees.
+        mapper.workingDirectory = PiSessionFile.canonical(launch.workingDirectory.path)
     }
 
     // MARK: AgentSession
@@ -105,67 +124,58 @@ public final class PiSession: AgentSession {
     }
 
     public func send(_ input: AgentTurnInput) async throws {
+        await acquireSend()
+        defer { releaseSend() }
         guard !isClosed else { throw AgentError.notRunning }
-        exitAfterTurn = nil
-        // A turn the thread runner already gave up on may still be running in Pi; a new process cannot leak it.
+        // A turn the thread runner already gave up on may still be running in Pi; restarting Pi stops it.
         let abandoned = turn != nil
-        if abandoned {
-            turn = nil
-            _ = mapper.finish()
-            withdrawDialogs(announce: false) { _ in true }
-        }
-        let wanted = Policy(accessMode: input.accessMode, interactionMode: input.interactionMode)
-        if abandoned || rpc?.isOpen != true || wanted != policy {
-            policy = wanted
-            try await reopen()
-        }
-        let compact = input.imagePaths.isEmpty ? PiCompactCommand.parse(input.text) : nil
-        let images = try PiImages.payload(input.imagePaths)
-
+        if let previous = turn?.number { discardTurn(previous) }
         turnCount += 1
         let number = turnCount
-        turn = Turn(number: number, mayBeCommand: compact == nil && input.text.hasPrefix("/"))
-        mapper.begin(itemPrefix: "t\(number)")
+        turn = Turn(number: number)
+        exitAfterTurn = nil
         do {
-            try await applySelection(input.selection)
+            try await begin(number, input: input, restart: abandoned)
         } catch {
-            if turn?.number == number { turn = nil }
+            // The user stopped the turn while Pi was starting, and it already ended; there is nothing left to fail.
+            guard turn?.number == number else { return }
+            discardTurn(number)
             throw error
-        }
-        // Interrupted while the model was being switched: nothing was sent, and the abort path ends the turn.
-        guard let current = turn, current.number == number, !current.interruptRequested, let rpc else { return }
-        if let compact {
-            var record: [String: JSONValue] = ["type": "compact"]
-            if let instructions = compact.instructions { record["customInstructions"] = .string(instructions) }
-            rpc.request(.object(record), timeout: nil) { [weak self] in self?.compactAnswered(number, $0) }
-        } else {
-            // `steer` makes Pi queue the prompt if it is still busy instead of rejecting it.
-            var record: [String: JSONValue] = ["type": "prompt", "message": .string(input.text), "streamingBehavior": "steer"]
-            if !images.isEmpty { record["images"] = .array(images) }
-            // Pi answers once slash commands and extension input handlers are done, which can wait on a dialog.
-            rpc.request(.object(record), timeout: nil) { [weak self] in self?.promptAnswered(number, $0) }
         }
     }
 
     public func respond(to approvalID: String, optionID: String) {
-        guard let open = dialogs.removeValue(forKey: approvalID) else { return }
+        respond(to: approvalID, optionID: optionID, text: nil)
+    }
+
+    public func respond(to approvalID: String, optionID: String, text: String?) {
+        guard let open = dialogs[approvalID], open.dialog.approval != nil else { return }
+        dialogs[approvalID] = nil
         open.expiry?.cancel()
-        client?.send(open.dialog.response(for: optionID))
-        if optionID == PiDialog.allowAlwaysID, let key = open.dialog.rememberKey { alwaysAllowed.insert(key) }
-        if open.dialog.declines(optionID), let toolCallID = open.dialog.request.toolCallID { mapper.markDeclined(toolCallID) }
+        client?.send(open.dialog.response(optionID: optionID, text: text))
+        if optionID == PiDialog.allowAlwaysID, let key = open.dialog.rememberKey { remember(key) }
+        if open.dialog.declines(optionID), let toolCallID = open.dialog.toolCallID { mapper.markDeclined(toolCallID) }
+    }
+
+    public func answer(userInput requestID: String, answers: [String: [String]]) {
+        guard let open = dialogs[requestID], open.dialog.question != nil else { return }
+        dialogs[requestID] = nil
+        open.expiry?.cancel()
+        client?.send(open.dialog.response(answers: answers))
     }
 
     public func interrupt() {
-        guard var turn, !turn.finishing, !turn.interruptRequested else { return }
+        guard var turn, !turn.interruptRequested else { return }
         turn.interruptRequested = true
         self.turn = turn
         let number = turn.number
-        guard let rpc else {
-            Task { await finishTurn(number) }
+        // Pi does not have the prompt yet (or the process is gone): `send` stops short, and the turn ends now.
+        guard turn.sent, let rpc, rpc.isOpen else {
+            Task { self.finishTurn(number) }
             return
         }
         // Once Pi settled it is only finishing up, such as an extension's compaction: stop that and end the turn now.
-        if turn.settled { Task { await finishTurn(number) } }
+        if turn.settled { Task { self.finishTurn(number) } }
         rpc.request(["type": "abort"], timeout: timing.abort) { [weak self] result in
             guard let self, self.turn?.number == number else { return }
             switch result {
@@ -177,7 +187,7 @@ public final class PiSession: AgentSession {
             case .failure:
                 // Pi did not stop in time. End the process so the turn ends now; the next turn restarts Pi.
                 self.discardProcess()
-                Task { await self.finishTurn(number) }
+                self.finishTurn(number)
             }
         }
     }
@@ -191,6 +201,192 @@ public final class PiSession: AgentSession {
         rpc = nil
         opening = nil
         client?.shutDown(grace: timing.exitGrace)
+    }
+
+    // MARK: Turns
+
+    /// Readies Pi for the turn and hands it the prompt. Returns early when the user stopped the turn first.
+    private func begin(_ number: Int, input: AgentTurnInput, restart: Bool) async throws {
+        let wanted = Policy(accessMode: input.accessMode, interactionMode: input.interactionMode)
+        if restart || rpc?.isOpen != true || wanted != policy {
+            policy = wanted
+            try await reopen()
+        }
+        guard try proceed(number) else { return }
+        let prompt = PiPrompt(input.text)
+        // A slash command only runs at the start of a prompt, so a recap in front of one travels on its own.
+        let handoff = prompt.needsSeparateRecap ? handoffCommand : nil
+        let text = handoff == nil ? input.text : prompt.message
+        let compact = input.imagePaths.isEmpty ? PiCompactCommand.parse(text) : nil
+        let images = try PiImages.payload(input.imagePaths)
+        mapper.begin(itemPrefix: "t\(number)")
+        try await applySelection(input.selection)
+        guard try proceed(number) else { return }
+        if let handoff, let recap = prompt.recap {
+            _ = try await connection().request(
+                ["type": "prompt", "message": .string("/\(handoff) \(recap)")], timeout: timing.request)
+            guard try proceed(number) else { return }
+        }
+        let rpc = try connection()
+        turn?.sent = true
+        turn?.mayBeCommand = compact == nil && text.hasPrefix("/")
+        if let compact {
+            var record: [String: JSONValue] = ["type": "compact"]
+            if let instructions = compact.instructions { record["customInstructions"] = .string(instructions) }
+            rpc.request(.object(record), timeout: nil) { [weak self] in self?.compactAnswered(number, $0) }
+        } else {
+            // `steer` makes Pi queue the prompt if it is still busy instead of rejecting it.
+            var record: [String: JSONValue] = ["type": "prompt", "message": .string(text), "streamingBehavior": "steer"]
+            if !images.isEmpty { record["images"] = .array(images) }
+            // Pi answers once slash commands and extension input handlers are done, which can wait on a dialog.
+            rpc.request(.object(record), timeout: nil) { [weak self] in self?.promptAnswered(number, $0) }
+        }
+    }
+
+    /// Whether to go on preparing the turn: false once the user stopped it, which ends it. Throws when Pi went away.
+    private func proceed(_ number: Int) throws -> Bool {
+        if isClosed { throw AgentError.notRunning }
+        guard let turn, turn.number == number else { return false }
+        if turn.interruptRequested {
+            finishTurn(number)
+            return false
+        }
+        _ = try connection()
+        return true
+    }
+
+    /// The running process, or an error saying why it ended.
+    private func connection() throws -> PiRPCClient {
+        if let rpc, rpc.isOpen { return rpc }
+        if let lastExit { throw AgentError.providerError(lastExit) }
+        throw AgentError.notRunning
+    }
+
+    private func promptAnswered(_ number: Int, _ result: Result<JSONValue, Error>) {
+        guard var turn, turn.number == number else { return }
+        switch result {
+        case .success(let data):
+            // "handled": an extension command consumed the prompt and no run starts. Pi before 0.99 says nothing.
+            let disposition = data["disposition"]?.string
+            if disposition == "handled" || (disposition == nil && turn.mayBeCommand && !turn.sawAgentStart) {
+                probeIdle(number)
+            }
+        case .failure(let error as PiRPCError) where error.isClosed:
+            break
+        case .failure(let error):
+            turn.failure = error.localizedDescription
+            self.turn = turn
+            finishTurn(number)
+        }
+    }
+
+    private func compactAnswered(_ number: Int, _ result: Result<JSONValue, Error>) {
+        guard var turn, turn.number == number else { return }
+        if case .failure(let error) = result {
+            if (error as? PiRPCError)?.isClosed == true { return }
+            // A compaction that ran shows its own failure; one Pi refused outright fails the turn.
+            if !mapper.sawCompaction, !turn.interruptRequested {
+                turn.failure = error.localizedDescription
+                self.turn = turn
+            }
+        }
+        probeIdle(number)
+    }
+
+    /// Ends the turn once `get_state` shows Pi idle: not streaming, not compacting, nothing queued.
+    private func probeIdle(_ number: Int, generation: Int? = nil, attempt: Int = 1) {
+        guard let turn, turn.number == number, let rpc, rpc.isOpen else { return }
+        if let generation, generation != turn.probeGeneration { return }
+        let generation = turn.probeGeneration
+        rpc.request(["type": "get_state"], timeout: timing.quick) { [weak self] result in
+            guard let self, let turn = self.turn, turn.number == number, turn.probeGeneration == generation else { return }
+            switch result {
+            case .success(let state):
+                let busy =
+                    state["isStreaming"]?.bool == true || state["isCompacting"]?.bool == true
+                    || (state["pendingMessageCount"]?.int ?? 0) > 0
+                if !busy {
+                    self.finishTurn(number)
+                } else if turn.settled || !turn.sawAgentStart {
+                    // Pi says so with `agent_settled` or `compaction_end` when that work is done; ask again in case not.
+                    self.probeLater(number, generation: generation, after: self.timing.busyRecheck)
+                }
+            case .failure(let error as PiRPCError) where error.isClosed:
+                break
+            case .failure:
+                if attempt < 3 {
+                    self.probeLater(number, generation: generation, after: self.timing.probeRetry, attempt: attempt + 1)
+                } else {
+                    self.turn?.failure = String(localized: "Pi stopped responding.")
+                    self.discardProcess()
+                    self.finishTurn(number)
+                }
+            }
+        }
+    }
+
+    private func probeLater(_ number: Int, generation: Int, after delay: Duration, attempt: Int = 1) {
+        Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            self?.probeIdle(number, generation: generation, attempt: attempt)
+        }
+    }
+
+    private func finishTurn(_ number: Int) {
+        guard let turn, turn.number == number else { return }
+        self.turn = nil
+        let outcome: TurnOutcome =
+            if turn.interruptRequested || turn.aborted {
+                .interrupted
+            } else if let failure = turn.failure ?? mapper.failure {
+                .failed(failure)
+            } else {
+                .completed
+            }
+        emit(mapper.finish())
+        withdrawDialogs(announce: false) { $0.turn == number }
+        let exit = exitAfterTurn
+        exitAfterTurn = nil
+        emit(.turnCompleted(outcome))
+        if let exit {
+            emit(.sessionExited(error: exit))
+        } else {
+            reportUsage()
+        }
+    }
+
+    /// Forgets a turn without reporting it: the thread runner gave up on it, or `send` is failing it.
+    private func discardTurn(_ number: Int) {
+        guard turn?.number == number else { return }
+        turn = nil
+        _ = mapper.finish()
+        withdrawDialogs(announce: false) { $0.turn == number }
+    }
+
+    /// The context in use and the session's cost, from `get_session_stats`, once a turn ended.
+    private func reportUsage() {
+        guard let rpc, rpc.isOpen else { return }
+        let estimate = mapper.tokensAfterCompaction
+        let window = mapper.contextWindow
+        rpc.request(["type": "get_session_stats"], timeout: timing.quick) { [weak self] result in
+            guard let self, case .success(let stats) = result else { return }
+            let context = stats["contextUsage"]
+            // Right after a compaction Pi has no token count until the next response; its estimate stands in.
+            let tokens = context?["tokens"]?.int ?? (context?["tokens"]?.isNull == true ? estimate : nil)
+            let usage = TokenUsage(
+                inputTokens: tokens, contextWindow: context?["contextWindow"]?.int ?? window, costUSD: stats["cost"]?.number)
+            if usage != TokenUsage() { self.emit(.usage(usage)) }
+        }
+    }
+
+    private func acquireSend() async {
+        while sending { await withCheckedContinuation { sendWaiters.append($0) } }
+        sending = true
+    }
+
+    private func releaseSend() {
+        sending = false
+        if !sendWaiters.isEmpty { sendWaiters.removeFirst().resume() }
     }
 
     // MARK: Process
@@ -212,14 +408,16 @@ public final class PiSession: AgentSession {
                 try await handshake(extensionPath: extensionPath, resume: resume)
             } catch let error as PiRPCError where error.isClosed && resume.forkPath != nil {
                 // Pi exits when it cannot fork the session file; continue in a new session instead.
-                try await handshake(extensionPath: extensionPath, resume: .fresh)
+                try await handshake(extensionPath: extensionPath, resume: .fresh, lostSession: true)
             }
         } catch let error as PiRPCError {
             throw AgentError.providerError(error.localizedDescription)
         }
     }
 
-    private func handshake(extensionPath: String, resume: PiLaunch.Resume) async throws {
+    /// Starts a process, loads the session and checks that Coincide's extension is in place.
+    /// `lostSession` says an earlier session could not be continued, so the fresh one gets a notice.
+    private func handshake(extensionPath: String, resume: PiLaunch.Resume, lostSession: Bool = false) async throws {
         let transport = makeTransport(
             PiLaunch.arguments(extensionPath: extensionPath, forkingFrom: resume.forkPath),
             PiLaunch.environment(launch.environment, accessMode: policy.accessMode, interactionMode: policy.interactionMode))
@@ -244,32 +442,50 @@ public final class PiSession: AgentSession {
                 let initial = try await client.request(["type": "get_state"], timeout: timing.request)
                 baseline = Baseline(model: PiModels.slug(of: initial["model"]), thinking: initial["thinkingLevel"]?.string)
             }
-            var resumed = true
+            // A resumed or forked session already holds the conversation; a new one has seen nothing of it.
+            var continued = resume != .fresh
             if case .switchTo(let path) = resume {
                 do {
                     let result = try await client.request(
                         ["type": "switch_session", "sessionPath": .string(path)], timeout: timing.lifecycle)
-                    resumed = result["cancelled"]?.bool != true
+                    continued = result["cancelled"]?.bool != true
                 } catch PiRPCError.rejected {
-                    resumed = false
+                    continued = false
                 }
             }
             let state = try await client.request(["type": "get_state"], timeout: timing.request)
             guard let id = state["sessionFile"]?.string ?? state["sessionId"]?.string else {
                 throw AgentError.protocolError(String(localized: "Pi did not report a session."))
             }
+            let commands: JSONValue?
+            do {
+                commands = try await client.request(["type": "get_commands"], timeout: timing.request)
+            } catch let error as PiRPCError where error.isClosed {
+                throw error
+            } catch {
+                commands = nil
+            }
+            let handoff = PiExtension.handoffCommandName(in: commands)
+            if handoff == nil, policy.needsExtension {
+                throw AgentError.providerError(
+                    String(
+                        localized:
+                            "Pi did not load Coincide’s extension, so it cannot ask before running tools or stay in plan mode. Run `pi --extension \"\(extensionPath)\"` in a terminal to see why."))
+            }
             guard !isClosed else { throw AgentError.notRunning }
+            handoffCommand = handoff
             // A resumed session brings back the model and level it last used.
             currentModel = PiModels.slug(of: state["model"])
             currentThinking = state["thinkingLevel"]?.string
             mapper.contextWindow = PiModels.contextWindow(of: state["model"])
             sessionID = id
             rpc = client
-            emit(.sessionStarted(id: id))
-            if let model = PiModels.slug(of: state["model"]) { emit(.modelResolved(model)) }
-            if resume.forkPath != nil {
-                emit(.notice(String(localized: "This thread’s folder changed, so Pi continues the conversation in a new session here.")))
-            } else if !resumed {
+            lastExit = nil
+            alwaysAllowed.formUnion(Self.approvalsBySession[id] ?? [])
+            if !alwaysAllowed.isEmpty { Self.approvalsBySession[id] = alwaysAllowed }
+            emit(continued ? .sessionContinued(id: id) : .sessionStarted(id: id))
+            if let model = currentModel { emit(.modelResolved(model)) }
+            if lostSession || (resume != .fresh && !continued) {
                 emit(.notice(String(localized: "Pi could not resume its earlier session for this thread and started a new one.")))
             }
         } catch {
@@ -299,24 +515,24 @@ public final class PiSession: AgentSession {
     private func processEnded(_ client: PiRPCClient, reason: String) {
         guard client === rpc, !isClosed else { return }
         rpc = nil
+        lastExit = reason
         withdrawDialogs(announce: true) { $0.turn == nil }
         guard var turn else {
             emit(.sessionExited(error: reason))
             return
         }
+        // A turn still being prepared fails through `send`, which is waiting on this process.
+        guard turn.sent else { return }
         if !turn.interruptRequested { turn.failure = reason }
         self.turn = turn
         exitAfterTurn = reason
-        guard !turn.finishing else { return }
-        let number = turn.number
-        Task { await finishTurn(number) }
+        finishTurn(turn.number)
     }
 
     // MARK: Model and thinking level
 
     /// Points Pi at the turn's model and thinking level; "Default" returns to Pi's own default.
     private func applySelection(_ selection: ModelSelection) async throws {
-        guard let rpc else { throw AgentError.notRunning }
         let isDefault = selection.modelID == PiModels.defaultModelID || selection.modelID.isEmpty
         if let model = isDefault ? baseline?.model : selection.modelID, model != currentModel {
             guard let target = PiModels.parseSlug(model) else {
@@ -325,7 +541,7 @@ public final class PiSession: AgentSession {
             }
             let data: JSONValue
             do {
-                data = try await rpc.request(
+                data = try await connection().request(
                     ["type": "set_model", "provider": .string(target.provider), "modelId": .string(target.modelID)],
                     timeout: timing.request)
             } catch PiRPCError.rejected(_, let message) {
@@ -341,34 +557,38 @@ public final class PiSession: AgentSession {
             PiModels.thinkingLevels.contains(level)
         else { return }
         // Pi clamps a level the model does not support rather than failing.
-        _ = try await rpc.request(["type": "set_thinking_level", "level": .string(level)], timeout: timing.request)
+        _ = try await connection().request(["type": "set_thinking_level", "level": .string(level)], timeout: timing.request)
         currentThinking = level
     }
 
     // MARK: Events
 
+    /// The turn Pi is working on; a turn still being prepared does not own Pi's events yet.
+    private var activeTurn: Turn? { turn?.sent == true ? turn : nil }
+
     private func handle(_ record: JSONValue) {
         guard let type = record["type"]?.string else { return }
         switch type {
         case "agent_start":
-            if var turn {
+            if var turn = activeTurn {
                 turn.sawAgentStart = true
                 turn.settled = false
                 turn.aborted = false
                 turn.probeGeneration += 1
                 self.turn = turn
-            } else {
+            } else if turn == nil {
                 // An extension started work between turns; it is shown, under its own item ids.
                 wakeCount += 1
                 mapper.begin(itemPrefix: "w\(wakeCount)")
             }
         case "agent_settled":
-            guard var turn else {
-                emit(mapper.finish())
+            guard var turn = activeTurn else {
+                // Work that started before the turn's prompt keeps the turn's ids; it ends with the turn.
+                if turn == nil { emit(mapper.finish()) }
                 return
             }
             if turn.interruptRequested {
-                Task { await finishTurn(turn.number) }
+                finishTurn(turn.number)
                 return
             }
             turn.aborted = record["aborted"]?.bool == true
@@ -381,7 +601,7 @@ public final class PiSession: AgentSession {
         case "thinking_level_changed":
             currentThinking = record["level"]?.string
         case "compaction_start":
-            if var turn {
+            if var turn = activeTurn {
                 turn.probeGeneration += 1
                 self.turn = turn
             }
@@ -389,19 +609,19 @@ public final class PiSession: AgentSession {
         case "compaction_end":
             emit(mapper.handle(record))
             // A compaction after `agent_settled`, or a `/compact` turn, is the last work of the turn.
-            if let turn, turn.settled || !turn.sawAgentStart { probeIdle(turn.number) }
+            if let turn = activeTurn, turn.settled || !turn.sawAgentStart { probeIdle(turn.number) }
         case "tool_execution_end":
             // A tool that ended while its approval was pending no longer needs it (Pi gave up waiting).
             if let toolCallID = record["toolCallId"]?.string {
-                withdrawDialogs(announce: true) { $0.dialog.request.toolCallID == toolCallID }
+                withdrawDialogs(announce: true) { $0.dialog.toolCallID == toolCallID }
             }
             emit(mapper.handle(record))
         case "response":
             // Responses without an id: Pi could not parse a line Coincide wrote.
-            guard record["command"]?.string == "parse", record["success"]?.bool == false, var turn, !turn.finishing else { return }
+            guard record["command"]?.string == "parse", record["success"]?.bool == false, var turn = activeTurn else { return }
             turn.failure = PiRPCClient.errorText(record["error"])
             self.turn = turn
-            Task { await finishTurn(turn.number) }
+            finishTurn(turn.number)
         default:
             emit(mapper.handle(record))
         }
@@ -414,21 +634,24 @@ public final class PiSession: AgentSession {
         }
         guard let dialog = PiDialog(record, tool: { mapper.tool($0) }) else { return }
         if let key = dialog.rememberKey, alwaysAllowed.contains(key) {
-            client?.send(dialog.response(for: "allow"))
+            client?.send(dialog.response(optionID: PiDialog.allowID, text: nil))
             return
         }
-        let id = dialog.request.id
+        let id = dialog.id
         var open = OpenDialog(dialog: dialog, turn: turn?.number)
         if let timeout = dialog.timeout {
             open.expiry = Task { [weak self] in
                 try? await Task.sleep(for: timeout)
                 // Pi answered the dialog itself with its default, so it no longer needs the user.
-                guard !Task.isCancelled, let self, self.dialogs.removeValue(forKey: id) != nil else { return }
-                self.emit(.approvalResolved(id: id))
+                guard !Task.isCancelled, let self, let open = self.dialogs.removeValue(forKey: id) else { return }
+                self.announceResolved(open.dialog)
             }
         }
         dialogs[id] = open
-        emit(.approvalRequested(dialog.request))
+        switch dialog.presentation {
+        case .approval(let request): emit(.approvalRequested(request))
+        case .question(let request): emit(.userInputRequested(request))
+        }
     }
 
     /// Withdraws dialogs nobody will answer any more and tells Pi; `announce` reports them as resolved by the agent.
@@ -436,112 +659,21 @@ public final class PiSession: AgentSession {
         for (id, open) in dialogs where shouldWithdraw(open) {
             dialogs[id] = nil
             open.expiry?.cancel()
-            client?.send(open.dialog.response(for: "cancel"))
-            if announce { emit(.approvalResolved(id: id)) }
+            client?.send(open.dialog.cancellation)
+            if announce { announceResolved(open.dialog) }
         }
     }
 
-    // MARK: Ending turns
-
-    private func promptAnswered(_ number: Int, _ result: Result<JSONValue, Error>) {
-        guard var turn, turn.number == number, !turn.finishing else { return }
-        switch result {
-        case .success(let data):
-            // "handled": an extension command consumed the prompt and no run starts. Older Pi says nothing.
-            let disposition = data["disposition"]?.string
-            if disposition == "handled" || (disposition == nil && turn.mayBeCommand && !turn.sawAgentStart) {
-                probeIdle(number)
-            }
-        case .failure(let error as PiRPCError) where error.isClosed:
-            break
-        case .failure(let error):
-            turn.failure = error.localizedDescription
-            self.turn = turn
-            Task { await finishTurn(number) }
+    private func announceResolved(_ dialog: PiDialog) {
+        switch dialog.presentation {
+        case .approval: emit(.approvalResolved(id: dialog.id))
+        case .question: emit(.userInputResolved(id: dialog.id))
         }
     }
 
-    private func compactAnswered(_ number: Int, _ result: Result<JSONValue, Error>) {
-        guard var turn, turn.number == number, !turn.finishing else { return }
-        if case .failure(let error) = result {
-            if (error as? PiRPCError)?.isClosed == true { return }
-            // A compaction that ran shows its own failure; one Pi refused outright fails the turn.
-            if !mapper.sawCompaction, !turn.interruptRequested {
-                turn.failure = error.localizedDescription
-                self.turn = turn
-            }
-        }
-        probeIdle(number)
-    }
-
-    /// Ends the turn once `get_state` shows Pi idle: not streaming, not compacting, nothing queued.
-    private func probeIdle(_ number: Int, generation: Int? = nil, attempt: Int = 1) {
-        guard let turn, turn.number == number, !turn.finishing, let rpc else { return }
-        if let generation, generation != turn.probeGeneration { return }
-        let generation = turn.probeGeneration
-        rpc.request(["type": "get_state"], timeout: timing.quick) { [weak self] result in
-            guard let self, let turn = self.turn, turn.number == number, turn.probeGeneration == generation, !turn.finishing
-            else { return }
-            switch result {
-            case .success(let state):
-                let busy =
-                    state["isStreaming"]?.bool == true || state["isCompacting"]?.bool == true
-                    || (state["pendingMessageCount"]?.int ?? 0) > 0
-                // When busy, Pi reports `agent_settled` again once that work is done.
-                if !busy { Task { await self.finishTurn(number) } }
-            case .failure(let error as PiRPCError) where error.isClosed:
-                break
-            case .failure:
-                if attempt < 3 {
-                    Task {
-                        try? await Task.sleep(for: self.timing.probeRetry)
-                        self.probeIdle(number, generation: generation, attempt: attempt + 1)
-                    }
-                } else {
-                    var turn = turn
-                    turn.failure = String(localized: "Pi stopped responding.")
-                    self.turn = turn
-                    self.discardProcess()
-                    Task { await self.finishTurn(number) }
-                }
-            }
-        }
-    }
-
-    private func finishTurn(_ number: Int) async {
-        guard var turn, turn.number == number, !turn.finishing else { return }
-        turn.finishing = true
-        self.turn = turn
-        let outcome: TurnOutcome =
-            if turn.interruptRequested || turn.aborted {
-                .interrupted
-            } else if let failure = turn.failure ?? mapper.failure {
-                .failed(failure)
-            } else {
-                .completed
-            }
-        emit(mapper.finish())
-        withdrawDialogs(announce: false) { $0.turn == number }
-        if let usage = await readUsage() { emit(.usage(usage)) }
-        let exit = exitAfterTurn
-        exitAfterTurn = nil
-        guard self.turn?.number == number else { return }
-        self.turn = nil
-        emit(.turnCompleted(outcome))
-        if let exit { emit(.sessionExited(error: exit)) }
-    }
-
-    /// The context in use and the session's cost, from `get_session_stats`.
-    private func readUsage() async -> TokenUsage? {
-        guard let rpc, rpc.isOpen,
-            let stats = try? await rpc.request(["type": "get_session_stats"], timeout: timing.quick)
-        else { return nil }
-        let context = stats["contextUsage"]
-        // Right after a compaction Pi reports no token count until the next response.
-        let usage = TokenUsage(
-            inputTokens: context?["tokens"]?.int ?? mapper.tokensAfterCompaction,
-            contextWindow: context?["contextWindow"]?.int ?? mapper.contextWindow, costUSD: stats["cost"]?.number)
-        return usage == TokenUsage() ? nil : usage
+    private func remember(_ key: String) {
+        alwaysAllowed.insert(key)
+        if let sessionID { Self.approvalsBySession[sessionID, default: []].insert(key) }
     }
 
     private func emit(_ event: AgentEvent) {

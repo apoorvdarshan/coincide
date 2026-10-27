@@ -113,6 +113,41 @@ enum PiModels {
     }
 }
 
+/// A turn's text, split into the handoff recap Coincide put in front of it and the user's own message.
+///
+/// Pi runs slash commands (extension commands, skills, prompt templates and `/compact`) only when the prompt
+/// starts with one, so a recap in front would turn the command into plain text. The session then sends the
+/// recap on its own first.
+struct PiPrompt: Equatable {
+    /// Everything before the user's message: the recap and the line that introduces the message.
+    var recap: String?
+    var message: String
+
+    init(recap: String? = nil, message: String) {
+        self.recap = recap
+        self.message = message
+    }
+
+    /// Splits `Handoff.prompt` output: `<conversation_handoff>…</conversation_handoff>`, a line introducing the
+    /// user's message, then the message. Text in any other shape is the message.
+    init(_ text: String) {
+        let opening = "<conversation_handoff>\n"
+        let closing = "\n</conversation_handoff>\n\n"
+        guard text.hasPrefix(opening), let end = text.range(of: closing),
+            let introduction = text.range(of: "\n\n", range: end.upperBound..<text.endIndex)
+        else {
+            self.init(message: text)
+            return
+        }
+        self.init(
+            recap: String(text[..<introduction.lowerBound]),
+            message: String(text[introduction.upperBound...]))
+    }
+
+    /// The recap only has to travel separately when the message is a slash command.
+    var needsSeparateRecap: Bool { recap != nil && message.hasPrefix("/") }
+}
+
 /// `/compact [instructions]`, which Pi only handles in its terminal UI, maps to the RPC `compact` command.
 struct PiCompactCommand: Equatable {
     var instructions: String?
@@ -140,12 +175,17 @@ enum PiImages {
         }
     }
 
-    /// Pi accepts PNG, JPEG, GIF and WebP; anything else (HEIC, TIFF) is converted to PNG.
-    private static func encodable(_ data: Data, type: UTType?, name: String) throws -> (Data, String) {
+    /// Pi accepts PNG, JPEG, GIF and WebP; anything else (HEIC, TIFF) is converted to PNG. The type comes from
+    /// the image data when ImageIO recognizes it, so a JPEG saved as `.png` is still sent as a JPEG.
+    private static func encodable(_ data: Data, type declared: UTType?, name: String) throws -> (Data, String) {
         let accepted: [(UTType, String)] = [(.png, "image/png"), (.jpeg, "image/jpeg"), (.gif, "image/gif"), (.webP, "image/webp")]
-        if let type, let match = accepted.first(where: { type.conforms(to: $0.0) }) { return (data, match.1) }
+        let source = CGImageSourceCreateWithData(data as CFData, nil)
+        let detected = source.flatMap { CGImageSourceGetType($0) }.flatMap { UTType($0 as String) }
+        if let type = detected ?? declared, let match = accepted.first(where: { type.conforms(to: $0.0) }) {
+            return (data, match.1)
+        }
         let output = NSMutableData()
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard let source,
             let destination = CGImageDestinationCreateWithData(output as CFMutableData, UTType.png.identifier as CFString, 1, nil)
         else { throw AgentError.providerError(String(localized: "Pi cannot use the image \(name).")) }
         CGImageDestinationAddImageFromSource(destination, source, 0, nil)

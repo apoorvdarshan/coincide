@@ -15,7 +15,7 @@ final class PiSessionTests {
 
     private static let timing = PiSession.Timing(
         request: .seconds(2), lifecycle: .seconds(2), quick: .milliseconds(500), abort: .milliseconds(200),
-        exitGrace: .milliseconds(200), probeRetry: .milliseconds(10))
+        exitGrace: .milliseconds(200), probeRetry: .milliseconds(10), busyRecheck: .milliseconds(40))
 
     private func makeSession(
         resume: String? = nil, accessMode: AccessMode = .fullAccess, interactionMode: InteractionMode = .build,
@@ -77,7 +77,8 @@ final class PiSessionTests {
         try await session.start()
         #expect(fake.sent("switch_session").map { $0["sessionPath"]?.string } == [saved])
         #expect(session.sessionID == saved)
-        #expect(log.events.first == .sessionStarted(id: saved))
+        // The resumed session already holds the conversation, so the thread needs no recap for it.
+        #expect(log.events.first == .sessionContinued(id: saved))
         #expect(log.notices.isEmpty)
     }
 
@@ -105,12 +106,51 @@ final class PiSessionTests {
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
         let saved = piSessionFile(in: scratch, workingDirectory: project)
+        let forked = try #require(fake.forkedSessionFile)
         let session = makeSession(resume: saved, workingDirectory: worktree)
         try await session.start()
         #expect(fake.current.arguments.contains("--fork"))
         #expect(fake.current.arguments.contains(saved))
         #expect(fake.sent("switch_session").isEmpty)
+        // The fork holds the whole conversation under a new id: no recap, and nothing to tell the user.
+        #expect(session.sessionID == forked)
+        #expect(log.events.first == .sessionContinued(id: forked))
+        #expect(log.notices.isEmpty)
+    }
+
+    @Test func failedForkStartsFreshAndSaysSo() async throws {
+        let project = scratch.appendingPathComponent("project")
+        let worktree = scratch.appendingPathComponent("worktree")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        let saved = piSessionFile(in: scratch, workingDirectory: project)
+        fake.forkedSessionFile = nil
+        let session = makeSession(resume: saved, workingDirectory: worktree)
+        try await session.start()
+        #expect(fake.transports.count == 2)
+        #expect(!fake.current.arguments.contains("--fork"))
+        #expect(log.events.first == .sessionStarted(id: fake.sessionFile))
         #expect(log.notices.count == 1)
+    }
+
+    @Test func approvalAndPlanModeNeedCoincidesExtension() async throws {
+        fake.extensionLoaded = false
+        let approval = makeSession(accessMode: .approval)
+        await #expect(throws: AgentError.self) { try await approval.start() }
+        #expect(fake.current.terminated)
+        let plan = makeSession(interactionMode: .plan)
+        await #expect(throws: AgentError.self) { try await plan.start() }
+
+        // Full access in build mode does not depend on it.
+        let full = makeSession()
+        try await full.start()
+        try await full.send(input())
+        #expect(fake.sent("prompt").count == 1)
+        // Switching to approval mode later refuses to run without it.
+        fake.emit([#"{"type":"agent_start"}"#, #"{"type":"agent_settled"}"#])
+        #expect(await finished())
+        await #expect(throws: AgentError.self) { try await full.send(input(accessMode: .approval)) }
+        #expect(fake.sent("prompt").count == 1)
     }
 
     @Test func startFailsWithPisErrorWhenItExits() async throws {
@@ -142,8 +182,10 @@ final class PiSessionTests {
         #expect(log.events.contains(.assistantText(itemID: "t1.m1.c1", text: "fixture simple ok")))
         #expect(log.events.contains(.reasoningDelta(itemID: "t1.m1.c0", delta: "The")))
         #expect(log.completions == [.completed])
-        #expect(log.events.last == .turnCompleted(.completed))
-        #expect(log.events.dropLast().last == .usage(TokenUsage(inputTokens: 1814, contextWindow: 1_048_576, costUSD: 0.00007710612)))
+        // The turn ends as soon as Pi is idle; the session's usage follows.
+        let usage = AgentEvent.usage(TokenUsage(inputTokens: 1814, contextWindow: 1_048_576, costUSD: 0.00007710612))
+        #expect(await eventually { log.events.last == usage })
+        #expect(log.events.dropLast().last == .turnCompleted(.completed))
         // Pi's default before any session, the session's state, then the idle check.
         #expect(fake.sent("get_state").count == 3)
         #expect(fake.sent("get_session_stats").count == 1)
@@ -289,7 +331,36 @@ final class PiSessionTests {
         #expect(await finished())
         #expect(log.completions == [.completed])
         // Pi has no token count right after compacting, so its estimate stands in.
-        #expect(log.events.contains(.usage(TokenUsage(inputTokens: 1890, contextWindow: 1_048_576, costUSD: 0.000207767924))))
+        let usage = AgentEvent.usage(TokenUsage(inputTokens: 1890, contextWindow: 1_048_576, costUSD: 0.000207767924))
+        #expect(await eventually { log.events.contains(usage) })
+    }
+
+    @Test func stillBusyAfterSettlingIsCheckedAgain() async throws {
+        let session = makeSession()
+        try await session.start()
+        try await session.send(input())
+        fake.busy = true
+        fake.emit([#"{"type":"agent_start"}"#, #"{"type":"agent_settled"}"#])
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(log.completions.isEmpty)
+        // Pi went idle without another event.
+        fake.busy = false
+        #expect(await finished())
+        #expect(log.completions == [.completed])
+    }
+
+    @Test func unresponsivePiFailsTheTurnAndRestarts() async throws {
+        let session = makeSession()
+        try await session.start()
+        try await session.send(input())
+        fake.held = ["get_state"]
+        fake.emit([#"{"type":"agent_start"}"#, #"{"type":"agent_settled"}"#])
+        #expect(await finished())
+        #expect(log.completions == [.failed("Pi stopped responding.")])
+        #expect(fake.transports[0].terminated)
+        fake.held = []
+        try await session.send(input())
+        #expect(fake.transports.count == 2)
     }
 
     @Test func imagesTravelWithThePrompt() async throws {
@@ -359,6 +430,23 @@ final class PiSessionTests {
         #expect(log.approvals.count == 2)
     }
 
+    @Test func alwaysAllowOutlivesTheProcess() async throws {
+        fake.sessionFile = piSessionFile(in: scratch, workingDirectory: scratch)
+        let first = makeSession(accessMode: .approval)
+        try await first.start()
+        try await first.send(input(accessMode: .approval))
+        requestApproval()
+        first.respond(to: "ui-1", optionID: "allow_always")
+        // The idle timer ends the session; the next turn gets a new one that resumes the same Pi session.
+        first.shutdown()
+        let second = makeSession(resume: fake.sessionFile, accessMode: .approval)
+        try await second.start()
+        try await second.send(input(accessMode: .approval))
+        requestApproval(callID: "call_2", uiID: "ui-2")
+        #expect(log.approvals.count == 1)
+        #expect(fake.sent("extension_ui_response").last == ["type": "extension_ui_response", "id": "ui-2", "confirmed": true])
+    }
+
     @Test func deniedToolReadsAsDeclined() async throws {
         let session = makeSession(accessMode: .approval)
         try await session.start()
@@ -377,10 +465,80 @@ final class PiSessionTests {
         try await session.start()
         try await session.send(input())
         fake.emit([#"{"type":"extension_ui_request","id":"ui-timed","method":"select","title":"Pick one","options":["a","b"],"timeout":40}"#])
-        #expect(log.approvals.map(\.id) == ["ui-timed"])
-        #expect(await eventually { log.events.contains(.approvalResolved(id: "ui-timed")) })
-        session.respond(to: "ui-timed", optionID: "option.0")
+        #expect(log.questions.map(\.id) == ["ui-timed"])
+        #expect(await eventually { log.events.contains(.userInputResolved(id: "ui-timed")) })
+        session.answer(userInput: "ui-timed", answers: ["ui-timed": ["a"]])
+        fake.emit([#"{"type":"extension_ui_request","id":"ui-confirm","method":"confirm","title":"Continue?","timeout":40}"#])
+        #expect(await eventually { log.events.contains(.approvalResolved(id: "ui-confirm")) })
+        session.respond(to: "ui-confirm", optionID: "allow")
         #expect(fake.sent("extension_ui_response").isEmpty)
+    }
+
+    @Test func selectDialogsBecomeQuestions() async throws {
+        let session = makeSession()
+        try await session.start()
+        try await session.send(input("/release"))
+        fake.emit([#"{"type":"extension_ui_request","id":"ui-tag","method":"select","title":"Pick a tag","options":["stable","","beta"]}"#])
+        let question = try #require(log.questions.first?.questions.first)
+        #expect(question.prompt == "Pick a tag")
+        #expect(question.options.map(\.label) == ["stable", PiDialog.emptyChoiceLabel, "beta"])
+        #expect(!question.allowsFreeText)
+        #expect(!question.allowsMultipleSelection)
+        // An approval answer does not apply to a question.
+        session.respond(to: "ui-tag", optionID: "allow")
+        #expect(fake.sent("extension_ui_response").isEmpty)
+        session.answer(userInput: "ui-tag", answers: [question.id: [PiDialog.emptyChoiceLabel]])
+        #expect(fake.sent("extension_ui_response") == [["type": "extension_ui_response", "id": "ui-tag", "value": ""]])
+
+        fake.emit([#"{"type":"extension_ui_request","id":"ui-again","method":"select","title":"Pick again","options":["a"]}"#])
+        session.answer(userInput: "ui-again", answers: [:])
+        #expect(fake.sent("extension_ui_response").last == ["type": "extension_ui_response", "id": "ui-again", "cancelled": true])
+    }
+
+    @Test func inputAndEditorDialogsTakeTypedText() async throws {
+        let session = makeSession()
+        try await session.start()
+        try await session.send(input("/setup"))
+        fake.emit([#"{"type":"extension_ui_request","id":"ui-db","method":"input","title":"Which database?","placeholder":"postgres"}"#])
+        let ask = try #require(log.approvals.last)
+        #expect(ask.title == "Which database?")
+        #expect(ask.textInput == TextInputSpec(placeholder: "postgres"))
+        #expect(ask.options.map(\.kind) == [.allowOnce, .cancel])
+        session.respond(to: "ui-db", optionID: try #require(ask.options.first?.id), text: "SQLite")
+        #expect(fake.sent("extension_ui_response").last == ["type": "extension_ui_response", "id": "ui-db", "value": "SQLite"])
+
+        let prefill = "fix(server): keep the editor text\n\ndetails\n"
+        fake.current.emit(
+            ["type": "extension_ui_request", "id": "ui-msg", "method": "editor", "title": "Commit message", "prefill": .string(prefill)])
+        let edit = try #require(log.approvals.last)
+        #expect(edit.textInput == TextInputSpec(initialText: prefill, isMultiline: true))
+        // Without text (an app that shows no field) the prefilled text goes back unchanged.
+        session.respond(to: "ui-msg", optionID: try #require(edit.options.first?.id))
+        #expect(fake.sent("extension_ui_response").last == ["type": "extension_ui_response", "id": "ui-msg", "value": .string(prefill)])
+
+        fake.emit([#"{"type":"extension_ui_request","id":"ui-no","method":"input","title":"Name?"}"#])
+        session.respond(to: "ui-no", optionID: "cancel", text: "ignored")
+        #expect(fake.sent("extension_ui_response").last == ["type": "extension_ui_response", "id": "ui-no", "cancelled": true])
+    }
+
+    @Test func startupDialogsCanBeAnsweredAndAreWithdrawnWhenPiExits() async throws {
+        let session = makeSession()
+        fake.held = ["get_commands"]
+        let starting = Task { try await session.start() }
+        #expect(await eventually { !fake.transports.isEmpty && !fake.current.records("get_commands").isEmpty })
+        fake.emit([#"{"type":"extension_ui_request","id":"ui-trust","method":"confirm","title":"Run project extensions?","message":"This project has .pi/extensions."}"#])
+        let trust = try #require(log.approvals.first)
+        #expect(trust.title == "Run project extensions?")
+        #expect(trust.detail == "This project has .pi/extensions.")
+        session.respond(to: "ui-trust", optionID: "allow")
+        #expect(fake.sent("extension_ui_response") == [["type": "extension_ui_response", "id": "ui-trust", "confirmed": true]])
+        fake.answer("get_commands", data: ["commands": [["name": .string(PiExtension.handoffCommand)]]])
+        try await starting.value
+
+        fake.emit([#"{"type":"extension_ui_request","id":"ui-later","method":"confirm","title":"Reload?"}"#])
+        fake.current.exit(status: 0)
+        #expect(log.events.contains(.approvalResolved(id: "ui-later")))
+        #expect(log.events.last == .sessionExited(error: "Pi exited."))
     }
 
     @Test func pendingApprovalsAreCancelledWhenTheTurnEnds() async throws {
@@ -410,8 +568,63 @@ final class PiSessionTests {
         #expect(fake.current.environment["COINCIDE_PI_ACCESS"] == "approval")
         #expect(fake.current.records("switch_session").map { $0["sessionPath"]?.string } == [fake.sessionFile])
         #expect(fake.current.records("prompt").count == 1)
-        #expect(log.events.filter { $0 == .sessionStarted(id: fake.sessionFile) }.count == 2)
+        #expect(log.events.filter { $0 == .sessionStarted(id: fake.sessionFile) }.count == 1)
+        #expect(log.events.filter { $0 == .sessionContinued(id: fake.sessionFile) }.count == 1)
         #expect(!log.events.contains { if case .sessionExited = $0 { true } else { false } })
+    }
+
+    @Test func stopWhileStartingPiEndsTheTurnWithoutSendingThePrompt() async throws {
+        fake.sessionFile = piSessionFile(in: scratch, workingDirectory: scratch)
+        let session = makeSession()
+        try await session.start()
+        fake.held = ["switch_session"]
+        // A new access mode restarts Pi, which takes a while to load the session.
+        let sending = Task { try await session.send(input(accessMode: .approval)) }
+        #expect(await eventually { fake.transports.count == 2 && !fake.current.records("switch_session").isEmpty })
+        session.interrupt()
+        #expect(await finished())
+        #expect(log.completions == [.interrupted])
+        fake.answer("switch_session", data: ["cancelled": false])
+        try await sending.value
+        #expect(fake.sent("prompt").isEmpty)
+
+        // The restarted process takes the next turn.
+        fake.held = []
+        try await session.send(input(accessMode: .approval))
+        #expect(fake.transports.count == 2)
+        #expect(fake.sent("prompt").count == 1)
+    }
+
+    @Test func slashCommandAfterAHandoffGetsItsRecapSeparately() async throws {
+        let session = makeSession()
+        try await session.start()
+        let handoff = Self.handoffText(for: "/compact keep the API notes")
+        try await session.send(input(handoff))
+        let recap = try #require(fake.sent("prompt").first?["message"]?.string)
+        #expect(recap.hasPrefix("/\(PiExtension.handoffCommand) <conversation_handoff>"))
+        #expect(recap.contains("Claude Code:\nThe parser is done."))
+        #expect(!recap.contains("/compact"))
+        #expect(fake.sent("compact").first?["customInstructions"]?.string == "keep the API notes")
+        fake.emit(PiFixtures.compaction)
+        #expect(await finished())
+
+        // An ordinary message keeps its recap in the prompt.
+        let plain = Self.handoffText(for: "Now add tests")
+        try await session.send(input(plain))
+        #expect(fake.sent("prompt").last?["message"]?.string == plain)
+        #expect(fake.sent("prompt").count == 2)
+    }
+
+    /// What the thread runner sends Pi after another agent worked on the thread.
+    private static func handoffText(for message: String) -> String {
+        let thread = ChatThread(
+            projectID: UUID(), selection: ModelSelection(provider: .pi, modelID: "default"),
+            items: [
+                TranscriptItem(kind: .user, text: "Write the parser"),
+                TranscriptItem(kind: .assistant, text: "The parser is done.", provider: .claude),
+            ],
+            sessions: [.pi: ProviderSessionRef(sessionID: "/s.jsonl", seenItemCount: 0)])
+        return Handoff.prompt(for: message, thread: thread, provider: .pi)
     }
 
     @Test func planModeKeepsPiReadOnlyAndReturnsThePlan() async throws {
@@ -489,6 +702,47 @@ final class PiSessionTests {
         #expect(tail == [.turnCompleted(.failed(reason)), .sessionExited(error: reason)])
     }
 
+    @Test func exitWhilePreparingATurnFailsTheSend() async throws {
+        let session = makeSession()
+        try await session.start()
+        fake.held = ["set_model"]
+        let sending = Task { try await session.send(input(model: "anthropic/claude-sonnet-4-5")) }
+        #expect(await eventually { !fake.sent("set_model").isEmpty })
+        fake.current.exit(status: 1, stderr: "Error: out of memory\n")
+        do {
+            try await sending.value
+            Issue.record("Expected the send to fail")
+        } catch {
+            #expect(error.localizedDescription == "Pi exited with code 1.\nError: out of memory")
+        }
+        // `send` reported it; there is no turn to complete and the process is not reported separately.
+        #expect(log.completions.isEmpty)
+        #expect(!log.events.contains { if case .sessionExited = $0 { true } else { false } })
+        fake.held = []
+        try await session.send(input())
+        #expect(fake.transports.count == 2)
+        #expect(fake.sent("prompt").count == 1)
+    }
+
+    @Test func workAnExtensionStartsBetweenTurnsIsShownWithoutATurn() async throws {
+        let session = makeSession()
+        try await session.start()
+        fake.emit([
+            #"{"type":"agent_start"}"#,
+            #"{"type":"message_start","message":{"role":"assistant","content":[]}}"#,
+            #"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Build finished"}}"#,
+            #"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Build finished"}]}}"#,
+            #"{"type":"agent_settled"}"#,
+        ])
+        #expect(log.events.contains(.assistantText(itemID: "w1.m1.c0", text: "Build finished")))
+        #expect(log.completions.isEmpty)
+        // The next turn is unaffected.
+        try await session.send(input())
+        fake.emit([#"{"type":"agent_start"}"#, #"{"type":"agent_settled"}"#])
+        #expect(await finished())
+        #expect(log.completions == [.completed])
+    }
+
     @Test func exitBetweenTurnsIsReported() async throws {
         let session = makeSession()
         try await session.start()
@@ -525,14 +779,14 @@ final class PiSessionTests {
 struct PiProviderTests {
     private let fake = FakePi()
 
-    private func provider(version: String = "1.4.0", status: Int32 = 0) -> PiProvider {
+    private func provider(version: String = "1.4.0", status: Int32 = 0, timeout: Duration = .milliseconds(300)) -> PiProvider {
         let fake = fake
         return PiProvider(
             probeVersion: { _, _ in ProcessRunner.Result(status: status, stdout: version + "\n", stderr: "") },
             discoveryTransport: { _, environment in
                 fake.makeTransport(arguments: ["--mode", "rpc", "--no-session"], environment: environment)
             },
-            discoveryTimeout: .milliseconds(300))
+            discoveryTimeout: timeout)
     }
 
     private let executable = URL(fileURLWithPath: "/opt/homebrew/bin/pi")
@@ -589,6 +843,20 @@ struct PiProviderTests {
         let silent = await provider().detect(executable: executable, environment: [:])
         #expect(silent.state == .ready)
         #expect(silent.message != nil)
+    }
+
+    @Test func discoveryDismissesDialogsNobodyCanAnswer() async {
+        fake.held = ["get_state"]
+        let pi = provider(timeout: .seconds(5))
+        let detecting = Task { await pi.detect(executable: executable, environment: [:]) }
+        #expect(await eventually { !fake.transports.isEmpty && !fake.current.records("get_state").isEmpty })
+        fake.emit([#"{"type":"extension_ui_request","id":"ui-start","method":"confirm","title":"Trust this folder?"}"#])
+        #expect(fake.sent("extension_ui_response") == [["type": "extension_ui_response", "id": "ui-start", "cancelled": true]])
+        fake.held = []
+        fake.answer("get_state", data: PiFixtures.state(sessionFile: "/s.jsonl"))
+        let status = await detecting.value
+        #expect(status.state == .ready)
+        #expect(status.message == nil)
     }
 
     @Test func sessionsArePiSessions() {

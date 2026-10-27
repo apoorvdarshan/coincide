@@ -13,6 +13,9 @@ enum PiExtension {
     static let planToolName = "propose_plan"
     /// Start of the reason the extension gives Pi when plan mode blocks a tool.
     static let planModeBlockPrefix = "Plan mode is on, so "
+    /// The command that adds a handoff recap to the conversation without starting a run. It also shows that the
+    /// extension loaded: `get_commands` lists it.
+    static let handoffCommand = "coincide-handoff"
 
     /// Where the extension file is written: under `COINCIDE_DATA_DIR` when set (tests), otherwise in Caches.
     static var defaultDirectory: URL {
@@ -33,6 +36,18 @@ enum PiExtension {
         return url
     }
 
+    /// The name to invoke the handoff command by, from `get_commands`; nil when Pi did not load the extension.
+    static func handoffCommandName(in data: JSONValue?) -> String? {
+        let commands = data?["commands"]?.array ?? []
+        let ours = commands.first { command in
+            guard let name = command["name"]?.string, name.hasPrefix(handoffCommand) else { return false }
+            // Another extension could register the same name; ours is the one loaded from our file.
+            let path = command["sourceInfo"]?["path"]?.string ?? command["path"]?.string
+            return path.map { ($0 as NSString).lastPathComponent == fileName } ?? true
+        }
+        return ours?["name"]?.string
+    }
+
     static let planInstructions = """
         Plan mode is on. Research the task and plan it, but do not change anything yet.
         - Do not edit or write files, and do not run commands that change files or system state. Read files, search, and run read-only commands only.
@@ -50,35 +65,85 @@ enum PiExtension {
         const PLAN_INSTRUCTIONS = \#(literal(planInstructions));
         const PLAN_BLOCK_PREFIX = \#(literal(planModeBlockPrefix));
         const APPROVAL_MARKER = \#(literal(approvalMarker));
+        const HANDOFF_COMMAND = \#(literal(handoffCommand));
         const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
-        // Pi's plan-mode example: commands that only read, and patterns that change things.
+        // Patterns that change files or system state, after Pi's plan-mode example. They are checked against the
+        // whole command, quoted text included, so they err on the side of blocking.
         const DESTRUCTIVE_COMMANDS = [
           /\brm\b/i, /\brmdir\b/i, /\bmv\b/i, /\bcp\b/i, /\bmkdir\b/i, /\btouch\b/i, /\bchmod\b/i, /\bchown\b/i,
           /\bchgrp\b/i, /\bln\b/i, /\btee\b/i, /\btruncate\b/i, /\bdd\b/i, /\bshred\b/i, /(^|[^<])>(?!>)/, />>/,
           /\bnpm\s+(install|uninstall|update|ci|link|publish)/i, /\byarn\s+(add|remove|install|publish)/i,
-          /\bpnpm\s+(add|remove|install|publish)/i, /\bpip\s+(install|uninstall)/i,
+          /\bpnpm\s+(add|remove|install|publish)/i, /\bpip3?\s+(install|uninstall)/i,
           /\bapt(-get)?\s+(install|remove|purge|update|upgrade)/i, /\bbrew\s+(install|uninstall|upgrade)/i,
-          /\bgit\s+(add|commit|push|pull|merge|rebase|reset|checkout|branch\s+-[dD]|stash|cherry-pick|revert|tag|init|clone)/i,
+          /\bgit\s+(add|commit|push|pull|merge|rebase|reset|checkout|switch|restore|clean|branch\s+-[dDmM]|stash|cherry-pick|revert|tag|init|clone|apply|am)\b/i,
           /\bsudo\b/i, /\bsu\b/i, /\bkill\b/i, /\bpkill\b/i, /\bkillall\b/i, /\breboot\b/i, /\bshutdown\b/i,
           /\bsystemctl\s+(start|stop|restart|enable|disable)/i, /\bservice\s+\S+\s+(start|stop|restart)/i,
           /\b(vim?|nano|emacs|code|subl)\b/i,
+          // find can delete or run anything; awk can run commands; sed -i edits in place; curl can write files or send data.
+          /\s-(delete|exec|execdir|ok|okdir|fprint\w*)\b/, /\bsystem\s*\(/, /\bsed\b[^|;&]*\s-[a-zA-Z]*i/,
+          /\bcurl\b[^|;&]*\s(-[a-zA-Z]*[oOTdFX]|--(output|remote-name|upload-file|data[\w-]*|form|request|json))\b/,
         ];
+        // Commands that only read. Every command of a pipeline, list or substitution has to be one of them.
         const READ_ONLY_COMMANDS = [
-          /^\s*cat\b/, /^\s*head\b/, /^\s*tail\b/, /^\s*less\b/, /^\s*more\b/, /^\s*grep\b/, /^\s*find\b/, /^\s*ls\b/,
-          /^\s*pwd\b/, /^\s*echo\b/, /^\s*printf\b/, /^\s*wc\b/, /^\s*sort\b/, /^\s*uniq\b/, /^\s*diff\b/, /^\s*file\b/,
-          /^\s*stat\b/, /^\s*du\b/, /^\s*df\b/, /^\s*tree\b/, /^\s*which\b/, /^\s*whereis\b/, /^\s*type\b/, /^\s*env\b/,
-          /^\s*printenv\b/, /^\s*uname\b/, /^\s*whoami\b/, /^\s*id\b/, /^\s*date\b/, /^\s*cal\b/, /^\s*uptime\b/,
-          /^\s*ps\b/, /^\s*top\b/, /^\s*htop\b/, /^\s*free\b/,
-          /^\s*git\s+(status|log|diff|show|branch|remote|config\s+--get)/i, /^\s*git\s+ls-/i,
-          /^\s*npm\s+(list|ls|view|info|search|outdated|audit)/i, /^\s*yarn\s+(list|info|why|audit)/i,
-          /^\s*node\s+--version/i, /^\s*python\s+--version/i, /^\s*curl\s/i, /^\s*wget\s+-O\s*-/i, /^\s*jq\b/,
-          /^\s*sed\s+-n/i, /^\s*awk\b/, /^\s*rg\b/, /^\s*fd\b/, /^\s*bat\b/, /^\s*eza\b/,
+          /^cat\b/, /^head\b/, /^tail\b/, /^less\b/, /^more\b/, /^e?f?grep\b/, /^find\b/, /^ls\b/, /^pwd\b/, /^echo\b/,
+          /^printf\b/, /^wc\b/, /^sort\b/, /^uniq\b/, /^diff\b/, /^file\b/, /^stat\b/, /^du\b/, /^df\b/, /^tree\b/,
+          /^which\b/, /^whereis\b/, /^type\b/, /^env$/, /^printenv\b/, /^uname\b/, /^whoami\b/, /^id\b/, /^date\b/,
+          /^cal\b/, /^uptime\b/, /^ps\b/, /^top\b/, /^free\b/, /^nl\b/, /^cut\b/, /^tr\b/, /^column\b/, /^comm\b/,
+          /^cmp\b/, /^basename\b/, /^dirname\b/, /^realpath\b/, /^readlink\b/, /^(md5|shasum|sha\d+sum)\b/,
+          /^xxd\b/, /^od\b/, /^hexdump\b/, /^strings\b/, /^cd\b/, /^pushd\b/, /^popd\b/, /^true\b/, /^false\b/,
+          /^git\s+(status|log|diff|show|branch|remote|config\s+--get|ls-|grep|blame|rev-parse|describe|shortlog|cat-file|reflog)/i,
+          /^npm\s+(list|ls|view|info|search|outdated|audit)/i, /^yarn\s+(list|info|why|audit)/i,
+          /^(node|python3?|swift|ruby|go|cargo|rustc)\s+-{0,2}version\b/i, /^curl\s/i, /^wget\s+-O\s*-/i, /^jq\b/,
+          /^sed\s+-n/i, /^awk\b/, /^rg\b/, /^fd\b/, /^bat\b/, /^eza\b/,
         ];
 
+        // Splits a command at pipes, lists and command substitutions, outside quotes.
+        function commandSegments(command) {
+          const segments = [];
+          let current = "";
+          let quote = null;
+          for (let index = 0; index < command.length; index++) {
+            const char = command[index];
+            if (quote === "'") {
+              if (char === "'") quote = null;
+              current += char;
+              continue;
+            }
+            if (char === "\\" && index + 1 < command.length) {
+              current += char + command[++index];
+              continue;
+            }
+            const substitution = char === "`" || (char === "$" && command[index + 1] === "(");
+            if (quote === '"' && !substitution) {
+              if (char === '"') quote = null;
+              current += char;
+              continue;
+            }
+            if (quote === null && (char === "'" || char === '"')) {
+              quote = char;
+              current += char;
+              continue;
+            }
+            if (substitution || (quote === null && "|&;\n()".includes(char))) {
+              segments.push(current);
+              current = "";
+              if (char === "$") index++;
+              continue;
+            }
+            current += char;
+          }
+          segments.push(current);
+          return segments.map((segment) => segment.trim()).filter((segment) => segment.length > 0);
+        }
+
         function isReadOnlyCommand(command) {
-          return !DESTRUCTIVE_COMMANDS.some((pattern) => pattern.test(command)) &&
-            READ_ONLY_COMMANDS.some((pattern) => pattern.test(command));
+          // Discarding output or merging streams writes nothing.
+          const normalized = command.replace(/(\d*|&)>>?\s*\/dev\/null\b/g, " ").replace(/\d*>&\d+/g, " ");
+          if (DESTRUCTIVE_COMMANDS.some((pattern) => pattern.test(normalized))) return false;
+          const segments = commandSegments(normalized);
+          return segments.length > 0 &&
+            segments.every((segment) => READ_ONLY_COMMANDS.some((pattern) => pattern.test(segment)));
         }
 
         export default function coincide(pi) {
@@ -91,6 +156,20 @@ enum PiExtension {
           const isReadOnlyTool = (name) =>
             READ_ONLY_TOOLS.has(name) ||
             (name === "tool_search" && registered(name)?.sourceInfo?.path === "builtin:tool-search");
+
+          // A slash command only works at the start of a prompt, so when the user's message is one, Coincide sends
+          // the recap of what other agents did in this thread through this command first.
+          pi.registerCommand(HANDOFF_COMMAND, {
+            description: "Adds Coincide's recap of the turns other agents handled to this conversation.",
+            handler: async (args) => {
+              const text = typeof args === "string" ? args.trim() : "";
+              if (text.length === 0) return;
+              pi.sendMessage(
+                { customType: HANDOFF_COMMAND, content: [{ type: "text", text }], display: false },
+                { triggerTurn: false },
+              );
+            },
+          });
 
           if (planMode) {
             pi.registerTool({
@@ -214,7 +293,8 @@ enum PiSessionFile {
         canonical(lhs) == canonical(rhs)
     }
 
-    private static func canonical(_ path: String) -> String {
+    /// The path with symlinks resolved, or the standardized path when it does not exist.
+    static func canonical(_ path: String) -> String {
         guard let resolved = realpath(path, nil) else { return (path as NSString).standardizingPath }
         defer { free(resolved) }
         return String(cString: resolved)

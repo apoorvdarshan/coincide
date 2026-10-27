@@ -17,6 +17,8 @@ struct PiTurnMapper {
 
     /// Context window of the active model, for usage reports.
     var contextWindow: Int?
+    /// The session's folder; tool titles show paths inside it relative to it.
+    var workingDirectory: String?
     /// Why Pi says the turn failed: a model error or an exhausted retry.
     private(set) var failure: String?
     /// Pi's estimate of the context after the last compaction, used until a response reports real usage.
@@ -212,7 +214,7 @@ struct PiTurnMapper {
             tools[id] = tool
             return planEvents(tool.args)
         }
-        let info = PiTools.info(id: id, name: tool.name, args: tool.args)
+        let info = PiTools.info(id: id, name: tool.name, args: tool.args, relativeTo: workingDirectory)
         let previous = tool.info
         tool.info = info
         tools[id] = tool
@@ -252,7 +254,10 @@ struct PiTurnMapper {
         guard tool.name != PiExtension.planToolName else { return events }
         let result = record["result"]
         let output = PiTools.outputText(name: tool.name, result: result)
-        if let finished = PiTools.finishedInfo(id: id, name: tool.name, args: tool.args, result: result), finished != tool.info {
+        if let finished = PiTools.finishedInfo(
+            id: id, name: tool.name, args: tool.args, result: result, relativeTo: workingDirectory),
+            finished != tool.info
+        {
             tools[id]?.info = finished
             events.append(.toolUpdated(finished))
         }

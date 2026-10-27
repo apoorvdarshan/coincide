@@ -21,14 +21,27 @@ enum PiTools {
         ["todo", "todos", "todo_write", "todowrite"].contains(name.lowercased())
     }
 
-    static func info(id: String, name: String, args: JSONValue?) -> ToolCallInfo {
-        ToolCallInfo(id: id, category: category(for: name), title: title(name: name, args: args), detail: detail(name: name, args: args))
+    /// `base` is the session's working folder; paths inside it are shown relative to it.
+    static func info(id: String, name: String, args: JSONValue?, relativeTo base: String? = nil) -> ToolCallInfo {
+        ToolCallInfo(
+            id: id, category: category(for: name), title: title(name: name, args: args, base: base),
+            detail: detail(name: name, args: args))
     }
 
     /// The detail once the tool has finished, when the result improves on it: Pi computes a unified patch for edits.
-    static func finishedInfo(id: String, name: String, args: JSONValue?, result: JSONValue?) -> ToolCallInfo? {
+    static func finishedInfo(
+        id: String, name: String, args: JSONValue?, result: JSONValue?, relativeTo base: String? = nil
+    ) -> ToolCallInfo? {
         guard name == "edit", let patch = PiText.nonEmpty(result?["details"]?["patch"]?.string) else { return nil }
-        return ToolCallInfo(id: id, category: .fileChange, title: title(name: name, args: args), detail: patch)
+        return ToolCallInfo(id: id, category: .fileChange, title: title(name: name, args: args, base: base), detail: patch)
+    }
+
+    /// `path` relative to `base` when it lies inside it.
+    static func displayPath(_ path: String, relativeTo base: String?) -> String {
+        guard let base = PiText.nonEmpty(base), path.hasPrefix("/") else { return path }
+        let folder = base.hasSuffix("/") ? base : base + "/"
+        guard path.hasPrefix(folder), path.count > folder.count else { return path }
+        return String(path.dropFirst(folder.count))
     }
 
     /// Text of a finished tool's result.
@@ -74,35 +87,37 @@ enum PiTools {
 
     // MARK: Titles and details
 
-    private static func title(name: String, args: JSONValue?) -> String {
+    private static func title(name: String, args: JSONValue?, base: String?) -> String {
         let text = { (key: String) in PiText.nonEmpty(args?[key]?.string) }
+        let place = { (key: String) in text(key).map { displayPath($0, relativeTo: base) } }
+        let file = path(args).map { displayPath($0, relativeTo: base) }
         switch name {
         case "bash", "powershell":
             guard let command = text("command") else { return String(localized: "Run a command") }
             return String(localized: "Run `\(PiText.summary(command))`")
         case "read":
-            guard let path = path(args) else { return String(localized: "Read a file") }
-            return String(localized: "Read \(path)")
+            guard let file else { return String(localized: "Read a file") }
+            return String(localized: "Read \(file)")
         case "edit":
-            guard let path = path(args) else { return String(localized: "Edit a file") }
-            return String(localized: "Edit \(path)")
+            guard let file else { return String(localized: "Edit a file") }
+            return String(localized: "Edit \(file)")
         case "write":
-            guard let path = path(args) else { return String(localized: "Write a file") }
-            return String(localized: "Write \(path)")
+            guard let file else { return String(localized: "Write a file") }
+            return String(localized: "Write \(file)")
         case "grep":
             guard let pattern = text("pattern").map({ PiText.summary($0, limit: 60) }) else {
                 return String(localized: "Search files")
             }
-            return text("path").map { String(localized: "Search for `\(pattern)` in \($0)") }
+            return place("path").map { String(localized: "Search for `\(pattern)` in \($0)") }
                 ?? String(localized: "Search for `\(pattern)`")
         case "find":
             guard let pattern = text("pattern").map({ PiText.summary($0, limit: 60) }) else {
                 return String(localized: "Find files")
             }
-            return text("path").map { String(localized: "Find `\(pattern)` in \($0)") }
+            return place("path").map { String(localized: "Find `\(pattern)` in \($0)") }
                 ?? String(localized: "Find `\(pattern)`")
         case "ls":
-            return String(localized: "List \(text("path") ?? ".")")
+            return String(localized: "List \(place("path") ?? ".")")
         case "tool_search":
             return text("query").map { String(localized: "Search tools for `\(PiText.summary($0, limit: 60))`") }
                 ?? String(localized: "Search tools")
@@ -171,16 +186,18 @@ enum PiTools {
     }
 
     /// A diff of the requested replacements, shown until Pi reports the real patch. Pi's `edit` takes
-    /// `edits: [{oldText, newText}]`; older versions took a single `oldText`/`newText` pair.
+    /// `edits: [{oldText, newText}]`; older versions took a single `oldText`/`newText` pair. Some models send
+    /// `edits` as a JSON string or as one object, which Pi accepts too.
     static func editDiff(path: String, args: JSONValue?) -> String? {
-        var replacements: [(old: String, new: String)] = []
-        if let edits = args?["edits"]?.array {
-            replacements = edits.compactMap { edit in
-                guard let old = edit["oldText"]?.string, let new = edit["newText"]?.string else { return nil }
-                return (old, new)
-            }
-        } else if let old = args?["oldText"]?.string, let new = args?["newText"]?.string {
-            replacements = [(old, new)]
+        var edits = args?["edits"]
+        if let encoded = edits?.string { edits = JSONValue.parse(encoded) }
+        if edits?.object != nil { edits = .array([edits ?? .null]) }
+        var replacements: [(old: String, new: String)] = (edits?.array ?? []).compactMap { edit in
+            guard let old = edit["oldText"]?.string, let new = edit["newText"]?.string else { return nil }
+            return (old, new)
+        }
+        if let old = args?["oldText"]?.string, let new = args?["newText"]?.string {
+            replacements.append((old, new))
         }
         guard !replacements.isEmpty else { return nil }
         var lines = ["--- \(path)", "+++ \(path)"]
