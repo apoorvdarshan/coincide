@@ -5,7 +5,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: MainWindowController?
     private var mainMenu: MainMenu?
 
+    /// Whether the app hosts the unit tests (CoincideTests). It then stays in the background: no windows,
+    /// no menu bar, no Dock icon, never active, and nothing started, so a test run never takes over the screen.
+    static let isHostingTests =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil
+
+    override init() {
+        super.init()
+        // As early as possible, before the app finishes launching and would be activated.
+        if Self.isHostingTests { NSApplication.shared.setActivationPolicy(.prohibited) }
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
+        if Self.isHostingTests {
+            // Again, in case launching restored the policy the app's Info.plist asks for.
+            NSApp.setActivationPolicy(.prohibited)
+            return
+        }
         let controller = MainWindowController()
         mainWindow = controller
         let menu = MainMenu(windowController: controller)
@@ -14,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !Self.isHostingTests else { return }
         AppearanceController.shared.start()
         SettingsWindowController.shared.startHandlingRequests()
         ThreadActivity.shared.start()
@@ -28,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Asks first while agents work or terminal commands run, as Terminal does for running processes.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !Self.isHostingTests else { return .terminateNow }
         let agents = ThreadRunner.shared.runningThreadIDs.count
         let jobs = TerminalSessionManager.shared.busySessionCount
         guard agents > 0 || jobs > 0 else { return .terminateNow }
@@ -52,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        guard !Self.isHostingTests else { return }
         ThreadRunner.shared.shutdownAll()
         AppStore.shared.flush()
         if mainWindow?.window?.isVisible == true { mainWindow?.saveLayout() }
@@ -61,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !Self.isHostingTests else { return false }
         if !flag { mainWindow?.showWindow(nil) }
         return true
     }

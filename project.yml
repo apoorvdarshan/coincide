@@ -58,6 +58,26 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+  CoincideTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: CoincideTests
+    dependencies:
+      - target: Coincide
+      # Linked for `import CoincideKit`; the host app already embeds it.
+      - target: CoincideKit
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.apptests
+        GENERATE_INFOPLIST_FILE: YES
+        # Hosted by the app, whose launch guard creates no windows and never activates under XCTest.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Coincide.app/Contents/MacOS/Coincide"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        # Points the shared stores at a scratch folder before any test runs (see TestEnvironment.swift).
+        INFOPLIST_KEY_NSPrincipalClass: CoincideTests.TestEnvironment
+        SWIFT_EMIT_LOC_STRINGS: NO
   CoincideKitTests:
     type: bundle.unit-test
     platform: macOS
@@ -82,5 +102,6 @@ schemes:
       config: Debug
       targets:
         - CoincideKitTests
+        - CoincideTests
     archive:
       config: Release
