@@ -95,6 +95,13 @@ public enum Handoff {
             return "\(agentLabel(item)) plan:\n\(item.text)"
         case .error:
             return "Error: \(item.text)"
+        case .question:
+            guard let request = item.questions else { return nil }
+            let lines = request.questions.map { question -> String in
+                let answer = item.answers?[question.id]?.joined(separator: ", ") ?? "(no answer)"
+                return "Q: \(question.prompt)\nA: \(answer)"
+            }
+            return "\(agentLabel(item)) asked the user:\n" + lines.joined(separator: "\n")
         case .reasoning, .approval, .notice:
             return nil
         }

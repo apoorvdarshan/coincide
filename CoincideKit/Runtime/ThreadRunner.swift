@@ -41,6 +41,8 @@ public final class ThreadRunner {
     public var onTurnFinished: ((UUID, TurnOutcome) -> Void)?
     /// Called when an agent asks for approval.
     public var onApprovalRequested: ((UUID, ApprovalRequest) -> Void)?
+    /// Called when an agent asks the user questions.
+    public var onUserInputRequested: ((UUID, UserInputRequest) -> Void)?
 
     public init(store: AppStore, registry: ProviderRegistry) {
         self.store = store
@@ -72,6 +74,11 @@ public final class ThreadRunner {
     /// Approval items still waiting for an answer.
     public func pendingApprovals(_ threadID: UUID) -> [TranscriptItem] {
         store.thread(threadID)?.items.filter { $0.kind == .approval && $0.status == .waiting } ?? []
+    }
+
+    /// Question items still waiting for an answer.
+    public func pendingQuestions(_ threadID: UUID) -> [TranscriptItem] {
+        store.thread(threadID)?.items.filter { $0.kind == .question && $0.status == .waiting } ?? []
     }
 
     // MARK: Turns
@@ -166,16 +173,50 @@ public final class ThreadRunner {
         }
     }
 
-    /// Answers an approval item.
-    public func respond(threadID: UUID, itemID: UUID, optionID: String) {
+    /// Answers an approval item. `text` is sent along when the approval asked for text input.
+    public func respond(threadID: UUID, itemID: UUID, optionID: String, text: String? = nil) {
         guard let item = store.item(itemID, in: threadID), let approval = item.approval, item.status == .waiting,
             let provider = item.provider
         else { return }
         let option = approval.options.first { $0.id == optionID }
-        sessions[threadID]?[provider]?.respond(to: approval.requestID, optionID: optionID)
+        if approval.textInput != nil {
+            sessions[threadID]?[provider]?.respond(to: approval.requestID, optionID: optionID, text: text)
+        } else {
+            sessions[threadID]?[provider]?.respond(to: approval.requestID, optionID: optionID)
+        }
         store.updateItem(itemID, in: threadID) { item in
             item.approval?.resolution = option?.label ?? optionID
+            if approval.textInput != nil { item.approval?.responseText = text }
             item.status = (option?.kind == .deny || option?.kind == .cancel) ? .declined : .completed
+            item.completedAt = Date()
+        }
+    }
+
+    /// Answers a question item. `answers` maps question ids to the chosen labels or typed text.
+    public func answer(threadID: UUID, itemID: UUID, answers: [String: [String]]) {
+        guard let item = store.item(itemID, in: threadID), let request = item.questions, item.status == .waiting,
+            let provider = item.provider
+        else { return }
+        sessions[threadID]?[provider]?.answer(userInput: request.id, answers: answers)
+        let secretIDs = Set(request.questions.filter(\.isSecret).map(\.id))
+        store.updateItem(itemID, in: threadID) { item in
+            // Secret answers are sent to the agent but never stored.
+            item.answers = answers.mapValues { $0 }.reduce(into: [:]) { result, entry in
+                result[entry.key] = secretIDs.contains(entry.key) ? ["••••"] : entry.value
+            }
+            item.status = .completed
+            item.completedAt = Date()
+        }
+    }
+
+    /// Dismisses a question item without answering.
+    public func dismissQuestion(threadID: UUID, itemID: UUID) {
+        guard let item = store.item(itemID, in: threadID), let request = item.questions, item.status == .waiting,
+            let provider = item.provider
+        else { return }
+        sessions[threadID]?[provider]?.answer(userInput: request.id, answers: [:])
+        store.updateItem(itemID, in: threadID) { item in
+            item.status = .declined
             item.completedAt = Date()
         }
     }
@@ -258,6 +299,12 @@ public final class ThreadRunner {
                 thread.sessions[provider] = ProviderSessionRef(sessionID: id, seenItemCount: seen)
             }
 
+        case .sessionContinued(let id):
+            store.updateThread(threadID) { thread in
+                let seen = thread.sessions[provider]?.seenItemCount ?? 0
+                thread.sessions[provider] = ProviderSessionRef(sessionID: id, seenItemCount: seen)
+            }
+
         case .assistantTextDelta(let itemID, let delta):
             appendText(delta, kind: .assistant, externalID: itemID, threadID: threadID, provider: provider, modelID: modelID)
         case .assistantText(let itemID, let text):
@@ -324,6 +371,23 @@ public final class ThreadRunner {
                 item.completedAt = Date()
             }
 
+        case .userInputRequested(let request):
+            let item = TranscriptItem(
+                kind: .question, title: request.title, status: .waiting, provider: provider, modelID: modelID,
+                externalID: request.id, questions: request)
+            store.append(item, to: threadID)
+            onUserInputRequested?(threadID, request)
+        case .userInputResolved(let id):
+            guard
+                let item = store.thread(threadID)?.items.last(where: {
+                    $0.kind == .question && $0.questions?.id == id && $0.status == .waiting
+                })
+            else { return }
+            store.updateItem(item.id, in: threadID) { item in
+                item.status = .completed
+                item.completedAt = Date()
+            }
+
         case .plan(let text):
             if let planID = turns[threadID]?.planItemID, store.item(planID, in: threadID) != nil {
                 store.updateItem(planID, in: threadID) { $0.text = text }
@@ -364,7 +428,7 @@ public final class ThreadRunner {
                 guard item.status == .running || item.status == .waiting else { continue }
                 store.updateItem(item.id, in: threadID) { item in
                     switch item.kind {
-                    case .approval: item.status = .declined
+                    case .approval, .question: item.status = .declined
                     case .tool: item.status = outcome == .completed ? .completed : .failed
                     default: item.status = .completed
                     }
