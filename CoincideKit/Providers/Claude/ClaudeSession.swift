@@ -1,8 +1,9 @@
 import Foundation
 
 /// A live Claude Code process for one thread, speaking the SDK's stream-json control protocol:
-/// `initialize`, user messages stamped with a uuid, `can_use_tool` permission prompts, MCP elicitations,
-/// `interrupt`, `set_model`, `apply_flag_settings` and `set_permission_mode`.
+/// `initialize`, user messages stamped with a uuid (and, to steer a running turn, priority `now`),
+/// `can_use_tool` permission prompts, MCP elicitations, `interrupt`, `set_model`, `apply_flag_settings`
+/// and `set_permission_mode`.
 @MainActor
 final class ClaudeSession: AgentSession {
     typealias TransportFactory = @MainActor (ClaudeLaunchConfig) -> ClaudeTransport
@@ -20,11 +21,19 @@ final class ClaudeSession: AgentSession {
     private struct Turn {
         /// The uuid stamped on the user message; `command_lifecycle` frames and results refer to it.
         let id: String
+        /// Messages the user added while the turn ran (steering it), in order.
+        var steerIDs: [String] = []
+        /// Messages of the turn Claude is done with: a result answered them, or their lifecycle ended.
+        var settled: Set<String> = []
         /// The message was written to Claude.
         var accepted = false
         /// Claude started running it (it may first finish a turn it started on its own).
         var started = false
         var interruptRequested = false
+
+        var messageIDs: [String] { [id] + steerIDs }
+        /// Steers Claude has not answered yet: a result before them ends only a part of the turn.
+        var pendingSteers: [String] { steerIDs.filter { !settled.contains($0) } }
     }
 
     /// What a turn asks for, in CLI terms.
@@ -163,6 +172,24 @@ final class ClaudeSession: AgentSession {
         }
     }
 
+    let supportsSteering = true
+
+    /// Writes the message into the running turn with priority `now`, as the Agent SDK steers: Claude moves running
+    /// commands to the background or stops streaming, takes the message in and answers it in the same turn.
+    func steer(_ input: AgentTurnInput) async throws {
+        guard !isShutDown, let transport, let current = turn, current.accepted, !current.interruptRequested else {
+            throw AgentError.providerError(String(localized: "Claude Code can't take a message for this turn now."))
+        }
+        let texts = Self.promptTexts(message: input.message, recap: nil, ultrathink: live?.effort.ultrathink ?? false)
+        let (images, skipped) = ClaudeAttachments.imageBlocks(for: input.imagePaths)
+        for path in skipped {
+            emit(.notice(String(localized: "Couldn't attach \((path as NSString).lastPathComponent).")))
+        }
+        let id = Self.newID()
+        turn?.steerIDs.append(id)
+        transport.write(Self.userMessage(texts: texts, images: images, uuid: id, priority: "now").compactJSON)
+    }
+
     func respond(to approvalID: String, optionID: String) {
         respond(to: approvalID, optionID: optionID, text: nil)
     }
@@ -211,9 +238,8 @@ final class ClaudeSession: AgentSession {
             // `cancel_queued` also drops the message when Claude had not started it yet (it may be finishing a
             // turn it began itself), and stops that turn too.
             let response = try? await self?.control(["subtype": "interrupt", "cancel_queued": true], timeout: 10)
-            if let self, self.turn?.id == turnID,
-                response?["cancelled"]?.array?.contains(.string(turnID)) == true
-            {
+            let cancelled = Set((response?["cancelled"]?.array ?? []).compactMap(\.string))
+            if let self, let current = self.turn, current.id == turnID, !cancelled.isDisjoint(with: current.messageIDs) {
                 self.finishTurn(.interrupted)
             }
         }
@@ -475,9 +501,10 @@ final class ClaudeSession: AgentSession {
                 handshake?.resultErrors += (frame["errors"]?.array ?? []).compactMap(\.string)
             } else {
                 let owned = ownsResult(frame)
+                if owned { turn?.settled.formUnion(Self.answeredMessages(frame)) }
                 emit(mapper.map(frame))
                 if owned {
-                    finishTurn(withResult: frame)
+                    if !endsSegment(frame) { finishTurn(withResult: frame) }
                 } else if turn == nil {
                     finishAgentTurn(withResult: frame)
                 }
@@ -513,26 +540,51 @@ final class ClaudeSession: AgentSession {
     }
 
     private func handleLifecycle(_ frame: JSONValue) {
-        guard let uuid = frame["command_uuid"]?.string, let current = turn, uuid == current.id else { return }
+        guard let uuid = frame["command_uuid"]?.string, let current = turn, current.messageIDs.contains(uuid) else { return }
         lifecycleSeen = true
         switch frame["state"]?.string {
         case "started"?:
-            guard !current.started else { return }
+            // A steer that starts begins a new part of the turn, with a reply of its own.
+            guard uuid != current.id || !current.started else { return }
             turn?.started = true
             mapper.turnStarted()
-        case "completed"?:
+        case let state? where state == "completed" || state == "cancelled":
+            turn?.settled.insert(uuid)
+            // Claude may still answer a steer after the message before it ended: the turn goes on until all have.
+            guard let updated = turn, updated.messageIDs.allSatisfy(updated.settled.contains) else { return }
+            if state == "cancelled" {
+                finishTurn(.interrupted)
+                return
+            }
             // The result normally ends the turn first.
             guard current.accepted else { return }
-            if current.started || current.interruptRequested {
-                finishTurn(current.interruptRequested ? .interrupted : .completed)
+            if updated.started || updated.interruptRequested {
+                finishTurn(updated.interruptRequested ? .interrupted : .completed)
             } else {
                 finishTurn(.failed(String(localized: "Claude Code accepted the message but never started working on it.")))
             }
-        case "cancelled"?:
-            finishTurn(.interrupted)
         default:
             break
         }
+    }
+
+    /// The messages a result answered.
+    private static func answeredMessages(_ result: JSONValue) -> [String] {
+        (result["user_message_uuids"]?.array ?? []).compactMap(\.string) + [result["user_message_uuid"]?.string].compactMap { $0 }
+    }
+
+    /// Whether a result of the turn ends only the part before a steer: Claude stopped streaming or tools to take the
+    /// steer in (T3 Code's active-steering abort), or finished the earlier messages while a steer still waited. The
+    /// turn ends with the result that answers its last steer. Without an echo of the answered messages (older
+    /// versions), only an aborted result after a steer tells.
+    private func endsSegment(_ result: JSONValue) -> Bool {
+        guard let current = turn, !current.steerIDs.isEmpty, !current.interruptRequested else { return false }
+        let terminal = result["terminal_reason"]?.string
+        let aborted = terminal == "aborted_streaming" || terminal == "aborted_tools"
+        if Self.answeredMessages(result).isEmpty { return aborted }
+        guard !current.pendingSteers.isEmpty else { return false }
+        return aborted
+            || ClaudeEventMapper.outcome(of: result, interruptRequested: false, assistantError: mapper.assistantError) == .completed
     }
 
     /// Whether a result ends the current turn rather than one Claude started by itself (to follow up on finished
@@ -540,8 +592,8 @@ final class ClaudeSession: AgentSession {
     private func ownsResult(_ result: JSONValue) -> Bool {
         guard let current = turn, current.accepted else { return false }
         // Results name the messages their turn consumed; ours may also have been folded into Claude's own turn.
-        let echoed = (result["user_message_uuids"]?.array ?? []).compactMap(\.string) + [result["user_message_uuid"]?.string].compactMap { $0 }
-        if !echoed.isEmpty { return echoed.contains(current.id) }
+        let echoed = Self.answeredMessages(result)
+        if !echoed.isEmpty { return !Set(echoed).isDisjoint(with: current.messageIDs) }
         if let origin = result.at("origin.kind")?.string, origin != "human" { return false }
         // Without an echo, lifecycle frames tell whether our message has started.
         let lifecycle = lifecycleSeen || mapper.capabilities.contains("msg_lifecycle_v1")
@@ -800,16 +852,18 @@ final class ClaudeSession: AgentSession {
 
     /// A user message as the SDK sends it, stamped with a uuid that lifecycle frames and results echo, and marked
     /// as typed by a person. Images go first: Claude runs a slash command or skill only when it starts the last
-    /// text block.
-    static func userMessage(texts: [String], images: [JSONValue] = [], uuid: String) -> JSONValue {
+    /// text block. Priority `now` steers a running turn.
+    static func userMessage(texts: [String], images: [JSONValue] = [], uuid: String, priority: String? = nil) -> JSONValue {
         let texts = texts.filter { !$0.isEmpty }
         let content: JSONValue =
             images.isEmpty && texts.count <= 1
             ? .string(texts.first ?? "") : .array(images + texts.map { ["type": "text", "text": .string($0)] })
-        return [
+        var message: [String: JSONValue] = [
             "type": "user", "message": ["role": "user", "content": content], "parent_tool_use_id": nil, "uuid": .string(uuid),
             "origin": ["kind": "human"],
         ]
+        if let priority { message["priority"] = .string(priority) }
+        return .object(message)
     }
 
     /// The text blocks of a user message. A slash command or skill (`/name …`) only runs when it starts the last

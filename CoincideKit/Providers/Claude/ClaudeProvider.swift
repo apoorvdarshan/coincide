@@ -51,9 +51,14 @@ public final class ClaudeProvider: AgentProvider {
                 state: .notAuthenticated, version: version, executable: executable,
                 message: String(localized: "Claude Code is not signed in. Run `claude auth login` in Terminal, then refresh."))
         }
+        // The plan's usage windows come from the same probe that lists the models, which `models` then reuses.
+        let usageLimits =
+            auth.loggedIn && !customEndpoint
+            ? await initializeInfo(executable: executable, environment: environment)?.usageLimits : nil
         return ProviderStatus(
             state: .ready, version: version, executable: executable,
-            account: auth.account ?? (customEndpoint ? String(localized: "Custom API endpoint") : nil), message: upgrade)
+            account: auth.account ?? (customEndpoint ? String(localized: "Custom API endpoint") : nil), message: upgrade,
+            usageLimits: usageLimits)
     }
 
     public func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption] {
@@ -93,6 +98,8 @@ struct ClaudeInitializeInfo: Sendable {
     var models: [JSONValue]
     var account: JSONValue?
     var permissionMode: String?
+    /// The plan's usage windows, when the probe read them.
+    var usageLimits: UsageLimits?
 
     init(response: JSONValue) {
         models = response["models"]?.array ?? []
@@ -121,7 +128,10 @@ enum ClaudeCapabilitiesProbe {
         return arguments
     }
 
-    static func run(executable: URL, environment: [String: String], timeout: TimeInterval = 25) async -> ClaudeInitializeInfo? {
+    /// With `includeUsage`, also reads the plan's usage windows (`get_usage`), which sends no prompt either.
+    static func run(executable: URL, environment: [String: String], timeout: TimeInterval = 25, includeUsage: Bool = true)
+        async -> ClaudeInitializeInfo?
+    {
         var environment = ClaudeLaunchConfig.environment(environment)
         environment["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
         environment["CLAUDE_CODE_AUTO_CONNECT_IDE"] = "0"
@@ -130,31 +140,49 @@ enum ClaudeCapabilitiesProbe {
         let process = LineProcess(
             executable: executable, arguments: arguments(managedMCPConfig: managed),
             workingDirectory: FileManager.default.homeDirectoryForCurrentUser, environment: environment)
-        let requestID = UUID().uuidString.lowercased()
-        let response: JSONValue? = await withCheckedContinuation { continuation in
-            let waiter = Waiter(continuation)
-            process.onLine = { line in
-                guard let frame = JSONValue.parse(line), frame["type"]?.string == "control_response",
-                    frame.at("response.request_id")?.string == requestID
-                else { return }
-                waiter.finish(frame.at("response.subtype")?.string == "success" ? frame.at("response.response") : nil)
-            }
-            process.onExit = { _, _ in waiter.finish(nil) }
-            do {
-                try process.start()
-            } catch {
-                waiter.finish(nil)
-                return
-            }
-            process.write(json: ["request_id": .string(requestID), "type": "control_request", "request": ["subtype": "initialize"]])
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(timeout))
-                waiter.finish(nil)
+        var waiters: [String: Waiter] = [:]
+        process.onLine = { line in
+            guard let frame = JSONValue.parse(line), frame["type"]?.string == "control_response",
+                let id = frame.at("response.request_id")?.string
+            else { return }
+            waiters.removeValue(forKey: id)?.finish(
+                frame.at("response.subtype")?.string == "success" ? frame.at("response.response") : nil)
+        }
+        process.onExit = { _, _ in
+            for waiter in waiters.values { waiter.finish(nil) }
+            waiters.removeAll()
+        }
+        /// Sends a control request and waits for its answer, nil on failure or after `timeout` seconds.
+        func request(_ request: JSONValue, timeout: TimeInterval) async -> JSONValue? {
+            let requestID = UUID().uuidString.lowercased()
+            return await withCheckedContinuation { continuation in
+                let waiter = Waiter(continuation)
+                waiters[requestID] = waiter
+                process.write(json: ["request_id": .string(requestID), "type": "control_request", "request": request])
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(timeout))
+                    waiter.finish(nil)
+                }
             }
         }
-        process.closeInput()
-        process.terminate()
-        return response.map(ClaudeInitializeInfo.init(response:))
+        do {
+            try process.start()
+        } catch {
+            return nil
+        }
+        defer {
+            process.closeInput()
+            process.terminate()
+        }
+        guard let response = await request(["subtype": "initialize"], timeout: timeout) else { return nil }
+        var info = ClaudeInitializeInfo(response: response)
+        // As in T3 Code, only the plan's limits are read, so Claude skips scanning local transcripts for the rest.
+        if includeUsage, let usage = await request(["subtype": "get_usage", "skip_behaviors": true], timeout: 10),
+            let windows = ClaudeUsageLimits.windows(fromUsage: usage)
+        {
+            info.usageLimits = UsageLimits(windows: windows, checkedAt: Date())
+        }
+        return info
     }
 
     @MainActor

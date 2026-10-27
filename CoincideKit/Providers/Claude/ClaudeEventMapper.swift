@@ -165,6 +165,9 @@ struct ClaudeEventMapper {
         case "user"?: events = user(frame)
         case "system"?: events = system(frame)
         case "result"?: events = result(frame)
+        case "rate_limit_event"?:
+            let windows = ClaudeUsageLimits.windows(fromEvent: frame)
+            events = windows.isEmpty ? [] : [.rateLimits(windows)]
         case "conversation_reset"?:
             // /clear: a new conversation whose running cost starts at zero.
             sessionID = frame["new_conversation_id"]?.string ?? sessionID
