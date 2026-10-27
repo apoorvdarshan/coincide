@@ -80,7 +80,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     override func loadView() {
         view = rootView
-        rootView.onKeyEquivalent = { [weak self] event in self?.handleKeyEquivalent(event) ?? false }
         buildTextView()
         buildSurface()
         buildColumn()
@@ -741,10 +740,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             guard flags.contains(.command), !textView.hasMarkedText() else { return false }
             primaryAction()
             return true
-        case 47:  // .
-            guard flags == .command, let threadID, runner.isRunning(threadID) else { return false }
-            runner.stop(threadID: threadID)
-            return true
         case 126:  // Up
             guard flags == .option else { return false }
             return editLatestQueued()
@@ -753,19 +748,29 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
     }
 
-    /// ⇧⌘M, ⇧⌘E and ⇧⌘A open the model, effort and access menus while focus is not in another editor.
-    private func handleKeyEquivalent(_ event: NSEvent) -> Bool {
-        guard threadID != nil, let window = view.window, window.isKeyWindow,
-            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command, .shift]
-        else { return false }
-        if let editor = window.firstResponder as? NSTextView, editor !== textView, editor.isEditable { return false }
-        switch event.charactersIgnoringModifiers?.lowercased() {
-        case "m": footer.modelButton.showMenu()
-        case "e" where !footer.effortButton.isHidden: footer.effortButton.showMenu()
-        case "a": footer.accessButton.showMenu()
-        default: return false
-        }
-        return true
+    /// The footer menus the Thread menu opens with ⇧⌘M, ⇧⌘E and ⇧⌘A.
+    enum Picker {
+        case model
+        case effort
+        case access
+    }
+
+    /// Whether the picker can open now: there is a thread, and the model takes an effort setting.
+    func canShowPicker(_ picker: Picker) -> Bool {
+        guard thread != nil, view.window != nil else { return false }
+        return picker != .effort || !footer.effortButton.isHidden
+    }
+
+    func showPicker(_ picker: Picker) {
+        guard canShowPicker(picker) else { return }
+        let button =
+            switch picker {
+            case .model: footer.modelButton
+            case .effort: footer.effortButton
+            case .access: footer.accessButton
+            }
+        // Open after the menu bar finishes handling the shortcut.
+        DispatchQueue.main.async { button.showMenu() }
     }
 
     /// Up in an empty composer recalls earlier messages of the thread; Down walks back toward the draft.
@@ -998,7 +1003,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         store.updateThread(threadID) { $0.accessMode = mode }
     }
 
-    @objc private func toggleInteractionMode() {
+    @objc func toggleInteractionMode() {
         guard let thread else { return }
         setInteractionMode(thread.interactionMode == .plan ? .build : .plan)
     }
@@ -1211,20 +1216,14 @@ extension ComposerViewController: QLPreviewPanelDataSource, QLPreviewPanelDelega
     }
 }
 
-/// The composer's root: transparent to clicks outside its controls, so a transcript beneath stays usable,
-/// and where the composer's window-wide shortcuts arrive.
+/// The composer's root: transparent to clicks outside its controls, so a transcript beneath stays usable.
 private final class ComposerRootView: NSView {
     var passThroughViews: [NSView] = []
-    var onKeyEquivalent: ((NSEvent) -> Bool)?
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         guard let hit, hit !== self, !passThroughViews.contains(where: { $0 === hit }) else { return nil }
         return hit
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        onKeyEquivalent?(event) == true || super.performKeyEquivalent(with: event)
     }
 }
 

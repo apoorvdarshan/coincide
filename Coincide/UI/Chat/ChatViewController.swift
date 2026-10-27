@@ -135,6 +135,14 @@ final class ChatViewController: NSViewController {
         composer.focus()
     }
 
+    func canShowComposerPicker(_ picker: ComposerViewController.Picker) -> Bool {
+        composer.canShowPicker(picker)
+    }
+
+    func showComposerPicker(_ picker: ComposerViewController.Picker) {
+        composer.showPicker(picker)
+    }
+
     // MARK: Thread
 
     private func loadThread() {

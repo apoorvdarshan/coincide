@@ -268,6 +268,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         open(ids[index])
     }
 
+    @objc func showModelPicker(_ sender: Any?) {
+        splitController.content.chat.showComposerPicker(.model)
+    }
+
+    @objc func showEffortPicker(_ sender: Any?) {
+        splitController.content.chat.showComposerPicker(.effort)
+    }
+
+    @objc func showAccessPicker(_ sender: Any?) {
+        splitController.content.chat.showComposerPicker(.access)
+    }
+
+    @objc func togglePlanMode(_ sender: Any?) {
+        guard let thread = selectedThread else { return }
+        store.updateThread(thread.id) { $0.interactionMode = thread.interactionMode == .plan ? .build : .plan }
+    }
+
     @objc func renameThread(_ sender: Any?) {
         guard let id = selectedThreadID else { return }
         if !splitController.isSidebarOpen { splitController.toggleSidebarPanel() }
@@ -394,6 +411,15 @@ extension MainWindowController: NSMenuItemValidation {
                 thread?.isArchived == true ? String(localized: "Unarchive Thread") : String(localized: "Archive Thread")
             return thread.map { ThreadActions.canArchive($0.id) } ?? false
         case #selector(renameThread(_:)), #selector(deleteThread(_:)), #selector(copyThreadPath(_:)):
+            return thread != nil
+        case #selector(showModelPicker(_:)):
+            return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.model)
+        case #selector(showEffortPicker(_:)):
+            return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.effort)
+        case #selector(showAccessPicker(_:)):
+            return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.access)
+        case #selector(togglePlanMode(_:)):
+            menuItem.state = thread?.interactionMode == .plan ? .on : .off
             return thread != nil
         case #selector(openInPreferred(_:)):
             let target = OpenTargets.preferred
