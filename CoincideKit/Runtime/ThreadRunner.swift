@@ -33,6 +33,8 @@ public final class ThreadRunner {
     private var itemMaps: [UUID: [String: UUID]] = [:]
     public private(set) var turns: [UUID: TurnState] = [:]
     public private(set) var usage: [UUID: TokenUsage] = [:]
+    /// Which provider the stored usage belongs to, so a switch doesn't show the previous agent's context.
+    public private(set) var usageProviders: [UUID: ProviderKind] = [:]
     public private(set) var queues: [UUID: [QueuedMessage]] = [:]
     private var starting: Set<UUID> = []
     private var idleTimer: Timer?
@@ -405,6 +407,8 @@ public final class ThreadRunner {
             }
 
         case .usage(let value):
+            if usageProviders[threadID] != provider { usage[threadID] = nil }
+            usageProviders[threadID] = provider
             usage[threadID] = value.merged(with: usage[threadID] ?? TokenUsage())
             store.notify(.runState(threadID))
         case .modelResolved:
