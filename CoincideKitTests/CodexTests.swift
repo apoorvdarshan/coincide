@@ -252,6 +252,12 @@ struct CodexPresentationTests {
             ])
         #expect(looking.category == .read)
         #expect(looking.title == "Run `ls src && cat README.md`")
+
+        // A stage Codex left out of its actions (here `cd`) makes it a command again.
+        let moved = presentation.commandInfo(
+            id: "c", command: "/bin/zsh -lc 'cd src && rg -n foo'",
+            actions: [try json(#"{"type":"search","command":"rg -n foo","query":"foo","path":"src"}"#)])
+        #expect(moved == ToolCallInfo(id: "c", category: .command, title: "Run `cd src && rg -n foo`", detail: "cd src && rg -n foo"))
         #expect(CodexPresentation.unwrapShell(argv: ["/bin/bash", "-c", "make"]) == "make")
         #expect(CodexPresentation.unwrapShell(argv: ["python3", "-c", "print(1)"]) == "python3 -c print(1)")
     }
@@ -703,6 +709,32 @@ struct CodexServerRequestTests {
             approval.responses["acceptWithExecpolicyAmendment"]
                 == ["decision": ["acceptWithExecpolicyAmendment": ["execpolicy_amendment": ["echo", "coincide-ok"]]]])
         #expect(approval.cancelResponse == ["decision": "cancel"])
+    }
+
+    @Test func commandApprovalShowsTheWholeCommandNotCodexsSummary() throws {
+        // Codex parses `cat a | tee b` as one read of `a`: it drops `tee` as formatting.
+        let params = try json(
+            #"{"kind":"command","threadId":"T","turnId":"R1","itemId":"exec-1","command":"/bin/zsh -lc 'cat a | tee b'","cwd":"/work","commandActions":[{"type":"read","command":"cat a","name":"a","path":"/work/a"}],"availableDecisions":["accept","cancel"]}"#)
+        let approval = try approval(
+            CodexServerRequests.action(
+                method: "item/commandExecution/requestApproval", params: params, requestID: "a1", presentation: presentation,
+                fileChanges: nil))
+        #expect(approval.request.title == "Run `cat a | tee b`")
+        #expect(approval.request.detail == "cat a | tee b")
+        let actions = params["commandActions"]?.array ?? []
+        let info = presentation.commandInfo(id: "exec-1", command: "/bin/zsh -lc 'cat a | tee b'", actions: actions)
+        #expect(info == ToolCallInfo(id: "exec-1", category: .command, title: "Run `cat a | tee b`", detail: "cat a | tee b"))
+        // Without a command, the parsed one stands in.
+        #expect(CodexPresentation.displayCommand("", actions: actions) == "cat a")
+    }
+
+    @Test func chainedCommandsAreCountedOutsideQuotes() {
+        #expect(CodexPresentation.chainedCommandCount("cat a") == 1)
+        #expect(CodexPresentation.chainedCommandCount("cat a | tee b && ls || pwd; echo x & wait") == 6)
+        #expect(CodexPresentation.chainedCommandCount("pwd\ncat a") == 2)
+        #expect(CodexPresentation.chainedCommandCount(#"rg -n 'a|b' "c && d" e\|f"#) == 1)
+        #expect(CodexPresentation.chainedCommandCount("a|'b'|c") == 3)
+        #expect(CodexPresentation.chainedCommandCount("echo 'open") == nil)
     }
 
     @Test func commandApprovalWithoutDecisionsUsesTheStandardSet() throws {
