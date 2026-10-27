@@ -947,7 +947,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     /// Continues the thread with `provider`, on the model it last used here or else its first model.
-    private func switchAgent(to provider: ProviderKind) {
+    func switchAgent(to provider: ProviderKind) {
         guard let thread else { return }
         let models = registry.models(for: provider)
         let lastUsed = thread.items.last { $0.provider == provider && $0.modelID != nil }?.modelID
@@ -985,7 +985,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// Picking a model from another provider switches the thread's agent; that agent's native session
     /// continues and it gets a recap of the turns it missed (see `Handoff`). The effort carries over
     /// when the new model supports it.
-    private func select(_ selection: ModelSelection) {
+    func select(_ selection: ModelSelection) {
         guard let threadID, let thread else { return }
         var selection = selection
         let model = registry.model(for: selection)
@@ -1016,12 +1016,22 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc private func chooseEffort(_ sender: NSMenuItem) {
-        guard let threadID, let effort = sender.representedObject as? String else { return }
-        store.updateThread(threadID) { $0.selection.effort = effort }
+        guard let effort = sender.representedObject as? String else { return }
+        setEffort(effort)
     }
 
     @objc private func chooseAccess(_ sender: NSMenuItem) {
-        guard let threadID, let mode = sender.representedObject as? AccessMode else { return }
+        guard let mode = sender.representedObject as? AccessMode else { return }
+        setAccessMode(mode)
+    }
+
+    func setEffort(_ effort: String) {
+        guard let threadID, thread?.selection.effort != effort else { return }
+        store.updateThread(threadID) { $0.selection.effort = effort }
+    }
+
+    func setAccessMode(_ mode: AccessMode) {
+        guard let threadID, thread?.accessMode != mode else { return }
         store.updateThread(threadID) { $0.accessMode = mode }
     }
 
@@ -1030,7 +1040,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         setInteractionMode(thread.interactionMode == .plan ? .build : .plan)
     }
 
-    private func setInteractionMode(_ mode: InteractionMode) {
+    func setInteractionMode(_ mode: InteractionMode) {
         guard let threadID, thread?.interactionMode != mode else { return }
         store.updateThread(threadID) { $0.interactionMode = mode }
     }

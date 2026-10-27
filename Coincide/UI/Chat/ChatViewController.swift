@@ -163,6 +163,30 @@ final class ChatViewController: NSViewController {
         composer.showPicker(picker)
     }
 
+    // MARK: Composer settings
+
+    /// The composer's model choice, from the command palette: switches agent when the model is another's.
+    func chooseModel(_ selection: ModelSelection) {
+        composer.select(selection)
+    }
+
+    /// Continues the thread with another agent, as `/codex` and the like do.
+    func switchAgent(to provider: ProviderKind) {
+        composer.switchAgent(to: provider)
+    }
+
+    func chooseEffort(_ effort: String) {
+        composer.setEffort(effort)
+    }
+
+    func chooseAccessMode(_ mode: AccessMode) {
+        composer.setAccessMode(mode)
+    }
+
+    func chooseInteractionMode(_ mode: InteractionMode) {
+        composer.setInteractionMode(mode)
+    }
+
     // MARK: Thread
 
     private func loadThread() {

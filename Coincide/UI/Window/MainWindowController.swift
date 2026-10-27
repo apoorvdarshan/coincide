@@ -243,6 +243,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.content.chat.performTextFinderAction(sender)
     }
 
+    /// Opens the find bar over the open thread.
+    func findInThread() {
+        showWindow(nil)
+        splitController.content.chat.showFindBar()
+    }
+
     @objc func stopTurn(_ sender: Any?) {
         guard let id = selectedThreadID else { return }
         ThreadRunner.shared.stop(threadID: id)
