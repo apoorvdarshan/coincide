@@ -93,7 +93,7 @@ enum OpenCodeTools {
             let offset = input["offset"]?.int
             let limit = input["limit"]?.int
             switch (offset, limit) {
-            case (let offset?, let limit?): return String(localized: "\(path), lines \(offset)–\(offset + limit - 1)")
+            case (let offset?, let limit?): return String(localized: "\(path), lines \(offset)–\(offset.saturatingAdding(limit).saturatingSubtracting(1))")
             case (let offset?, nil): return String(localized: "\(path), from line \(offset)")
             default: return path
             }

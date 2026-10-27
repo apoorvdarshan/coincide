@@ -30,9 +30,11 @@ public struct ACPFileSystem: Sendable {
         let limit = params["limit"]?.acpInt
         guard line != nil || limit != nil else { return ["content": .string(text)] }
         // ACP lines are 1-based and `limit` counts lines.
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let start = min(lines.count, max(0, (line ?? 1) - 1))
-        let end = limit.map { min(lines.count, start + max(0, $0)) } ?? lines.count
+        // Split on the newline scalar: "\r\n" is a single Character, so CRLF files would read as one line.
+        let lines = text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false).map { String(Substring($0)) }
+        // The numbers come from the agent; clamp so extreme values can't overflow.
+        let start = min(lines.count, max(0, (line ?? 1).saturatingSubtracting(1)))
+        let end = limit.map { min(lines.count, start.saturatingAdding(max(0, $0))) } ?? lines.count
         return ["content": .string(lines[start..<end].joined(separator: "\n"))]
     }
 

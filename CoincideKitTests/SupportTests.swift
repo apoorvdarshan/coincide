@@ -54,3 +54,14 @@ struct SupportTests {
         #expect(JSONValue.number(1.5).displayText == "1.5")
     }
 }
+
+struct SaturatingMathTests {
+    @Test func sumsAndDifferencesClampInsteadOfTrapping() {
+        #expect(Int.max.saturatingAdding(1) == .max)
+        #expect(Int.min.saturatingSubtracting(1) == .min)
+        #expect(Int.min.saturatingAdding(-1) == .min)
+        #expect(Int.max.saturatingSubtracting(-1) == .max)
+        #expect(Int.saturatingSum(.max, .max, 3) == .max)
+        #expect(Int.saturatingSum(2, 3, 4) == 9)
+    }
+}

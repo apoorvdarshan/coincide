@@ -600,7 +600,7 @@ struct ClaudeEventMapper {
 
     private func contextUsage(_ usage: MessageUsage) -> TokenUsage {
         TokenUsage(
-            inputTokens: usage.input + usage.cacheCreation + usage.cacheRead, outputTokens: usage.output,
+            inputTokens: Int.saturatingSum(usage.input, usage.cacheCreation, usage.cacheRead), outputTokens: usage.output,
             cachedInputTokens: usage.cacheRead, contextWindow: contextWindow)
     }
 

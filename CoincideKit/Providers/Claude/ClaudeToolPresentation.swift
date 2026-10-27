@@ -203,7 +203,7 @@ enum ClaudeTools {
     private static func readTitle(_ path: String?, input: JSONValue) -> String {
         guard let path else { return String(localized: "Read file") }
         if let offset = input["offset"]?.int, let limit = input["limit"]?.int, limit > 0 {
-            return String(localized: "Read \(path) (lines \(offset)–\(offset + limit - 1))")
+            return String(localized: "Read \(path) (lines \(offset)–\(offset.saturatingAdding(limit).saturatingSubtracting(1)))")
         }
         return String(localized: "Read \(path)")
     }

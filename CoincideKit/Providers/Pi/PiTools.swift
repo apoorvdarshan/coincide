@@ -170,7 +170,7 @@ enum PiTools {
         let offset = args?["offset"]?.int
         let limit = args?["limit"]?.int
         switch (offset, limit) {
-        case let (offset?, limit?): return String(localized: "Lines \(offset)–\(offset + limit - 1)")
+        case let (offset?, limit?): return String(localized: "Lines \(offset)–\(offset.saturatingAdding(limit).saturatingSubtracting(1))")
         case let (offset?, nil): return String(localized: "From line \(offset)")
         case let (nil, limit?): return String(localized: "Lines 1–\(limit)")
         case (nil, nil): return nil

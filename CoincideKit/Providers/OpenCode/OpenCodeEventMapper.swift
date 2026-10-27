@@ -224,7 +224,7 @@ struct OpenCodeEventMapper {
             let cacheRead = tokens.at("cache.read")?.int ?? 0
             let cacheWrite = tokens.at("cache.write")?.int ?? 0
             let usage = TokenUsage(
-                inputTokens: (tokens["input"]?.int ?? 0) + cacheRead + cacheWrite, outputTokens: tokens["output"]?.int,
+                inputTokens: Int.saturatingSum(tokens["input"]?.int ?? 0, cacheRead, cacheWrite), outputTokens: tokens["output"]?.int,
                 cachedInputTokens: cacheRead, contextWindow: contextWindow)
             return [.event(.usage(usage))]
         case "session.usage.updated":

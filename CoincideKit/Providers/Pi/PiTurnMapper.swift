@@ -190,7 +190,7 @@ struct PiTurnMapper {
     /// While a response streams only a new prompt size is reported, so output growth does not flood the UI.
     private mutating func usage(_ usage: JSONValue?, final: Bool) -> [AgentEvent] {
         guard let total = usage?["totalTokens"]?.int, total > 0, total != lastContextTokens else { return [] }
-        let prompt = ["input", "cacheRead", "cacheWrite"].reduce(0) { $0 + (usage?[$1]?.int ?? 0) }
+        let prompt = ["input", "cacheRead", "cacheWrite"].reduce(0) { $0.saturatingAdding(usage?[$1]?.int ?? 0) }
         guard final || prompt != lastPromptTokens else { return [] }
         lastPromptTokens = prompt
         lastContextTokens = total
