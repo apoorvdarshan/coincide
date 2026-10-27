@@ -65,7 +65,7 @@ public final class WorktreeService {
         setPreparing(threadID, true)
         defer { setPreparing(threadID, false) }
 
-        if let previous = unused.removeValue(forKey: threadID) {
+        if let previous = unused.removeValue(forKey: threadID), !isInUse(previous.path, besides: threadID) {
             await git.discardUnusedWorktree(URL(fileURLWithPath: previous.path), branch: previous.branch, prefix: prefix)
         }
         var base = baseBranch
@@ -94,7 +94,9 @@ public final class WorktreeService {
         else { return }
         setPreparing(threadID, true)
         defer { setPreparing(threadID, false) }
-        if let previous = unused.removeValue(forKey: threadID), previous.path == thread.worktreePath {
+        if let previous = unused.removeValue(forKey: threadID), previous.path == thread.worktreePath,
+            !isInUse(previous.path, besides: threadID)
+        {
             await git.discardUnusedWorktree(URL(fileURLWithPath: previous.path), branch: previous.branch, prefix: prefix)
         }
         bases[threadID] = nil
@@ -107,7 +109,9 @@ public final class WorktreeService {
     /// Moves a thread that has no messages into an existing worktree, such as one another thread used.
     public func useExistingWorktree(threadID: UUID, path: String, branch: String?) async {
         guard let thread = store.thread(threadID), !thread.hasUserMessages, !preparing.contains(threadID) else { return }
-        if let previous = unused.removeValue(forKey: threadID), previous.path != path {
+        if let previous = unused.removeValue(forKey: threadID), previous.path != path,
+            !isInUse(previous.path, besides: threadID)
+        {
             setPreparing(threadID, true)
             await git.discardUnusedWorktree(URL(fileURLWithPath: previous.path), branch: previous.branch, prefix: prefix)
             setPreparing(threadID, false)
@@ -133,6 +137,12 @@ public final class WorktreeService {
 
     // MARK: Observation
 
+    /// Whether a thread other than `threadID` is in the worktree at `path`. Such a worktree is never
+    /// discarded, even when the thread it was made for never used it.
+    private func isInUse(_ path: String, besides threadID: UUID?) -> Bool {
+        store.threads.values.contains { $0.id != threadID && $0.worktreePath == path }
+    }
+
     private func setPreparing(_ threadID: UUID, _ value: Bool) {
         if value { preparing.insert(threadID) } else { preparing.remove(threadID) }
         store.notify(.thread(threadID))
@@ -144,7 +154,8 @@ public final class WorktreeService {
             let message = thread.items.first(where: { $0.kind == .user })?.text
         else { return }
         named.insert(threadID)
-        unused[threadID] = nil
+        // A message in the worktree makes it used, whichever thread it was made for.
+        unused = unused.filter { $0.value.path != path }
         let prefix = prefix
         guard let branch = thread.branch, BranchNames.isTemporaryWorktreeBranch(branch, prefix: prefix) else { return }
         Task {
@@ -168,7 +179,8 @@ public final class WorktreeService {
         }
         let prefix = prefix
         Task {
-            for worktree in deleted.values {
+            // Checked just before each removal, since another thread may be in the worktree.
+            for worktree in deleted.values where !isInUse(worktree.path, besides: nil) {
                 await git.discardUnusedWorktree(URL(fileURLWithPath: worktree.path), branch: worktree.branch, prefix: prefix)
             }
         }
