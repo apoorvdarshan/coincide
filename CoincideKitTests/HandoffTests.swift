@@ -114,3 +114,35 @@ struct StoreTests {
         #expect(ThreadRunner.title(from: long).count <= 60)
     }
 }
+
+@MainActor
+struct RunnerQueueTests {
+    @Test func messagesSentDuringATurnAreQueued() async {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-tests-\(UUID().uuidString)")
+        let store = AppStore(directory: dir)
+        let registry = ProviderRegistry(store: store, providers: [])
+        let runner = ThreadRunner(store: store, registry: registry)
+        let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
+        let thread = store.createThread(in: project.id)
+        runner.enqueue(threadID: thread.id, text: "later")
+        #expect(runner.queuedMessages(thread.id).map(\.text) == ["later"])
+        let id = runner.queuedMessages(thread.id)[0].id
+        #expect(runner.removeQueued(threadID: thread.id, id: id)?.text == "later")
+        #expect(runner.queuedMessages(thread.id).isEmpty)
+    }
+
+    @Test func missingProviderFailsTheTurnWithAnError() async {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-tests-\(UUID().uuidString)")
+        let store = AppStore(directory: dir)
+        let registry = ProviderRegistry(store: store, providers: [])
+        let runner = ThreadRunner(store: store, registry: registry)
+        let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
+        let thread = store.createThread(in: project.id)
+        await runner.send(threadID: thread.id, text: "hello")
+        let items = store.thread(thread.id)?.items ?? []
+        #expect(items.first?.kind == .user)
+        #expect(items.last?.kind == .error)
+        #expect(!runner.isRunning(thread.id))
+        #expect(store.thread(thread.id)?.title == "hello")
+    }
+}

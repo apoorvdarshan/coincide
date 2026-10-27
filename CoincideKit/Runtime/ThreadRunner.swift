@@ -17,6 +17,14 @@ public final class ThreadRunner {
         var interruptRequested = false
     }
 
+    /// A message sent while a turn was running; it is sent when the turn completes.
+    public struct QueuedMessage: Sendable, Identifiable, Hashable {
+        public var id: UUID
+        public var text: String
+        public var imagePaths: [String]
+        public var createdAt: Date
+    }
+
     private let store: AppStore
     private let registry: ProviderRegistry
     private var sessions: [UUID: [ProviderKind: AgentSession]] = [:]
@@ -25,6 +33,7 @@ public final class ThreadRunner {
     private var itemMaps: [UUID: [String: UUID]] = [:]
     public private(set) var turns: [UUID: TurnState] = [:]
     public private(set) var usage: [UUID: TokenUsage] = [:]
+    public private(set) var queues: [UUID: [QueuedMessage]] = [:]
     private var starting: Set<UUID> = []
     private var idleTimer: Timer?
 
@@ -57,6 +66,9 @@ public final class ThreadRunner {
         (sessions[threadID] ?? [:]).keys.sorted { $0.rawValue < $1.rawValue }
     }
 
+    /// Messages waiting for the running turn to finish, oldest first.
+    public func queuedMessages(_ threadID: UUID) -> [QueuedMessage] { queues[threadID] ?? [] }
+
     /// Approval items still waiting for an answer.
     public func pendingApprovals(_ threadID: UUID) -> [TranscriptItem] {
         store.thread(threadID)?.items.filter { $0.kind == .approval && $0.status == .waiting } ?? []
@@ -65,10 +77,15 @@ public final class ThreadRunner {
     // MARK: Turns
 
     /// Sends a user message on the thread's selected provider and model.
+    /// While a turn is running the message is queued and sent when that turn completes.
     public func send(threadID: UUID, text: String, imagePaths: [String] = []) async {
-        guard !isRunning(threadID), let thread = store.thread(threadID), store.project(thread.projectID) != nil else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imagePaths.isEmpty else { return }
+        if isRunning(threadID) {
+            enqueue(threadID: threadID, text: trimmed, imagePaths: imagePaths)
+            return
+        }
+        guard let thread = store.thread(threadID), store.project(thread.projectID) != nil else { return }
         let selection = thread.selection
         let provider = selection.provider
 
@@ -117,6 +134,23 @@ public final class ThreadRunner {
         }
     }
 
+    /// Queues a message to send after the running turn.
+    public func enqueue(threadID: UUID, text: String, imagePaths: [String] = []) {
+        let message = QueuedMessage(id: UUID(), text: text, imagePaths: imagePaths, createdAt: Date())
+        queues[threadID, default: []].append(message)
+        store.notify(.runState(threadID))
+    }
+
+    /// Removes a queued message, for example to edit it in the composer.
+    @discardableResult
+    public func removeQueued(threadID: UUID, id: UUID) -> QueuedMessage? {
+        guard let index = queues[threadID]?.firstIndex(where: { $0.id == id }) else { return nil }
+        let message = queues[threadID]?.remove(at: index)
+        if queues[threadID]?.isEmpty == true { queues[threadID] = nil }
+        store.notify(.runState(threadID))
+        return message
+    }
+
     /// Stops the running turn on the thread.
     public func stop(threadID: UUID) {
         guard let turn = turns[threadID] else { return }
@@ -148,6 +182,7 @@ public final class ThreadRunner {
 
     /// Ends every session of a thread (for example when it is deleted or its folder changes).
     public func shutdown(threadID: UUID) {
+        queues[threadID] = nil
         if let turn = turns[threadID] { finishTurn(threadID, provider: turn.provider, outcome: .interrupted) }
         for session in (sessions[threadID] ?? [:]).values { session.shutdown() }
         sessions[threadID] = nil
@@ -357,6 +392,11 @@ public final class ThreadRunner {
             Task { await CheckpointService.shared.captureAfterTurn(threadID: threadID, userItemID: userItemID, cwd: cwd) }
         }
         onTurnFinished?(threadID, outcome)
+        // Queued follow-ups only continue a turn that finished normally; after a stop or error the user decides.
+        if outcome == .completed, let next = queues[threadID]?.first {
+            removeQueued(threadID: threadID, id: next.id)
+            Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths) }
+        }
     }
 
     // MARK: Item mapping
