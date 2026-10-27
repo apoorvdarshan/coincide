@@ -318,6 +318,16 @@
         }
       }
     },
+    "%lld of %lld+" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld+"
+          }
+        }
+      }
+    },
     "%lld points" : {
 
     },
@@ -839,7 +849,16 @@
     "Choose" : {
 
     },
+    "Choose Access…" : {
+
+    },
     "Choose Agent and Model…" : {
+
+    },
+    "Choose App to Open In" : {
+
+    },
+    "Choose Reasoning Effort…" : {
 
     },
     "Choose a folder to work on with your coding agents." : {
@@ -987,6 +1006,12 @@
     "Close %@" : {
 
     },
+    "Close (⎋)" : {
+
+    },
+    "Close Find Bar" : {
+
+    },
     "Close Terminal" : {
 
     },
@@ -1006,6 +1031,9 @@
 
     },
     "Close terminal" : {
+
+    },
+    "Close the find bar" : {
 
     },
     "Close these terminals?" : {
@@ -1789,6 +1817,15 @@
         }
       }
     },
+    "Find in Thread" : {
+
+    },
+    "Find in Thread…" : {
+
+    },
+    "Find in the thread" : {
+
+    },
     "Find “%@”" : {
 
     },
@@ -2332,7 +2369,16 @@
     "Next" : {
 
     },
+    "Next Match" : {
+
+    },
+    "Next Match (⌘G)" : {
+
+    },
     "Next Thread" : {
+
+    },
+    "Next and previous match" : {
 
     },
     "No" : {
@@ -2375,6 +2421,9 @@
 
     },
     "No local commits to push." : {
+
+    },
+    "No matches" : {
 
     },
     "No matching actions." : {
@@ -2711,6 +2760,12 @@
 
     },
     "Preview %@" : {
+
+    },
+    "Previous Match" : {
+
+    },
+    "Previous Match (⇧⌘G)" : {
 
     },
     "Previous Thread" : {
@@ -3125,6 +3180,9 @@
     "Search Threads" : {
 
     },
+    "Search access modes…" : {
+
+    },
     "Search appearances…" : {
 
     },
@@ -3166,10 +3224,16 @@
         }
       }
     },
+    "Search models…" : {
+
+    },
     "Search or create a branch" : {
 
     },
     "Search projects…" : {
+
+    },
+    "Search reasoning efforts…" : {
 
     },
     "Search the web" : {
@@ -3477,6 +3541,15 @@
 
     },
     "Switch this thread into plan mode" : {
+
+    },
+    "Switch to %@" : {
+
+    },
+    "Switch to Build Mode" : {
+
+    },
+    "Switch to Plan Mode" : {
 
     },
     "Switch to build mode and implement the plan" : {
