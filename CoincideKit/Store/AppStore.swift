@@ -19,7 +19,8 @@ public enum StoreChange: Sendable, Equatable {
 /// Files are encoded and written on a background queue, each thread at most once at a time, so a
 /// long transcript that streams updates never stalls the main thread. Every write is atomic. A file
 /// that cannot be read is set aside (`*.unreadable-…`) before anything replaces it, and fields or items
-/// this version cannot read are skipped rather than losing the thread.
+/// this version cannot read are skipped rather than losing the thread. A thread file with such content
+/// (written by a newer version, say) is copied aside before its first save, which would drop it.
 @MainActor
 public final class AppStore {
     public static let shared = AppStore(directory: AppStore.defaultDirectory)
@@ -35,6 +36,9 @@ public final class AppStore {
     /// Threads whose write is on the save queue; a newer change waits for it.
     private var threadsBeingSaved: Set<UUID> = []
     private var saveScheduled = false
+    /// Threads loaded from disk and not saved since. Before the first save replaces such a file, the file
+    /// is checked for content this version could not read and, if it has some, copied aside.
+    private var threadsToCheckBeforeSave: Set<UUID> = []
     /// How long changes collect before they are written.
     var saveDelay: TimeInterval = 0.6
     private let writer = StoreWriter()
@@ -252,6 +256,7 @@ public final class AppStore {
             pendingThreadSaves.remove(id)
             guard let thread = threads[id] else { continue }
             threadsBeingSaved.insert(id)
+            if threadsToCheckBeforeSave.remove(id) != nil { writer.preserveIfPartlyUnreadable(threadURL(id)) }
             writer.write(thread, to: threadURL(id)) { [weak self] in
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
@@ -272,6 +277,7 @@ public final class AppStore {
 
     private func deleteThreadFile(_ id: UUID) {
         pendingThreadSaves.remove(id)
+        threadsToCheckBeforeSave.remove(id)
         writer.remove(threadURL(id))
     }
 
@@ -292,9 +298,10 @@ public final class AppStore {
         // Threads decode in parallel: with many long transcripts this is most of the launch time.
         let loaded = LoadedThreads(count: threadFiles.count)
         DispatchQueue.concurrentPerform(iterations: threadFiles.count) { index in
-            loaded.set(index, Self.read(ChatThread.self, from: threadFiles[index], decoder: StoreWriter.makeDecoder()))
+            loaded.set(index, Self.read(ThreadFile.self, from: threadFiles[index], decoder: StoreWriter.makeDecoder()))
         }
-        for var thread in loaded.values {
+        for file in loaded.values {
+            var thread = file.thread
             // Anything left running when the app quit can no longer finish.
             for index in thread.items.indices
             where thread.items[index].status == .running || thread.items[index].status == .waiting {
@@ -302,6 +309,7 @@ public final class AppStore {
                 thread.items[index].status = kind == .approval || kind == .question ? .declined : .failed
             }
             threads[thread.id] = thread
+            threadsToCheckBeforeSave.insert(thread.id)
         }
     }
 
@@ -319,7 +327,7 @@ public final class AppStore {
     }
 
     /// Moves (or copies) an unreadable file next to itself under a dated name that is no longer loaded.
-    private nonisolated static func setAside(_ url: URL, copy: Bool) {
+    fileprivate nonisolated static func setAside(_ url: URL, copy: Bool) {
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let target = url.appendingPathExtension("unreadable-\(stamp)")
         if copy {
@@ -363,6 +371,18 @@ private final class StoreWriter: @unchecked Sendable {
         queue.async { try? FileManager.default.removeItem(at: url) }
     }
 
+    /// Copies a thread file aside (see `AppStore.setAside`) when it holds something this version could not
+    /// read, or cannot be read at all, so the write queued after this cannot lose it.
+    nonisolated func preserveIfPartlyUnreadable(_ url: URL) {
+        queue.async {
+            guard let data = try? Data(contentsOf: url) else { return }
+            let decoder = Self.makeDecoder()
+            decoder.userInfo[.checksUnreadContent] = true
+            let unread = (try? decoder.decode(ThreadFile.self, from: data))?.hasUnreadContent ?? true
+            if unread { AppStore.setAside(url, copy: true) }
+        }
+    }
+
     nonisolated func waitUntilIdle() {
         queue.sync {}
     }
@@ -390,17 +410,17 @@ private struct LenientList<Element: Decodable>: Decodable {
 /// Results of decoding thread files in parallel.
 private final class LoadedThreads: @unchecked Sendable {
     private let lock = NSLock()
-    private var slots: [ChatThread?]
+    private var slots: [ThreadFile?]
 
     nonisolated init(count: Int) {
         slots = Array(repeating: nil, count: count)
     }
 
-    nonisolated func set(_ index: Int, _ thread: ChatThread?) {
-        lock.withLock { slots[index] = thread }
+    nonisolated func set(_ index: Int, _ file: ThreadFile?) {
+        lock.withLock { slots[index] = file }
     }
 
-    nonisolated var values: [ChatThread] { lock.withLock { slots.compactMap { $0 } } }
+    nonisolated var values: [ThreadFile] { lock.withLock { slots.compactMap { $0 } } }
 }
 
 /// Cancels a store observation when released.
