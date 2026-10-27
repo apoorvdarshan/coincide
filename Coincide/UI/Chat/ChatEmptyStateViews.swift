@@ -79,15 +79,27 @@ final class ChatWelcomeView: NSView {
     private lazy var refreshButton = NSButton(title: String(localized: "Check Again"), target: self, action: #selector(refresh))
     private lazy var settingsButton = NSButton(title: String(localized: "Agent Settings…"), target: self, action: #selector(openSettings))
     private let footer = NSStackView()
+    private let missingLabel = NSTextField(labelWithString: "")
+    private lazy var locateButton = NSButton(title: String(localized: "Locate Folder…"), target: self, action: #selector(locateFolder))
+    private let missingRow = NSStackView()
+    private var projectID: UUID?
+
+    /// For text that gives way before the chat grows: above a stack view's hugging (250), so it keeps its
+    /// size when there is room, and below the sidebar's holding priority (260), so the split view never
+    /// shrinks the sidebar to make room for it.
+    static let yieldingPriority = NSLayoutConstraint.Priority(255)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         headline.alignment = .center
         headline.lineBreakMode = .byTruncatingMiddle
+        headline.setContentCompressionResistancePriority(Self.yieldingPriority, for: .horizontal)
         selectionLabel.alignment = .center
         selectionLabel.textColor = .secondaryLabelColor
         providerRow.orientation = .horizontal
         providerRow.spacing = 6
+        // Chips that do not fit are left out, the least useful first.
+        providerRow.setClippingResistancePriority(Self.yieldingPriority, for: .horizontal)
         hintsStack.orientation = .vertical
         hintsStack.alignment = .leading
         hintsStack.spacing = 8
@@ -103,11 +115,25 @@ final class ChatWelcomeView: NSView {
         footer.orientation = .horizontal
         footer.spacing = 12
         footer.setViews([checkingSpinner, refreshButton, settingsButton], in: .center)
-        let stack = NSStackView(views: [headline, selectionLabel, providerRow, hintsStack, footer])
+        let warning = NSImageView(image: Theme.symbol("questionmark.folder", size: 13, weight: .medium) ?? NSImage())
+        warning.contentTintColor = Theme.warning
+        warning.setAccessibilityElement(false)
+        missingLabel.font = .systemFont(ofSize: 13)
+        missingLabel.textColor = .secondaryLabelColor
+        missingLabel.lineBreakMode = .byTruncatingTail
+        missingLabel.setContentCompressionResistancePriority(Self.yieldingPriority, for: .horizontal)
+        locateButton.bezelStyle = .push
+        locateButton.controlSize = .small
+        missingRow.orientation = .horizontal
+        missingRow.spacing = 8
+        missingRow.setViews([warning, missingLabel, locateButton], in: .center)
+        missingRow.isHidden = true
+        let stack = NSStackView(views: [headline, selectionLabel, missingRow, providerRow, hintsStack, footer])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 8
         stack.setCustomSpacing(18, after: selectionLabel)
+        stack.setCustomSpacing(18, after: missingRow)
         stack.setCustomSpacing(18, after: providerRow)
         stack.setCustomSpacing(14, after: hintsStack)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -139,6 +165,18 @@ final class ChatWelcomeView: NSView {
         headline.attributedStringValue = text
         headline.toolTip = project?.path
 
+        projectID = project?.id
+        if let project, !FileManager.default.fileExists(atPath: project.path) {
+            missingLabel.stringValue = String(localized: "The project folder was moved or deleted.")
+            missingLabel.toolTip = Formatting.abbreviatedPath(project.path)
+            missingRow.setAccessibilityElement(true)
+            missingRow.setAccessibilityLabel(
+                String(localized: "The project folder was moved or deleted: \(Formatting.abbreviatedPath(project.path))"))
+            missingRow.isHidden = false
+        } else {
+            missingRow.isHidden = true
+        }
+
         let selection = thread.selection
         let model = registry.displayName(for: selection)
         let usesDefault = selection.modelID == "default" || model.isEmpty
@@ -148,7 +186,15 @@ final class ChatWelcomeView: NSView {
             : String(localized: "Using \(selection.provider.displayName) · \(model)")
         selectionLabel.font = .systemFont(ofSize: 13)
 
-        providerRow.setViews(registry.orderedKinds.map { ProviderChip(kind: $0, status: registry.status($0), isSelected: $0 == selection.provider) }, in: .center)
+        let chips = registry.orderedKinds.map { kind in
+            ProviderChip(kind: kind, status: registry.status(kind), isSelected: kind == selection.provider)
+        }
+        providerRow.setViews(chips, in: .center)
+        for (kind, chip) in zip(registry.orderedKinds, chips) {
+            let priority: NSStackView.VisibilityPriority =
+                kind == selection.provider ? .mustHold : registry.status(kind).state == .ready ? .init(600) : .init(500)
+            providerRow.setVisibilityPriority(priority, for: chip)
+        }
 
         let missing = registry.orderedKinds.filter {
             let state = registry.status($0).state
@@ -165,7 +211,12 @@ final class ChatWelcomeView: NSView {
     }
 
     @objc private func openSettings() {
-        AppEvents.post(.coincideShowSettings, ["section": SettingsSection.providers.rawValue])
+        AppEvents.showSettings(section: .providers)
+    }
+
+    @objc private func locateFolder() {
+        guard let projectID else { return }
+        ThreadActions.locateProject(projectID, in: window)
     }
 }
 
@@ -202,7 +253,7 @@ private final class ProviderChip: NSView {
             case .error: String(localized: "unavailable")
             case .unknown: status.message ?? String(localized: "checking")
             }
-        toolTip = [status.version, status.account, status.message].compactMap { $0 }.joined(separator: "\n").nilIfEmpty
+        toolTip = [status.version, status.account, status.message].compactMap { $0 }.joined(separator: "\n").nonEmpty
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
         setAccessibilityLabel("\(kind.displayName), \(state)")
@@ -235,6 +286,7 @@ private final class SetupHintRow: NSView {
         text.append(TranscriptText.inlineLabel(hint, font: font, color: .secondaryLabelColor))
         let label = NSTextField(labelWithAttributedString: text)
         label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(ChatWelcomeView.yieldingPriority, for: .horizontal)
         label.isSelectable = true
         label.toolTip = hint
         let stack = NSStackView(views: [icon, label])
@@ -256,8 +308,4 @@ private final class SetupHintRow: NSView {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-}
-
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

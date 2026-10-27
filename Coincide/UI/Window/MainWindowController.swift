@@ -56,11 +56,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             (.coincideOpenThread, #selector(openThreadEvent(_:))),
             (.coincideNewThread, #selector(newThreadEvent(_:))),
             (.coincideAddProject, #selector(addProject(_:))),
-            (.coincideToggleDiff, #selector(toggleDiffPanel(_:))),
             (.coincideShowTurnDiff, #selector(showTurnDiff(_:))),
             (.coincideToggleTerminal, #selector(toggleTerminalPanel(_:))),
-            (.coincideToggleSidebar, #selector(toggleSidebarPanel(_:))),
-            (.coincideShowCommandPalette, #selector(showCommandPalette(_:))),
             (.coincideThreadActivityChanged, #selector(activityChanged(_:))),
             (OpenTargets.preferredDidChange, #selector(updateOpenInItem)),
         ]
@@ -75,6 +72,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Selection
 
     /// Shows a thread in the chat, terminal and diff panes, and highlights it in the sidebar.
+    /// As in T3, the composer takes focus, unless the user is working in the sidebar, terminal or diff.
     func open(_ threadID: UUID?) {
         let threadID = threadID.flatMap { store.thread($0) != nil ? $0 : nil }
         guard threadID != selectedThreadID || !hasOpenedThread else { return }
@@ -87,6 +85,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         UIState.shared.update { $0.selectedThreadID = threadID }
         updateTitle()
         updateRunStatus()
+        if threadID != nil, !isFocusInSidePanel { splitController.content.chat.focusComposer() }
+    }
+
+    /// Whether keyboard focus is in the sidebar, the terminal or the diff, where it stays when the thread changes.
+    private var isFocusInSidePanel: Bool {
+        guard let responder = window?.firstResponder as? NSView else { return false }
+        return [sidebar.view, splitController.content.terminal.view, splitController.diff.view].contains {
+            responder.isDescendant(of: $0)
+        }
     }
 
     var selectedThread: ChatThread? { selectedThreadID.flatMap { store.thread($0) } }
@@ -101,7 +108,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .runState(let id) where id == selectedThreadID:
             updateRunStatus()
         case .projects, .threadList:
+            // The open thread may be gone; the sidebar then opens its neighbour.
             updateTitle()
+            updateRunStatus()
         default:
             break
         }
@@ -198,9 +207,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.toggleDiffPanel()
     }
 
-    /// The diff inspector picks the turn up from the same notification; this only makes sure it's open.
+    /// Opens the diff inspector on one turn's changes.
     @objc private func showTurnDiff(_ notification: Notification) {
+        guard let threadID = notification.userInfo?["threadID"] as? UUID,
+            let turnID = notification.userInfo?["turnID"] as? UUID
+        else { return }
+        showWindow(nil)
         splitController.showDiffPanel()
+        splitController.diff.showTurn(turnID, in: threadID, path: notification.userInfo?["path"] as? String)
     }
 
     /// Command-K opens the palette, or closes it when it is showing.
@@ -254,6 +268,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         open(ids[index])
     }
 
+    @objc func showModelPicker(_ sender: Any?) {
+        splitController.content.chat.showComposerPicker(.model)
+    }
+
+    @objc func showEffortPicker(_ sender: Any?) {
+        splitController.content.chat.showComposerPicker(.effort)
+    }
+
+    @objc func showAccessPicker(_ sender: Any?) {
+        splitController.content.chat.showComposerPicker(.access)
+    }
+
+    @objc func togglePlanMode(_ sender: Any?) {
+        guard let thread = selectedThread else { return }
+        store.updateThread(thread.id) { $0.interactionMode = thread.interactionMode == .plan ? .build : .plan }
+    }
+
     @objc func renameThread(_ sender: Any?) {
         guard let id = selectedThreadID else { return }
         if !splitController.isSidebarOpen { splitController.toggleSidebarPanel() }
@@ -277,7 +308,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func copyThreadPath(_ sender: Any?) {
         guard let id = selectedThreadID, let folder = ThreadActions.folder(for: id) else { return }
-        ThreadActions.copyToPasteboard(folder.path)
+        NSPasteboard.general.setText(folder.path)
     }
 
     @objc func revealInFinder(_ sender: Any?) {
@@ -286,9 +317,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The folder "Open in" acts on: the open thread's worktree or project, else the current project.
+    /// Nil when that folder was moved or deleted.
     var openFolder: URL? {
-        if let id = selectedThreadID, let folder = ThreadActions.folder(for: id) { return folder }
-        return currentProjectID.flatMap { store.project($0)?.url }
+        let folder: URL?
+        if let id = selectedThreadID, let threadFolder = ThreadActions.folder(for: id) {
+            folder = threadFolder
+        } else {
+            folder = currentProjectID.flatMap { store.project($0)?.url }
+        }
+        return folder.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
     @objc func openInPreferred(_ sender: Any?) {
@@ -380,6 +417,15 @@ extension MainWindowController: NSMenuItemValidation {
                 thread?.isArchived == true ? String(localized: "Unarchive Thread") : String(localized: "Archive Thread")
             return thread.map { ThreadActions.canArchive($0.id) } ?? false
         case #selector(renameThread(_:)), #selector(deleteThread(_:)), #selector(copyThreadPath(_:)):
+            return thread != nil
+        case #selector(showModelPicker(_:)):
+            return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.model)
+        case #selector(showEffortPicker(_:)):
+            return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.effort)
+        case #selector(showAccessPicker(_:)):
+            return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.access)
+        case #selector(togglePlanMode(_:)):
+            menuItem.state = thread?.interactionMode == .plan ? .on : .off
             return thread != nil
         case #selector(openInPreferred(_:)):
             let target = OpenTargets.preferred

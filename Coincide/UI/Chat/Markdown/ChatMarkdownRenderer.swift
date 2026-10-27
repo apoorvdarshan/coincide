@@ -323,7 +323,7 @@ struct ChatMarkdownRenderer {
                 cell.setWidth(4, type: .absoluteValueType, for: .padding, edge: .maxY)
                 cell.setWidth(8, type: .absoluteValueType, for: .padding, edge: .minX)
                 cell.setWidth(8, type: .absoluteValueType, for: .padding, edge: .maxX)
-                if rowIndex == 0 { cell.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04) }
+                if rowIndex == 0 { cell.backgroundColor = Theme.tableHeaderFill }
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.textBlocks = context.textBlocks + [cell]
                 paragraph.lineSpacing = 1

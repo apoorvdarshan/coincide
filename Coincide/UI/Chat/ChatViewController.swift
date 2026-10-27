@@ -44,8 +44,6 @@ final class ChatViewController: NSViewController {
     private var revisions: [UUID: Int] = [:]
     private var expanded: [UUID: Set<TranscriptRowID>] = [:]
     private var scrollStates: [UUID: TranscriptScrollState] = [:]
-    /// Input on waiting question and approval cards, by item.
-    private var inputDrafts: [UUID: TranscriptInputDraft] = [:]
     private var changedFileSignatures: [UUID: Int] = [:]
     private var pendingItemIDs = Set<UUID>()
     private var needsFullReload = false
@@ -129,6 +127,20 @@ final class ChatViewController: NSViewController {
         if displayedThreadID != nil { list.scrollToBottom() }
     }
 
+    /// Puts the caret in the composer, or does so once the view is in a window.
+    func focusComposer() {
+        guard displayedThreadID != nil else { return }
+        composer.focus()
+    }
+
+    func canShowComposerPicker(_ picker: ComposerViewController.Picker) -> Bool {
+        composer.canShowPicker(picker)
+    }
+
+    func showComposerPicker(_ picker: ComposerViewController.Picker) {
+        composer.showPicker(picker)
+    }
+
     // MARK: Thread
 
     private func loadThread() {
@@ -160,8 +172,6 @@ final class ChatViewController: NSViewController {
     private func rebuild(reload: Bool = false, keeping anchor: TranscriptRowID? = nil) {
         guard let threadID, let thread = store.thread(threadID) else { return }
         itemsByID = Dictionary(thread.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-        // Drafts of this thread's cards that no longer wait are done; other threads keep theirs.
-        inputDrafts = inputDrafts.filter { id, _ in itemsByID[id].map { $0.status == .waiting } ?? true }
         let turn = runner.turn(threadID)
         var builder = TranscriptBuilder(items: thread.items)
         builder.runningTurnID = runner.isRunning(threadID) ? turn?.userItemID : nil
@@ -216,7 +226,7 @@ final class ChatViewController: NSViewController {
                 scrollStates[threadID] = nil
                 expanded[threadID] = nil
                 self.threadID = nil
-            } else if displayedThreadID == nil {
+            } else if displayedThreadID == nil || !welcomeView.isHidden {
                 updateChrome()
             }
         case .settings:
@@ -466,9 +476,7 @@ extension ChatViewController: TranscriptHost {
     }
 
     func copyToPasteboard(_ text: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        NSPasteboard.general.setText(text)
     }
 
     func editMessage(_ itemID: UUID) {
@@ -517,36 +525,9 @@ extension ChatViewController: TranscriptHost {
         return CheckpointService.shared.canRestore(threadID: threadID, userItemID: itemID)
     }
 
-    func respond(to itemID: UUID, optionID: String, text: String?) {
-        guard let threadID = displayedThreadID else { return }
-        runner.respond(threadID: threadID, itemID: itemID, optionID: optionID, text: text)
-        inputDrafts[itemID] = nil
-    }
-
-    func answer(_ itemID: UUID, answers: [String: [String]]) {
-        guard let threadID = displayedThreadID else { return }
-        runner.answer(threadID: threadID, itemID: itemID, answers: answers)
-        inputDrafts[itemID] = nil
-    }
-
-    func dismissQuestion(_ itemID: UUID) {
-        guard let threadID = displayedThreadID else { return }
-        runner.dismissQuestion(threadID: threadID, itemID: itemID)
-        inputDrafts[itemID] = nil
-    }
-
-    func inputDraft(for itemID: UUID) -> TranscriptInputDraft {
-        if let draft = inputDrafts[itemID] { return draft }
-        let draft = TranscriptInputDraft()
-        inputDrafts[itemID] = draft
-        return draft
-    }
-
     func showDiff(turnID: UUID, path: String?) {
         guard let threadID = displayedThreadID else { return }
-        var info: [String: Any] = ["threadID": threadID, "turnID": turnID]
-        if let path { info["path"] = path }
-        AppEvents.post(.coincideShowTurnDiff, info)
+        AppEvents.showTurnDiff(threadID: threadID, turnID: turnID, path: path)
     }
 
     func openLink(_ link: Any) -> Bool {
@@ -663,11 +644,5 @@ extension ChatViewController: @preconcurrency QLPreviewPanelDataSource {
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
         previewURLs[index] as NSURL
-    }
-}
-
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }

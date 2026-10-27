@@ -80,7 +80,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     override func loadView() {
         view = rootView
-        rootView.onKeyEquivalent = { [weak self] event in self?.handleKeyEquivalent(event) ?? false }
         buildTextView()
         buildSurface()
         buildColumn()
@@ -91,6 +90,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             self, selector: #selector(focusRequested), name: .coincideFocusComposer, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationWillTerminate), name: NSApplication.willTerminateNotification, object: nil)
+        // Folders are moved and deleted in other apps.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
         applySettings()
         bindThread()
     }
@@ -301,6 +303,10 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         suggestions.hide()
     }
 
+    @objc private func applicationDidBecomeActive() {
+        refreshThread()
+    }
+
     @objc private func applicationWillTerminate() {
         guard let threadID else { return }
         saveDraft(to: threadID)
@@ -346,6 +352,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             refreshRunState()
         case .threadList:
             if threadID != nil, thread == nil { refreshThread() }
+        case .projects:
+            if threadID != nil { refreshThread() }
         case .settings:
             applySettings()
             refreshThread()
@@ -577,6 +585,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         if noProviderReady {
             return String(localized: "Enable a provider in Settings to send a message")
         }
+        if let missing = missingFolder {
+            return missing.isWorktree
+                ? String(localized: "This thread’s worktree no longer exists.")
+                : String(localized: "The project folder was moved or deleted. Locate it from the sidebar.")
+        }
         let provider = thread.selection.provider
         if !isUsable(provider) {
             return String(localized: "\(provider.displayName) isn't available. Choose another agent below.")
@@ -610,6 +623,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
     }
 
+    /// The folder the thread works in, when it was moved or deleted.
+    private var missingFolder: (url: URL, isWorktree: Bool)? {
+        guard let thread, let folder = store.workingDirectory(for: thread.id),
+            !FileManager.default.fileExists(atPath: folder.path)
+        else { return nil }
+        return (folder, thread.worktreePath != nil)
+    }
+
     private var hasContent: Bool {
         !attachments.isEmpty || textView.string.contains { !$0.isWhitespace }
     }
@@ -628,7 +649,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         let running = runner.isRunning(threadID)
         let canSend =
             hasContent && importingImages == 0 && isUsable(thread.selection.provider)
-            && !WorktreeService.shared.isPreparing(threadID)
+            && !WorktreeService.shared.isPreparing(threadID) && missingFolder == nil
         footer.stopButton.isHidden = !running
         footer.implementButton.isHidden = !(proposedPlan != nil && !hasContent && !running)
         send.isHidden = !footer.implementButton.isHidden
@@ -741,10 +762,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             guard flags.contains(.command), !textView.hasMarkedText() else { return false }
             primaryAction()
             return true
-        case 47:  // .
-            guard flags == .command, let threadID, runner.isRunning(threadID) else { return false }
-            runner.stop(threadID: threadID)
-            return true
         case 126:  // Up
             guard flags == .option else { return false }
             return editLatestQueued()
@@ -753,19 +770,29 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
     }
 
-    /// ⇧⌘M, ⇧⌘E and ⇧⌘A open the model, effort and access menus while focus is not in another editor.
-    private func handleKeyEquivalent(_ event: NSEvent) -> Bool {
-        guard threadID != nil, let window = view.window, window.isKeyWindow,
-            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command, .shift]
-        else { return false }
-        if let editor = window.firstResponder as? NSTextView, editor !== textView, editor.isEditable { return false }
-        switch event.charactersIgnoringModifiers?.lowercased() {
-        case "m": footer.modelButton.showMenu()
-        case "e" where !footer.effortButton.isHidden: footer.effortButton.showMenu()
-        case "a": footer.accessButton.showMenu()
-        default: return false
-        }
-        return true
+    /// The footer menus the Thread menu opens with ⇧⌘M, ⇧⌘E and ⇧⌘A.
+    enum Picker {
+        case model
+        case effort
+        case access
+    }
+
+    /// Whether the picker can open now: there is a thread, and the model takes an effort setting.
+    func canShowPicker(_ picker: Picker) -> Bool {
+        guard thread != nil, view.window != nil else { return false }
+        return picker != .effort || !footer.effortButton.isHidden
+    }
+
+    func showPicker(_ picker: Picker) {
+        guard canShowPicker(picker) else { return }
+        let button =
+            switch picker {
+            case .model: footer.modelButton
+            case .effort: footer.effortButton
+            case .access: footer.accessButton
+            }
+        // Open after the menu bar finishes handling the shortcut.
+        DispatchQueue.main.async { button.showMenu() }
     }
 
     /// Up in an empty composer recalls earlier messages of the thread; Down walks back toward the draft.
@@ -998,7 +1025,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         store.updateThread(threadID) { $0.accessMode = mode }
     }
 
-    @objc private func toggleInteractionMode() {
+    @objc func toggleInteractionMode() {
         guard let thread else { return }
         setInteractionMode(thread.interactionMode == .plan ? .build : .plan)
     }
@@ -1013,7 +1040,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc private func openProviderSettings() {
-        AppEvents.post(.coincideShowSettings, ["section": SettingsSection.providers.rawValue])
+        AppEvents.showSettings(section: .providers)
     }
 
     // MARK: Sending
@@ -1033,7 +1060,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
         // A message sent while the thread's worktree is still being created would run in the project folder.
         guard importingImages == 0, let thread, isUsable(thread.selection.provider),
-            !WorktreeService.shared.isPreparing(thread.id)
+            !WorktreeService.shared.isPreparing(thread.id), missingFolder == nil
         else {
             NSSound.beep()
             return
@@ -1163,7 +1190,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     private func setDropHighlight(_ highlighted: Bool) {
-        surface.tintColor = highlighted ? NSColor.controlAccentColor.withAlphaComponent(0.12) : nil
+        surface.tintColor = highlighted ? Theme.dropTint : nil
     }
 
     private func preview(_ attachment: ComposerAttachment) {
@@ -1211,20 +1238,14 @@ extension ComposerViewController: QLPreviewPanelDataSource, QLPreviewPanelDelega
     }
 }
 
-/// The composer's root: transparent to clicks outside its controls, so a transcript beneath stays usable,
-/// and where the composer's window-wide shortcuts arrive.
+/// The composer's root: transparent to clicks outside its controls, so a transcript beneath stays usable.
 private final class ComposerRootView: NSView {
     var passThroughViews: [NSView] = []
-    var onKeyEquivalent: ((NSEvent) -> Bool)?
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         guard let hit, hit !== self, !passThroughViews.contains(where: { $0 === hit }) else { return nil }
         return hit
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        onKeyEquivalent?(event) == true || super.performKeyEquivalent(with: event)
     }
 }
 

@@ -79,7 +79,10 @@ enum ThreadActions {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "Delete “\(thread.title)”?")
-        alert.informativeText = String(localized: "This permanently deletes the conversation. Files on disk are not changed.")
+        alert.informativeText =
+            ThreadRunner.shared.isRunning(threadID)
+            ? String(localized: "The agent working in it is stopped and the conversation is deleted. Files on disk are not changed.")
+            : String(localized: "This permanently deletes the conversation. Files on disk are not changed.")
         alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.showsSuppressionButton = true
@@ -141,6 +144,36 @@ enum ThreadActions {
         store.updateProject(projectID) { $0.name = trimmed }
     }
 
+    /// Points a project whose folder was moved or renamed at its new place.
+    static func locateProject(_ projectID: UUID, in window: NSWindow?) {
+        guard let project = store.project(projectID) else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = String(localized: "Choose")
+        panel.message = String(localized: "Where is “\(project.name)” now?")
+        panel.directoryURL = project.url.deletingLastPathComponent()
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url?.standardizedFileURL else { return }
+            guard !store.projects.contains(where: { $0.id != projectID && $0.path == url.path }) else {
+                NSSound.beep()
+                return
+            }
+            // Agents started in the old folder cannot continue there; their next turn starts fresh.
+            for thread in store.threads(in: projectID, includeArchived: true)
+            where thread.worktreePath == nil && !ThreadRunner.shared.isRunning(thread.id) {
+                ThreadRunner.shared.shutdown(threadID: thread.id)
+            }
+            store.updateProject(projectID) { $0.path = url.path }
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
     static func removeProject(_ projectID: UUID, in window: NSWindow?) {
         guard let project = store.project(projectID) else { return }
         let threads = store.threads(in: projectID, includeArchived: true)
@@ -164,11 +197,6 @@ enum ThreadActions {
 
     static func reveal(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    static func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// The folder a thread works in: its worktree, else its project folder.

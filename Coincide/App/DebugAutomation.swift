@@ -12,6 +12,10 @@ import CoincideKit
 /// - `{"send": "text"}`
 /// - `{"waitIdle": seconds}`: waits until the turn ends
 /// - `{"approve": "allow"}`: answers the latest pending approval with the option of that kind or id
+/// - `{"openThread": "title"}`: opens an existing thread
+/// - `{"request": "approval" | "question"}`: adds a sample request waiting for an answer, to check how it looks
+/// - `{"toggle": "sidebar" | "terminal" | "diff"}`, `{"appearance": "light" | "dark" | "system"}`
+/// - `{"settings": "general" | "providers" | "models" | "keyboard" | "about"}`: opens the settings window
 /// - `{"sleep": seconds}`, `{"log": "text"}`, `{"quit": true}`
 enum DebugAutomation {
     static func startIfRequested() {
@@ -65,6 +69,29 @@ enum DebugAutomation {
                 threadID = thread.id
                 AppEvents.openThread(thread.id)
                 log("thread \(thread.id) selection \(thread.selection)")
+            case "openThread":
+                guard let thread = store.recentThreads.first(where: { $0.title == value.string }) else {
+                    log("no thread named \(value.displayText)")
+                    continue
+                }
+                threadID = thread.id
+                AppEvents.openThread(thread.id)
+            case "request":
+                guard let threadID else { continue }
+                store.append(sampleRequest(value.string ?? "approval"), to: threadID)
+            case "toggle":
+                let window = NSApp.windows.compactMap { $0.windowController as? MainWindowController }.first
+                switch value.string {
+                case "sidebar": window?.toggleSidebarPanel(nil)
+                case "terminal": window?.toggleTerminalPanel(nil)
+                case "diff": window?.toggleDiffPanel(nil)
+                default: log("unknown panel \(value.displayText)")
+                }
+            case "settings":
+                AppEvents.showSettings(section: value.string.flatMap(SettingsSection.init(rawValue:)))
+            case "appearance":
+                guard let mode = value.string.flatMap(AppearanceMode.init(rawValue:)) else { continue }
+                store.updateSettings { $0.appearance = mode }
             case "select":
                 guard let threadID, let selection = selection(value) else { continue }
                 store.updateThread(threadID) { $0.selection = selection }
@@ -113,6 +140,29 @@ enum DebugAutomation {
         }
         store.flush()
         log("done")
+    }
+
+    private static func sampleRequest(_ kind: String) -> TranscriptItem {
+        if kind == "question" {
+            let question = UserQuestion(
+                id: "q1", header: "Database", prompt: "Which database should the sample app use?",
+                options: [
+                    .init(label: "SQLite", detail: "A file next to the app"), .init(label: "Postgres", detail: "Needs a server"),
+                ])
+            return TranscriptItem(
+                kind: .question, status: .waiting, provider: .claude,
+                questions: UserInputRequest(id: "r1", title: "Pick a database", questions: [question]))
+        }
+        return TranscriptItem(
+            kind: .approval, title: "Run `rm -rf .build && swift build`", detail: "rm -rf .build && swift build -c release",
+            category: .command, status: .waiting, provider: .claude,
+            approval: ApprovalInfo(
+                requestID: "a1",
+                options: [
+                    ApprovalOption(id: "allow", label: "Allow", kind: .allowOnce),
+                    ApprovalOption(id: "always", label: "Always Allow", kind: .allowAlways),
+                    ApprovalOption(id: "deny", label: "Deny", kind: .deny),
+                ]))
     }
 }
 #endif

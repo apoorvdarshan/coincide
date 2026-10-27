@@ -219,8 +219,8 @@ struct TranscriptBuilder {
 
     private func isVisible(_ item: TranscriptItem) -> Bool {
         switch item.kind {
-        case .reasoning: showReasoning && !item.text.isBlank
-        case .assistant, .plan: !item.text.isBlank
+        case .reasoning: showReasoning && item.text.nonBlank != nil
+        case .assistant, .plan: item.text.nonBlank != nil
         default: true
         }
     }
@@ -378,8 +378,6 @@ enum TranscriptLabels {
 }
 
 fileprivate extension String {
-    var isBlank: Bool { allSatisfy(\.isWhitespace) }
-
     var lowercasedFirstLetter: String {
         guard let first else { return self }
         return first.lowercased() + dropFirst()

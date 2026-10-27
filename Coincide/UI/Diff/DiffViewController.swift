@@ -41,7 +41,7 @@ final class DiffViewController: NSViewController {
     private let banner = GitResultBanner(frame: .zero)
 
     private var scopes: [UUID: Scope] = [:]
-    /// File to select once the next turn diff loads, from `.coincideShowTurnDiff`.
+    /// File to select once the next turn diff loads, from `showTurn(_:in:path:)`.
     private var pendingPath: String?
     private var diff: GitDiff?
     private var status: GitStatus?
@@ -152,8 +152,12 @@ final class DiffViewController: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        if needsReload || diff == nil { reload() }
-        updateLiveRefresh()
+        // When the inspector opens with an animation, this runs while its view is still hidden.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible else { return }
+            if self.loadTask == nil, self.needsReload || self.diff == nil { self.reload() }
+            self.updateLiveRefresh()
+        }
     }
 
     override func viewDidDisappear() {
@@ -184,6 +188,9 @@ final class DiffViewController: NSViewController {
             case .thread(let id) where id == self.threadID:
                 // The thread may have moved into (or out of) a worktree.
                 if self.cwd != self.loadedFolder { self.reload() }
+            case .projects where self.cwd != self.loadedFolder:
+                // The project's folder was located somewhere else.
+                self.reload()
             case .settings where self.fontSize != Theme.fontSize:
                 self.fontSize = Theme.fontSize
                 if let diff = self.diff { self.show(diff, keepPosition: true) }
@@ -197,7 +204,6 @@ final class DiffViewController: NSViewController {
         center.addObserver(
             self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification,
             object: nil)
-        center.addObserver(self, selector: #selector(showTurnDiff(_:)), name: .coincideShowTurnDiff, object: nil)
     }
 
     @objc private func repositoryChanged(_ notification: Notification) {
@@ -218,13 +224,11 @@ final class DiffViewController: NSViewController {
         }
     }
 
-    @objc private func showTurnDiff(_ notification: Notification) {
-        guard let threadID = notification.userInfo?["threadID"] as? UUID,
-            let turnID = notification.userInfo?["turnID"] as? UUID
-        else { return }
+    /// Shows one turn's changes, selecting `path` when given. Call once the inspector is open.
+    func showTurn(_ turnID: UUID, in threadID: UUID, path: String?) {
         scopes[threadID] = .turn(turnID)
         guard threadID == self.threadID else { return }
-        pendingPath = notification.userInfo?["path"] as? String
+        pendingPath = path
         reload()
     }
 

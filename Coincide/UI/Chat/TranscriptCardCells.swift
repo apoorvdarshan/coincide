@@ -24,19 +24,18 @@ final class TranscriptCardView: NSView {
 
 // MARK: - Approval
 
-/// An agent asking permission: what it wants to do, the provider's choices and, when the agent
-/// wants it, a text reply. Once answered, the card keeps the request and shows the answer.
-final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
+/// An agent asking permission: what it wants to do and, once answered, the answer. As in T3 Code the
+/// choices themselves are in the approval banner above the composer, so a waiting card only says so.
+final class TranscriptApprovalCell: TranscriptCell {
     private static let padding: CGFloat = 12
     private static let detailMaxHeight: CGFloat = 160
+    private static let statusHeight: CGFloat = 18
 
     private let card = TranscriptCardView()
     private let icon = NSImageView()
     private let kindLabel = NSTextField(labelWithString: "")
     private let titleView = ChatTextView()
     private let detailPanel = TranscriptDetailPanel()
-    private let replyField = NSTextField()
-    private var buttons: [NSButton] = []
     private let resolutionIcon = NSImageView()
     private let resolutionLabel = NSTextField(labelWithString: "")
     private var item: TranscriptItem?
@@ -46,8 +45,7 @@ final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
         addSubview(card)
         kindLabel.font = .systemFont(ofSize: Theme.fontSize - 2, weight: .semibold)
         resolutionLabel.lineBreakMode = .byTruncatingTail
-        replyField.delegate = self
-        for view in [icon, kindLabel, titleView, detailPanel, replyField, resolutionIcon, resolutionLabel] as [NSView] {
+        for view in [icon, kindLabel, titleView, detailPanel, resolutionIcon, resolutionLabel] as [NSView] {
             card.addSubview(view)
         }
         setAccessibilityElement(true)
@@ -64,7 +62,7 @@ final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
         self.item = item
         let isWaiting = item.status == .waiting
         let accent = isWaiting ? Theme.warning : NSColor.secondaryLabelColor
-        card.strokeColor = isWaiting ? Theme.warning.withAlphaComponent(0.45) : .separatorColor
+        card.strokeColor = isWaiting ? Theme.waitingStroke : .separatorColor
         icon.image = Theme.symbol((item.category ?? .other).symbolName, size: 11, weight: .semibold)
         icon.contentTintColor = accent
         kindLabel.stringValue = Self.kindLabel(item.category)
@@ -74,28 +72,15 @@ final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
         let hasDetail = Self.detail(item) != nil
         detailPanel.isHidden = !hasDetail
         if hasDetail { detailPanel.setText(Self.detailText(item, cache: host.textCache).string, textHeight: 0) }
-        configureReply(isWaiting ? item.approval?.textInput : nil, item: item, host: host)
 
-        let options = isWaiting ? Self.orderedOptions(item.approval?.options ?? []) : []
-        while buttons.count < options.count {
-            let button = NSButton(title: "", target: self, action: #selector(choose(_:)))
-            button.bezelStyle = .push
-            button.controlSize = .regular
-            card.addSubview(button)
-            buttons.append(button)
-        }
-        for (index, button) in buttons.enumerated() {
-            button.isHidden = index >= options.count
-            guard index < options.count else { continue }
-            let option = options[index]
-            button.title = option.label
-            button.identifier = NSUserInterfaceItemIdentifier(option.id)
-            button.tintProminence = option.kind == .allowOnce ? .primary : .automatic
-            button.hasDestructiveAction = option.kind == .deny
-        }
-        resolutionIcon.isHidden = isWaiting
-        resolutionLabel.isHidden = isWaiting
-        if !isWaiting {
+        resolutionLabel.font = .systemFont(ofSize: Theme.fontSize - 1)
+        resolutionLabel.textColor = .secondaryLabelColor
+        if isWaiting {
+            resolutionIcon.image = Theme.symbol("hourglass", size: 11, weight: .semibold)
+            resolutionIcon.contentTintColor = Theme.warning
+            resolutionLabel.stringValue = String(localized: "Waiting for your answer below")
+            resolutionLabel.toolTip = nil
+        } else {
             let declined = item.status == .declined
             resolutionIcon.image = Theme.symbol(declined ? "xmark.circle.fill" : "checkmark.circle.fill", size: 12, weight: .regular)
             resolutionIcon.contentTintColor = declined ? Theme.failure : Theme.success
@@ -103,28 +88,8 @@ final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
             let reply = item.approval?.responseText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             resolutionLabel.stringValue = reply.isEmpty ? resolution : String(localized: "\(resolution): “\(reply)”")
             resolutionLabel.toolTip = reply.isEmpty ? nil : reply
-            resolutionLabel.font = .systemFont(ofSize: Theme.fontSize - 1)
-            resolutionLabel.textColor = .secondaryLabelColor
         }
-        setAccessibilityLabel("\(kindLabel.stringValue): \(item.title ?? "")")
-    }
-
-    private func configureReply(_ textInput: TextInputSpec?, item: TranscriptItem, host: TranscriptHost) {
-        replyField.isHidden = textInput == nil
-        guard let textInput else { return }
-        let draft = host.inputDraft(for: item.id)
-        let key = TranscriptInputDraft.approvalTextKey
-        if draft.texts[key] == nil { draft.texts[key] = textInput.initialText ?? "" }
-        replyField.font = .systemFont(ofSize: Theme.fontSize)
-        replyField.placeholderString = textInput.placeholder ?? String(localized: "Reply")
-        replyField.usesSingleLineMode = !textInput.isMultiline
-        replyField.cell?.wraps = textInput.isMultiline
-        replyField.cell?.isScrollable = !textInput.isMultiline
-        replyField.lineBreakMode = textInput.isMultiline ? .byWordWrapping : .byTruncatingTail
-        replyField.bezelStyle = textInput.isMultiline ? .squareBezel : .roundedBezel
-        // Leave a reply that is being typed alone; transcript updates must not move the cursor.
-        if replyField.currentEditor() == nil { replyField.stringValue = draft.texts[key] ?? "" }
-        replyField.setAccessibilityLabel(item.title ?? kindLabel.stringValue)
+        setAccessibilityLabel("\(kindLabel.stringValue): \(item.title ?? ""), \(resolutionLabel.stringValue)")
     }
 
     private static func kindLabel(_ category: ToolCategory?) -> String {
@@ -136,16 +101,6 @@ final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
         case .mcp: String(localized: "Tool approval")
         default: String(localized: "Approval needed")
         }
-    }
-
-    /// Choices in Mac order: the primary "allow" last, on the right.
-    private static func orderedOptions(_ options: [ApprovalOption]) -> [ApprovalOption] {
-        let rank: [ApprovalOption.Kind: Int] = [.cancel: 0, .deny: 1, .allowAlways: 2, .allowOnce: 3]
-        return options.enumerated().sorted { lhs, rhs in
-            let left = rank[lhs.element.kind] ?? 0
-            let right = rank[rhs.element.kind] ?? 0
-            return left != right ? left < right : lhs.offset < rhs.offset
-        }.map(\.element)
     }
 
     private static func title(_ item: TranscriptItem, cache: TranscriptTextCache) -> ChatRenderedText {
@@ -183,8 +138,7 @@ final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
     private struct Layout {
         var title: NSRect
         var detail: NSRect?
-        var reply: NSRect?
-        var controlsY: CGFloat
+        var statusY: CGFloat
         var cardHeight: CGFloat
     }
 
@@ -204,16 +158,8 @@ final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
             detailRect = NSRect(x: padding, y: y + 8, width: inner, height: height)
             y += 8 + height
         }
-        var replyRect: NSRect?
-        if item.status == .waiting, let textInput = item.approval?.textInput {
-            let height: CGFloat = textInput.isMultiline ? 64 : 24
-            replyRect = NSRect(x: padding, y: y + 10, width: inner, height: height)
-            y += 10 + height
-        }
-        let controlsY = y + 10
-        let controlsHeight: CGFloat = item.status == .waiting ? 28 : 18
-        return Layout(
-            title: titleRect, detail: detailRect, reply: replyRect, controlsY: controlsY, cardHeight: controlsY + controlsHeight + padding)
+        let statusY = y + 10
+        return Layout(title: titleRect, detail: detailRect, statusY: statusY, cardHeight: statusY + statusHeight + padding)
     }
 
     override class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
@@ -240,48 +186,9 @@ final class TranscriptApprovalCell: TranscriptCell, NSTextFieldDelegate {
             let size = Self.detailSize(item, width: detail.width - TranscriptDetailPanel.padding * 2, host: host)
             detailPanel.setText(Self.detailText(item, cache: host.textCache).string, textHeight: size.height)
         }
-        if let reply = layout.reply { replyField.frame = reply }
-        var x = column.width - Self.padding
-        for button in buttons.reversed() where !button.isHidden {
-            let width = max(76, ceil(button.intrinsicContentSize.width))
-            x -= width
-            button.frame = NSRect(x: x, y: layout.controlsY, width: width, height: 28)
-            x -= 8
-        }
-        resolutionIcon.frame = NSRect(x: Self.padding, y: layout.controlsY + 1, width: 16, height: 16)
-        resolutionLabel.frame = NSRect(x: Self.padding + 22, y: layout.controlsY, width: column.width - Self.padding * 2 - 22, height: 18)
-    }
-
-    @objc private func choose(_ sender: NSButton) {
-        guard let optionID = sender.identifier?.rawValue else { return }
-        respond(optionID: optionID)
-    }
-
-    private func respond(optionID: String) {
-        guard let item, let host else { return }
-        let text = item.approval?.textInput == nil ? nil : host.inputDraft(for: item.id).texts[TranscriptInputDraft.approvalTextKey] ?? ""
-        host.respond(to: item.id, optionID: optionID, text: text)
-    }
-
-    func controlTextDidChange(_ notification: Notification) {
-        guard let item, let host else { return }
-        host.inputDraft(for: item.id).texts[TranscriptInputDraft.approvalTextKey] = replyField.stringValue
-    }
-
-    /// Return adds a line to a multi-line reply; in a single-line one it sends the reply with the allow choice.
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard commandSelector == #selector(NSResponder.insertNewline(_:)), let approval = item?.approval else { return false }
-        if approval.textInput?.isMultiline == true {
-            textView.insertNewlineIgnoringFieldEditor(nil)
-            return true
-        }
-        guard let primary = approval.options.first(where: { $0.kind == .allowOnce }) ?? approval.options.first(where: { $0.kind == .allowAlways })
-        else {
-            NSSound.beep()
-            return true
-        }
-        respond(optionID: primary.id)
-        return true
+        resolutionIcon.frame = NSRect(x: Self.padding, y: layout.statusY + 1, width: 16, height: 16)
+        resolutionLabel.frame = NSRect(
+            x: Self.padding + 22, y: layout.statusY, width: column.width - Self.padding * 2 - 22, height: Self.statusHeight)
     }
 }
 
@@ -631,8 +538,8 @@ final class TranscriptErrorCell: TranscriptCell {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        card.fillColor = Theme.failure.withAlphaComponent(0.07)
-        card.strokeColor = Theme.failure.withAlphaComponent(0.3)
+        card.fillColor = Theme.failureFill
+        card.strokeColor = Theme.failureStroke
         icon.image = Theme.symbol("exclamationmark.triangle.fill", size: 12, weight: .regular)
         icon.contentTintColor = Theme.failure
         addSubview(card)
