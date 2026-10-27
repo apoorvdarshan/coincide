@@ -57,6 +57,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             (.coincideNewThread, #selector(newThreadEvent(_:))),
             (.coincideAddProject, #selector(addProject(_:))),
             (.coincideToggleDiff, #selector(toggleDiffPanel(_:))),
+            (.coincideShowTurnDiff, #selector(showTurnDiff(_:))),
             (.coincideToggleTerminal, #selector(toggleTerminalPanel(_:))),
             (.coincideToggleSidebar, #selector(toggleSidebarPanel(_:))),
             (.coincideShowCommandPalette, #selector(showCommandPalette(_:))),
@@ -195,6 +196,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @objc func toggleDiffPanel(_ sender: Any?) {
         showWindow(nil)
         splitController.toggleDiffPanel()
+    }
+
+    /// The diff inspector picks the turn up from the same notification; this only makes sure it's open.
+    @objc private func showTurnDiff(_ notification: Notification) {
+        splitController.showDiffPanel()
     }
 
     /// Command-K opens the palette, or closes it when it is showing.

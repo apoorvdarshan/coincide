@@ -82,6 +82,11 @@ final class MainSplitViewController: NSSplitViewController {
         sidebarItem.animator().isCollapsed.toggle()
     }
 
+    /// Opens the inspector if it is closed.
+    func showDiffPanel() {
+        if inspectorItem.isCollapsed { toggleDiffPanel() }
+    }
+
     func toggleDiffPanel() {
         if inspectorItem.isCollapsed {
             if hasSizedInspector {

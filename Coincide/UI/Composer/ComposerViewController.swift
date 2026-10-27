@@ -257,6 +257,17 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         suggestions.reposition(above: surface)
     }
 
+    /// Replaces the text and attachments, for example when the user edits a message they already sent.
+    func setDraft(_ text: String, imagePaths: [String]) {
+        textView.setText(text)
+        textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        attachments = imagePaths.filter { FileManager.default.fileExists(atPath: $0) }
+            .map { ComposerAttachment(path: $0, name: ($0 as NSString).lastPathComponent) }
+        refreshAttachments()
+        textChanged()
+        focus()
+    }
+
     /// Puts the caret in the composer.
     func focus() {
         guard let window = view.window else {

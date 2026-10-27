@@ -2,12 +2,6 @@ import AppKit
 import CoincideKit
 import QuickLookUI
 
-extension Notification.Name {
-    /// Posted when the user edits a sent message: the text goes back to the composer.
-    /// userInfo["threadID"]: UUID, ["text"]: String, ["imagePaths"]: [String]
-    static let coincideEditMessage = Notification.Name("coincide.editMessage")
-}
-
 /// A thread's timeline above its composer.
 ///
 /// The transcript follows T3 Code's chat view: user bubbles, Markdown replies with the provider and
@@ -434,15 +428,8 @@ final class ChatViewController: NSViewController {
     /// Removes the conversation from `item` on and hands its text back to the composer.
     private func rewind(to item: TranscriptItem) {
         guard let threadID = displayedThreadID else { return }
-        // Detach the composer first so it saves its own draft before ours replaces it.
-        composer.threadID = nil
         store.truncate(threadID, from: item.id)
-        store.updateThread(threadID) { $0.draft = item.text }
-        composer.threadID = threadID
-        composer.focus()
-        NotificationCenter.default.post(
-            name: .coincideEditMessage, object: self,
-            userInfo: ["threadID": threadID, "text": item.text, "imagePaths": item.attachments ?? []])
+        composer.setDraft(item.text, imagePaths: item.attachments ?? [])
     }
 
     private func present(_ error: Error) {
@@ -559,7 +546,7 @@ extension ChatViewController: TranscriptHost {
         guard let threadID = displayedThreadID else { return }
         var info: [String: Any] = ["threadID": threadID, "turnID": turnID]
         if let path { info["path"] = path }
-        AppEvents.post(.coincideToggleDiff, info)
+        AppEvents.post(.coincideShowTurnDiff, info)
     }
 
     func openLink(_ link: Any) -> Bool {

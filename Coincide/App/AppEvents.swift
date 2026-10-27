@@ -9,6 +9,9 @@ extension Notification.Name {
     static let coincideNewThread = Notification.Name("coincide.newThread")
     static let coincideAddProject = Notification.Name("coincide.addProject")
     static let coincideToggleDiff = Notification.Name("coincide.toggleDiff")
+    /// Opens the diff inspector on one turn's changes.
+    /// userInfo["threadID"]: UUID, ["turnID"]: UUID (the turn's user item id), ["path"]: String? (file to select)
+    static let coincideShowTurnDiff = Notification.Name("coincide.showTurnDiff")
     static let coincideToggleTerminal = Notification.Name("coincide.toggleTerminal")
     static let coincideToggleSidebar = Notification.Name("coincide.toggleSidebar")
     static let coincideFocusComposer = Notification.Name("coincide.focusComposer")
