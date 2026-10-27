@@ -58,6 +58,18 @@ struct HandoffTests {
         #expect(!prompt.contains("claude answer"))
     }
 
+    @Test func freshSessionAfterFailedResumeGetsItsOwnHistory() {
+        let items = [
+            TranscriptItem(kind: .user, text: "remember the word zebra", provider: .claude),
+            TranscriptItem(kind: .assistant, text: "Noted.", provider: .claude),
+        ]
+        // ThreadRunner records the new session (seen nothing) before the prompt is built.
+        let fresh = thread(items, sessions: [.claude: ProviderSessionRef(sessionID: "new", seenItemCount: 0)])
+        let prompt = Handoff.prompt(for: "what word?", thread: fresh, provider: .claude)
+        #expect(prompt.contains("zebra"))
+        #expect(prompt.contains("joining an existing conversation"))
+    }
+
     @Test func recapKeepsMostRecentWithinBudget() {
         let items = (0..<50).map { TranscriptItem(kind: .assistant, text: String(repeating: "x", count: 100) + "\($0)", provider: .codex) }
         let text = Handoff.transcript(items, budget: 1_000)
