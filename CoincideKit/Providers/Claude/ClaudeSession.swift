@@ -875,3 +875,8 @@ final class ClaudeSession: AgentSession {
         }
     }
 }
+
+extension ClaudeSession: BackgroundWorkReporting {
+    /// Background commands or agents Claude started keep running between turns; the idle sweep must not stop them.
+    var hasBackgroundWork: Bool { !isShutDown && transport != nil && !mapper.backgroundTasks.isEmpty }
+}
