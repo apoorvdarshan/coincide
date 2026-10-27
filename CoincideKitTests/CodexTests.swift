@@ -243,6 +243,17 @@ struct CodexPresentationTests {
                 try json(#"{"type":"unknown","command":"tee b"}"#),
             ])
         #expect(mixed == ToolCallInfo(id: "c", category: .command, title: "Run `cat a | tee b`", detail: "cat a | tee b"))
+
+        let looking = presentation.commandInfo(
+            id: "c", command: "/bin/zsh -lc 'ls src && cat README.md'",
+            actions: [
+                try json(#"{"type":"listFiles","command":"ls src","path":"/work/src"}"#),
+                try json(#"{"type":"read","command":"cat README.md","name":"README.md","path":"/work/README.md"}"#),
+            ])
+        #expect(looking.category == .read)
+        #expect(looking.title == "Run `ls src && cat README.md`")
+        #expect(CodexPresentation.unwrapShell(argv: ["/bin/bash", "-c", "make"]) == "make")
+        #expect(CodexPresentation.unwrapShell(argv: ["python3", "-c", "print(1)"]) == "python3 -c print(1)")
     }
 
     @Test func longCommandsAreShortenedInTitles() {
@@ -485,6 +496,43 @@ struct CodexEventMapperTests {
             ])
     }
 
+    @Test func subagentToolCallsAreListedUnderTheirSubagentItem() throws {
+        var mapper = mapper()
+        let events = try mapper.feed([
+            #"{"method":"item/started","params":{"item":{"type":"collabAgentToolCall","id":"spawn","tool":"spawnAgent","status":"inProgress","senderThreadId":"T","receiverThreadIds":[],"prompt":"Run the tests","model":null,"reasoningEffort":null,"agentsStates":{}},"threadId":"T","turnId":"R1","startedAtMs":1}}"#,
+            #"{"method":"item/completed","params":{"item":{"type":"collabAgentToolCall","id":"spawn","tool":"spawnAgent","status":"completed","senderThreadId":"T","receiverThreadIds":["T2"],"prompt":"Run the tests","model":null,"reasoningEffort":null,"agentsStates":{"T2":{"status":"pendingInit","message":null}}},"threadId":"T","turnId":"R1","completedAtMs":2}}"#,
+            #"{"method":"item/started","params":{"item":{"type":"commandExecution","id":"c-exec","command":"/bin/zsh -lc 'npm test'","cwd":"/work","status":"inProgress","commandActions":[{"type":"unknown","command":"npm test"}]},"threadId":"T2","turnId":"C1","startedAtMs":3}}"#,
+            #"{"method":"item/started","params":{"item":{"type":"collabAgentToolCall","id":"wait","tool":"wait","status":"inProgress","senderThreadId":"T","receiverThreadIds":["T2"],"prompt":null,"model":null,"reasoningEffort":null,"agentsStates":{}},"threadId":"T","turnId":"R1","startedAtMs":4}}"#,
+            #"{"method":"item/started","params":{"item":{"type":"fileChange","id":"c-edit","changes":[{"path":"/work/a.swift","kind":{"type":"update","move_path":null},"diff":"@@ -1 +1 @@\n-a\n+b\n"}],"status":"inProgress"},"threadId":"T2","turnId":"C1","startedAtMs":5}}"#,
+            #"{"method":"item/agentMessage/delta","params":{"threadId":"T2","turnId":"C1","itemId":"m","delta":"done"}}"#,
+            #"{"method":"item/completed","params":{"item":{"type":"collabAgentToolCall","id":"wait","tool":"wait","status":"completed","senderThreadId":"T","receiverThreadIds":["T2"],"prompt":null,"model":null,"reasoningEffort":null,"agentsStates":{"T2":{"status":"completed","message":"All tests pass"}}},"threadId":"T","turnId":"R1","completedAtMs":6}}"#,
+        ])
+        #expect(
+            events == [
+                .toolStarted(ToolCallInfo(id: "spawn", category: .task, title: "Start a subagent", detail: "Run the tests")),
+                .toolCompleted(id: "spawn", status: .completed, output: nil),
+                .toolOutput(id: "spawn", delta: "• Run `npm test`\n"),
+                .toolStarted(ToolCallInfo(id: "wait", category: .task, title: "Wait for subagents")),
+                .toolOutput(id: "wait", delta: "• Edit a.swift\n"),
+                .toolOutput(id: "wait", delta: "\nAll tests pass"),
+                .toolCompleted(id: "wait", status: .completed, output: nil),
+            ])
+    }
+
+    @Test func failedAndBlockingHooksAreReported() throws {
+        var mapper = mapper()
+        let events = try mapper.feed([
+            #"{"method":"hook/completed","params":{"threadId":"T","turnId":"R1","run":{"id":"h1","eventName":"sessionStart","status":"completed","statusMessage":null,"entries":[{"kind":"context","text":"ok"}]}}}"#,
+            #"{"method":"hook/completed","params":{"threadId":"T","turnId":"R1","run":{"id":"h2","eventName":"userPromptSubmit","status":"blocked","statusMessage":null,"entries":[{"kind":"context","text":"hidden"},{"kind":"stop","text":"Secrets are not allowed in prompts."}]}}}"#,
+            #"{"method":"hook/completed","params":{"threadId":"T","turnId":"R1","run":{"id":"h3","eventName":"preToolUse","status":"failed","statusMessage":"exit status 2","entries":[]}}}"#,
+        ])
+        #expect(
+            events == [
+                .notice("A userPromptSubmit hook stopped Codex.\nSecrets are not allowed in prompts."),
+                .notice("A preToolUse hook failed.\nexit status 2"),
+            ])
+    }
+
     @Test func otherThreadsAndUnknownTurnsAreIgnored() throws {
         var mapper = mapper()
         let events = try mapper.feed([
@@ -520,20 +568,106 @@ struct CodexEventMapperTests {
             ])
     }
 
-    @Test func compactionReroutesAndWarningsBecomeNotices() throws {
+    @Test func compactionIsShownWhileItRuns() throws {
         var mapper = mapper()
         let events = try mapper.feed([
-            #"{"method":"item/completed","params":{"item":{"type":"contextCompaction","id":"cc"},"threadId":"T","turnId":"R1","completedAtMs":1}}"#,
-            #"{"method":"model/rerouted","params":{"threadId":"T","turnId":"R1","fromModel":"gpt-6-astra","toModel":"gpt-6-luna","reason":"highRiskCyberActivity"}}"#,
-            #"{"method":"warning","params":{"threadId":"T","message":"Skills budget exceeded"}}"#,
+            #"{"method":"item/started","params":{"item":{"type":"contextCompaction","id":"cc"},"threadId":"T","turnId":"R1","startedAtMs":1}}"#,
+            #"{"method":"item/completed","params":{"item":{"type":"contextCompaction","id":"cc"},"threadId":"T","turnId":"R1","completedAtMs":2}}"#,
         ])
         #expect(
             events == [
-                .notice("Context compacted"),
+                .toolStarted(ToolCallInfo(id: "cc", category: .other, title: "Compact the conversation")),
+                .toolCompleted(id: "cc", status: .completed, output: nil),
+            ])
+    }
+
+    @Test func reroutesAndWarningsBecomeNoticesOnce() throws {
+        var mapper = mapper()
+        let events = try mapper.feed([
+            #"{"method":"model/rerouted","params":{"threadId":"T","turnId":"R1","fromModel":"gpt-6-astra","toModel":"gpt-6-luna","reason":"highRiskCyberActivity"}}"#,
+            #"{"method":"warning","params":{"threadId":"T","message":"Skills budget exceeded"}}"#,
+            #"{"method":"warning","params":{"threadId":"T","message":"Skills budget exceeded"}}"#,
+            #"{"method":"warning","params":{"threadId":null,"message":"Under-development features enabled"}}"#,
+            #"{"method":"guardianWarning","params":{"threadId":"OTHER","message":"not ours"}}"#,
+            #"{"method":"configWarning","params":{"summary":"Invalid config","details":"unknown key `foo`","path":"/Users/me/.codex/config.toml"}}"#,
+            #"{"method":"mcpServer/startupStatus/updated","params":{"threadId":"T","name":"Neon","status":"starting","error":null,"failureReason":null}}"#,
+            #"{"method":"mcpServer/startupStatus/updated","params":{"threadId":"T","name":"Neon","status":"failed","error":"connection refused","failureReason":null}}"#,
+            #"{"method":"mcpServer/startupStatus/updated","params":{"threadId":"T","name":"github","status":"failed","error":null,"failureReason":"reauthenticationRequired"}}"#,
+        ])
+        #expect(
+            events == [
                 .modelResolved("gpt-6-luna"),
                 .notice("Codex switched from gpt-6-astra to gpt-6-luna."),
                 .notice("Skills budget exceeded"),
+                .notice("Under-development features enabled"),
+                .notice("Invalid config\nunknown key `foo`\n/Users/me/.codex/config.toml"),
+                .notice("The MCP server “Neon” could not start: connection refused"),
+                .notice("The MCP server “github” needs you to sign in again: run `codex mcp login github`."),
             ])
+    }
+
+    @Test func asyncQuestionsListTheirSuggestedAnswers() throws {
+        var mapper = mapper()
+        let events = try mapper.feed([
+            #"{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m","text":"Which branch?","phase":"final_answer","memoryCitation":null,"delivery":"async","questions":[{"title":"Which branch?","options":["main","dev"]},{"title":"Squash?","options":null}]},"threadId":"T","turnId":"R1","completedAtMs":1}}"#
+        ])
+        #expect(events == [.assistantText(itemID: "m", text: "Which branch?\n\n- main\n- dev\n\n**Squash?**")])
+    }
+
+    @Test func outputOfOlderTurnsIsNeverTakenForANewTurn() throws {
+        var mapper = mapper()
+        mapper.beginTurn()
+        mapper.adoptTurn("R2")
+        // R3 was sent but Codex has not answered yet; R1's background server keeps printing.
+        mapper.beginTurn()
+        let events = try mapper.feed([
+            #"{"method":"item/commandExecution/outputDelta","params":{"threadId":"T","turnId":"R1","itemId":"server","delta":"GET /\n"}}"#,
+            #"{"method":"item/agentMessage/delta","params":{"threadId":"T","turnId":"R3","itemId":"m","delta":"hi"}}"#,
+        ])
+        #expect(events == [.toolOutput(id: "server", delta: "GET /\n"), .assistantTextDelta(itemID: "m", delta: "hi")])
+        #expect(mapper.turnID == "R3")
+        #expect(mapper.isFinished("R1") && mapper.isFinished("R2"))
+    }
+
+    @Test func lateNotificationsOfAFinishedTurnLeaveThePlanAlone() throws {
+        var mapper = mapper()
+        mapper.beginTurn()
+        mapper.adoptTurn("R2")
+        let events = try mapper.feed([
+            #"{"method":"item/plan/delta","params":{"threadId":"T","turnId":"R1","itemId":"R1-plan","delta":"Old plan"}}"#,
+            #"{"method":"turn/plan/updated","params":{"threadId":"T","turnId":"R2","explanation":null,"plan":[{"step":"New","status":"pending"}]}}"#,
+        ])
+        #expect(events == [.plan(text: "- [ ] New")])
+    }
+
+    @Test func codexAnswerToTurnStartWinsOverAGuessedTurn() throws {
+        var mapper = mapper(turn: nil)
+        _ = try mapper.feed([
+            #"{"method":"item/agentMessage/delta","params":{"threadId":"T","turnId":"STALE","itemId":"m","delta":"x"}}"#
+        ])
+        mapper.adoptTurn("R2")
+        let events = try mapper.feed([
+            #"{"method":"item/agentMessage/delta","params":{"threadId":"T","turnId":"R2","itemId":"m2","delta":"ok"}}"#,
+            #"{"method":"item/agentMessage/delta","params":{"threadId":"T","turnId":"STALE","itemId":"m","delta":"y"}}"#,
+        ])
+        #expect(events == [.assistantTextDelta(itemID: "m2", delta: "ok")])
+    }
+
+    @Test func hugeOutputsKeepTheirEnd() throws {
+        var mapper = mapper()
+        let output = (1...40_000).map { "line \($0)" }.joined(separator: "\n")
+        let item: JSONValue = [
+            "type": "commandExecution", "id": "big", "command": "seq 40000", "cwd": "/work", "status": "completed",
+            "commandActions": [], "aggregatedOutput": .string(output), "exitCode": 0,
+        ]
+        let events = mapper.handle(method: "item/completed", params: ["threadId": "T", "turnId": "R1", "item": item])
+        guard case .toolCompleted(_, _, let shown?) = events.last else {
+            Issue.record("expected a completion, got \(events)")
+            return
+        }
+        #expect(shown.count <= CodexPresentation.outputLimit + 40)
+        #expect(shown.hasPrefix("[Earlier output not shown]\nline "))
+        #expect(shown.hasSuffix("line 40000"))
     }
 }
 
@@ -555,7 +689,7 @@ struct CodexServerRequestTests {
             #"{"kind":"command","threadId":"T","turnId":"R1","itemId":"exec-1","startedAtMs":1,"environmentId":"local","command":"/bin/zsh -lc 'echo coincide-ok'","cwd":"/work","commandActions":[{"type":"unknown","command":"echo coincide-ok"}],"proposedExecpolicyAmendment":["echo","coincide-ok"],"availableDecisions":["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["echo","coincide-ok"]}},"cancel"]}"#)
         let approval = try approval(
             CodexServerRequests.action(
-                method: "item/commandExecution/requestApproval", params: params, approvalID: "a1", presentation: presentation,
+                method: "item/commandExecution/requestApproval", params: params, requestID: "a1", presentation: presentation,
                 fileChanges: nil))
         #expect(approval.request.id == "a1")
         #expect(approval.request.category == .command)
@@ -576,7 +710,7 @@ struct CodexServerRequestTests {
             #"{"kind":"command","threadId":"T","turnId":"R1","itemId":"exec-1","command":"npm install","reason":"Needs network access","networkApprovalContext":{"host":"registry.npmjs.org","protocol":"https"}}"#)
         let approval = try approval(
             CodexServerRequests.action(
-                method: "item/commandExecution/requestApproval", params: params, approvalID: "a2", presentation: presentation,
+                method: "item/commandExecution/requestApproval", params: params, requestID: "a2", presentation: presentation,
                 fileChanges: nil))
         #expect(approval.request.title == "Allow network access to registry.npmjs.org")
         #expect(approval.request.detail == "npm install\n\nNeeds network access")
@@ -597,7 +731,7 @@ struct CodexServerRequestTests {
         let changes = [try json(#"{"path":"/work/hello.txt","kind":{"type":"add"},"diff":"hi\n"}"#)]
         let approval = try approval(
             CodexServerRequests.action(
-                method: "item/fileChange/requestApproval", params: params, approvalID: "a3", presentation: presentation,
+                method: "item/fileChange/requestApproval", params: params, requestID: "a3", presentation: presentation,
                 fileChanges: changes))
         #expect(approval.request.title == "Create hello.txt")
         #expect(approval.request.detail == "--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1,1 @@\n+hi")
@@ -610,7 +744,7 @@ struct CodexServerRequestTests {
             #"{"threadId":"T","turnId":"R1","itemId":"p-1","environmentId":null,"startedAtMs":1,"cwd":"/work","reason":"Write build output","permissions":{"network":null,"fileSystem":{"read":null,"write":["/work/build"]}}}"#)
         let approval = try approval(
             CodexServerRequests.action(
-                method: "item/permissions/requestApproval", params: params, approvalID: "a4", presentation: presentation,
+                method: "item/permissions/requestApproval", params: params, requestID: "a4", presentation: presentation,
                 fileChanges: nil))
         #expect(approval.request.title == "Allow writing to build")
         #expect(approval.request.category == .fileChange)
@@ -618,52 +752,85 @@ struct CodexServerRequestTests {
         #expect(approval.responses["deny"] == ["permissions": [:], "scope": "turn"])
     }
 
+    @Test func permissionEntriesAndExtraCommandPermissionsAreDescribed() throws {
+        let params = try json(
+            #"{"threadId":"T","turnId":"R1","itemId":"p-2","environmentId":null,"startedAtMs":1,"cwd":"/work","reason":null,"permissions":{"network":{"enabled":true},"fileSystem":{"read":null,"write":null,"entries":[{"path":{"type":"path","path":"/work/dist"},"access":"write"},{"path":{"type":"glob_pattern","pattern":"/etc/*.conf"},"access":"read"}]}}}"#)
+        let permission = try approval(
+            CodexServerRequests.action(
+                method: "item/permissions/requestApproval", params: params, requestID: "a12", presentation: presentation,
+                fileChanges: nil))
+        #expect(permission.request.title == "Allow writing to dist")
+        #expect(permission.request.detail == "Write access: dist\nRead access: /etc/*.conf\nNetwork access")
+
+        let command = try json(
+            #"{"kind":"command","threadId":"T","turnId":"R1","itemId":"exec-9","command":"/bin/zsh -lc 'curl -O https://example.com/a.zip'","additionalPermissions":{"network":{"enabled":true},"fileSystem":null},"availableDecisions":["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["/bin/zsh","-lc","curl -O https://example.com/a.zip"]}},"decline"]}"#)
+        let commandApproval = try approval(
+            CodexServerRequests.action(
+                method: "item/commandExecution/requestApproval", params: command, requestID: "a13",
+                presentation: presentation, fileChanges: nil))
+        #expect(commandApproval.request.detail == "curl -O https://example.com/a.zip\n\nNetwork access")
+        #expect(commandApproval.request.options[1].label == "Always allow `curl -O https://example.com/a.zip`")
+        #expect(commandApproval.cancelResponse == ["decision": "decline"])
+    }
+
     @Test func legacyApprovalsAnswerWithReviewDecisions() throws {
         let params = try json(
             #"{"conversationId":"T","callId":"call-1","approvalId":null,"command":["/bin/zsh","-lc","make test"],"cwd":"/work","reason":null,"parsedCmd":[]}"#)
         let approval = try approval(
             CodexServerRequests.action(
-                method: "execCommandApproval", params: params, approvalID: "a5", presentation: presentation, fileChanges: nil))
+                method: "execCommandApproval", params: params, requestID: "a5", presentation: presentation, fileChanges: nil))
         #expect(approval.request.title == "Run `make test`")
         #expect(approval.responses["approved_for_session"] == ["decision": "approved_for_session"])
         #expect(approval.responses["denied"] == ["decision": ["denied": ["rejection": "The user declined the request."]]])
         #expect(approval.cancelResponse == ["decision": "abort"])
     }
 
-    @Test func multipleChoiceQuestionsBecomeApprovals() throws {
-        let params = try json(
-            #"{"threadId":"T","turnId":"R1","itemId":"q","isBlocking":true,"autoResolutionMs":null,"questions":[{"id":"stack","header":"Stack","question":"Which framework?","isOther":true,"isSecret":false,"options":[{"label":"SwiftUI","description":"Declarative"},{"label":"AppKit","description":""}]},{"id":"name","header":"Name","question":"What should it be called?","isOther":false,"isSecret":false,"options":null}]}"#)
-        let action = CodexServerRequests.action(
-            method: "item/tool/requestUserInput", params: params, approvalID: "a6", presentation: presentation, fileChanges: nil)
-        guard case .questions(let questions, let answered, let notices) = action else {
+    private func userInput(_ action: CodexServerRequestAction) throws -> CodexUserInput {
+        guard case .userInput(let input) = action else {
             Issue.record("expected questions, got \(action)")
-            return
+            throw CancellationError()
         }
-        #expect(questions.count == 1)
-        let question = try #require(questions.first)
-        #expect(question.questionID == "stack")
-        #expect(question.request.id == "a6/0")
-        #expect(question.request.title == "Stack")
-        #expect(question.request.detail == "Which framework?\n\nSwiftUI: Declarative")
-        #expect(question.request.options.map(\.label) == ["SwiftUI", "AppKit", "Skip"])
-        #expect(question.responses["option-1"] == ["answers": ["AppKit"]])
-        #expect(question.cancelResponse == ["answers": []])
-        #expect(answered == ["name": ["answers": []]])
-        #expect(notices == ["Codex asked: What should it be called?"])
+        return input
     }
 
-    @Test func freeTextQuestionsAreAnsweredEmpty() throws {
+    @Test func requestUserInputQuestionsKeepChoicesFreeTextAndSecrets() throws {
         let params = try json(
-            #"{"threadId":"T","turnId":"R1","itemId":"q","isBlocking":true,"questions":[{"id":"name","header":"","question":"Name?","isOther":false,"isSecret":false,"options":[]}]}"#)
-        let action = CodexServerRequests.action(
-            method: "item/tool/requestUserInput", params: params, approvalID: "a7", presentation: presentation, fileChanges: nil)
-        guard case .questions(let questions, let answered, let notices) = action else {
-            Issue.record("expected questions, got \(action)")
+            #"{"threadId":"T","turnId":"R1","itemId":"q","isBlocking":true,"autoResolutionMs":null,"questions":[{"id":"stack","header":"Stack","question":"Which framework?","isOther":true,"isSecret":false,"options":[{"label":"SwiftUI","description":"Declarative"},{"label":"AppKit","description":""}]},{"id":"name","header":"","question":"What should it be called?","isOther":false,"isSecret":false,"options":null},{"id":"token","header":"Token","question":"Paste the API token.","isOther":false,"isSecret":true,"options":[]}]}"#)
+        let input = try userInput(
+            CodexServerRequests.action(
+                method: "item/tool/requestUserInput", params: params, requestID: "a6", presentation: presentation,
+                fileChanges: nil))
+        #expect(input.request.id == "a6")
+        #expect(
+            input.request.questions == [
+                UserQuestion(
+                    id: "stack", header: "Stack", prompt: "Which framework?",
+                    options: [.init(label: "SwiftUI", detail: "Declarative"), .init(label: "AppKit")], allowsFreeText: true),
+                UserQuestion(id: "name", prompt: "What should it be called?", allowsFreeText: true),
+                UserQuestion(id: "token", header: "Token", prompt: "Paste the API token.", allowsFreeText: true, isSecret: true),
+            ])
+        #expect(
+            input.response(to: ["stack": ["AppKit"], "name": ["  Coincide "], "token": ["s3cret"], "unknown": ["x"]])
+                == [
+                    "answers": [
+                        "stack": ["answers": ["AppKit"]], "name": ["answers": ["Coincide"]],
+                        "token": ["answers": ["s3cret"]],
+                    ]
+                ])
+        #expect(input.response(to: ["stack": ["SwiftUI"], "name": [" "]]) == ["answers": ["stack": ["answers": ["SwiftUI"]]]])
+        #expect(input.dismissResponse == ["answers": [:]])
+    }
+
+    @Test func requestsWithoutQuestionsAreAnsweredRightAway() throws {
+        let params = try json(#"{"threadId":"T","turnId":"R1","itemId":"q","isBlocking":true,"questions":[]}"#)
+        guard case .respond(let result) = CodexServerRequests.action(
+            method: "item/tool/requestUserInput", params: params, requestID: "a7", presentation: presentation,
+            fileChanges: nil)
+        else {
+            Issue.record("expected an immediate answer")
             return
         }
-        #expect(questions.isEmpty)
-        #expect(answered == ["name": ["answers": []]])
-        #expect(notices == ["Codex asked: Name?"])
+        #expect(result == ["answers": [:]])
     }
 
     @Test func approveStyleElicitationsCanBeAnswered() throws {
@@ -671,7 +838,7 @@ struct CodexServerRequestTests {
             #"{"threadId":"T","turnId":"R1","serverName":"codex_apps","mode":"form","_meta":{"persist":["session","always"]},"message":"Allow ChatGPT to use Gmail?","requestedSchema":{"type":"object","properties":{},"required":[]}}"#)
         let approval = try approval(
             CodexServerRequests.action(
-                method: "mcpServer/elicitation/request", params: params, approvalID: "a8", presentation: presentation,
+                method: "mcpServer/elicitation/request", params: params, requestID: "a8", presentation: presentation,
                 fileChanges: nil))
         #expect(approval.request.title == "Allow ChatGPT to use Gmail?")
         #expect(approval.request.options.map(\.id) == ["accept", "session", "always", "decline", "cancel"])
@@ -679,27 +846,72 @@ struct CodexServerRequestTests {
         #expect(approval.responses["session"] == ["action": "accept", "content": [:], "_meta": ["persist": "session"]])
     }
 
-    @Test func elicitationFormsFillApproveChoicesAndDeclineTheRest() throws {
+    @Test func approveStyleFormsFillApproveChoices() throws {
         let form = try json(
             #"{"threadId":"T","turnId":"R1","serverName":"s","mode":"form","_meta":null,"message":"Run tool?","requestedSchema":{"type":"object","properties":{"decision":{"type":"string","enum":["approve_once","approve_session","deny"]}},"required":["decision"]}}"#)
         #expect(CodexServerRequests.elicitationResponse(form, persist: nil)?.at("content.decision") == "approve_once")
         #expect(CodexServerRequests.elicitationResponse(form, persist: "session")?.at("content.decision") == "approve_session")
         #expect(CodexServerRequests.elicitationPersistence(form) == ["session"])
+        let approval = try approval(
+            CodexServerRequests.action(
+                method: "mcpServer/elicitation/request", params: form, requestID: "a9", presentation: presentation,
+                fileChanges: nil))
+        #expect(approval.request.options.map(\.id) == ["accept", "session", "decline", "cancel"])
+        #expect(approval.cancelResponse == ["action": "cancel", "content": nil, "_meta": nil])
+    }
 
-        let url = try json(
-            #"{"threadId":"T","turnId":null,"serverName":"s","mode":"url","_meta":null,"message":"Sign in","url":"https://example.com","elicitationId":"e"}"#)
-        guard case .respond(let result) = CodexServerRequests.action(
-            method: "mcpServer/elicitation/request", params: url, approvalID: "a9", presentation: presentation, fileChanges: nil)
-        else {
-            Issue.record("expected a decline")
-            return
+    @Test func formsThatNeedAnswersBecomeQuestions() throws {
+        let form = try json(
+            #"{"threadId":"T","turnId":"R1","serverName":"github","mode":"form","_meta":null,"message":"Where should the issue go?","requestedSchema":{"type":"object","properties":{"repo":{"type":"string","title":"Repository","description":"owner/name"},"labels":{"type":"array","items":{"anyOf":[{"const":"bug","title":"Bug"},{"const":"docs","title":"Docs"}]}},"priority":{"type":"integer","title":"Priority","default":2},"public":{"type":"boolean","title":"Public"},"kind":{"type":"string","oneOf":[{"const":"task","title":"Task"},{"const":"epic","title":"Epic"}]}},"required":["repo","public","kind"]}}"#)
+        let input = try userInput(
+            CodexServerRequests.action(
+                method: "mcpServer/elicitation/request", params: form, requestID: "a10", presentation: presentation,
+                fileChanges: nil))
+        #expect(input.request.title == "Where should the issue go?")
+        #expect(input.request.questions.map(\.id) == ["kind", "public", "repo", "labels", "priority"])
+        let byID = Dictionary(uniqueKeysWithValues: input.request.questions.map { ($0.id, $0) })
+        #expect(byID["repo"] == UserQuestion(id: "repo", header: "Repository", prompt: "owner/name", allowsFreeText: true))
+        #expect(byID["kind"]?.options.map(\.label) == ["Task", "Epic"])
+        #expect(byID["kind"]?.allowsFreeText == false)
+        #expect(byID["public"]?.options.map(\.label) == ["Yes", "No"])
+        #expect(byID["labels"]?.allowsMultipleSelection == true)
+        #expect(byID["labels"]?.prompt == "labels (optional)")
+        #expect(byID["priority"]?.prompt == "Priority (default: 2)")
+
+        let accepted = input.response(to: [
+            "repo": ["apoorvdarshan/coincide"], "kind": ["Epic"], "public": ["No"], "labels": ["Bug", "docs"],
+        ])
+        #expect(accepted["action"] == "accept")
+        #expect(
+            accepted["content"] == [
+                "repo": "apoorvdarshan/coincide", "kind": "epic", "public": false, "labels": ["bug", "docs"], "priority": 2,
+            ])
+        #expect(input.response(to: ["repo": ["x/y"], "kind": ["Task"], "public": ["Yes"], "priority": ["3"]])["content"]?["priority"] == 3)
+        // A required answer that does not fit, or no answers at all, cancels the form.
+        #expect(input.response(to: ["repo": ["x/y"], "kind": ["Story"], "public": ["Yes"]])["action"] == "cancel")
+        #expect(input.dismissResponse == ["action": "cancel", "content": nil, "_meta": nil])
+    }
+
+    @Test func urlAndVerificationElicitationsAreDeclined() throws {
+        for mode in [
+            #""mode":"url","message":"Sign in","url":"https://example.com","elicitationId":"e""#,
+            #""mode":"openai/userVerification","title":"Verify","description":"Confirm","challenge":"123""#,
+        ] {
+            let params = try json(#"{"threadId":"T","turnId":null,"serverName":"s","_meta":null,"# + mode + "}")
+            guard case .respond(let result) = CodexServerRequests.action(
+                method: "mcpServer/elicitation/request", params: params, requestID: "a11", presentation: presentation,
+                fileChanges: nil)
+            else {
+                Issue.record("expected a decline for \(mode)")
+                continue
+            }
+            #expect(result["action"] == "decline")
         }
-        #expect(result["action"] == "decline")
     }
 
     @Test func toolCallsTimeAndUnknownRequestsAreAnsweredDirectly() throws {
         let tool = CodexServerRequests.action(
-            method: "item/tool/call", params: [:], approvalID: "x", presentation: presentation, fileChanges: nil)
+            method: "item/tool/call", params: [:], requestID: "x", presentation: presentation, fileChanges: nil)
         guard case .respond(let toolResult) = tool else {
             Issue.record("expected a tool result")
             return
@@ -707,7 +919,7 @@ struct CodexServerRequestTests {
         #expect(toolResult["success"] == false)
 
         let time = CodexServerRequests.action(
-            method: "currentTime/read", params: ["threadId": "T"], approvalID: "x", presentation: presentation, fileChanges: nil)
+            method: "currentTime/read", params: ["threadId": "T"], requestID: "x", presentation: presentation, fileChanges: nil)
         guard case .respond(let timeResult) = time else {
             Issue.record("expected the time")
             return
@@ -715,7 +927,7 @@ struct CodexServerRequestTests {
         #expect((timeResult["currentTimeAt"]?.number ?? 0) > 1_700_000_000)
 
         guard case .reject = CodexServerRequests.action(
-            method: "account/chatgptAuthTokens/refresh", params: [:], approvalID: "x", presentation: presentation,
+            method: "account/chatgptAuthTokens/refresh", params: [:], requestID: "x", presentation: presentation,
             fileChanges: nil)
         else {
             Issue.record("expected a rejection")
@@ -753,6 +965,7 @@ final class FakeCodexTransport: CodexTransport {
         handlers["thread/resume"] = { params in .result(["thread": ["id": params["threadId"] ?? "T"], "model": "gpt-6-luna"]) }
         handlers["turn/start"] = { _ in .result(["turn": ["id": "R1", "status": "inProgress", "startedAt": nil, "items": []]]) }
         handlers["turn/interrupt"] = { _ in .result([:]) }
+        handlers["model/list"] = { _ in .result(["data": [], "nextCursor": nil]) }
     }
 
     func start() throws {}
@@ -805,6 +1018,12 @@ final class FakeCodexTransport: CodexTransport {
     func responses(to id: Int) -> [JSONValue] {
         sent.filter { $0["id"]?.int == id && $0["method"] == nil }
     }
+
+    /// Answers a request that was left unanswered (`.silent`).
+    func answer(_ method: String, with result: JSONValue) {
+        guard let id = requests(method).last?["id"] else { return }
+        deliver(["id": id, "result": result])
+    }
 }
 
 @MainActor
@@ -822,6 +1041,20 @@ private final class EventLog {
         events.compactMap { event -> ApprovalRequest? in
             guard case .approvalRequested(let request) = event else { return nil }
             return request
+        }
+    }
+
+    var questions: [UserInputRequest] {
+        events.compactMap { event -> UserInputRequest? in
+            guard case .userInputRequested(let request) = event else { return nil }
+            return request
+        }
+    }
+
+    var notices: [String] {
+        events.compactMap { event -> String? in
+            guard case .notice(let text) = event else { return nil }
+            return text
         }
     }
 }
@@ -869,7 +1102,9 @@ struct CodexSessionTests {
         let transport = FakeCodexTransport()
         let (session, log) = makeSession(transports: [transport])
         try await session.start()
-        #expect(transport.sent.map { $0["method"]?.string } == ["initialize", "initialized", "thread/start"])
+        #expect(
+            transport.sent.compactMap { $0["method"]?.string }.filter { $0 != "model/list" }
+                == ["initialize", "initialized", "thread/start"])
         #expect(transport.requests("thread/start").first?.at("params.cwd") == "/work")
         #expect(transport.requests("thread/start").first?.at("params.model") == "gpt-6-luna")
         #expect(session.sessionID == "T")
@@ -894,8 +1129,21 @@ struct CodexSessionTests {
         try await session.start()
         #expect(transport.requests("thread/start").count == 1)
         #expect(session.sessionID == "T")
-        #expect(log.events.contains(.sessionStarted(id: "T")))
-        #expect(log.events.contains { if case .notice = $0 { true } else { false } })
+        #expect(Array(log.events.prefix(3)) == [
+            .sessionStarted(id: "T"), .modelResolved("gpt-6-luna"),
+            .notice("The previous Codex session could not be resumed, so a new one was started. (no rollout found for thread id OLD)"),
+        ])
+    }
+
+    @Test func aFreshThreadThatAlsoFailsReportsTheError() async throws {
+        let transport = FakeCodexTransport()
+        transport.queued["thread/resume"] = [.error("no rollout found for thread id OLD")]
+        transport.queued["thread/start"] = [.error("model gpt-0 is not supported")]
+        let (session, log) = makeSession(resume: "OLD", transports: [transport])
+        await #expect(throws: CodexRPCError.server(code: -32600, message: "model gpt-0 is not supported")) {
+            try await session.start()
+        }
+        #expect(log.notices.isEmpty)
     }
 
     @Test func archivedThreadsAreUnarchivedThenResumed() async throws {
@@ -1009,7 +1257,7 @@ struct CodexSessionTests {
         #expect(transport.responses(to: 3).isEmpty)
     }
 
-    @Test func questionsAreAnsweredTogether() async throws {
+    @Test func questionsAreAnsweredThroughUserInput() async throws {
         let transport = FakeCodexTransport()
         let (session, log) = makeSession(transports: [transport])
         try await session.start()
@@ -1023,36 +1271,62 @@ struct CodexSessionTests {
                         "id": "a", "header": "A", "question": "First?", "isOther": false, "isSecret": false,
                         "options": [["label": "Yes", "description": ""], ["label": "No", "description": ""]],
                     ],
-                    [
-                        "id": "b", "header": "B", "question": "Second?", "isOther": false, "isSecret": false,
-                        "options": [["label": "Left", "description": ""], ["label": "Right", "description": ""]],
-                    ],
+                    ["id": "b", "header": "B", "question": "Name?", "isOther": false, "isSecret": false, "options": nil],
                 ],
             ])
-        #expect(log.approvals.count == 2)
-        session.respond(to: log.approvals[1].id, optionID: "option-1")
-        #expect(transport.responses(to: 7).isEmpty)
-        session.respond(to: log.approvals[0].id, optionID: "option-0")
+        let request = try #require(log.questions.first)
+        #expect(request.questions.map(\.id) == ["a", "b"])
+        #expect(request.questions[1].allowsFreeText)
+        session.answer(userInput: request.id, answers: ["a": ["No"], "b": ["Coincide"]])
         #expect(
             transport.responses(to: 7) == [
-                ["id": 7, "result": ["answers": ["a": ["answers": ["Yes"]], "b": ["answers": ["Right"]]]]]
+                ["id": 7, "result": ["answers": ["a": ["answers": ["No"]], "b": ["answers": ["Coincide"]]]]]
             ])
+        session.answer(userInput: request.id, answers: [:])
+        #expect(transport.responses(to: 7).count == 1)
     }
 
-    @Test func unanswerableQuestionsAreAnsweredRightAway() async throws {
+    @Test func dismissedAndWithdrawnQuestions() async throws {
         let transport = FakeCodexTransport()
         let (session, log) = makeSession(transports: [transport])
         try await session.start()
         try await session.send(input(mode: .plan))
+        let question: JSONValue = [
+            "threadId": "T", "turnId": "R1", "itemId": "q", "isBlocking": true,
+            "questions": [["id": "n", "header": "", "question": "Name?", "isOther": true, "isSecret": false, "options": nil]],
+        ]
+        transport.request(id: 8, "item/tool/requestUserInput", question)
+        transport.request(id: 9, "item/tool/requestUserInput", question)
+        #expect(log.questions.count == 2)
+        session.answer(userInput: log.questions[0].id, answers: [:])
+        #expect(transport.responses(to: 8) == [["id": 8, "result": ["answers": [:]]]])
+        transport.notify("serverRequest/resolved", ["threadId": "T", "requestId": 9])
+        #expect(log.events.last == .userInputResolved(id: log.questions[1].id))
+        session.answer(userInput: log.questions[1].id, answers: ["n": ["late"]])
+        #expect(transport.responses(to: 9).isEmpty)
+    }
+
+    @Test func mcpFormsAreAskedAndAnsweredWithTypedContent() async throws {
+        let transport = FakeCodexTransport()
+        let (session, log) = makeSession(transports: [transport])
+        try await session.start()
+        try await session.send(input())
         transport.request(
-            id: 8, "item/tool/requestUserInput",
+            id: 4, "mcpServer/elicitation/request",
             [
-                "threadId": "T", "turnId": "R1", "itemId": "q", "isBlocking": true,
-                "questions": [["id": "n", "header": "", "question": "Name?", "isOther": true, "isSecret": false, "options": nil]],
+                "threadId": "T", "turnId": "R1", "serverName": "tracker", "mode": "form", "_meta": nil,
+                "message": "How many tickets?",
+                "requestedSchema": [
+                    "type": "object", "properties": ["count": ["type": "integer", "title": "Count"]], "required": ["count"],
+                ],
             ])
-        #expect(transport.responses(to: 8) == [["id": 8, "result": ["answers": ["n": ["answers": []]]]]])
-        #expect(log.events.last == .notice("Codex asked: Name?"))
-        #expect(log.approvals.isEmpty)
+        let request = try #require(log.questions.first)
+        #expect(request.title == "How many tickets?")
+        session.answer(userInput: request.id, answers: ["count": ["3"]])
+        #expect(
+            transport.responses(to: 4) == [
+                ["id": 4, "result": ["action": "accept", "content": ["count": 3], "_meta": nil]]
+            ])
     }
 
     @Test func interruptWaitsForTurnStartedAndCompletesOnce() async throws {
@@ -1082,30 +1356,79 @@ struct CodexSessionTests {
         transport.request(
             id: 1, "item/commandExecution/requestApproval",
             ["kind": "command", "threadId": "T", "turnId": "R1", "itemId": "e", "command": "rm -rf /"])
+        transport.request(
+            id: 2, "item/tool/requestUserInput",
+            [
+                "threadId": "T", "turnId": "R1", "itemId": "q", "isBlocking": true,
+                "questions": [["id": "n", "header": "", "question": "Name?", "isOther": true, "isSecret": false, "options": nil]],
+            ])
         session.interrupt()
         #expect(transport.responses(to: 1) == [["id": 1, "result": ["decision": "cancel"]]])
+        #expect(transport.responses(to: 2) == [["id": 2, "result": ["answers": [:]]]])
+        transport.request(
+            id: 3, "item/commandExecution/requestApproval",
+            ["kind": "command", "threadId": "T", "turnId": "R1", "itemId": "e2", "command": "ls"])
+        #expect(transport.responses(to: 3) == [["id": 3, "result": ["decision": "cancel"]]])
+        #expect(log.approvals.count == 1)
         transport.notify("turn/completed", ["threadId": "T", "turn": ["id": "R1", "status": "completed"]])
         #expect(log.completions == [.interrupted])
     }
 
-    @Test func aStuckInterruptEndsTheTurnAndRestartsCodex() async throws {
+    @Test func promptsLeftOpenByATurnAreDeclinedWhenItEnds() async throws {
+        let transport = FakeCodexTransport()
+        let (session, log) = makeSession(transports: [transport])
+        try await session.start()
+        // A subagent asks between turns: it stays open across the next turn.
+        transport.request(
+            id: 5, "item/permissions/requestApproval",
+            ["threadId": "SUB", "turnId": "S1", "itemId": "p", "cwd": "/work", "reason": nil, "permissions": ["network": ["enabled": true], "fileSystem": nil]])
+        try await session.send(input(access: .approval))
+        transport.request(
+            id: 6, "item/fileChange/requestApproval", ["threadId": "T", "turnId": "R1", "itemId": "fc", "reason": nil])
+        #expect(log.approvals.count == 2)
+        #expect(log.approvals[0].title == "Subagent: Allow network access")
+        #expect(log.approvals[1].title == "Edit files")
+        transport.notify("turn/completed", ["threadId": "T", "turn": ["id": "R1", "status": "completed"]])
+        #expect(transport.responses(to: 6) == [["id": 6, "result": ["decision": "cancel"]]])
+        #expect(transport.responses(to: 5).isEmpty)
+        session.respond(to: log.approvals[0].id, optionID: "turn")
+        #expect(transport.responses(to: 5).first?.at("result.scope") == "turn")
+    }
+
+    @Test func aStopWhileCodexStartsUpNeverStartsTheTurn() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["thread/start"] = { _ in .silent }
+        let (session, log) = makeSession(transports: [transport])
+        let sending = Task { try await session.send(input()) }
+        try await waitUntil { !transport.requests("thread/start").isEmpty }
+        session.interrupt()
+        transport.answer("thread/start", with: ["thread": ["id": "T"], "model": "gpt-6-luna"])
+        try await sending.value
+        #expect(log.completions == [.interrupted])
+        #expect(transport.requests("turn/start").isEmpty)
+        try await session.send(input())
+        #expect(transport.requests("turn/start").count == 1)
+    }
+
+    @Test func aStuckInterruptEndsTheTurnAndTheProcess() async throws {
         let first = FakeCodexTransport()
-        let second = FakeCodexTransport()
-        let (session, log) = makeSession(grace: .milliseconds(30), transports: [first, second])
+        let (session, log) = makeSession(grace: .milliseconds(30), transports: [first])
         try await session.start()
         try await session.send(input())
         first.notify("turn/started", ["threadId": "T", "turn": ["id": "R1", "status": "inProgress"]])
         session.interrupt()
         try await waitUntil { !log.completions.isEmpty }
-        #expect(log.completions == [.interrupted])
+        #expect(Array(log.events.suffix(2)) == [.turnCompleted(.interrupted), .sessionExited(error: nil)])
         #expect(first.isClosed)
-
-        second.handlers["turn/start"] = { _ in .result(["turn": ["id": "R2", "status": "inProgress"]]) }
-        try await session.send(input("again"))
-        #expect(second.requests("thread/resume").first?.at("params.threadId") == "T")
-        #expect(second.requests("turn/start").count == 1)
         first.notify("turn/completed", ["threadId": "T", "turn": ["id": "R1", "status": "interrupted"]])
         #expect(log.completions == [.interrupted])
+        await #expect(throws: AgentError.self) { try await session.send(input("again")) }
+
+        // The runner then resumes the thread in a new session.
+        let second = FakeCodexTransport()
+        let (resumed, _) = makeSession(resume: session.sessionID, transports: [second])
+        try await resumed.start()
+        #expect(second.requests("thread/resume").first?.at("params.threadId") == "T")
     }
 
     @Test func aCrashFailsTheTurnAndEndsTheSession() async throws {
@@ -1116,6 +1439,69 @@ struct CodexSessionTests {
         transport.crash(status: 101, stderr: "thread 'main' panicked\n")
         let message = "Codex exited unexpectedly (status 101).\nthread 'main' panicked"
         #expect(Array(log.events.suffix(2)) == [.turnCompleted(.failed(message)), .sessionExited(error: message)])
+        await #expect(throws: AgentError.self) { try await session.send(input()) }
+    }
+
+    @Test func aCrashBeforeCodexAcceptsTheTurnFailsTheSend() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/start"] = { _ in .silent }
+        let (session, log) = makeSession(transports: [transport])
+        try await session.start()
+        let sending = Task { try await session.send(input()) }
+        try await waitUntil { !transport.requests("turn/start").isEmpty }
+        transport.crash(status: 1, stderr: "")
+        await #expect(throws: CodexRPCError.closed("Codex exited unexpectedly (status 1).")) { try await sending.value }
+        #expect(log.completions.isEmpty)
+        #expect(log.events.last == .sessionExited(error: "Codex exited unexpectedly (status 1)."))
+    }
+
+    @Test func retryNoticesAreShownOncePerStreak() async throws {
+        let transport = FakeCodexTransport()
+        let (session, log) = makeSession(transports: [transport])
+        try await session.start()
+        try await session.send(input())
+        for attempt in 1...3 {
+            transport.notify(
+                "error",
+                [
+                    "threadId": "T", "turnId": "R1", "willRetry": true,
+                    "error": ["message": .string("Reconnecting... \(attempt)/5"), "additionalDetails": nil],
+                ])
+        }
+        transport.notify(
+            "error",
+            ["threadId": "T", "turnId": "R1", "willRetry": true, "error": ["message": "Stream disconnected; retrying"]])
+        #expect(log.notices == ["Reconnecting... 1/5", "Stream disconnected; retrying"])
+    }
+
+    @Test func theSessionCatalogRefreshesTheModelPickerOnce() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["model/list"] = { _ in
+            .result([
+                "data": [
+                    [
+                        "id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6-Luna", "hidden": false,
+                        "supportedReasoningEfforts": [["reasoningEffort": "low", "description": ""]],
+                        "defaultReasoningEffort": "low", "inputModalities": ["text", "image"], "isDefault": true,
+                    ]
+                ],
+                "nextCursor": nil,
+            ])
+        }
+        let (session, log) = makeSession(transports: [transport])
+        try await session.start()
+        try await waitUntil { log.events.contains { if case .modelsDiscovered = $0 { true } else { false } } }
+        transport.notify("thread/closed", ["threadId": "T"])
+        try await session.send(input())
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(transport.requests("model/list").count == 1)
+        #expect(
+            log.events.contains(
+                .modelsDiscovered([
+                    ModelOption(
+                        provider: .codex, modelID: "gpt-6-luna", displayName: "GPT-6-Luna", efforts: ["low"],
+                        defaultEffort: "low")
+                ])))
     }
 
     @Test func aRejectedTurnStartThrowsWithoutCompleting() async throws {
@@ -1138,7 +1524,8 @@ struct CodexSessionTests {
         transport.notify("thread/closed", ["threadId": "T"])
         try await session.send(input())
         #expect(transport.requests("thread/resume").first?.at("params.threadId") == "T")
-        #expect(transport.sent.last?["method"] == "turn/start")
+        let methods = transport.sent.compactMap { $0["method"]?.string }.filter { $0 != "model/list" }
+        #expect(methods.suffix(2) == ["thread/resume", "turn/start"])
     }
 
     @Test func unknownServerRequestsGetAnError() async throws {

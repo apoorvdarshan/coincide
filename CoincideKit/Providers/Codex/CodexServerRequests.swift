@@ -1,22 +1,194 @@
 import Foundation
 
-/// A request from the app server shown to the user, with the JSON-RPC result each choice sends back.
+/// A request from the app server shown as an approval, with the JSON-RPC result each choice sends back.
 struct CodexApproval {
     var request: ApprovalRequest
     var responses: [String: JSONValue]
-    /// Sent when the turn is stopped before the user answers.
+    /// Sent when the turn stops or ends before the user answers.
     var cancelResponse: JSONValue
-    /// For `item/tool/requestUserInput`, the question this approval answers; `responses` are its answers.
-    var questionID: String?
+}
+
+/// Questions from the app server (`request_user_input`, MCP forms), and how the answers are sent back.
+struct CodexUserInput {
+    enum Format: Equatable {
+        /// `item/tool/requestUserInput`: `{answers: {questionID: {answers: [String]}}}`.
+        case toolAnswers
+        /// An MCP elicitation form; the answers become its typed `content`.
+        case form([CodexFormField])
+    }
+
+    var request: UserInputRequest
+    var format: Format
+
+    /// The JSON-RPC result for the user's answers (question id → values). Empty answers mean dismissed.
+    func response(to answers: [String: [String]]) -> JSONValue {
+        switch format {
+        case .toolAnswers:
+            var result: [String: JSONValue] = [:]
+            for question in request.questions {
+                let values = CodexUserInput.cleaned(answers[question.id])
+                if !values.isEmpty { result[question.id] = ["answers": .array(values.map { .string($0) })] }
+            }
+            return ["answers": .object(result)]
+        case .form(let fields):
+            guard !answers.isEmpty, let content = CodexFormField.content(fields, answers: answers) else {
+                return CodexServerRequests.elicitationResult("cancel")
+            }
+            return ["action": "accept", "content": .object(content), "_meta": .null]
+        }
+    }
+
+    /// Sent when the user dismisses the questions or the turn stops first.
+    var dismissResponse: JSONValue { response(to: [:]) }
+
+    static func cleaned(_ values: [String]?) -> [String] {
+        (values ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+}
+
+/// One field of an MCP elicitation form, asked as a question.
+struct CodexFormField: Equatable {
+    enum Kind: Equatable {
+        case text
+        case number(integer: Bool)
+        case boolean
+        /// `values` are what the form expects back, `labels` what the user sees, in the same order.
+        case choice(values: [String], labels: [String], multiple: Bool)
+    }
+
+    var key: String
+    var kind: Kind
+    var isRequired: Bool
+    var defaultValue: JSONValue?
+
+    /// Labels for boolean fields.
+    static var yes: String { String(localized: "Yes") }
+    static var no: String { String(localized: "No") }
+
+    /// Every field of a form schema: required fields first, then by name, since object order is not kept.
+    static func fields(of schema: JSONValue?) -> [CodexFormField] {
+        let required = Set(schema?["required"]?.array?.compactMap(\.string) ?? [])
+        let properties = schema?["properties"]?.object ?? [:]
+        return properties.keys
+            .sorted { (required.contains($0) ? 0 : 1, $0) < (required.contains($1) ? 0 : 1, $1) }
+            .compactMap { key -> CodexFormField? in
+                guard let property = properties[key] else { return nil }
+                return CodexFormField(
+                    key: key, kind: kind(of: property), isRequired: required.contains(key),
+                    defaultValue: property["default"].flatMap { $0.isNull ? nil : $0 })
+            }
+    }
+
+    private static func kind(of property: JSONValue) -> Kind {
+        if let options = property["oneOf"]?.array ?? property["anyOf"]?.array {
+            let pairs = options.compactMap { option in option["const"]?.string.map { ($0, option["title"]?.string ?? $0) } }
+            if !pairs.isEmpty { return .choice(values: pairs.map { $0.0 }, labels: pairs.map { $0.1 }, multiple: false) }
+        }
+        if let values = property["enum"]?.array?.compactMap(\.string), !values.isEmpty {
+            let names = property["enumNames"]?.array?.compactMap(\.string) ?? []
+            let labels = values.indices.map { names.indices.contains($0) ? names[$0] : values[$0] }
+            return .choice(values: values, labels: labels, multiple: false)
+        }
+        switch property["type"]?.string {
+        case "boolean":
+            return .boolean
+        case "number":
+            return .number(integer: false)
+        case "integer":
+            return .number(integer: true)
+        case "array":
+            let items = property["items"]
+            if let options = items?["anyOf"]?.array ?? items?["oneOf"]?.array {
+                let pairs = options.compactMap { option in
+                    option["const"]?.string.map { ($0, option["title"]?.string ?? $0) }
+                }
+                return .choice(values: pairs.map { $0.0 }, labels: pairs.map { $0.1 }, multiple: true)
+            }
+            let values = items?["enum"]?.array?.compactMap(\.string) ?? []
+            return values.isEmpty ? .text : .choice(values: values, labels: values, multiple: true)
+        default:
+            return .text
+        }
+    }
+
+    func question(_ property: JSONValue?) -> UserQuestion {
+        let title = property?["title"]?.string.flatMap(CodexPresentation.nonEmpty)
+        let description = property?["description"]?.string.flatMap(CodexPresentation.nonEmpty)
+        var prompt = description ?? title ?? key
+        if let defaultValue, case .choice = kind {
+            prompt += " " + String(localized: "(default: \(displayValue(defaultValue)))")
+        } else if let defaultValue {
+            prompt += " " + String(localized: "(default: \(defaultValue.displayText))")
+        } else if !isRequired {
+            prompt += " " + String(localized: "(optional)")
+        }
+        let header = description == nil ? nil : title
+        switch kind {
+        case .text, .number:
+            return UserQuestion(id: key, header: header, prompt: prompt, allowsFreeText: true)
+        case .boolean:
+            return UserQuestion(
+                id: key, header: header, prompt: prompt, options: [.init(label: Self.yes), .init(label: Self.no)],
+                allowsFreeText: false)
+        case .choice(_, let labels, let multiple):
+            return UserQuestion(
+                id: key, header: header, prompt: prompt, options: labels.map { .init(label: $0) },
+                allowsMultipleSelection: multiple, allowsFreeText: false)
+        }
+    }
+
+    /// The label shown for a value of this field.
+    private func displayValue(_ value: JSONValue) -> String {
+        guard case .choice(let values, let labels, _) = kind, let text = value.string,
+            let index = values.firstIndex(of: text)
+        else { return value.displayText }
+        return labels[index]
+    }
+
+    /// The typed value for the user's answers, or nil when they gave none that fits.
+    func value(_ answers: [String]) -> JSONValue? {
+        switch kind {
+        case .text:
+            return answers.isEmpty ? nil : .string(answers.joined(separator: ", "))
+        case .number(let integer):
+            guard let text = answers.first, let number = Double(text), number.isFinite else { return nil }
+            if integer, number.rounded() != number { return nil }
+            return .number(number)
+        case .boolean:
+            guard let answer = answers.first?.lowercased() else { return nil }
+            if [Self.yes.lowercased(), "yes", "true"].contains(answer) { return true }
+            if [Self.no.lowercased(), "no", "false"].contains(answer) { return false }
+            return nil
+        case .choice(let values, let labels, let multiple):
+            let chosen = answers.compactMap { answer -> String? in
+                if let index = labels.firstIndex(of: answer) { return values[index] }
+                return values.contains(answer) ? answer : nil
+            }
+            if multiple { return chosen.isEmpty ? nil : .array(chosen.map { .string($0) }) }
+            return chosen.first.map { .string($0) }
+        }
+    }
+
+    /// Form content for the answers, falling back to defaults; nil when a required field has no usable answer.
+    static func content(_ fields: [CodexFormField], answers: [String: [String]]) -> [String: JSONValue]? {
+        var content: [String: JSONValue] = [:]
+        for field in fields {
+            if let value = field.value(CodexUserInput.cleaned(answers[field.key])) {
+                content[field.key] = value
+            } else if let defaultValue = field.defaultValue {
+                content[field.key] = defaultValue
+            } else if field.isRequired {
+                return nil
+            }
+        }
+        return content
+    }
 }
 
 /// What to do with a request the app server sent.
 enum CodexServerRequestAction {
     case approval(CodexApproval)
-    /// Multiple-choice questions, one approval each. `answered` holds questions that cannot be shown
-    /// (free text, secrets) with empty answers, and `notices` repeats them for the user. With no
-    /// approvals, the answer is sent right away.
-    case questions([CodexApproval], answered: [String: JSONValue], notices: [String])
+    case userInput(CodexUserInput)
     case respond(JSONValue)
     case reject(String)
 }
@@ -25,24 +197,25 @@ enum CodexServerRequestAction {
 /// following T3 Code's handling.
 enum CodexServerRequests {
     static func action(
-        method: String, params: JSONValue, approvalID: String, presentation: CodexPresentation,
+        method: String, params: JSONValue, requestID: String, presentation: CodexPresentation,
         fileChanges: [JSONValue]?
     ) -> CodexServerRequestAction {
         switch method {
         case "item/commandExecution/requestApproval":
-            return .approval(commandApproval(params, id: approvalID))
+            return .approval(commandApproval(params, id: requestID, presentation: presentation))
         case "item/fileChange/requestApproval":
-            return .approval(fileChangeApproval(params, id: approvalID, presentation: presentation, changes: fileChanges))
+            return .approval(fileChangeApproval(params, id: requestID, presentation: presentation, changes: fileChanges))
         case "item/permissions/requestApproval":
-            return .approval(permissionsApproval(params, id: approvalID, presentation: presentation))
+            return .approval(permissionsApproval(params, id: requestID, presentation: presentation))
         case "execCommandApproval":
-            return .approval(legacyCommandApproval(params, id: approvalID))
+            return .approval(legacyCommandApproval(params, id: requestID))
         case "applyPatchApproval":
-            return .approval(legacyPatchApproval(params, id: approvalID, presentation: presentation))
+            return .approval(legacyPatchApproval(params, id: requestID, presentation: presentation))
         case "item/tool/requestUserInput":
-            return questions(params, id: approvalID)
+            guard let input = userInput(params, id: requestID) else { return .respond(["answers": [:]]) }
+            return .userInput(input)
         case "mcpServer/elicitation/request":
-            return elicitation(params, id: approvalID)
+            return elicitation(params, id: requestID)
         case "item/tool/call":
             // Coincide registers no dynamic tools.
             return .respond([
@@ -57,7 +230,7 @@ enum CodexServerRequests {
 
     // MARK: Commands and file changes
 
-    static func commandApproval(_ params: JSONValue, id: String) -> CodexApproval {
+    static func commandApproval(_ params: JSONValue, id: String, presentation: CodexPresentation) -> CodexApproval {
         let command = CodexPresentation.displayCommand(
             params["command"]?.string ?? "", actions: params["commandActions"]?.array ?? [])
         let title: String
@@ -77,11 +250,15 @@ enum CodexServerRequests {
             responses[option.id] = ["decision": decision]
         }
         let cancel: JSONValue = decisions.contains("cancel") || !decisions.contains("decline") ? "cancel" : "decline"
+        let extra = permissionLines(params["additionalPermissions"], presentation: presentation)
         return CodexApproval(
             request: ApprovalRequest(
                 id: id, category: .command, title: title,
-                detail: joined([command, params["reason"]?.string]), options: options,
-                toolCallID: params["itemId"]?.string),
+                detail: joined([
+                    CodexPresentation.head(command), params["reason"]?.string,
+                    extra.isEmpty ? nil : extra.joined(separator: "\n"),
+                ]),
+                options: options, toolCallID: params["itemId"]?.string),
             responses: responses, cancelResponse: ["decision": cancel])
     }
 
@@ -101,7 +278,7 @@ enum CodexServerRequests {
             break
         }
         if let prefix = decision.at("acceptWithExecpolicyAmendment.execpolicy_amendment")?.array?.compactMap(\.string) {
-            let command = CodexPresentation.shortened(prefix.joined(separator: " "))
+            let command = CodexPresentation.shortened(CodexPresentation.unwrapShell(argv: prefix))
             return ApprovalOption(
                 id: "acceptWithExecpolicyAmendment", label: String(localized: "Always allow `\(command)`"),
                 kind: .allowAlways)
@@ -147,14 +324,12 @@ enum CodexServerRequests {
 
     static func permissionsApproval(_ params: JSONValue, id: String, presentation: CodexPresentation) -> CodexApproval {
         let requested = params["permissions"] ?? [:]
-        let write = requested.at("fileSystem.write")?.array?.compactMap(\.string) ?? []
-        let read = requested.at("fileSystem.read")?.array?.compactMap(\.string) ?? []
-        let paths = { (list: [String]) in list.map(presentation.relativePath).joined(separator: ", ") }
+        let paths = requestedPaths(requested["fileSystem"], presentation: presentation)
         let (title, category): (String, ToolCategory) =
-            if !write.isEmpty {
-                (String(localized: "Allow writing to \(paths(write))"), .fileChange)
-            } else if !read.isEmpty {
-                (String(localized: "Allow reading \(paths(read))"), .read)
+            if !paths.write.isEmpty {
+                (String(localized: "Allow writing to \(paths.write.joined(separator: ", "))"), .fileChange)
+            } else if !paths.read.isEmpty {
+                (String(localized: "Allow reading \(paths.read.joined(separator: ", "))"), .read)
             } else if requested.at("network.enabled")?.bool == true {
                 (String(localized: "Allow network access"), .web)
             } else {
@@ -165,9 +340,11 @@ enum CodexServerRequests {
             if let value = requested[key], !value.isNull { granted[key] = value }
         }
         let deny: JSONValue = ["permissions": [:], "scope": "turn"]
+        let lines = permissionLines(requested, presentation: presentation)
         return CodexApproval(
             request: ApprovalRequest(
-                id: id, category: category, title: title, detail: params["reason"]?.string,
+                id: id, category: category, title: title,
+                detail: joined([params["reason"]?.string, lines.count > 1 ? lines.joined(separator: "\n") : nil]),
                 options: [
                     ApprovalOption(id: "turn", label: String(localized: "Allow"), kind: .allowOnce),
                     ApprovalOption(id: "session", label: String(localized: "Allow for this session"), kind: .allowAlways),
@@ -179,6 +356,41 @@ enum CodexServerRequests {
                 "deny": deny,
             ],
             cancelResponse: deny)
+    }
+
+    /// Paths a permission profile asks to read or write, from the legacy lists and the newer `entries`.
+    static func requestedPaths(_ fileSystem: JSONValue?, presentation: CodexPresentation)
+        -> (read: [String], write: [String])
+    {
+        var read = fileSystem?["read"]?.array?.compactMap(\.string) ?? []
+        var write = fileSystem?["write"]?.array?.compactMap(\.string) ?? []
+        for entry in fileSystem?["entries"]?.array ?? [] {
+            let path = entry["path"]
+            let name =
+                path?["path"]?.string ?? path?["pattern"]?.string
+                ?? path?.at("value.path")?.string ?? path?.at("value.kind")?.string
+            guard let name else { continue }
+            switch entry["access"]?.string {
+            case "write": write.append(name)
+            case "read": read.append(name)
+            default: break
+            }
+        }
+        let unique = { (list: [String]) in
+            list.map(presentation.relativePath).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        }
+        return (unique(read), unique(write))
+    }
+
+    /// One line per extra permission a command or permission request asks for.
+    static func permissionLines(_ profile: JSONValue?, presentation: CodexPresentation) -> [String] {
+        guard let profile, !profile.isNull else { return [] }
+        let paths = requestedPaths(profile["fileSystem"], presentation: presentation)
+        var lines: [String] = []
+        if !paths.write.isEmpty { lines.append(String(localized: "Write access: \(paths.write.joined(separator: ", "))")) }
+        if !paths.read.isEmpty { lines.append(String(localized: "Read access: \(paths.read.joined(separator: ", "))")) }
+        if profile.at("network.enabled")?.bool == true { lines.append(String(localized: "Network access")) }
+        return lines
     }
 
     // MARK: Legacy approvals
@@ -203,10 +415,7 @@ enum CodexServerRequests {
     }
 
     static func legacyCommandApproval(_ params: JSONValue, id: String) -> CodexApproval {
-        let argv = params["command"]?.array?.compactMap(\.string) ?? []
-        let command =
-            argv.count == 3 && ["-lc", "-c"].contains(argv[1])
-            ? argv[2] : argv.joined(separator: " ")
+        let command = CodexPresentation.unwrapShell(argv: params["command"]?.array?.compactMap(\.string) ?? [])
         return legacyApproval(
             id: id, category: .command, title: CodexPresentation.runTitle(command),
             detail: joined([command, params["reason"]?.string]), toolCallID: params["callId"]?.string)
@@ -226,53 +435,48 @@ enum CodexServerRequests {
 
     // MARK: Questions
 
-    /// `request_user_input`: each multiple-choice question becomes an approval whose options are the answers.
-    static func questions(_ params: JSONValue, id: String) -> CodexServerRequestAction {
-        var approvals: [CodexApproval] = []
-        var answered: [String: JSONValue] = [:]
-        var notices: [String] = []
-        let skipped: JSONValue = ["answers": []]
-        for (index, question) in (params["questions"]?.array ?? []).enumerated() {
-            guard let questionID = question["id"]?.string else { continue }
-            let text = question["question"]?.string ?? ""
-            let choices = (question["options"]?.array ?? []).compactMap { option -> (String, String?)? in
-                option["label"]?.string.map { ($0, option["description"]?.string) }
+    /// `request_user_input`: Codex's questions as asked, answered with option labels or typed text.
+    static func userInput(_ params: JSONValue, id: String) -> CodexUserInput? {
+        let text = { (value: JSONValue?) in value?.string.flatMap(CodexPresentation.nonEmpty) }
+        let questions = (params["questions"]?.array ?? []).compactMap { question -> UserQuestion? in
+            guard let questionID = question["id"]?.string, !questionID.isEmpty else { return nil }
+            let options = (question["options"]?.array ?? []).compactMap { option -> UserQuestion.Option? in
+                text(option["label"]).map { UserQuestion.Option(label: $0, detail: text(option["description"])) }
             }
-            guard !choices.isEmpty, question["isSecret"]?.bool != true else {
-                answered[questionID] = skipped
-                if !text.isEmpty { notices.append(String(localized: "Codex asked: \(text)")) }
-                continue
-            }
-            var options: [ApprovalOption] = []
-            var responses: [String: JSONValue] = [:]
-            for (choiceIndex, choice) in choices.enumerated() {
-                let optionID = "option-\(choiceIndex)"
-                options.append(ApprovalOption(id: optionID, label: choice.0, kind: .allowOnce))
-                responses[optionID] = ["answers": [.string(choice.0)]]
-            }
-            options.append(ApprovalOption(id: "skip", label: String(localized: "Skip"), kind: .cancel))
-            responses["skip"] = skipped
-            let header = question["header"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-            let descriptions = choices.compactMap { choice in choice.1.flatMap { $0.isEmpty ? nil : "\(choice.0): \($0)" } }
-            approvals.append(
-                CodexApproval(
-                    request: ApprovalRequest(
-                        id: "\(id)/\(index)", category: .other,
-                        title: header ?? String(localized: "Codex has a question"),
-                        detail: joined([text, descriptions.isEmpty ? nil : descriptions.joined(separator: "\n")]),
-                        options: options, toolCallID: params["itemId"]?.string),
-                    responses: responses, cancelResponse: skipped, questionID: questionID))
+            let header = text(question["header"])
+            return UserQuestion(
+                id: questionID, header: header, prompt: text(question["question"]) ?? header ?? questionID,
+                options: options, allowsMultipleSelection: false,
+                allowsFreeText: options.isEmpty || question["isOther"]?.bool == true,
+                isSecret: question["isSecret"]?.bool == true)
         }
-        return .questions(approvals, answered: answered, notices: notices)
+        guard !questions.isEmpty else { return nil }
+        return CodexUserInput(request: UserInputRequest(id: id, questions: questions), format: .toolAnswers)
     }
 
     // MARK: MCP elicitations
 
-    /// Approve-style MCP forms (connector permission prompts) become approvals; anything Coincide cannot
-    /// fill in is declined, as in T3 Code.
+    static func elicitationResult(_ action: String) -> JSONValue {
+        ["action": .string(action), "content": .null, "_meta": .null]
+    }
+
+    /// Approve-style MCP forms (connector permission prompts) become approvals and forms that need real
+    /// answers become questions. URL and verification prompts are declined, as in T3 Code.
     static func elicitation(_ params: JSONValue, id: String) -> CodexServerRequestAction {
-        let decline: JSONValue = ["action": "decline", "content": .null, "_meta": .null]
-        guard let accept = elicitationResponse(params, persist: nil) else { return .respond(decline) }
+        let decline = elicitationResult("decline")
+        guard ["form", "openai/form", "openaiForm"].contains(params["mode"]?.string ?? "") else { return .respond(decline) }
+        let message = params["message"]?.string.flatMap(CodexPresentation.nonEmpty)
+        let server = params["serverName"]?.string.flatMap(CodexPresentation.nonEmpty) ?? "MCP"
+        guard let accept = elicitationResponse(params, persist: nil) else {
+            let schema = params["requestedSchema"]
+            let fields = CodexFormField.fields(of: schema)
+            guard !fields.isEmpty else { return .respond(decline) }
+            let properties = schema?["properties"]?.object ?? [:]
+            let request = UserInputRequest(
+                id: id, title: message ?? String(localized: "\(server) needs more information"),
+                questions: fields.map { $0.question(properties[$0.key]) })
+            return .userInput(CodexUserInput(request: request, format: .form(fields)))
+        }
         var options = [ApprovalOption(id: "accept", label: String(localized: "Allow"), kind: .allowOnce)]
         var responses: [String: JSONValue] = ["accept": accept]
         let persistLabels = [
@@ -288,16 +492,13 @@ enum CodexServerRequests {
         options.append(ApprovalOption(id: "decline", label: String(localized: "Deny"), kind: .deny))
         options.append(ApprovalOption(id: "cancel", label: String(localized: "Deny and stop"), kind: .cancel))
         responses["decline"] = decline
-        responses["cancel"] = ["action": "cancel", "content": .null, "_meta": .null]
-        let message = params["message"]?.string ?? ""
-        let server = params["serverName"]?.string ?? "MCP"
-        let title =
-            message.isEmpty ? String(localized: "\(server) asks for permission") : CodexPresentation.shortened(message)
+        responses["cancel"] = elicitationResult("cancel")
+        let title = message.map { CodexPresentation.shortened($0) } ?? String(localized: "\(server) asks for permission")
         return .approval(
             CodexApproval(
                 request: ApprovalRequest(
                     id: id, category: .mcp, title: title, detail: joined([message, server]), options: options),
-                responses: responses, cancelResponse: responses["cancel"] ?? decline))
+                responses: responses, cancelResponse: elicitationResult("cancel")))
     }
 
     /// The accept answer for a form, choosing approve-like values (or the `persist` scope) and defaults;

@@ -9,7 +9,8 @@ struct CodexEventMapper {
     var threadID: String?
     let presentation: CodexPresentation
     private(set) var turnID: String?
-    private(set) var previousTurnID: String?
+    /// Turns that ended. Background commands they started may still report output and finish.
+    private var finishedTurnIDs: Set<String> = []
     private var adoptsNextTurn = false
     /// What each tool item last showed, to tell starts from updates.
     private var tools: [String: ToolCallInfo] = [:]
@@ -17,6 +18,12 @@ struct CodexEventMapper {
     private var fileChanges: [String: [JSONValue]] = [:]
     private var proposedPlan: String?
     private var todoList: String?
+    /// Warnings already shown; Codex repeats some on every resume.
+    private var shownNotices: Set<String> = []
+    /// Subagent threads, with the subagent tool item that lists what they do.
+    private var subagentItems: [String: String] = [:]
+    /// Subagent tool items that listed progress, so their result is added below it.
+    private var itemsWithProgress: Set<String> = []
 
     init(workingDirectory: String) {
         presentation = CodexPresentation(workingDirectory: workingDirectory)
@@ -32,16 +39,23 @@ struct CodexEventMapper {
         todoList = nil
     }
 
+    /// Follows `id` from now on. Codex's answer to `turn/start` wins over a turn guessed from notifications.
     mutating func adoptTurn(_ id: String) {
-        guard turnID == nil, id != previousTurnID else { return }
+        guard turnID != id, !finishedTurnIDs.contains(id) else { return }
+        if let turnID { finishedTurnIDs.insert(turnID) }
         turnID = id
         adoptsNextTurn = false
     }
 
     mutating func endTurn() {
-        if let turnID { previousTurnID = turnID }
+        if let turnID { finishedTurnIDs.insert(turnID) }
         turnID = nil
         adoptsNextTurn = false
+    }
+
+    /// Whether the turn already ended (or was abandoned) in this session.
+    func isFinished(_ turnID: String) -> Bool {
+        finishedTurnIDs.contains(turnID)
     }
 
     func fileChanges(for itemID: String) -> [JSONValue]? {
@@ -52,7 +66,10 @@ struct CodexEventMapper {
 
     mutating func handle(method: String, params: JSONValue) -> [AgentEvent] {
         recordFileChanges(method: method, params: params)
-        let isOurThread = threadID != nil && params["threadId"]?.string == threadID
+        let thread = params["threadId"]?.string
+        let isOurThread = threadID != nil && thread == threadID
+        // Process-wide notices have no thread; this app server only runs this thread.
+        let concernsUs = isOurThread || (params["threadId"] ?? .null).isNull
         switch method {
         case "thread/tokenUsage/updated":
             guard isOurThread, let usage = usage(params["tokenUsage"]) else { return [] }
@@ -61,18 +78,37 @@ struct CodexEventMapper {
             guard isOurThread, let model = params["toModel"]?.string else { return [] }
             let from = params["fromModel"]?.string ?? ""
             return [.modelResolved(model), .notice(String(localized: "Codex switched from \(from) to \(model)."))]
-        case "warning":
-            guard isOurThread, let message = params["message"]?.string, !message.isEmpty else { return [] }
-            return [.notice(message)]
+        case "warning", "guardianWarning":
+            guard concernsUs, let message = params["message"]?.string.flatMap(CodexPresentation.nonEmpty) else {
+                return []
+            }
+            return notice(once: message)
+        case "configWarning":
+            return CodexPresentation.configWarning(params).map { notice(once: $0) } ?? []
+        case "mcpServer/startupStatus/updated":
+            guard concernsUs else { return [] }
+            return CodexPresentation.mcpStartupNotice(params).map { notice(once: $0) } ?? []
+        case "hook/completed":
+            guard isOurThread, let text = CodexPresentation.hookNotice(params["run"]) else { return [] }
+            return [.notice(text)]
         default:
             break
+        }
+        if !isOurThread, let thread, let parent = subagentItems[thread] {
+            return subagentProgress(method: method, params: params, parent: parent)
         }
         guard isOurThread else { return [] }
         switch turnMatch(params["turnId"]?.string) {
         case .current:
             return itemEvents(method: method, params: params)
-        case .previous:
+        case .finished:
             // Background work of a finished turn: let its tools finish, but add nothing new.
+            let type = params.at("item.type")?.string ?? ""
+            let late =
+                ["item/commandExecution/outputDelta", "item/mcpToolCall/progress"].contains(method)
+                || (method == "item/completed"
+                    && !["agentMessage", "reasoning", "plan", "contextCompaction"].contains(type))
+            guard late else { return [] }
             return itemEvents(method: method, params: params).filter { event in
                 switch event {
                 case .toolOutput, .toolCompleted: true
@@ -86,19 +122,40 @@ struct CodexEventMapper {
 
     private enum TurnMatch {
         case current
-        case previous
+        case finished
         case other
     }
 
     private mutating func turnMatch(_ id: String?) -> TurnMatch {
         guard let id else { return .other }
         if id == turnID { return .current }
-        if id == previousTurnID { return .previous }
+        if finishedTurnIDs.contains(id) { return .finished }
         if adoptsNextTurn {
             adoptTurn(id)
             return .current
         }
         return .other
+    }
+
+    private mutating func notice(once text: String) -> [AgentEvent] {
+        shownNotices.insert(text).inserted ? [.notice(text)] : []
+    }
+
+    /// A subagent's tool calls, one line each, in the output of the subagent tool item that started or awaits it.
+    private mutating func subagentProgress(method: String, params: JSONValue, parent: String) -> [AgentEvent] {
+        guard method == "item/started" || method == "item/completed", let item = params["item"],
+            let id = item["id"]?.string
+        else { return [] }
+        if item["type"]?.string == "collabAgentToolCall" { trackSubagents(item, parent: parent) }
+        guard method == "item/started", let info = toolInfo(item, id: id) else { return [] }
+        itemsWithProgress.insert(parent)
+        return [.toolOutput(id: parent, delta: "• \(info.title)\n")]
+    }
+
+    private mutating func trackSubagents(_ item: JSONValue, parent: String) {
+        for receiver in item["receiverThreadIds"]?.array?.compactMap(\.string) ?? [] where receiver != threadID {
+            subagentItems[receiver] = parent
+        }
     }
 
     private mutating func recordFileChanges(method: String, params: JSONValue) {
@@ -163,19 +220,30 @@ struct CodexEventMapper {
 
     private mutating func itemStarted(_ item: JSONValue) -> [AgentEvent] {
         guard let id = item["id"]?.string else { return [] }
-        if item["type"]?.string == "plan" {
+        switch item["type"]?.string {
+        case "plan":
             proposedPlan = item["text"]?.string
             return proposedPlan?.isEmpty == false ? planEvents : []
+        case "contextCompaction":
+            return show(Self.compactionInfo(id)).map { [$0] } ?? []
+        case "collabAgentToolCall":
+            trackSubagents(item, parent: id)
+            fallthrough
+        default:
+            guard let info = toolInfo(item, id: id) else { return [] }
+            return show(info).map { [$0] } ?? []
         }
-        guard let info = toolInfo(item, id: id) else { return [] }
-        return show(info).map { [$0] } ?? []
     }
 
     private mutating func itemCompleted(_ item: JSONValue) -> [AgentEvent] {
         guard let id = item["id"]?.string else { return [] }
         switch item["type"]?.string {
         case "agentMessage":
-            guard let text = item["text"]?.string, !text.isEmpty else { return [] }
+            var text = item["text"]?.string ?? ""
+            if item["delivery"]?.string == "async", let questions = item["questions"]?.array, !questions.isEmpty {
+                text = CodexPresentation.asyncQuestionsMarkdown(text: text, questions: questions)
+            }
+            guard !text.isEmpty else { return [] }
             return [.assistantText(itemID: id, text: text)]
         case "reasoning":
             var events: [AgentEvent] = []
@@ -190,7 +258,18 @@ struct CodexEventMapper {
             proposedPlan = item["text"]?.string ?? proposedPlan
             return planEvents
         case "contextCompaction":
-            return [.notice(String(localized: "Context compacted"))]
+            let completed = AgentEvent.toolCompleted(id: id, status: .completed, output: nil)
+            return [show(Self.compactionInfo(id)), completed].compactMap { $0 }
+        case "collabAgentToolCall":
+            trackSubagents(item, parent: id)
+            guard let info = toolInfo(item, id: id) else { return [] }
+            let (status, output) = Self.completion(item)
+            // Keep the progress lines above the subagents' result.
+            guard let output, itemsWithProgress.contains(id) else {
+                return [show(info), .toolCompleted(id: id, status: status, output: output)].compactMap { $0 }
+            }
+            let result = AgentEvent.toolOutput(id: id, delta: "\n" + output)
+            return [show(info), result, .toolCompleted(id: id, status: status, output: nil)].compactMap { $0 }
         default:
             guard let info = toolInfo(item, id: id) else { return [] }
             let (status, output) = Self.completion(item)
@@ -229,6 +308,11 @@ struct CodexEventMapper {
         }
     }
 
+    /// Codex summarizing the conversation to free context, shown while it runs.
+    static func compactionInfo(_ id: String) -> ToolCallInfo {
+        ToolCallInfo(id: id, category: .other, title: String(localized: "Compact the conversation"))
+    }
+
     /// Final status and output of a completed tool item.
     private static func completion(_ item: JSONValue) -> (ItemStatus, String?) {
         let status = item["status"]?.string
@@ -241,7 +325,7 @@ struct CodexEventMapper {
         case "fileChange":
             return (status == "declined" ? .declined : status == "failed" ? .failed : .completed, nil)
         case "mcpToolCall":
-            if let message = item.at("error.message")?.string { return (.failed, message) }
+            if let message = item.at("error.message")?.string { return (.failed, CodexPresentation.tail(message)) }
             return (status == "failed" ? .failed : .completed, CodexPresentation.mcpResultText(item["result"]))
         case "dynamicToolCall":
             let failed = status == "failed" || item["success"]?.bool == false
