@@ -317,6 +317,9 @@ private final class ReplyCollector {
             } else {
                 session.interrupt()
             }
+        case .userInputRequested(let request):
+            // Nobody is there to answer; dismissing lets the agent reply with what it has.
+            session.answer(userInput: request.id, answers: [:])
         case .turnCompleted(let outcome):
             failed = outcome != .completed
             finish()
