@@ -626,7 +626,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             return
         }
         let running = runner.isRunning(threadID)
-        let canSend = hasContent && importingImages == 0 && isUsable(thread.selection.provider)
+        let canSend =
+            hasContent && importingImages == 0 && isUsable(thread.selection.provider)
+            && !WorktreeService.shared.isPreparing(threadID)
         footer.stopButton.isHidden = !running
         footer.implementButton.isHidden = !(proposedPlan != nil && !hasContent && !running)
         send.isHidden = !footer.implementButton.isHidden
@@ -1029,7 +1031,10 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             if proposedPlan != nil, !runner.isRunning(threadID) { implementPlan() }
             return
         }
-        guard importingImages == 0, let thread, isUsable(thread.selection.provider) else {
+        // A message sent while the thread's worktree is still being created would run in the project folder.
+        guard importingImages == 0, let thread, isUsable(thread.selection.provider),
+            !WorktreeService.shared.isPreparing(thread.id)
+        else {
             NSSound.beep()
             return
         }
