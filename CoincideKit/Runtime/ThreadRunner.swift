@@ -144,6 +144,8 @@ public final class ThreadRunner {
             try await session.send(input)
         } catch {
             starting.remove(threadID)
+            // The session may already have ended this turn (for example on Stop) before the error surfaced.
+            guard turns[threadID]?.userItemID == userItem.id else { return }
             finishTurn(threadID, provider: provider, outcome: .failed(error.localizedDescription))
         }
     }
@@ -370,7 +372,7 @@ public final class ThreadRunner {
             let item = TranscriptItem(
                 kind: .approval, title: request.title, detail: request.detail, category: request.category,
                 status: .waiting, provider: provider, modelID: modelID, externalID: request.id,
-                approval: ApprovalInfo(requestID: request.id, options: request.options))
+                approval: ApprovalInfo(requestID: request.id, options: request.options, textInput: request.textInput))
             store.append(item, to: threadID)
             onApprovalRequested?(threadID, request)
             NotificationCenter.default.post(name: Self.attentionNeededNotification, object: self, userInfo: ["threadID": threadID])
