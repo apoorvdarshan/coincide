@@ -87,6 +87,9 @@
     "%@ failed." : {
 
     },
+    "%@ fork" : {
+
+    },
     "%@ is not installed or could not be found on PATH." : {
 
     },
@@ -831,6 +834,9 @@
     "Cancel" : {
 
     },
+    "Cannot create a merge request from a detached HEAD." : {
+
+    },
     "Cannot create a pull request from a detached HEAD." : {
 
     },
@@ -885,7 +891,13 @@
     "Check again" : {
 
     },
+    "Check out a branch before pushing or opening a merge request." : {
+
+    },
     "Check out a branch before pushing or opening a pull request." : {
+
+    },
+    "Check out a branch to push or open a merge request." : {
 
     },
     "Check out a branch to push or open a pull request." : {
@@ -1151,6 +1163,9 @@
     "Codex to answer %@" : {
 
     },
+    "Coincide can't find this repository’s page on %@." : {
+
+    },
     "Coincide could not prepare its Pi extension: %@" : {
 
     },
@@ -1232,7 +1247,13 @@
     "Commit on New Branch" : {
 
     },
+    "Commit, Push & Create MR" : {
+
+    },
     "Commit, Push & Create PR" : {
+
+    },
+    "Commit, push and open a merge request from the default branch?" : {
 
     },
     "Commit, push and open a pull request from the default branch?" : {
@@ -1327,6 +1348,9 @@
     "Conversation" : {
 
     },
+    "Conversation fork" : {
+
+    },
     "Copied" : {
 
     },
@@ -1382,6 +1406,9 @@
 
     },
     "Could not commit." : {
+
+    },
+    "Could not create the merge request." : {
 
     },
     "Could not create the pull request." : {
@@ -1548,6 +1575,12 @@
         }
       }
     },
+    "Create MR" : {
+
+    },
+    "Create Merge Request" : {
+
+    },
     "Create PR" : {
 
     },
@@ -1563,7 +1596,22 @@
     "Create checkpoints" : {
 
     },
+    "Create the merge request on %@" : {
+
+    },
+    "Create the pull request on %@" : {
+
+    },
+    "Create the pull request on %@ instead." : {
+
+    },
+    "Created MR !%lld" : {
+
+    },
     "Created PR #%lld" : {
+
+    },
+    "Creating merge request…" : {
 
     },
     "Creating pull request…" : {
@@ -1777,22 +1825,25 @@
     "Edit %lld files" : {
 
     },
-    "Edit Message" : {
-
-    },
     "Edit a file" : {
-
-    },
-    "Edit and Resend…" : {
-
-    },
-    "Edit and resend" : {
 
     },
     "Edit file" : {
 
     },
     "Edit files" : {
+
+    },
+    "Edit from Here" : {
+
+    },
+    "Edit from Here…" : {
+
+    },
+    "Edit from here" : {
+
+    },
+    "Edit from here?" : {
 
     },
     "Edit notebook" : {
@@ -1805,9 +1856,6 @@
 
     },
     "Edit the last queued message" : {
-
-    },
-    "Edit this message?" : {
 
     },
     "Enable a provider in Settings to send a message" : {
@@ -1901,9 +1949,6 @@
 
     },
     "Files and folders" : {
-
-    },
-    "Files go back to how they were before this turn, and the conversation from this message on is removed. The message returns to the composer." : {
 
     },
     "Files to commit" : {
@@ -2013,6 +2058,21 @@
 
     },
     "Font size" : {
+
+    },
+    "Fork Thread" : {
+
+    },
+    "Fork from Here" : {
+
+    },
+    "Fork from this response" : {
+
+    },
+    "Forked from conversation" : {
+
+    },
+    "Forked from “%@”" : {
 
     },
     "Forward Delete" : {
@@ -2225,6 +2285,9 @@
     "Install Pi with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`, then run `pi` and sign in with /login." : {
 
     },
+    "Install the Azure CLI (az) with its azure-devops extension and run “az login” to create pull requests." : {
+
+    },
     "Install the Codex CLI and run `codex login`." : {
 
     },
@@ -2232,6 +2295,12 @@
 
     },
     "Install the GitHub CLI (gh) and run “gh auth login” to create pull requests." : {
+
+    },
+    "Install the GitLab CLI (glab) and run “glab auth login” to create merge requests." : {
+
+    },
+    "Install the Gitea CLI (tea) and run “tea login add” for this server to create pull requests." : {
 
     },
     "Install the Grok Build CLI and run `grok login`." : {
@@ -2368,6 +2437,9 @@
     "MCP tool" : {
 
     },
+    "MR" : {
+      "comment" : "Short for merge request"
+    },
     "Make Lower Case" : {
 
     },
@@ -2388,6 +2460,19 @@
     },
     "Memory" : {
 
+    },
+    "Merge Request" : {
+
+    },
+    "Merge request !%lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Merge request !%1$lld: %2$@"
+          }
+        }
+      }
     },
     "Message" : {
 
@@ -2733,6 +2818,9 @@
     "Open a web page" : {
 
     },
+    "Open fork" : {
+
+    },
     "Open in %@" : {
 
     },
@@ -2743,6 +2831,9 @@
 
     },
     "Open or close the selected entry" : {
+
+    },
+    "Open source conversation" : {
 
     },
     "Open the Google sign-in page and finish there. If your browser is on another device, paste the address it ends on here." : {
@@ -2797,6 +2888,9 @@
     "OpenCode started working on its own." : {
 
     },
+    "Opened MR !%lld" : {
+
+    },
     "Opened PR #%lld" : {
 
     },
@@ -2811,6 +2905,9 @@
     },
     "Overview" : {
 
+    },
+    "PR" : {
+      "comment" : "Short for pull request"
     },
     "Parts of a branch name can’t start with “.” or end with “.lock”." : {
 
@@ -2955,6 +3052,9 @@
     "Preparing feature branch…" : {
 
     },
+    "Preparing merge request…" : {
+
+    },
     "Preparing pull request…" : {
 
     },
@@ -3015,6 +3115,9 @@
     "Pull" : {
 
     },
+    "Pull Request" : {
+
+    },
     "Pull request #%lld: %@" : {
       "localizations" : {
         "en" : {
@@ -3034,7 +3137,13 @@
     "Push" : {
 
     },
+    "Push & Create MR" : {
+
+    },
     "Push & Create PR" : {
+
+    },
+    "Push and open a merge request from the default branch?" : {
 
     },
     "Push and open a pull request from the default branch?" : {
@@ -3322,13 +3431,10 @@
     "Revert" : {
 
     },
-    "Revert to Before This Message…" : {
+    "Revert Files Too" : {
 
     },
-    "Revert to before this message" : {
-
-    },
-    "Revert to before this message?" : {
+    "Revert and Keep Changes" : {
 
     },
     "Review and confirm your commit. Leave the message empty to have the agent write one." : {
@@ -3880,6 +3986,9 @@
     "The Antigravity profile settings could not be written." : {
 
     },
+    "The Azure CLI can't take a branch name containing “@”." : {
+
+    },
     "The Claude API is overloaded (529). Try again shortly." : {
 
     },
@@ -3975,7 +4084,10 @@
     "The branch the new worktree starts from" : {
 
     },
-    "The conversation from this message on is removed so you can change it and send it again. Files on disk are not changed." : {
+    "The conversation is rewound to before this message, which returns to the composer. Files on disk are not changed." : {
+
+    },
+    "The conversation is rewound to before this message, which returns to the composer. “Revert Files Too” also puts files back the way they were before it, undoing any edits since." : {
 
     },
     "The diff for this file is too large to show." : {
@@ -4036,6 +4148,9 @@
     "The project folder was moved or deleted: %@" : {
 
     },
+    "The server answered with HTTP status %lld." : {
+
+    },
     "The server is not an OpenCode 2 server." : {
 
     },
@@ -4093,6 +4208,9 @@
     "This branch has no upstream yet. Push it first." : {
 
     },
+    "This branch has not been pushed. Push it before creating a merge request." : {
+
+    },
     "This branch has not been pushed. Push it before creating a pull request." : {
 
     },
@@ -4100,6 +4218,9 @@
 
     },
     "This permanently deletes the conversation. Files on disk are not changed." : {
+
+    },
+    "This thread is no longer available" : {
 
     },
     "This thread started on %@; the folder is now on %@." : {
@@ -4384,6 +4505,12 @@
     "View Diff" : {
 
     },
+    "View MR" : {
+
+    },
+    "View Merge Request !%lld" : {
+
+    },
     "View PR" : {
 
     },
@@ -4463,6 +4590,9 @@
 
     },
     "Write file" : {
+
+    },
+    "Writing merge request…" : {
 
     },
     "Writing pull request…" : {
