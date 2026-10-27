@@ -130,11 +130,18 @@ final class ComposerApprovalBanner: ComposerBanner {
         heading.stringValue = kind
         agent.stringValue = item.provider?.displayName ?? ""
         counter.stringValue = othersWaiting > 0 ? String(localized: "\(othersWaiting) more waiting") : ""
-        summary.stringValue = item.title ?? kind
+        // Titles use Markdown code spans for commands, as in the transcript.
+        let title = NSMutableAttributedString(
+            attributedString: TranscriptText.inlineLabel(
+                item.title ?? kind, font: .systemFont(ofSize: 12, weight: .medium), color: .labelColor))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
+        summary.attributedStringValue = title
         let detailText = item.detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         detail.stringValue = detailText
         detail.isHidden = detailText.isEmpty || detailText == item.title
-        setAccessibilityLabel([kind, item.provider?.displayName, item.title].compactMap { $0 }.joined(separator: ", "))
+        setAccessibilityLabel([kind, item.provider?.displayName, title.string].compactMap { $0 }.joined(separator: ", "))
 
         textInput = item.approval?.textInput
         input.isHidden = textInput == nil

@@ -30,7 +30,7 @@ final class TranscriptQuestionCell: TranscriptCell {
         let title = request.title?.nonBlank ?? request.questions.first?.prompt ?? String(localized: "Question")
         let (detail, status): (String?, TranscriptDisclosureHeader.Status) =
             switch (item.status, item.answers) {
-            case (.waiting, _): (String(localized: "Waiting for your answer below"), .waiting)
+            case (.waiting, _): (String(localized: "Answer below"), .waiting)
             case (.declined, _): (String(localized: "Not answered"), .declined)
             case (_, nil): (String(localized: "Resolved by the agent"), .completed)
             default: (nil, .completed)

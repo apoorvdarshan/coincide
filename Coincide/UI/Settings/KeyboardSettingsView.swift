@@ -186,7 +186,7 @@ private struct ShortcutGroup: Identifiable {
         "selectAll:", "performFindPanelAction:", "performTextFinderAction:", "centerSelectionInVisibleArea:",
         "showGuessPanel:", "checkSpelling:", "toggleContinuousSpellChecking:", "startSpeaking:", "stopSpeaking:",
         "orderFrontCharacterPalette:", "hide:", "hideOtherApplications:", "unhideAllApplications:", "terminate:",
-        "orderFrontStandardAboutPanel:", "showHelp:", "performClose:", "performMiniaturize:", "performZoom:",
+        "orderFrontStandardAboutPanel:", "showHelp:", "performClose:", "closeAll:", "performMiniaturize:", "performZoom:",
         "toggleFullScreen:", "arrangeInFront:", "selectNextTab:", "selectPreviousTab:", "toggleTabBar:",
         "toggleTabOverview:", "mergeAllWindows:", "moveTabToNewWindow:", "runPageLayout:", "print:",
     ]
@@ -207,7 +207,7 @@ private struct ShortcutGroup: Identifiable {
 
     private static func collect(_ menu: NSMenu, path: [String], into shortcuts: inout [Shortcut]) {
         guard menu !== NSApp.servicesMenu else { return }
-        for item in menu.items where !item.isSeparatorItem {
+        for item in menu.items where !item.isSeparatorItem && !item.isAlternate {
             let action = item.action.map(NSStringFromSelector) ?? ""
             // Command-1 … Command-9 are hidden items; list them once.
             if action == "jumpToThread:" {
