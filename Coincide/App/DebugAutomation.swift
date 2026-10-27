@@ -1,0 +1,118 @@
+#if DEBUG
+import AppKit
+import CoincideKit
+
+/// Debug-only scripted driver for end-to-end checks without touching the keyboard or mouse.
+///
+/// Launch with `COINCIDE_AUTOMATION=/path/script.json` (a JSON array of steps) and the app runs the
+/// steps against real providers, writing progress to `<script>.log`. Steps:
+/// - `{"newThread": {"project": "name", "provider": "claude", "model": "haiku", "effort": "low"}}`
+/// - `{"select": {"provider": "codex", "model": "gpt-6-luna", "effort": "low"}}`
+/// - `{"access": "approval" | "fullAccess"}`, `{"mode": "plan" | "build"}`
+/// - `{"send": "text"}`
+/// - `{"waitIdle": seconds}`: waits until the turn ends
+/// - `{"approve": "allow"}`: answers the latest pending approval with the option of that kind or id
+/// - `{"sleep": seconds}`, `{"log": "text"}`, `{"quit": true}`
+enum DebugAutomation {
+    static func startIfRequested() {
+        guard let path = ProcessInfo.processInfo.environment["COINCIDE_AUTOMATION"], !path.isEmpty else { return }
+        Task { await run(scriptAt: URL(fileURLWithPath: path)) }
+    }
+
+    private static func run(scriptAt url: URL) async {
+        let logURL = url.appendingPathExtension("log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        func log(_ text: String) {
+            let line = "\(ISO8601DateFormatter().string(from: Date())) \(text)\n"
+            if let handle = try? FileHandle(forWritingTo: logURL) {
+                handle.seekToEndOfFile()
+                handle.write(Data(line.utf8))
+                try? handle.close()
+            }
+        }
+        guard let data = try? Data(contentsOf: url), let steps = JSONValue.parse(data)?.array else {
+            log("error: cannot read script")
+            return
+        }
+        let store = AppStore.shared
+        let registry = ProviderRegistry.shared
+        let runner = ThreadRunner.shared
+        await registry.refresh()
+        while registry.isRefreshing { try? await Task.sleep(for: .milliseconds(200)) }
+        log("providers: " + registry.orderedKinds.map { "\($0.rawValue)=\(registry.status($0).state.rawValue)" }.joined(separator: " "))
+        var threadID: UUID?
+
+        func selection(_ spec: JSONValue) -> ModelSelection? {
+            guard let raw = spec["provider"]?.string, let kind = ProviderKind(rawValue: raw) else { return nil }
+            let models = registry.models(for: kind)
+            let wanted = spec["model"]?.string
+            let model = models.first { $0.modelID == wanted } ?? models.first { $0.modelID.contains(wanted ?? "\u{0}") }
+            let modelID = model?.modelID ?? wanted ?? "default"
+            return ModelSelection(provider: kind, modelID: modelID, effort: spec["effort"]?.string ?? model?.defaultEffort)
+        }
+
+        for step in steps {
+            guard let (name, value) = step.object?.first else { continue }
+            log("step \(name): \(value.compactJSON)")
+            switch name {
+            case "newThread":
+                let projectName = value["project"]?.string
+                guard let project = store.projects.first(where: { $0.name == projectName }) ?? store.projects.first else {
+                    log("error: no project")
+                    return
+                }
+                let thread = store.createThread(in: project.id, selection: selection(value))
+                threadID = thread.id
+                AppEvents.openThread(thread.id)
+                log("thread \(thread.id) selection \(thread.selection)")
+            case "select":
+                guard let threadID, let selection = selection(value) else { continue }
+                store.updateThread(threadID) { $0.selection = selection }
+                log("selected \(selection)")
+            case "access":
+                guard let threadID, let mode = value.string.flatMap(AccessMode.init(rawValue:)) else { continue }
+                store.updateThread(threadID) { $0.accessMode = mode }
+            case "mode":
+                guard let threadID, let mode = value.string.flatMap(InteractionMode.init(rawValue:)) else { continue }
+                store.updateThread(threadID) { $0.interactionMode = mode }
+            case "send":
+                guard let threadID, let text = value.string else { continue }
+                Task { await runner.send(threadID: threadID, text: text) }
+                try? await Task.sleep(for: .milliseconds(500))
+            case "waitIdle":
+                guard let threadID else { continue }
+                let deadline = Date().addingTimeInterval(value.number ?? 120)
+                while runner.isRunning(threadID), Date() < deadline {
+                    if !runner.pendingApprovals(threadID).isEmpty || !runner.pendingQuestions(threadID).isEmpty { break }
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
+                let items = store.thread(threadID)?.items ?? []
+                log("idle=\(!runner.isRunning(threadID)) items=\(items.count) last=\(items.last.map { "\($0.kind.rawValue): \($0.text.prefix(200))" } ?? "-")")
+            case "approve":
+                guard let threadID, let item = runner.pendingApprovals(threadID).last, let approval = item.approval else {
+                    log("no pending approval")
+                    continue
+                }
+                let wanted = value.string ?? "allow"
+                let option =
+                    approval.options.first { $0.id == wanted }
+                    ?? approval.options.first { $0.kind == (wanted == "deny" ? .deny : .allowOnce) }
+                if let option { runner.respond(threadID: threadID, itemID: item.id, optionID: option.id) }
+                log("answered approval with \(option?.label ?? "nothing")")
+            case "sleep":
+                try? await Task.sleep(for: .seconds(value.number ?? 1))
+            case "log":
+                log(value.displayText)
+            case "quit":
+                store.flush()
+                log("quit")
+                NSApp.terminate(nil)
+            default:
+                log("unknown step \(name)")
+            }
+        }
+        store.flush()
+        log("done")
+    }
+}
+#endif

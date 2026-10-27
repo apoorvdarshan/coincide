@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(showSettingsEvent(_:)), name: .coincideShowSettings, object: nil)
         mainWindow?.showWindow(nil)
         Task { await ProviderRegistry.shared.refresh() }
+        #if DEBUG
+        DebugAutomation.startIfRequested()
+        #endif
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
