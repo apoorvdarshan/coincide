@@ -1147,8 +1147,9 @@ struct CodexSessionTests {
         let transport = FakeCodexTransport()
         let (session, log) = makeSession(transports: [transport])
         try await session.start()
+        // The model list and the plan's usage windows are read in the background.
         #expect(
-            transport.sent.compactMap { $0["method"]?.string }.filter { $0 != "model/list" }
+            transport.sent.compactMap { $0["method"]?.string }.filter { $0 != "model/list" && $0 != "account/rateLimits/read" }
                 == ["initialize", "initialized", "thread/start"])
         #expect(transport.requests("thread/start").first?.at("params.cwd") == "/work")
         #expect(transport.requests("thread/start").first?.at("params.model") == "gpt-6-luna")
@@ -1569,7 +1570,9 @@ struct CodexSessionTests {
         transport.notify("thread/closed", ["threadId": "T"])
         try await session.send(input())
         #expect(transport.requests("thread/resume").first?.at("params.threadId") == "T")
-        let methods = transport.sent.compactMap { $0["method"]?.string }.filter { $0 != "model/list" }
+        let methods = transport.sent.compactMap { $0["method"]?.string }.filter {
+            $0 != "model/list" && $0 != "account/rateLimits/read"
+        }
         #expect(methods.suffix(2) == ["thread/resume", "turn/start"])
     }
 
@@ -1592,5 +1595,129 @@ struct CodexSessionTests {
         transport.notify("turn/completed", ["threadId": "T", "turn": ["id": "R1", "status": "completed"]])
         #expect(log.events.count == count)
         await #expect(throws: AgentError.self) { try await session.send(input()) }
+    }
+}
+
+// MARK: - Steering and usage limits
+
+struct CodexUsageLimitsTests {
+    @Test func windowsFollowT3sReadingOfCodexSnapshots() throws {
+        let read = try #require(
+            JSONValue.parse(
+                #"""
+                {"rateLimits":{"limitId":"codex","primary":{"usedPercent":99,"windowDurationMins":300,"resetsAt":1800000000}},
+                 "rateLimitsByLimitId":{"codex":{"limitId":"codex","planType":"pro",
+                   "primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1800003600},
+                   "secondary":{"usedPercent":17,"windowDurationMins":10080,"resetsAt":1800500000}},
+                   "gpt-6-astra":{"limitId":"gpt-6-astra","primary":{"usedPercent":80}}}}
+                """#))
+        // The `codex` bucket wins over the single-bucket view.
+        let windows = CodexUsageLimits.windows(fromRead: read)
+        #expect(windows.map(\.id) == ["primary", "secondary"])
+        #expect(windows.map(\.kind) == [.session, .weekly])
+        #expect(windows.map(\.label) == ["Session", "Weekly"])
+        #expect(windows.map(\.usedPercent) == [42, 17])
+        #expect(windows[0].resetsAt == Date(timeIntervalSince1970: 1_800_003_600))
+        #expect(windows[1].durationMinutes == 10_080)
+    }
+
+    @Test func positionsWithoutLengthsUseThePlansWindows() throws {
+        let paid = try #require(JSONValue.parse(#"{"primary":{"usedPercent":5},"secondary":{"usedPercent":6,"resetsAt":null}}"#))
+        #expect(CodexUsageLimits.windows(from: paid).map(\.kind) == [.session, .weekly])
+        #expect(CodexUsageLimits.windows(from: paid).map(\.durationMinutes) == [300, 10_080])
+        let free = try #require(JSONValue.parse(#"{"planType":"free","primary":{"usedPercent":5}}"#))
+        #expect(CodexUsageLimits.windows(from: free).map(\.kind) == [.monthly])
+        #expect(CodexUsageLimits.windows(from: free).first?.label == "Monthly")
+    }
+
+    @Test func modelLimitsAreLeftOutAndCreditLimitsAdded() throws {
+        let model = try #require(JSONValue.parse(#"{"limitId":"gpt-6-astra","primary":{"usedPercent":80}}"#))
+        #expect(CodexUsageLimits.windows(from: model).isEmpty)
+        let credits = try #require(
+            JSONValue.parse(#"{"individualLimit":{"limit":"100","used":"30","remainingPercent":70,"resetsAt":1800000000}}"#))
+        let window = try #require(CodexUsageLimits.windows(from: credits).first)
+        #expect(window.id == "individual" && window.kind == .monthly && window.usedPercent == 30)
+        #expect(window.label == "Monthly credit limit")
+        #expect(CodexUsageLimits.windows(from: nil).isEmpty)
+        #expect(CodexUsageLimits.windows(from: .null).isEmpty)
+    }
+}
+
+extension CodexSessionTests {
+    @Test func steeringSendsTheMessageIntoTheActiveTurn() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/steer"] = { _ in .result(["turnId": "R1"]) }
+        let (session, log) = makeSession(transports: [transport])
+        #expect(session.supportsSteering)
+        try await session.start()
+        try await session.send(input("Count to ten"))
+        transport.notify("turn/started", ["threadId": "T", "turn": ["id": "R1", "status": "inProgress"]])
+        try await session.steer(input("Stop at five", model: "gpt-6-astra"))
+        let steer = try #require(transport.requests("turn/steer").first)
+        #expect(steer.at("params.threadId") == "T")
+        #expect(steer.at("params.expectedTurnId") == "R1")
+        #expect(steer.at("params.input")?[0]?["text"] == "Stop at five")
+        // Steering adds to the turn: no new turn, and it still completes once.
+        #expect(transport.requests("turn/start").count == 1)
+        transport.notify("turn/completed", ["threadId": "T", "turn": ["id": "R1", "status": "completed"]])
+        #expect(log.completions == [.completed])
+    }
+
+    @Test func steeringNeedsTheTurnsIDAndATurnThatIsNotStopping() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/start"] = { _ in .silent }
+        transport.handlers["turn/steer"] = { _ in .result(["turnId": "R1"]) }
+        let (session, _) = makeSession(transports: [transport])
+        try await session.start()
+        await #expect(throws: AgentError.self) { try await session.steer(input()) }
+        let sending = Task { try await session.send(input()) }
+        try await waitUntil { !transport.requests("turn/start").isEmpty }
+        // Codex has not named the turn yet.
+        await #expect(throws: AgentError.self) { try await session.steer(input()) }
+        transport.answer("turn/start", with: ["turn": ["id": "R1", "status": "inProgress", "startedAt": 1]])
+        try await sending.value
+        try await session.steer(input())
+        session.interrupt()
+        await #expect(throws: AgentError.self) { try await session.steer(input()) }
+        #expect(transport.requests("turn/steer").count == 1)
+    }
+
+    @Test func aSteerCodexRefusesFailsTheCall() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/steer"] = { _ in .error("expected turn R1 is not active") }
+        let (session, log) = makeSession(transports: [transport])
+        try await session.start()
+        try await session.send(input())
+        await #expect(throws: CodexRPCError.self) { try await session.steer(input()) }
+        #expect(log.completions.isEmpty)
+    }
+
+    @Test func usageLimitsAreReadOnStartAndFollowCodexsUpdates() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["account/rateLimits/read"] = { params in
+            guard params["excludeResetCreditDetails"] == true else { return .error("expected a background read") }
+            return .result(["rateLimits": ["primary": ["usedPercent": 12, "windowDurationMins": 300]]])
+        }
+        let (session, log) = makeSession(transports: [transport])
+        try await session.start()
+        let limits = { log.events.compactMap { event -> [UsageLimitWindow]? in if case .rateLimits(let w) = event { w } else { nil } } }
+        try await waitUntil { !limits().isEmpty }
+        #expect(limits().first?.map(\.usedPercent) == [12])
+
+        transport.notify(
+            "account/rateLimits/updated",
+            ["rateLimits": ["limitId": "codex", "secondary": ["usedPercent": 91, "windowDurationMins": 10080, "resetsAt": 1_800_000_000]]])
+        #expect(
+            limits().last == [
+                UsageLimitWindow(
+                    id: "secondary", kind: .weekly, label: "Weekly", usedPercent: 91,
+                    resetsAt: Date(timeIntervalSince1970: 1_800_000_000), durationMinutes: 10_080)
+            ])
+        // A model's own limit is not the plan's.
+        transport.notify("account/rateLimits/updated", ["rateLimits": ["limitId": "gpt-6-astra", "primary": ["usedPercent": 99]]])
+        #expect(limits().count == 2)
+        // Read once per session.
+        try await session.send(input())
+        #expect(transport.requests("account/rateLimits/read").count == 1)
     }
 }

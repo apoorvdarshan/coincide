@@ -28,6 +28,7 @@ final class CodexSession: AgentSession {
     private let requestPrefix = String(UUID().uuidString.prefix(8))
     private var requestSerial = 0
     private var modelsRequested = false
+    private var rateLimitsRequested = false
 
     private struct Turn {
         let token = UUID()
@@ -125,6 +126,23 @@ final class CodexSession: AgentSession {
             }
             throw error
         }
+    }
+
+    let supportsSteering = true
+
+    /// Adds the message to the running turn with `turn/steer`, as T3 Code does. Codex only takes it once the turn
+    /// has its id, and refuses it when that turn is no longer the active one.
+    func steer(_ input: AgentTurnInput) async throws {
+        guard !isShutDown, let connection, let threadID = mapper.threadID, let current = turn, current.sent,
+            let turnID = current.id, !current.interruptRequested
+        else {
+            throw AgentError.providerError(String(localized: "Codex can't take a message for this turn now."))
+        }
+        let params: JSONValue = [
+            "threadId": .string(threadID), "expectedTurnId": .string(turnID),
+            "input": CodexProtocol.userInput(text: input.text, imagePaths: input.imagePaths),
+        ]
+        _ = try await connection.request("turn/steer", params, timeout: .seconds(30))
     }
 
     func respond(to approvalID: String, optionID: String) {
@@ -240,6 +258,22 @@ final class CodexSession: AgentSession {
         emit(.sessionStarted(id: id))
         if let threadModel { emit(.modelResolved(threadModel)) }
         reportModels(on: connection)
+        reportRateLimits(on: connection)
+    }
+
+    /// Reads the plan's usage windows once per session, so the composer's meter is current before the first turn;
+    /// Codex reports changes itself while turns run.
+    private func reportRateLimits(on connection: CodexConnection) {
+        guard !rateLimitsRequested else { return }
+        rateLimitsRequested = true
+        Task { [weak self] in
+            // A background read: Codex can skip looking up reset-credit details.
+            guard let result = try? await connection.request(
+                "account/rateLimits/read", ["excludeResetCreditDetails": true], timeout: .seconds(20))
+            else { return }
+            let windows = CodexUsageLimits.windows(fromRead: result)
+            if !windows.isEmpty { self?.emit(.rateLimits(windows)) }
+        }
     }
 
     /// Refreshes the model picker once per session from the catalog this process uses.
@@ -367,6 +401,10 @@ final class CodexSession: AgentSession {
         case "thread/closed":
             // Codex unloaded the idle thread; the next turn resumes it.
             if isOurThread { threadLoaded = false }
+        case "account/rateLimits/updated":
+            // The account's limits, whichever thread's turn spent them.
+            let windows = CodexUsageLimits.windows(from: params["rateLimits"])
+            if !windows.isEmpty { emit(.rateLimits(windows)) }
         default:
             for event in mapper.handle(method: method, params: params) { emit(event) }
         }
