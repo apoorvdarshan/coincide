@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: MainWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppearanceController.shared.start()
         let controller = MainWindowController()
         mainWindow = controller
         controller.showWindow(nil)

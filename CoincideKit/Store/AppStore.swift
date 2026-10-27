@@ -28,7 +28,11 @@ public final class AppStore {
     private var pendingThreadSaves: Set<UUID> = []
     private var saveScheduled = false
 
+    /// `~/Library/Application Support/Coincide`, or `COINCIDE_DATA_DIR` when set (used for testing).
     public static var defaultDirectory: URL {
+        if let override = ProcessInfo.processInfo.environment["COINCIDE_DATA_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("Coincide", isDirectory: true)
     }
