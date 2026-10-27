@@ -887,9 +887,6 @@
     "Claude Code exited while starting: %@" : {
 
     },
-    "Claude Code exited with status %lld." : {
-
-    },
     "Claude Code exited." : {
 
     },
@@ -1188,9 +1185,6 @@
 
     },
     "Context" : {
-
-    },
-    "Context compacted" : {
 
     },
     "Context window" : {
