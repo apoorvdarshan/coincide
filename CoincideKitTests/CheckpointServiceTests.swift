@@ -191,6 +191,96 @@ struct CheckpointServiceTests {
         await #expect(throws: CheckpointError.self) { try await checkpoints.restore(threadID: mine.id, toBefore: turnID) }
     }
 
+    @Test func refusesToRestoreWhileAnotherThreadInTheFolderIsRunning() async throws {
+        let repository = try await makeRepository()
+        let store = AppStore(directory: try TestRepository.makeDirectory("store"))
+        let project = store.addProject(at: repository.url)
+        let mine = store.createThread(in: project.id)
+        // Started its turn (and a long tool) before this turn's snapshot; tool output since then
+        // updates its items without touching the thread.
+        let other = store.createThread(in: project.id)
+        let running = RunningThreads()
+        let checkpoints = CheckpointService(
+            store: store, directory: try TestRepository.makeDirectory("checkpoints"),
+            isThreadRunning: { running.ids.contains($0) })
+        await checkpoints.captureBeforeTurn(threadID: mine.id, userItemID: turnID, cwd: repository.url)
+        #expect(checkpoints.canRestore(threadID: mine.id, userItemID: turnID))
+
+        running.ids = [other.id]
+        #expect(!checkpoints.canRestore(threadID: mine.id, userItemID: turnID))
+        await #expect(throws: CheckpointError.self) { try await checkpoints.restore(threadID: mine.id, toBefore: turnID) }
+        #expect(checkpoints.checkpoint(threadID: mine.id, userItemID: turnID) != nil)
+
+        // The thread's own turn does not count.
+        running.ids = [mine.id]
+        #expect(checkpoints.canRestore(threadID: mine.id, userItemID: turnID))
+    }
+
+    @Test func workDoneWhileTheSnapshotIsTakenCountsAsAfterIt() async throws {
+        let repository = try await makeRepository()
+        let store = AppStore(directory: try TestRepository.makeDirectory("store"))
+        let project = store.addProject(at: repository.url)
+        let mine = store.createThread(in: project.id)
+        let other = store.createThread(in: project.id)
+        let (checkpoints, _) = try makeService(store)
+
+        let capture = Task { await checkpoints.captureBeforeTurn(threadID: mine.id, userItemID: turnID, cwd: repository.url) }
+        try await Task.sleep(for: .milliseconds(20))
+        store.append(TranscriptItem(kind: .user, text: "edit something"), to: other.id)
+        await capture.value
+        #expect(checkpoints.checkpoint(threadID: mine.id, userItemID: turnID)?.before != nil)
+        #expect(!checkpoints.canRestore(threadID: mine.id, userItemID: turnID))
+    }
+
+    @Test func runningTurnDiffsShareAWaitingCapture() async throws {
+        let repository = try await makeRepository()
+        let (checkpoints, _) = try makeService()
+        await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: repository.url)
+        try repository.write("edit.txt", "one\nTWO\n")
+
+        let requests = (0..<8).map { _ in Task { await checkpoints.turnDiff(threadID: threadID, userItemID: turnID) } }
+        for request in requests {
+            #expect(await request.value?.contains("+TWO") == true)
+        }
+        #expect(checkpoints.liveCapturesStarted <= 2)
+
+        // A later request still sees later changes.
+        try repository.write("edit.txt", "one\nTHREE\n")
+        #expect(await checkpoints.turnDiff(threadID: threadID, userItemID: turnID)?.contains("+THREE") == true)
+    }
+
+    @Test func aCancelledTurnDiffQueuesNoCapture() async throws {
+        let repository = try await makeRepository()
+        let (checkpoints, _) = try makeService()
+        await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: repository.url)
+        let request = Task { await checkpoints.turnDiff(threadID: threadID, userItemID: turnID) }
+        request.cancel()
+        #expect(await request.value == nil)
+        #expect(checkpoints.liveCapturesStarted == 0)
+    }
+
+    @Test func turnDiffsReadAtMostTheCappedPatch() async throws {
+        let repository = try await makeRepository()
+        let (checkpoints, _) = try makeService()
+        await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: repository.url)
+        // More text than the patch limit: about 10 MB of patch.
+        let line = String(repeating: "x", count: 99) + "\n"
+        for index in 0..<5 {
+            try repository.write("part\(index).txt", String(repeating: line, count: 20_000))
+        }
+        try repository.write("edit.txt", "one\nTWO\n")
+        await checkpoints.captureAfterTurn(threadID: threadID, userItemID: turnID, cwd: repository.url)
+
+        let patch = try #require(await checkpoints.turnDiff(threadID: threadID, userItemID: turnID))
+        #expect(patch.utf8.count == GitOps.maxPatchBytes + 1)
+        let diff = await GitService.parseDiff(
+            patch, files: checkpoints.changedFiles(threadID: threadID, userItemID: turnID))
+        #expect(diff.isTruncated)
+        #expect(diff.files.contains { $0.path == "edit.txt" && !$0.hunks.isEmpty })
+        #expect(diff.files.contains { $0.path == "part0.txt" && !$0.hunks.isEmpty })
+        #expect(diff.files.contains { $0.path == "part4.txt" && $0.hunks.isEmpty && $0.additions == 20_000 })
+    }
+
     @Test func forgetsTurnsCutFromTheTranscript() async throws {
         let repository = try await makeRepository()
         let store = AppStore(directory: try TestRepository.makeDirectory("store"))
@@ -215,4 +305,10 @@ struct CheckpointServiceTests {
         #expect(!checkpoints.canRestore(threadID: threadID, userItemID: turnID))
         #expect(await checkpoints.turnDiff(threadID: threadID, userItemID: turnID) == nil)
     }
+}
+
+/// The threads a test reports as having a turn running.
+@MainActor
+private final class RunningThreads {
+    var ids: Set<UUID> = []
 }

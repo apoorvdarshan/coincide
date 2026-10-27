@@ -22,6 +22,12 @@ public final class GitService {
 
     // MARK: Repository
 
+    /// The git executable to run, or nil when no usable git is installed. Skips the `/usr/bin/git`
+    /// shim while the developer tools are missing, since running it brings up their install dialog.
+    public nonisolated static func gitExecutable() async -> URL? {
+        await GitCLI.gitExecutable()
+    }
+
     public func isRepository(_ url: URL) async -> Bool {
         await GitOps.repositoryRoot(url) != nil
     }
@@ -98,6 +104,7 @@ public final class GitService {
         guard let root = await GitOps.repositoryRoot(repository) else {
             throw GitError(String(localized: "This folder is not a Git repository."))
         }
+        if path == nil { try Self.prepareWorktreesRoot(worktreesRoot) }
         let destination = path ?? uniqueWorktreePath(repositoryName: root.lastPathComponent, branch: branch)
         let worktree = try await GitOps.createWorktree(
             in: root, branch: branch, baseRef: baseRef, path: destination, recordBase: baseRef)
@@ -165,6 +172,17 @@ public final class GitService {
         let namePrefix = branch.hasPrefix(prefix) ? prefix : String(branch.dropLast(8))
         let name = BranchNames.descriptiveBranch(for: message, prefix: namePrefix)
         return try await renameBranch(branch, to: name, in: worktree)
+    }
+
+    /// Home folders are readable by the `staff` group, which every local account belongs to, so the
+    /// folder holding checkouts (of repositories that may be private) is kept owner-only.
+    private nonisolated static func prepareWorktreesRoot(_ url: URL) throws {
+        let ownerOnly: [FileAttributeKey: Any] = [.posixPermissions: 0o700]
+        // The attributes also apply to parent folders created here, such as ~/.coincide.
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: ownerOnly)
+        // Tighten a root an earlier version created as 0755. Best effort, so a root on an odd volume
+        // or owned by someone else does not block creating the worktree.
+        try? FileManager.default.setAttributes(ownerOnly, ofItemAtPath: url.path)
     }
 
     private func uniqueWorktreePath(repositoryName: String, branch: String) -> URL {

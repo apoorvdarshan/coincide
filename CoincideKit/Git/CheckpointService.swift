@@ -82,30 +82,42 @@ public final class CheckpointService {
     /// Uses `AppStore.shared`, connected on first need so merely referencing the service has no side effects.
     public static let shared = CheckpointService(
         directory: AppStore.defaultDirectory.appendingPathComponent("checkpoints", isDirectory: true),
-        storeProvider: { AppStore.shared })
+        storeProvider: { AppStore.shared }, isThreadRunning: { ThreadRunner.shared.isRunning($0) })
 
     private let directory: URL?
     private let storeProvider: (@MainActor () -> AppStore)?
+    /// Whether a thread has a turn running, which can change files without updating the thread.
+    private let isThreadRunning: (@MainActor (UUID) -> Bool)?
     private var connectedStore: AppStore?
     private var threads: [UUID: [TurnCheckpoint]] = [:]
     private var workspaceQueues: [String: Task<Void, Never>] = [:]
+    /// Live-diff captures queued but not started yet, by folder (see `liveTree`).
+    private var waitingLiveCaptures: [String: Task<String, Error>] = [:]
+    /// How many live-diff captures have started, so tests can check that requests share them.
+    private(set) var liveCapturesStarted = 0
     private var storeObservation: ObservationToken?
     private var pruneScheduled = false
 
     /// `store` is consulted for restore safety and notified when a turn's changes are ready.
     /// Checkpoint indexes are saved under `directory` (by default the store's `checkpoints` folder);
-    /// with neither, they are kept in memory only.
-    public convenience init(store: AppStore? = nil, directory: URL? = nil) {
+    /// with neither, they are kept in memory only. `isThreadRunning` tells which threads have a turn
+    /// running, so a restore never rewrites a folder another running thread works in.
+    public convenience init(
+        store: AppStore? = nil, directory: URL? = nil, isThreadRunning: (@MainActor (UUID) -> Bool)? = nil
+    ) {
         var provider: (@MainActor () -> AppStore)?
         if let store { provider = { store } }
         self.init(
             directory: directory ?? store?.directory.appendingPathComponent("checkpoints", isDirectory: true),
-            storeProvider: provider)
+            storeProvider: provider, isThreadRunning: isThreadRunning)
     }
 
-    private init(directory: URL?, storeProvider: (@MainActor () -> AppStore)?) {
+    private init(
+        directory: URL?, storeProvider: (@MainActor () -> AppStore)?, isThreadRunning: (@MainActor (UUID) -> Bool)?
+    ) {
         self.directory = directory
         self.storeProvider = storeProvider
+        self.isThreadRunning = isThreadRunning
     }
 
     /// The store, observed from the first time it is needed.
@@ -125,11 +137,14 @@ public final class CheckpointService {
     /// Records the working tree before a turn starts.
     public func captureBeforeTurn(threadID: UUID, userItemID: UUID, cwd: URL) async {
         let ref = Self.ref(threadID: threadID, userItemID: userItemID, phase: "before")
+        // Taken before waiting for the folder and reading it, so any change the snapshot may have
+        // missed counts as made after it.
+        let startedAt = Date()
         guard let commit = try? await serialized(cwd, { try await CheckpointGit.capture(cwd: cwd, ref: ref) }) else {
             return
         }
         update(threadID) { turns in
-            let checkpoint = TurnCheckpoint(userItemID: userItemID, cwd: cwd.path, before: commit, beforeAt: Date())
+            let checkpoint = TurnCheckpoint(userItemID: userItemID, cwd: cwd.path, before: commit, beforeAt: startedAt)
             if let index = turns.firstIndex(where: { $0.userItemID == userItemID }) {
                 turns[index] = checkpoint
             } else {
@@ -202,12 +217,30 @@ public final class CheckpointService {
         if let after = checkpoint.after {
             target = after
         } else {
-            guard let tree = try? await serialized(cwd, { try await CheckpointGit.capture(cwd: cwd, ref: nil) })
-            else { return nil }
+            // A caller that gave up (a reload replaced it) would only queue work nobody reads.
+            guard !Task.isCancelled, let tree = try? await liveTree(cwd) else { return nil }
             target = tree
         }
         return try? await CheckpointGit.diff(
             cwd: cwd, from: before, to: target, numstat: false, ignoreWhitespace: ignoreWhitespace, paths: paths)
+    }
+
+    /// The folder's current tree, for the diff of a turn that is still running. At most one such
+    /// capture waits in the folder's queue, and requests made meanwhile share it, so frequent diff
+    /// reloads cannot pile up captures ahead of the next turn's snapshots.
+    private func liveTree(_ cwd: URL) async throws -> String {
+        let key = cwd.standardizedFileURL.path
+        if let waiting = waitingLiveCaptures[key] { return try await waiting.value }
+        let task = Task { @MainActor () async throws -> String in
+            try await self.serialized(cwd) {
+                // Once it starts, a later request queues a fresh capture, so the diff stays current.
+                self.waitingLiveCaptures[key] = nil
+                self.liveCapturesStarted += 1
+                return try await CheckpointGit.capture(cwd: cwd, ref: nil)
+            }
+        }
+        waitingLiveCaptures[key] = task
+        return try await task.value
     }
 
     /// Whether the working tree can be restored to how it was before the turn.
@@ -243,11 +276,14 @@ public final class CheckpointService {
     }
 
     /// Restoring rewrites the whole folder, so it is refused when another thread has worked in the
-    /// same folder (or one inside or around it) since the snapshot was taken.
+    /// same folder (or one inside or around it) since the snapshot was taken, or is running there now.
+    /// A running turn's tool output and completions update its items without touching the thread, so
+    /// `updatedAt` alone would miss a long tool; the turn's end does touch it.
     private func isRestoreIsolated(threadID: UUID, cwd: String, since: Date) -> Bool {
         guard let store = store() else { return true }
         let target = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().standardizedFileURL.path
-        for other in store.threads.values where other.id != threadID && other.updatedAt > since {
+        for other in store.threads.values
+        where other.id != threadID && (other.updatedAt > since || isThreadRunning?(other.id) == true) {
             guard let folder = store.workingDirectory(for: other.id)?.resolvingSymlinksInPath().standardizedFileURL.path
             else { continue }
             if Self.contains(target, folder) || Self.contains(folder, target) { return false }
@@ -652,7 +688,13 @@ enum CheckpointGit {
         } else {
             arguments.append(".")
         }
-        let result = await GitCLI.git(arguments, in: cwd, timeout: 120)
+        let result: ProcessRunner.Result
+        if numstat {
+            result = await GitCLI.git(arguments, in: cwd, timeout: 120)
+        } else {
+            // A byte past the cap tells the parser the patch is too long, so it cuts it at a file.
+            result = await GitCLI.git(arguments, in: cwd, timeout: 120, maxOutputBytes: GitOps.maxPatchBytes + 1).result
+        }
         guard result.succeeded else { throw GitError.failed(String(localized: "Could not read the turn's changes."), result) }
         return result.stdout
     }

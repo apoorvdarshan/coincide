@@ -92,6 +92,69 @@ struct GitWorktreeServiceTests {
         #expect(fixture.store.thread(other.id)?.worktreePath == path)
     }
 
+    /// Moves a second thread into the fixture thread's new, unused worktree and returns it with the path.
+    private func shareTheUnusedWorktree(_ fixture: Fixture) async throws -> (other: UUID, path: String) {
+        try await fixture.worktrees.useNewWorktree(threadID: fixture.threadID, baseBranch: nil)
+        let project = try #require(fixture.store.thread(fixture.threadID)?.projectID)
+        let other = fixture.store.createThread(in: project)
+        let previous = try #require(fixture.worktrees.previousWorktree(for: other.id))
+        await fixture.worktrees.useExistingWorktree(threadID: other.id, path: previous.path, branch: previous.branch)
+        #expect(fixture.store.thread(other.id)?.worktreePath == previous.path)
+        return (other.id, previous.path)
+    }
+
+    @Test func switchingBackKeepsAWorktreeAnotherThreadMovedInto() async throws {
+        let fixture = try await makeFixture()
+        let (other, path) = try await shareTheUnusedWorktree(fixture)
+
+        await fixture.worktrees.useProjectCheckout(threadID: fixture.threadID)
+        #expect(fixture.store.thread(fixture.threadID)?.worktreePath == nil)
+        #expect(FileManager.default.fileExists(atPath: path))
+        #expect(fixture.store.thread(other)?.worktreePath == path)
+        #expect(try await fixture.git.worktrees(fixture.repository.url).count == 2)
+    }
+
+    @Test func choosingAnotherBaseKeepsAWorktreeAnotherThreadMovedInto() async throws {
+        let fixture = try await makeFixture()
+        let (_, path) = try await shareTheUnusedWorktree(fixture)
+
+        try await fixture.worktrees.useNewWorktree(threadID: fixture.threadID, baseBranch: "main")
+        #expect(fixture.store.thread(fixture.threadID)?.worktreePath != path)
+        #expect(FileManager.default.fileExists(atPath: path))
+    }
+
+    @Test func deletingTheThreadKeepsAWorktreeAnotherThreadMovedInto() async throws {
+        let fixture = try await makeFixture()
+        let (other, path) = try await shareTheUnusedWorktree(fixture)
+        // A third thread's unused worktree shows when the removals triggered by deleting threads have run.
+        let project = try #require(fixture.store.thread(fixture.threadID)?.projectID)
+        let third = fixture.store.createThread(in: project)
+        try await fixture.worktrees.useNewWorktree(threadID: third.id, baseBranch: nil)
+        let thirdPath = try #require(fixture.store.thread(third.id)?.worktreePath)
+
+        fixture.store.deleteThread(fixture.threadID)
+        fixture.store.deleteThread(third.id)
+        try await eventually { !FileManager.default.fileExists(atPath: thirdPath) }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!FileManager.default.fileExists(atPath: thirdPath))
+        #expect(FileManager.default.fileExists(atPath: path))
+        #expect(fixture.store.thread(other)?.worktreePath == path)
+    }
+
+    @Test func aMessageFromAnotherThreadMakesTheWorktreeUsed() async throws {
+        let fixture = try await makeFixture()
+        let (other, path) = try await shareTheUnusedWorktree(fixture)
+        fixture.store.append(TranscriptItem(kind: .user, text: "Add a dark mode toggle"), to: other)
+        try await eventually { fixture.store.thread(fixture.threadID)?.branch == "coincide/add-dark-mode-toggle" }
+        #expect(fixture.store.thread(fixture.threadID)?.branch == "coincide/add-dark-mode-toggle")
+
+        // Once the thread that used it is gone, the worktree is still not the first thread's to discard.
+        fixture.store.deleteThread(other)
+        await fixture.worktrees.useProjectCheckout(threadID: fixture.threadID)
+        #expect(fixture.store.thread(fixture.threadID)?.worktreePath == nil)
+        #expect(FileManager.default.fileExists(atPath: path))
+    }
+
     @Test func threadsWithMessagesKeepTheirFolder() async throws {
         let fixture = try await makeFixture()
         fixture.store.append(TranscriptItem(kind: .user, text: "hello"), to: fixture.threadID)
