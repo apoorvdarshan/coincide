@@ -24,6 +24,9 @@ public protocol ACPAgentFlavor {
     /// Arguments that start the agent's ACP server over stdio.
     func arguments(for accessMode: AccessMode) -> [String]
     func environment(_ base: [String: String], executable: URL) -> [String: String]
+    /// Work before each launch, such as preparing a private profile; throwing fails the launch with
+    /// the error. The lease it returns is released once the process has ended.
+    func prepareLaunch(executable: URL, environment: [String: String]) async throws -> ACPLaunchLease?
     /// Give each process its own temporary folder and delete it when the process ends.
     var usesPrivateTemporaryDirectory: Bool { get }
     /// The launch arguments encode the access mode, so changing it needs a new process.
@@ -96,6 +99,8 @@ public protocol ACPAgentFlavor {
     func message(for error: Error) -> String
     /// A notice for a line the agent printed outside JSON-RPC (stdout or stderr), such as a sign-in link.
     func notice(forOutputLine line: String) -> String?
+    /// An error that ends the process for such a line, for example a sign-in the agent cannot finish here.
+    func failure(forOutputLine line: String) -> String?
 
     // MARK: Detection
 
@@ -103,6 +108,27 @@ public protocol ACPAgentFlavor {
     func probe(executable: URL, environment: [String: String]) async -> ACPProbe
     /// Models to offer before a probe succeeded, for example when the CLI is missing.
     func offlineModels(environment: [String: String]) -> [ModelOption]
+}
+
+/// Held by a launch that runs from files that must not be removed meanwhile (see
+/// `ACPAgentFlavor.prepareLaunch`). `release()`, or letting go of the lease, ends it.
+@MainActor
+public final class ACPLaunchLease {
+    private var onRelease: (() -> Void)?
+
+    public init(onRelease: @escaping () -> Void) {
+        self.onRelease = onRelease
+    }
+
+    public func release() {
+        let release = onRelease
+        onRelease = nil
+        release?()
+    }
+
+    isolated deinit {
+        release()
+    }
 }
 
 /// How `interrupt()` stops a running prompt.
@@ -166,6 +192,7 @@ public enum ACPExtensionEvent: Sendable, Hashable {
 extension ACPAgentFlavor {
     public func arguments(for accessMode: AccessMode) -> [String] { [] }
     public func environment(_ base: [String: String], executable: URL) -> [String: String] { base }
+    public func prepareLaunch(executable: URL, environment: [String: String]) async throws -> ACPLaunchLease? { nil }
     public var usesPrivateTemporaryDirectory: Bool { false }
     public var accessModeNeedsRestart: Bool { false }
 
@@ -222,6 +249,7 @@ extension ACPAgentFlavor {
     }
 
     public func notice(forOutputLine line: String) -> String? { nil }
+    public func failure(forOutputLine line: String) -> String? { nil }
 
     /// Ready without running anything; the session reports the real model list once it starts.
     public func probe(executable: URL, environment: [String: String]) async -> ACPProbe {

@@ -157,7 +157,9 @@ struct ACPProviderTests {
         try Data("#!/bin/sh\n".utf8).write(to: server)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server.path)
         let provider = ACPProvider(profile: .antigravity)
-        #expect(provider.executableNames == ["agy_acp_server.par", "agy_acp_server"])
+        // A downloaded runtime, when there is one, comes before the names looked up on PATH.
+        #expect(provider.executableNames.suffix(2) == ["agy_acp_server.par", "agy_acp_server"])
+        #expect(provider.executableNames.count <= 3)
 
         let missing = await provider.detect(executable: server, environment: [:])
         #expect(missing.state == .error)
@@ -166,11 +168,47 @@ struct ACPProviderTests {
         let harness = directory.appendingPathComponent("localharness_external")
         try Data("#!/bin/sh\n".utf8).write(to: harness)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: harness.path)
-        let ready = await provider.detect(executable: server, environment: [:])
-        #expect(ready.state == .ready)
-        let models = await provider.models(status: ready, environment: [:])
-        #expect(models.map(\.modelID) == ["antigravity-default"])
+        // Signed in or not is decided by the private profile, never by starting the agent.
+        let flavor = try acpAntigravityFlavor()
+        let signedOut = await flavor.probe(executable: server, environment: [:])
+        #expect(signedOut.status.state == .notAuthenticated)
+        #expect(signedOut.status.message?.contains("Settings") == true)
+        #expect(signedOut.models.map(\.modelID) == ["antigravity-default"])
+
+        try FileManager.default.createDirectory(at: flavor.profile.acpDirectory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: flavor.profile.tokenFile)
+        let ready = await flavor.probe(executable: server, environment: [:])
+        #expect(ready.status.state == .ready)
+        #expect(ready.status.version == nil)
         #expect(provider.makeSession(acpLaunch(.antigravity)).provider == .antigravity)
+    }
+
+    @Test func antigravityReportsTheDownloadedReleaseVersion() async throws {
+        let flavor = try acpAntigravityFlavor()
+        let installer = AntigravityInstaller(paths: flavor.paths)
+        let releaseID = String(repeating: "b", count: 64)
+        let release = flavor.paths.versionsDirectory.appendingPathComponent(releaseID, isDirectory: true)
+        try FileManager.default.createDirectory(at: release, withIntermediateDirectories: true)
+        for name in ["agy_acp_server.par", "localharness_external"] {
+            try Data("#!/bin/sh\n".utf8).write(to: release.appendingPathComponent(name))
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: release.appendingPathComponent(name).path)
+        }
+        try FileManager.default.createSymbolicLink(atPath: flavor.paths.currentLink.path, withDestinationPath: "versions/" + releaseID)
+        #expect(ACPProfile.managedAntigravityExecutable(paths: flavor.paths) == flavor.paths.managedExecutable)
+
+        // Without its record the release is incomplete, and never offered as ready.
+        let incomplete = await flavor.probe(executable: flavor.paths.managedExecutable, environment: [:])
+        #expect(incomplete.status.state == .error)
+        #expect(throws: AntigravityInstallError.self) { try installer.activeRelease() }
+
+        let record = AntigravityInstaller.Record(
+            releaseId: releaseID, version: "1.3.0", executable: .init(name: "agy_acp_server.par", bytes: 10, sha256: ""),
+            harness: .init(name: "localharness_external", bytes: 10, sha256: ""))
+        try JSONEncoder().encode(record).write(to: release.appendingPathComponent(AntigravityInstaller.recordName))
+        let installed = await flavor.probe(executable: flavor.paths.managedExecutable, environment: [:])
+        #expect(installed.status.state == .notAuthenticated)
+        #expect(installed.status.version == "1.3.0")
+        #expect(try installer.activeRelease()?.harness == release.appendingPathComponent("localharness_external"))
     }
 
     // MARK: Client file system
